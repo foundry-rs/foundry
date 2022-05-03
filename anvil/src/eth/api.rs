@@ -42,7 +42,10 @@ use ethers::{
     },
     utils::rlp,
 };
-use foundry_evm::{revm::Return, utils::u256_to_h256_be};
+use foundry_evm::{
+    revm::{return_ok, Return},
+    utils::u256_to_h256_be,
+};
 use futures::channel::mpsc::Receiver;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
@@ -712,9 +715,9 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) = self.backend.call(request, fees);
+                    let (exit, _, _gas, _) = self.backend.call(request.clone(), fees);
                     match exit {
-                        Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
+                        return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
                         }
@@ -734,21 +737,51 @@ impl EthApi {
             }
         }
 
-        const CALL_STIPEND: u64 = 2_300;
+        let gas: U256 = gas.into();
 
-        // the gas returned by `Backend::call()` is the actually consumed gas, however there might
-        // be the case if the gas left prior to an SSTORE is less than the `CALL_STIPEND` which
-        // would cause a `Return::OutOfGas` if the tx's gas_limit is set to `gas`, See EIP-2200.
-        // Adding the CALL_STIPEND on top will prevent that.
-        let mut gas = gas + CALL_STIPEND;
+        // binary search gas estimation
+        let mut lowest_gas_limit = MIN_GAS;
 
-        // 2 safe factor until binary search
-        gas = gas.saturating_mul(2000) / 1000;
-        // TODO this could be optimized with a binary search
+        // pick a point that's close to the estimated gas
+        let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
 
-        trace!(target : "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
+        let mut last_highest_gas_limit = highest_gas_limit;
 
-        Ok(gas.into())
+        while (highest_gas_limit - lowest_gas_limit) > U256::one() {
+            request.gas = Some(mid_gas_limit);
+            let (exit, _, _gas, _) = self.backend.call(request.clone(), fees.clone());
+            match exit {
+                return_ok!() => {
+                    highest_gas_limit = mid_gas_limit;
+                    // if last two successful estimations only vary by 10%, we consider this to
+                    // sufficiently accurate
+                    const ACCURACY: u64 = 10;
+                    if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                        last_highest_gas_limit <
+                        U256::one()
+                    {
+                        return Ok(highest_gas_limit)
+                    }
+                    last_highest_gas_limit = highest_gas_limit;
+                }
+                Return::Revert |
+                Return::OutOfGas |
+                Return::LackOfFundForGasLimit |
+                Return::OutOfFund => {
+                    lowest_gas_limit = mid_gas_limit;
+                }
+                reason => {
+                    trace!(target: "node", "estimation failed due to {:?}", reason);
+                    return Err(BlockchainError::EvmError(reason))
+                }
+            }
+            // new midpoint
+            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+        }
+
+        trace!(target : "node", "Estimated Gas for call {:?}", gas);
+
+        Ok(gas)
     }
 
     /// Get transaction by its hash.
