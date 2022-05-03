@@ -227,7 +227,7 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
-        self.solc_io_report.log_compiler_input(input);
+        self.solc_io_report.log_compiler_input(input, version);
     }
 
     fn on_solc_success(
@@ -237,7 +237,7 @@ impl Reporter for SpinnerReporter {
         output: &CompilerOutput,
         duration: &Duration,
     ) {
-        self.solc_io_report.log_compiler_output(output);
+        self.solc_io_report.log_compiler_output(output, version);
         self.send_msg(format!(
             "Solc {}.{}.{} finished in {:.2?}",
             version.major, version.minor, version.patch, duration
