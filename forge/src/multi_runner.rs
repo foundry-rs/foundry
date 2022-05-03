@@ -661,7 +661,7 @@ mod tests {
                             None,
                         ),
                         (
-                            "testLog()",
+                            "testConsoleLog()",
                             true,
                             None,
                             Some(vec!["constructor".into(), "log()".into()]),
@@ -685,7 +685,7 @@ mod tests {
                             "testLogString()",
                             true,
                             None,
-                            Some(vec!["constructor".into(), "testString".into()]),
+                            Some(vec!["constructor".into(), "test".into()]),
                             None,
                         ),
                         (
@@ -754,49 +754,56 @@ mod tests {
                             "testConsoleLogUint()",
                             true,
                             None,
-                            Some(vec![
-                                "constructor".into(),
-                                "log(uint), 1000000000000000000".into()
-                            ]),
+                            Some(vec!["constructor".into(), "1".into()]),
                             None,
                         ),
                         (
                             "testConsoleLogString()",
                             true,
                             None,
-                            Some(vec![
-                                "constructor".into(),
-                                "log(string), testString".into()
-                            ]),
+                            Some(vec!["constructor".into(), "test".into()]),
                             None,
                         ),
                         (
                             "testConsoleLogBool()",
                             true,
                             None,
-                            Some(vec![
-                                "constructor".into(),
-                                "log(bool), false".into()
-                            ]),
+                            Some(vec!["constructor".into(), "false".into()]),
                             None,
                         ),
                         (
                             "testConsoleLogAddress()",
                             true,
                             None,
-                            Some(vec![
-                                "constructor".into(),
-                                "log(address), 0x0000000000000000000000000000000000000001".into()
-                            ]),
+                            Some(vec!["constructor".into(), "0x0000000000000000000000000000000000000001".into()]),
                             None,
-                        ),(
+                        ),
+                        (
                             "testLogUintUint()",
                             true,
                             None,
-                            Some(vec![
-                                "constructor".into(),
-                                "log(uint,uint), 1000000000000000000, 2000000000000000000".into()
-                            ]),
+                            Some(vec!["constructor".into(), "1, 2".into()]),
+                            None,
+                        ),
+                        (
+                            "testLogUintString()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(),"1, test".into()]),
+                            None,
+                        ),
+                        (
+                            "testLogUintBool()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "1, false".into()]),
+                            None,
+                        ),
+                        (
+                            "testLogUintAddress()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "1, 0x0000000000000000000000000000000000000001".into()]),
                             None,
                         ),
                     ],

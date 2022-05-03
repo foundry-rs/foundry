@@ -22,8 +22,8 @@ contract HardhatLogsTest {
 				console.log("testMisc", 42);
     }
 
-	function testLog() public view {
-		console.logString("log()");
+	function testConsoleLog() public view {
+		console.log("log()");
 	}
 
 	function testLogInt() public view {
@@ -35,7 +35,7 @@ contract HardhatLogsTest {
 	}
 
 	function testLogString() public view {
-		console.logString(string("testString"));
+		console.logString(string("test"));
 	}
 
 	function testLogBool() public view {
@@ -86,24 +86,37 @@ contract HardhatLogsTest {
 	}
 
 	function testConsoleLogUint() public view {
-		console.log(string("log(uint)"), uint(1 ether));
+		console.log(uint(1));
 	}
 
 	function testConsoleLogString() public view {
-		console.log(string("log(string)"), string("testString"));
+		console.log(string("test"));
 	}
 
 	function testConsoleLogBool() public view {
-		console.log(string("log(bool)"), bool(false));
+		console.log(bool(false));
 	}
 
 	function testConsoleLogAddress() public view {
-		console.log(string("log(address)"), address(1));
+		console.log(address(1));
 	}
 
 	function testLogUintUint() public view {
-		console.log(string("log(uint,uint)"), uint(1 ether), uint(2 ether));
+		console.log(uint(1), uint(2));
 	}
+
+	function testLogUintString() public view {
+		console.log(uint(1), string("test"));
+	}
+
+	function testLogUintBool() public view {
+		console.log(uint(1), bool(false));
+	}
+
+	function testLogUintAddress() public view {
+		console.log(uint(1), address(1));
+	}
+
 
 }
 
