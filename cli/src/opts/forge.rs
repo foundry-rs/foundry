@@ -126,7 +126,7 @@ pub enum Subcommands {
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Manage the foundry cache.")]
+    #[clap(about = "Manage the Foundry cache.")]
     Cache(CacheArgs),
 
     #[clap(alias = "s", about = "Create a snapshot of each test's gas usage.")]
