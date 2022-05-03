@@ -217,7 +217,7 @@ impl Cmd for ScriptArgs {
                     })
                     .collect();
 
-                nonce += predeploy_libraries.len().into();
+                let default_sender_offset: U256 = predeploy_libraries.len().into();
 
                 result.transactions = Some(lib_deploy);
 
@@ -240,7 +240,10 @@ impl Cmd for ScriptArgs {
                     (Some(txs), Some(new_txs)) => {
                         new_txs.iter().enumerate().for_each(|(i, tx)| {
                             let mut tx = into_legacy(tx.clone());
-                            tx.nonce = Some(nonce + i);
+                            if tx.from.expect("no sender") == new_sender {
+                                tx.nonce =
+                                    Some(tx.nonce.unwrap_or_default() + default_sender_offset);
+                            }
                             txs.push_back(TypedTransaction::Legacy(tx));
                         });
                         nonce += new_txs.len().into();
@@ -264,12 +267,15 @@ impl Cmd for ScriptArgs {
                     })
                     .collect();
 
-                nonce += predeploy_libraries.len().into();
+                let default_sender_offset: U256 = predeploy_libraries.len().into();
+
                 // prepend predeploy libraries
                 if let Some(txs) = &mut result.transactions {
                     txs.iter().enumerate().for_each(|(i, tx)| {
                         let mut tx = into_legacy(tx.clone());
-                        tx.nonce = Some(nonce + i);
+                        if tx.from.expect("no sender") == evm_opts.sender {
+                            tx.nonce = Some(tx.nonce.unwrap_or_default() + default_sender_offset);
+                        }
                         lib_deploy.push_back(TypedTransaction::Legacy(tx));
                     });
                     *txs = lib_deploy;

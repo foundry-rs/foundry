@@ -22,6 +22,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
+    prelude::U256,
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
@@ -178,12 +179,17 @@ where
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
+
+                    data.subroutine.load_account(broadcast.origin, data.db);
+                    let nonce = data.subroutine.account(broadcast.origin).info.nonce;
+
                     self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                         TransactionRequest {
                             from: Some(broadcast.origin),
                             to: Some(NameOrAddress::Address(call.contract)),
                             value: Some(call.transfer.value),
                             data: Some(call.input.clone().into()),
+                            nonce: Some(nonce.into()),
                             ..Default::default()
                         },
                     ));
@@ -379,12 +385,17 @@ where
                 call.caller == broadcast.original_caller
             {
                 call.caller = broadcast.origin;
+
+                data.subroutine.load_account(broadcast.origin, data.db);
+                let nonce = data.subroutine.account(broadcast.origin).info.nonce;
+
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
                         from: Some(broadcast.origin),
                         to: None,
                         value: Some(call.value),
                         data: Some(call.init_code.clone().into()),
+                        nonce: Some(nonce.into()),
                         ..Default::default()
                     },
                 ));
