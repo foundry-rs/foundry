@@ -9,7 +9,7 @@ interface Cheats {
     // Set block.basefee (newBasefee)
     function fee(uint256) external;
     // Set block.coinbase (who)
-    function bank(address) external;
+    function coinbase(address) external;
     // Loads a storage slot from an address (who, slot)
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)

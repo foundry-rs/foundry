@@ -4,16 +4,16 @@ pragma solidity >=0.8.0;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-contract BankTest is DSTest {
+contract CoinbaseTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testBank() public {
-        cheats.bank(0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8);
-        assertEq(block.coinbase, 0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8, "bank failed");
+    function testCoinbase() public {
+        cheats.coinbase(0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8);
+        assertEq(block.coinbase, 0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8, "coinbase failed");
     }
 
-    function testBankFuzzed(address who) public {
-        cheats.bank(who);
-        assertEq(block.coinbase, who, "bank failed");
+    function testCoinbaseFuzzed(address who) public {
+        cheats.coinbase(who);
+        assertEq(block.coinbase, who, "coinbase failed");
     }
 }

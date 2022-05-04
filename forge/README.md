@@ -124,7 +124,7 @@ which implements the following methods:
 
 - `function roll(uint x) public` Sets the block number to `x`.
 
-- `function bank(address c) public` Sets the block coinbase to `c`.
+- `function coinbase(address c) public` Sets the block coinbase to `c`.
 
 - `function store(address c, bytes32 loc, bytes32 val) public` Sets the slot
   `loc` of contract `c` to `val`.
@@ -263,7 +263,7 @@ interface Hevm {
     // Set block.basefee (newBasefee)
     function fee(uint256) external;
     // Set block.coinbase (who)
-    function bank(address) external;
+    function coinbase(address) external;
     // Loads a storage slot from an address (who, slot)
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)

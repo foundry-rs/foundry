@@ -86,7 +86,7 @@ pub fn apply<DB: Database>(
             data.env.block.basefee = inner.0;
             Ok(Bytes::new())
         }
-        HEVMCalls::Bank(inner) => {
+        HEVMCalls::Coinbase(inner) => {
             data.env.block.coinbase = inner.0;
             Ok(Bytes::new())
         }
