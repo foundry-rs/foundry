@@ -11,7 +11,11 @@ use ethers::{
     }
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, io::Write, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -125,7 +129,7 @@ impl ScriptSequence {
         transactions: VecDeque<TypedTransaction>,
         sig: &String,
         target: &ArtifactId,
-        out: &PathBuf,
+        out: &Path,
     ) -> eyre::Result<Self> {
         Ok(ScriptSequence {
             index: 0,
@@ -135,7 +139,7 @@ impl ScriptSequence {
         })
     }
 
-    pub fn load(sig: &String, target: &ArtifactId, out: &PathBuf) -> eyre::Result<Self> {
+    pub fn load(sig: &String, target: &ArtifactId, out: &Path) -> eyre::Result<Self> {
         let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, out)?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
@@ -161,8 +165,8 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    pub fn get_path(sig: &String, target: &ArtifactId, out: &PathBuf) -> eyre::Result<PathBuf> {
-        let mut out = out.clone();
+    pub fn get_path(sig: &String, target: &ArtifactId, out: &Path) -> eyre::Result<PathBuf> {
+        let mut out = out.to_path_buf();
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);
         out.push("scripted_transactions");
