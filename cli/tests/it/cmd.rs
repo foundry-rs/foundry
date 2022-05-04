@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use anvil::{spawn, NodeConfig};
 use ethers::solc::{
     artifacts::{BytecodeHash, Metadata},
     ConfigurableContractArtifact,
@@ -667,7 +668,9 @@ contract CTest is DSTest {
 
 forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
+        spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new(cmd);
+
         tester
             .add_sender(0)
             .load_private_keys(vec![0, 1])
@@ -682,6 +685,7 @@ forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
 
 forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
+        spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new(cmd);
 
         tester
@@ -698,7 +702,9 @@ forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
 
 forgetest!(can_resume_script, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
+        spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new(cmd);
+
         tester
             .add_sender(0)
             .load_private_keys(vec![0])

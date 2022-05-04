@@ -39,12 +39,12 @@ impl ScriptTester {
 
         ScriptTester {
             accounts_pub: vec![
-                "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1".to_string(),
-                "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0".to_string(),
+                "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".to_string(),
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string(),
             ],
             accounts_priv: vec![
-                "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d".to_string(),
-                "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1".to_string(),
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+                "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string(),
             ],
             provider: Provider::<Http>::try_from(url).unwrap(),
             nonces: BTreeMap::default(),

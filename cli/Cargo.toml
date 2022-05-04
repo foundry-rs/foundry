@@ -23,6 +23,7 @@ foundry-config = { path = "../config" }
 foundry-common = { path = "../common" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
+anvil = { path = "../anvil" }
 
 # eth
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
