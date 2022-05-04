@@ -733,12 +733,7 @@ impl<'a> ScriptTester<'a> {
         let str_account_b = "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0";
 
         ScriptTester {
-            accounts_pub: vec![
-                // (str_account_a.to_string(), Address::from_str(str_account_a).unwrap()),
-                str_account_a.to_string(),
-                // (str_account_b.to_string(), Address::from_str(str_account_b).unwrap()),
-                str_account_b.to_string(),
-            ],
+            accounts_pub: vec![str_account_a.to_string(), str_account_b.to_string()],
             accounts_priv: vec![
                 "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d".to_string(),
                 "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1".to_string(),
