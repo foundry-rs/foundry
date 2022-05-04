@@ -13,7 +13,6 @@ contract BankTest is DSTest {
     }
 
     function testBankFuzzed(address who) public {
-        address pre = block.coinbase;
         cheats.bank(who);
         assertEq(block.coinbase, who, "bank failed");
     }
