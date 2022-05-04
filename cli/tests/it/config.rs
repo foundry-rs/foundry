@@ -367,7 +367,6 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
 
 // test that optimizer runs works
 forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     let config = cmd.config();
     let remappings = config.get_all_remappings();
     pretty_assertions::assert_eq!(
@@ -378,16 +377,44 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "src/=src/".parse().unwrap(),
         ]
     );
-    // create a new lib
+    // create a new lib directly in the `lib` folder
     let mut config = config.clone();
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
     let nested = prj.paths().libraries[0].join("nested-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
     let toml_file = nested.join("foundry.toml");
-    dbg!(toml_file.clone());
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
     let config = cmd.config();
     let remappings = config.get_all_remappings();
-    dbg!(remappings);
+    pretty_assertions::assert_eq!(
+        remappings,
+        vec![
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            "src/=src/".parse().unwrap(),
+        ]
+    );
+
+    // nest another lib under the already nested lib
+    let mut config = config.clone();
+    config.remappings = vec![Remapping::from_str("nested-twice/=lib/nested-twice").unwrap().into()];
+    let nested = nested.join("lib/nested-lib");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let toml_file = nested.join("foundry.toml");
+    pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
+
+    let config = cmd.config();
+    let remappings = config.get_all_remappings();
+    pretty_assertions::assert_eq!(
+        remappings,
+        vec![
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/nested-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            "src/=src/".parse().unwrap(),
+        ]
+    );
 });
