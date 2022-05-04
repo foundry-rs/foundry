@@ -1,5 +1,5 @@
 use super::fuzz_param_from_state;
-use crate::executor::StateChangeset;
+use crate::{executor::StateChangeset, utils};
 use bytes::Bytes;
 use ethers::{
     abi::{Function, RawLog},
@@ -54,13 +54,13 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
 
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(u256_to_h256(info.balance).into());
-        state.insert(u256_to_h256(U256::from(info.nonce)).into());
+        state.insert(utils::u256_to_h256_le(info.balance).into());
+        state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
 
         // Insert storage
         for (slot, value) in storage {
-            state.insert(u256_to_h256(*slot).into());
-            state.insert(u256_to_h256(*value).into());
+            state.insert(utils::u256_to_h256_le(*slot).into());
+            state.insert(utils::u256_to_h256_le(*value).into());
         }
     }
 
@@ -85,13 +85,13 @@ pub fn collect_state_from_call(
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(u256_to_h256(account.info.balance).into());
-        state.insert(u256_to_h256(U256::from(account.info.nonce)).into());
+        state.insert(utils::u256_to_h256_le(account.info.balance).into());
+        state.insert(utils::u256_to_h256_le(U256::from(account.info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
-            state.insert(u256_to_h256(*slot).into());
-            state.insert(u256_to_h256(*value).into());
+            state.insert(utils::u256_to_h256_le(*slot).into());
+            state.insert(utils::u256_to_h256_le(*value).into());
         }
 
         // Insert push bytes
@@ -156,11 +156,4 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     }
 
     bytes
-}
-
-/// Small helper function to convert [U256] into [H256].
-fn u256_to_h256(u: U256) -> H256 {
-    let mut h = H256::default();
-    u.to_little_endian(h.as_mut());
-    h
 }

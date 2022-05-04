@@ -4,7 +4,7 @@
 pub mod identifier;
 
 mod decoder;
-mod node;
+pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
@@ -15,6 +15,7 @@ use ethers::{
     types::U256,
 };
 use node::CallTraceNode;
+use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -149,7 +150,7 @@ impl fmt::Display for CallTraceArena {
 }
 
 /// A raw or decoded log.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RawOrDecodedLog {
     /// A raw log
     Raw(RawLog),
@@ -196,7 +197,7 @@ impl fmt::Display for RawOrDecodedLog {
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
@@ -204,7 +205,7 @@ pub enum LogCallOrder {
 
 // TODO: Maybe unify with output
 /// Raw or decoded calldata.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
     Raw(Vec<u8>),
@@ -215,6 +216,17 @@ pub enum RawOrDecodedCall {
     Decoded(String, Vec<String>),
 }
 
+impl RawOrDecodedCall {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedCall::Raw(raw) => raw.clone(),
+            RawOrDecodedCall::Decoded(_, _) => {
+                vec![]
+            }
+        }
+    }
+}
+
 impl Default for RawOrDecodedCall {
     fn default() -> Self {
         RawOrDecodedCall::Raw(Vec::new())
@@ -222,12 +234,21 @@ impl Default for RawOrDecodedCall {
 }
 
 /// Raw or decoded return data.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
     Raw(Vec<u8>),
     /// Decoded return data
     Decoded(String),
+}
+
+impl RawOrDecodedReturnData {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+        }
+    }
 }
 
 impl Default for RawOrDecodedReturnData {
@@ -252,7 +273,7 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
@@ -268,11 +289,13 @@ pub struct CallTrace {
     pub contract: Option<String>,
     /// The label for the destination address, if any
     pub label: Option<String>,
+    /// caller of this call
+    pub caller: Address,
     /// The destination address of the call
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
-    /// The value tranferred in the call
+    /// The value transferred in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
     pub data: RawOrDecodedCall,
@@ -281,7 +304,13 @@ pub struct CallTrace {
     pub output: RawOrDecodedReturnData,
     /// The gas cost of the call
     pub gas_cost: u64,
+    /// The status of the trace's call
+    pub status: Return,
+    /// call context of the runtime
+    pub call_context: Option<CallContext>,
 }
+
+// === impl CallTrace ===
 
 impl CallTrace {
     /// Updates a trace given another trace
@@ -299,6 +328,26 @@ impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)
+    }
+}
+
+impl Default for CallTrace {
+    fn default() -> Self {
+        Self {
+            depth: Default::default(),
+            success: Default::default(),
+            contract: Default::default(),
+            label: Default::default(),
+            caller: Default::default(),
+            address: Default::default(),
+            kind: Default::default(),
+            value: Default::default(),
+            data: Default::default(),
+            output: Default::default(),
+            gas_cost: Default::default(),
+            status: Return::Continue,
+            call_context: Default::default(),
+        }
     }
 }
 
