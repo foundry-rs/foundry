@@ -22,6 +22,7 @@ pub struct App {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = App::parse();
+    let _ = fdlimit::raise_fd_limit();
     app.node.run().await?;
 
     Ok(())

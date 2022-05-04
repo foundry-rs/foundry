@@ -66,6 +66,7 @@ async-trait = "0.1.53"
 chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
+fdlimit = { version = "0.2.1", optional = true }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
@@ -76,4 +77,4 @@ tokio = { version = "1.10", features = ["full"] }
 [features]
 default = ["cli"]
 cmd = ["foundry-common", "forge", "clap", "ctrlc", "anvil-server/clap"]
-cli = ["tokio/full", "cmd"]
+cli = ["tokio/full", "cmd", "fdlimit"]
