@@ -664,7 +664,7 @@ mod tests {
                             "testConsoleLog()",
                             true,
                             None,
-                            Some(vec!["constructor".into(), "log()".into()]),
+                            Some(vec!["constructor".into(), "test".into()]),
                             None,
                         ),
                         (
@@ -782,7 +782,7 @@ mod tests {
                             "testLogUintUint()",
                             true,
                             None,
-                            Some(vec!["constructor".into(), "1, 2".into()]),
+                            Some(vec!["constructor".into(), "1, 1".into()]),
                             None,
                         ),
                         (

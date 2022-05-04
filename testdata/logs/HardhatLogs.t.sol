@@ -6,6 +6,22 @@ contract HardhatLogsTest {
         console.log("constructor");
     }
 
+	string testStr;
+	int testInt;
+	uint testUint;
+	bool testBool;
+	address testAddr;
+	bytes testBytes;
+
+	function setUp() public {
+		testStr = "test";
+		testInt = 1;
+		testUint = 1;
+		testBool = false;
+		testAddr = 0x0000000000000000000000000000000000000001;
+		testBytes = 'abcd';
+	}
+
     function testInts() public view {
         console.log(0);
         console.log(1);
@@ -23,31 +39,31 @@ contract HardhatLogsTest {
     }
 
 	function testConsoleLog() public view {
-		console.log("log()");
+		console.log(testStr);
 	}
 
 	function testLogInt() public view {
-		console.logInt(int(1));
+		console.logInt(testInt);
 	}
 
 	function testLogUint() public view {
-		console.logUint(uint(1));
+		console.logUint(testUint);
 	}
 
 	function testLogString() public view {
-		console.logString(string("test"));
+		console.logString(testStr);
 	}
 
 	function testLogBool() public view {
-		console.logBool(bool(false));
+		console.logBool(testBool);
 	}
 
 	function testLogAddress() public view {
-		console.logAddress(address(1));
+		console.logAddress(testAddr);
 	}
 
 	function testLogBytes() public view {
-		console.logBytes(bytes("abcd"));
+		console.logBytes(testBytes);
 	}
 
 	function testLogBytes1Through32() public view {
@@ -86,37 +102,36 @@ contract HardhatLogsTest {
 	}
 
 	function testConsoleLogUint() public view {
-		console.log(uint(1));
+		console.log(testUint);
 	}
 
 	function testConsoleLogString() public view {
-		console.log(string("test"));
+		console.log(testStr);
 	}
 
 	function testConsoleLogBool() public view {
-		console.log(bool(false));
+		console.log(testBool);
 	}
 
 	function testConsoleLogAddress() public view {
-		console.log(address(1));
+		console.log(testAddr);
 	}
 
 	function testLogUintUint() public view {
-		console.log(uint(1), uint(2));
+		console.log(testUint, testUint);
 	}
 
 	function testLogUintString() public view {
-		console.log(uint(1), string("test"));
+		console.log(testUint, testStr);
 	}
 
 	function testLogUintBool() public view {
-		console.log(uint(1), bool(false));
+		console.log(testUint, testBool);
 	}
 
 	function testLogUintAddress() public view {
-		console.log(uint(1), address(1));
+		console.log(testUint, testAddr);
 	}
-
 
 }
 
