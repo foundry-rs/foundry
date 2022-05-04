@@ -1,5 +1,5 @@
 use colored::Colorize;
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use crate::{
     eth::{
@@ -30,7 +30,7 @@ use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
-    revm::{BlockEnv, CfgEnv, TxEnv},
+    revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
 
@@ -61,6 +61,8 @@ pub struct NodeConfig {
     pub gas_price: U256,
     /// Default base fee
     pub base_fee: U256,
+    /// The hardfork to use
+    pub hardfork: Hardfork,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
@@ -107,6 +109,7 @@ impl Default for NodeConfig {
             chain_id: CHAIN_ID,
             gas_limit: U256::from(30_000_000),
             gas_price: U256::from(20_000_000_000u64),
+            hardfork: Hardfork::default(),
             accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
             genesis_accounts,
             // 100ETH default balance
@@ -176,6 +179,13 @@ impl NodeConfig {
         if let Some(base_fee) = base_fee {
             self.base_fee = base_fee.into();
         }
+        self
+    }
+
+    /// Sets the hardfork
+    #[must_use]
+    pub fn with_hardfork(mut self, hardfork: Hardfork) -> Self {
+        self.hardfork = hardfork;
         self
     }
 
@@ -377,7 +387,11 @@ Chain ID:       {}
     pub(crate) async fn setup(&mut self) -> mem::Backend {
         // configure the revm environment
         let mut env = revm::Env {
-            cfg: CfgEnv { chain_id: self.chain_id.into(), ..Default::default() },
+            cfg: CfgEnv {
+                spec_id: self.hardfork.into(),
+                chain_id: self.chain_id.into(),
+                ..Default::default()
+            },
             block: BlockEnv {
                 gas_limit: self.gas_limit,
                 basefee: self.base_fee,
@@ -451,6 +465,71 @@ Chain ID:       {}
         // only memory based backend for now
 
         mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Hardfork {
+    Frontier,
+    Homestead,
+    Tangerine,
+    SpuriousDragon,
+    Byzantine,
+    Constantinople,
+    Petersburg,
+    Istanbul,
+    Muirglacier,
+    Berlin,
+    London,
+    Latest,
+}
+
+impl FromStr for Hardfork {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_lowercase();
+        let hardfork = match s.as_str() {
+            "frontier" | "1" => Hardfork::Frontier,
+            "homestead" | "2" => Hardfork::Homestead,
+            "tangerine" | "3" => Hardfork::Tangerine,
+            "spuriousdragon" | "4" => Hardfork::SpuriousDragon,
+            "byzantine" | "5" => Hardfork::Byzantine,
+            "constantinople" | "6" => Hardfork::Constantinople,
+            "petersburg" | "7" => Hardfork::Petersburg,
+            "istanbul" | "8" => Hardfork::Istanbul,
+            "muirglacier" | "9" => Hardfork::Muirglacier,
+            "berlin" | "10" => Hardfork::Berlin,
+            "london" | "11" => Hardfork::London,
+            "latest" | "12" => Hardfork::Latest,
+            _ => return Err(format!("Unknown hardfork {}", s)),
+        };
+        Ok(hardfork)
+    }
+}
+
+impl Default for Hardfork {
+    fn default() -> Self {
+        Hardfork::Latest
+    }
+}
+
+impl From<Hardfork> for SpecId {
+    fn from(fork: Hardfork) -> Self {
+        match fork {
+            Hardfork::Frontier => SpecId::FRONTIER,
+            Hardfork::Homestead => SpecId::HOMESTEAD,
+            Hardfork::Tangerine => SpecId::TANGERINE,
+            Hardfork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
+            Hardfork::Byzantine => SpecId::BYZANTINE,
+            Hardfork::Constantinople => SpecId::CONSTANTINOPLE,
+            Hardfork::Petersburg => SpecId::PETERSBURG,
+            Hardfork::Istanbul => SpecId::ISTANBUL,
+            Hardfork::Muirglacier => SpecId::MUIRGLACIER,
+            Hardfork::Berlin => SpecId::BERLIN,
+            Hardfork::London => SpecId::LONDON,
+            Hardfork::Latest => SpecId::LATEST,
+        }
     }
 }
 

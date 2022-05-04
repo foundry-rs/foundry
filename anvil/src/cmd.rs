@@ -7,7 +7,10 @@ use std::sync::{
 };
 use tracing::log::trace;
 
-use crate::{config::DEFAULT_MNEMONIC, AccountGenerator, NodeConfig, CHAIN_ID};
+use crate::{
+    config::{Hardfork, DEFAULT_MNEMONIC},
+    AccountGenerator, NodeConfig, CHAIN_ID,
+};
 use forge::executor::opts::EvmOpts;
 use foundry_common::evm::EvmArgs;
 
@@ -48,6 +51,9 @@ pub struct NodeArgs {
 
     #[clap(long, help = "don't print anything on startup")]
     pub silent: bool,
+
+    #[clap(long, help = "the hardfork to use", default_value = "latest")]
+    pub hardfork: Hardfork,
 }
 
 impl NodeArgs {
@@ -62,6 +68,7 @@ impl NodeArgs {
         NodeConfig::default()
             .with_gas_limit(self.evm_opts.env.gas_limit)
             .with_gas_price(self.evm_opts.env.gas_price)
+            .with_hardfork(self.hardfork)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
