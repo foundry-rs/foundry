@@ -3,7 +3,6 @@ use ethers::{
     prelude::{Http, Middleware, Provider, U256},
 };
 
-use foundry_utils::RuntimeOrHandle;
 use std::{collections::BTreeMap, str::FromStr};
 
 use crate::TestCommand;
@@ -54,16 +53,16 @@ impl ScriptTester {
         }
     }
 
-    pub fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
-        let runtime = RuntimeOrHandle::new();
-
+    pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
         for index in keys_indexes {
             self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
-            let nonce = runtime
-                .block_on(self.provider.get_transaction_count(
+            let nonce = self
+                .provider
+                .get_transaction_count(
                     Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
                     None,
-                ))
+                )
+                .await
                 .unwrap();
             self.nonces.insert(index, nonce);
         }
@@ -99,15 +98,15 @@ impl ScriptTester {
         self.run(expected)
     }
 
-    pub fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
-        let runtime = RuntimeOrHandle::new();
-
+    pub async fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
         for (index, increment) in keys_indexes {
-            let nonce = runtime
-                .block_on(self.provider.get_transaction_count(
+            let nonce = self
+                .provider
+                .get_transaction_count(
                     Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
                     None,
-                ))
+                )
+                .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&index).unwrap();
 
