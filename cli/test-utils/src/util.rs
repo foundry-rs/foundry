@@ -1,14 +1,20 @@
 use atty::{self, Stream};
+use ethers::{
+    abi::Address,
+    prelude::{Http, Middleware, Provider, U256},
+};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
+use foundry_utils::RuntimeOrHandle;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
 use std::{
+    collections::BTreeMap,
     env,
     ffi::OsStr,
     fmt::Display,
@@ -17,6 +23,7 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::{self, Command},
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -691,5 +698,133 @@ mod tests {
         } else {
             assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
+    }
+}
+
+pub struct ScriptTester<'a> {
+    pub accounts_pub: Vec<String>,
+    pub accounts_priv: Vec<String>,
+    pub provider: Provider<Http>,
+    pub nonces: BTreeMap<u32, U256>,
+    pub cmd: &'a mut TestCommand,
+    pub err: bool,
+}
+
+impl<'a> ScriptTester<'a> {
+    pub fn new(cmd: &'a mut TestCommand) -> Self {
+        let current_dir = std::env::current_dir().unwrap();
+        let root_path = current_dir.join("../testdata");
+        let root = root_path.to_string_lossy().to_string();
+        let target_contract =
+            root_path.join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
+        let url = "http://localhost:8545".to_string();
+
+        cmd.args([
+            "script",
+            target_contract.as_str(),
+            "--root",
+            root.as_str(),
+            "--fork-url",
+            url.as_str(),
+            "-vvv",
+            "--legacy", // only necessary for ganache
+        ]);
+        let str_account_a = "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1";
+        let str_account_b = "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0";
+
+        ScriptTester {
+            accounts_pub: vec![
+                // (str_account_a.to_string(), Address::from_str(str_account_a).unwrap()),
+                str_account_a.to_string(),
+                // (str_account_b.to_string(), Address::from_str(str_account_b).unwrap()),
+                str_account_b.to_string(),
+            ],
+            accounts_priv: vec![
+                "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d".to_string(),
+                "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1".to_string(),
+            ],
+            provider: Provider::<Http>::try_from(&url).unwrap(),
+            nonces: BTreeMap::default(),
+            err: false,
+            cmd,
+        }
+    }
+
+    pub fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
+        let runtime = RuntimeOrHandle::new();
+
+        for index in keys_indexes {
+            self.cmd.args(["--private-keys", &self.accounts_priv[index as usize]]);
+            let nonce = runtime
+                .block_on(self.provider.get_transaction_count(
+                    Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
+                    None,
+                ))
+                .unwrap();
+            self.nonces.insert(index, nonce);
+        }
+        self
+    }
+
+    pub fn add_sender(&mut self, index: u32) -> &mut Self {
+        self.cmd.args(["--sender", &self.accounts_pub[index as usize]]);
+        self
+    }
+
+    pub fn add_sig(&mut self, contract_name: &str, sig: &str) -> &mut Self {
+        self.cmd.args(["--tc", contract_name, "--sig", sig]);
+        self
+    }
+
+    pub fn sim(&mut self, expected: &str) -> &mut Self {
+        self.run(expected)
+    }
+
+    pub fn execute(&mut self, expected: &str) -> &mut Self {
+        self.cmd.arg("--execute");
+        self.run(expected)
+    }
+
+    pub fn resume(&mut self, expected: &str) -> &mut Self {
+        self.cmd.arg("--resume");
+        self.run(expected)
+    }
+
+    pub fn force_resume(&mut self, expected: &str) -> &mut Self {
+        self.cmd.arg("--force-resume");
+        self.run(expected)
+    }
+
+    pub fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
+        let runtime = RuntimeOrHandle::new();
+
+        for (index, increment) in keys_indexes {
+            let nonce = runtime
+                .block_on(self.provider.get_transaction_count(
+                    Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
+                    None,
+                ))
+                .unwrap();
+            let prev_nonce = self.nonces.get(&index).unwrap();
+
+            assert!(nonce == prev_nonce + U256::from(increment));
+        }
+        self
+    }
+
+    pub fn run(&mut self, expected: &str) -> &mut Self {
+        let output = if self.err {
+            self.err = false;
+            self.cmd.stderr_lossy()
+        } else {
+            self.cmd.stdout_lossy()
+        };
+        assert!(output.contains(expected));
+        self
+    }
+
+    pub fn expect_err(&mut self) -> &mut Self {
+        self.err = true;
+        self
     }
 }

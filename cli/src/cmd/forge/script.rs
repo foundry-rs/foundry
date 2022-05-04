@@ -35,7 +35,6 @@ use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
-    str::FromStr,
 };
 use yansi::Paint;
 
@@ -316,7 +315,7 @@ impl Cmd for ScriptArgs {
             println!("Simulated On-chain Traces:\n");
             if let Some(txs) = result.transactions {
                 if let Ok(gas_filled_txs) =
-                    self.execute_transactions(txs.clone(), &evm_opts, &config, &mut decoder)
+                    self.execute_transactions(txs, &evm_opts, &config, &mut decoder)
                 {
                     println!("\n\n==========================");
                     if !result.success {
@@ -703,92 +702,100 @@ impl ScriptArgs {
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
                 {
                     let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
-                    (tx.clone(), signer)
+                    Ok((tx.clone(), signer))
                 } else {
-                    panic!(
+                    Err(eyre::eyre!(format!(
                         "No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}",
                         from,
                         local_wallets
                             .iter()
                             .map(|wallet| wallet.address())
                             .collect::<Vec<Address>>()
-                    )
+                    )))
                 }
             })
-            .for_each(|(tx, signer)| {
-                let mut legacy_or_1559 = if is_legacy {
-                    tx.clone()
-                } else {
-                    TypedTransaction::Eip1559(into_1559(tx.clone()))
-                };
-                set_chain_id(&mut legacy_or_1559, chain);
+            .for_each(|payload| {
+                match payload {
+                    Ok((tx, signer)) => {
+                        let mut legacy_or_1559 = if is_legacy {
+                            tx
+                        } else {
+                            TypedTransaction::Eip1559(into_1559(tx))
+                        };
+                        set_chain_id(&mut legacy_or_1559, chain);
 
-                let from = *legacy_or_1559.from().expect("no sender");
-                match foundry_utils::next_nonce(from, &fork_url, None) {
-                    Ok(nonce) => {
-                        let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
-                        let offset = if self.force_resume {
-                            match nonce_offset.get(&from) {
-                                Some(offset) => *offset,
-                                None => {
-                                    let offset = nonce - tx_nonce;
-                                    nonce_offset.insert(from, offset);
-                                    offset
+                        let from = *legacy_or_1559.from().expect("no sender");
+                        match foundry_utils::next_nonce(from, &fork_url, None) {
+                            Ok(nonce) => {
+                                let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+                                let offset = if self.force_resume {
+                                    match nonce_offset.get(&from) {
+                                        Some(offset) => *offset,
+                                        None => {
+                                            let offset = nonce - tx_nonce;
+                                            nonce_offset.insert(from, offset);
+                                            offset
+                                        }
+                                    }
+                                } else {
+                                    U256::from(0u32)
+                                };
+
+                                if nonce != tx_nonce + offset {
+                                    deployment_sequence
+                                        .save()
+                                        .expect("not able to save deployment sequence");
+                                    panic!("EOA nonce changed unexpectedly while sending transactions.");
+                                } else if !offset.is_zero() {
+                                    legacy_or_1559.set_nonce(tx_nonce + offset);
                                 }
                             }
-                        } else {
-                            U256::from(0u32)
+                            Err(_) => {
+                                deployment_sequence.save().expect("not able to save deployment sequence");
+                                panic!("Not able to query the EOA nonce.");
+                            }
+                        }
+
+                        async fn send<T, U>(
+                            signer: SignerMiddleware<T, U>,
+                            legacy_or_1559: TypedTransaction,
+                        ) -> eyre::Result<Option<TransactionReceipt>>
+                        where
+                            SignerMiddleware<T, U>: Middleware,
+                        {
+                            tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+                            match signer.send_transaction(legacy_or_1559, None).await {
+                                Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
+                                Err(e) => Err(eyre::eyre!(e.to_string())),
+                            }
+                        }
+
+                        let receipt = match rt.block_on(send(signer, legacy_or_1559)) {
+                            Ok(Some(res)) => {
+                                let tx_str = serde_json::to_string_pretty(&res).expect("Bad serialization");
+                                println!("{}", tx_str);
+                                res
+                            }
+
+                            Ok(None) => {
+                                // todo what if it has been actually sent
+                                deployment_sequence.save().expect("not able to save deployment sequence");
+                                panic!("Failed to get transaction receipt?")
+                            }
+                            Err(e) => {
+                                deployment_sequence.save().expect("not able to save deployment sequence");
+                                panic!("Aborting! A transaction failed to send: {:#?}", e)
+                            }
                         };
 
-                        if nonce != tx_nonce + offset {
-                            deployment_sequence
-                                .save()
-                                .expect("not able to save deployment sequence");
-                            panic!("EOA nonce changed unexpectedly while sending transactions.");
-                        } else if !offset.is_zero() {
-                            legacy_or_1559.set_nonce(tx_nonce + offset);
-                        }
-                    }
-                    Err(_) => {
-                        deployment_sequence.save().expect("not able to save deployment sequence");
-                        panic!("Not able to query the EOA nonce.");
-                    }
-                }
-
-                async fn send<T, U>(
-                    signer: SignerMiddleware<T, U>,
-                    legacy_or_1559: TypedTransaction,
-                ) -> eyre::Result<Option<TransactionReceipt>>
-                where
-                    SignerMiddleware<T, U>: Middleware,
-                {
-                    tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-                    match signer.send_transaction(legacy_or_1559, None).await {
-                        Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
-                        Err(e) => Err(eyre::eyre!(e.to_string())),
-                    }
-                }
-
-                let receipt = match rt.block_on(send(signer, legacy_or_1559)) {
-                    Ok(Some(res)) => {
-                        let tx_str = serde_json::to_string_pretty(&res).expect("Bad serialization");
-                        println!("{}", tx_str);
-                        res
-                    }
-
-                    Ok(None) => {
-                        // todo what if it has been actually sent
-                        deployment_sequence.save().expect("not able to save deployment sequence");
-                        panic!("Failed to get transaction receipt?")
+                        deployment_sequence.add_receipt(receipt);
+                        deployment_sequence.index += 1;
                     }
                     Err(e) => {
                         deployment_sequence.save().expect("not able to save deployment sequence");
-                        panic!("Aborting! A transaction failed to send: {:#?}", e)
+                        panic!("{e}");
                     }
-                };
-
-                deployment_sequence.add_receipt(receipt);
-                deployment_sequence.index += 1;
+                }
             });
 
         deployment_sequence.save()?;

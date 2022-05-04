@@ -1,17 +1,14 @@
 //! Contains various tests for checking forge's commands
 use ansi_term::Colour;
-use ethers::{
-    abi::Address,
-    prelude::{Http, Middleware, Provider},
-    solc::{
-        artifacts::{BytecodeHash, Metadata},
-        ConfigurableContractArtifact,
-    },
+use ethers::solc::{
+    artifacts::{BytecodeHash, Metadata},
+    ConfigurableContractArtifact,
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
+    ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
 use foundry_utils::RuntimeOrHandle;
@@ -670,136 +667,41 @@ contract CTest is DSTest {
 });
 
 forgetest!(can_deploy_script_without_lib, |_: TestProject, mut cmd: TestCommand| {
-    let current_dir = std::env::current_dir().unwrap();
-    let root_path = current_dir.join("../testdata");
-    let root = root_path.clone().to_string_lossy().to_string();
-    let target_contract =
-        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-    let url = "http://localhost:8545".to_string();
-    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
-    let runtime = RuntimeOrHandle::new();
-
-    let str_account_a = "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1";
-    let account_a = Address::from_str(str_account_a).unwrap();
-    let priv_account_a = "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d";
-    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
-    let priv_account_b = "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1";
-
-    cmd.args([
-        "script",
-        target_contract.as_str(),
-        "--sender",
-        str_account_a,
-        "--root",
-        root.as_str(),
-        "--fork-url",
-        url.as_str(),
-        "--tc",
-        "BroadcastTestNoLinking",
-        "--sig",
-        "deployDoesntPanic()",
-        "-vvv",
-        "--legacy", // only necessary for ganache
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
-
-    let prev_nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
-    let prev_nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
-
-    cmd.args(["--execute", "--private-keys", priv_account_a, "--private-keys", priv_account_b]);
-    let output = cmd.stdout_lossy();
-
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-
-    let nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
-    let nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
-
-    assert!(nonce_a.as_u32() == 1 + prev_nonce_a.as_u32());
-    assert!(nonce_b.as_u32() == 2 + prev_nonce_b.as_u32());
+    let mut tester = ScriptTester::new(&mut cmd);
+    tester
+        .add_sender(0)
+        .load_private_keys(vec![0, 1])
+        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
+        .sim("SIMULATION COMPLETE. To send these")
+        .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+        .assert_nonce_increment(vec![(0, 1), (1, 2)]);
 });
 
 forgetest!(can_deploy_script_with_lib, |_: TestProject, mut cmd: TestCommand| {
-    let current_dir = std::env::current_dir().unwrap();
-    let root_path = current_dir.join("../testdata");
-    let root = root_path.clone().to_string_lossy().to_string();
-    let target_contract =
-        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-    let url = "http://localhost:8545".to_string();
-    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
-    let runtime = RuntimeOrHandle::new();
-
-    let str_account_a = "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1";
-    let account_a = Address::from_str("0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1").unwrap();
-    let priv_account_a = "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d";
-    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
-    let priv_account_b = "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1";
-
-    cmd.args([
-        "script",
-        target_contract.as_str(),
-        "--sender",
-        str_account_a,
-        "--root",
-        root.as_str(),
-        "--fork-url",
-        url.as_str(),
-        "--tc",
-        "BroadcastTest",
-        "--sig",
-        "deploy()",
-        "-vvv",
-        "--legacy", // only necessary for ganache
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
-
-    let prev_nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
-    let prev_nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
-
-    cmd.args(["--execute", "--private-keys", priv_account_a, "--private-keys", priv_account_b]);
-    let output = cmd.stdout_lossy();
-
-    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
-
-    let nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
-    let nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
-
-    assert!(nonce_a.as_u32() == 2 + prev_nonce_a.as_u32());
-    assert!(nonce_b.as_u32() == 1 + prev_nonce_b.as_u32());
+    let mut tester = ScriptTester::new(&mut cmd);
+    tester
+        .add_sender(0)
+        .load_private_keys(vec![0, 1])
+        .add_sig("BroadcastTest", "deploy()")
+        .sim("SIMULATION COMPLETE. To send these")
+        .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+        .assert_nonce_increment(vec![(0, 2), (1, 1)]);
 });
 
 forgetest!(can_resume_script, |_: TestProject, mut cmd: TestCommand| {
-    let current_dir = std::env::current_dir().unwrap();
-    let root_path = current_dir.join("../testdata");
-    let root = root_path.clone().to_string_lossy().to_string();
-    let target_contract =
-        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-
-    cmd.args([
-        "script",
-        target_contract.as_str(),
-        "--root",
-        root.as_str(),
-        "--fork-url",
-        "http://localhost:8545",
-        "--tc",
-        "BroadcastTest",
-        "--sig",
-        "deploy()",
-        "-vvv",
-        "--legacy", // only necessary for ganache
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
-
-    cmd.args([
-        "--resume",
-        "--private-keys",
-        "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d",
-        "--private-keys",
-        "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1",
-    ]);
-
-    assert!(cmd.stdout_lossy().contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    let mut tester = ScriptTester::new(&mut cmd);
+    tester
+        .add_sender(0)
+        .load_private_keys(vec![0])
+        .add_sig("BroadcastTest", "deploy()")
+        .sim("SIMULATION COMPLETE. To send these")
+        .expect_err()
+        .resume("No associated wallet")
+        // it failed after making 2 txes
+        .assert_nonce_increment(vec![(0, 2)])
+        // load missing wallet
+        .load_private_keys(vec![1])
+        .run("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+        // it skips the first 2 txes
+        .assert_nonce_increment(vec![(0, 2), (1, 1)]);
 });
