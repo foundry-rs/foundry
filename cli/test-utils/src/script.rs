@@ -3,7 +3,7 @@ use ethers::{
     prelude::{Http, Middleware, Provider, U256},
 };
 
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use crate::TestCommand;
 
@@ -18,19 +18,20 @@ pub struct ScriptTester {
 }
 
 impl ScriptTester {
-    pub fn new(mut cmd: TestCommand, port: u16) -> Self {
-        let current_dir = std::env::current_dir().unwrap();
-        let root_path = current_dir.join("../testdata");
-        let root = root_path.to_string_lossy().to_string();
-        let target_contract =
-            root_path.join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
+    pub fn new(mut cmd: TestCommand, port: u16, current_dir: &Path) -> Self {
+        ScriptTester::link_testdata(current_dir).unwrap();
+        cmd.set_current_dir(current_dir);
+
+        let target_contract = current_dir.join("src/Broadcast.t.sol").to_string_lossy().to_string();
         let url = format!("http://127.0.0.1:{port}");
 
         cmd.args([
             "script",
+            "-r",
+            "ds-test/=lib/",
             target_contract.as_str(),
             "--root",
-            root.as_str(),
+            current_dir.to_str().unwrap(),
             "--fork-url",
             url.as_str(),
             "-vvv",
@@ -51,6 +52,24 @@ impl ScriptTester {
             err: false,
             cmd,
         }
+    }
+
+    fn link_testdata(current_dir: &Path) -> eyre::Result<()> {
+        let testdata = format!("{}/../../testdata", env!("CARGO_MANIFEST_DIR"));
+        std::fs::hard_link(
+            testdata.clone() + "/cheats/Cheats.sol",
+            current_dir.join("src/Cheats.sol"),
+        )?;
+        std::fs::hard_link(
+            testdata.clone() + "/cheats/Broadcast.t.sol",
+            current_dir.join("src/Broadcast.t.sol"),
+        )?;
+        std::fs::hard_link(
+            testdata + "/lib/ds-test/src/test.sol",
+            current_dir.join("lib/test.sol"),
+        )?;
+
+        Ok(())
     }
 
     pub async fn load_private_keys(&mut self, keys_indexes: Vec<u32>) -> &mut Self {
