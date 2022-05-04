@@ -10,6 +10,7 @@ use foundry_cli_test_utils::{
     ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use foundry_utils::RuntimeOrHandle;
 use std::{env, fs};
 use yansi::Paint;
 
@@ -665,41 +666,56 @@ contract CTest is DSTest {
 });
 
 forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
-    let mut tester = ScriptTester::new(cmd);
-    tester
-        .add_sender(0)
-        .load_private_keys(vec![0, 1])
-        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-        .sim("SIMULATION COMPLETE. To send these")
-        .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
-        .assert_nonce_increment(vec![(0, 1), (1, 2)]);
+    RuntimeOrHandle::new().block_on(async {
+        let mut tester = ScriptTester::new(cmd);
+        tester
+            .add_sender(0)
+            .load_private_keys(vec![0, 1])
+            .await
+            .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
+            .sim("SIMULATION COMPLETE. To send these")
+            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 1), (1, 2)])
+            .await;
+    })
 });
 
 forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
-    let mut tester = ScriptTester::new(cmd);
-    tester
-        .add_sender(0)
-        .load_private_keys(vec![0, 1])
-        .add_sig("BroadcastTest", "deploy()")
-        .sim("SIMULATION COMPLETE. To send these")
-        .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
-        .assert_nonce_increment(vec![(0, 2), (1, 1)]);
+    RuntimeOrHandle::new().block_on(async {
+        let mut tester = ScriptTester::new(cmd);
+
+        tester
+            .add_sender(0)
+            .load_private_keys(vec![0, 1])
+            .await
+            .add_sig("BroadcastTest", "deploy()")
+            .sim("SIMULATION COMPLETE. To send these")
+            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 2), (1, 1)])
+            .await;
+    });
 });
 
 forgetest!(can_resume_script, |_: TestProject, cmd: TestCommand| {
-    let mut tester = ScriptTester::new(cmd);
-    tester
-        .add_sender(0)
-        .load_private_keys(vec![0])
-        .add_sig("BroadcastTest", "deploy()")
-        .sim("SIMULATION COMPLETE. To send these")
-        .expect_err()
-        .resume("No associated wallet")
-        // it failed after making 2 txes
-        .assert_nonce_increment(vec![(0, 2)])
-        // load missing wallet
-        .load_private_keys(vec![1])
-        .run("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
-        // it skips the first 2 txes
-        .assert_nonce_increment(vec![(0, 2), (1, 1)]);
+    RuntimeOrHandle::new().block_on(async {
+        let mut tester = ScriptTester::new(cmd);
+        tester
+            .add_sender(0)
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTest", "deploy()")
+            .sim("SIMULATION COMPLETE. To send these")
+            .expect_err()
+            .resume("No associated wallet")
+            // it failed after making 2 txes
+            .assert_nonce_increment(vec![(0, 2)])
+            .await
+            // load missing wallet
+            .load_private_keys(vec![1])
+            .await
+            .run("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            // it skips the first 2 txes
+            .assert_nonce_increment(vec![(0, 2), (1, 1)])
+            .await;
+    });
 });

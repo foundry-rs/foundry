@@ -9,7 +9,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
-foundry-utils = { path = "../../utils" }
 tempfile = "3.2.0"
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["project-util"] }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
