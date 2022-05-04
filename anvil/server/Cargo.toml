@@ -1,0 +1,33 @@
+[package]
+name = "anvil-server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = """
+Customizable RPC server
+"""
+
+[dependencies]
+anvil-rpc = { path = "../rpc" }
+
+# axum related
+axum = { version = "0.5", features = ["ws"] }
+hyper = "0.14"
+tower-http = { version = "0.3", features = ["trace", "cors"] }
+
+# tracing
+tracing = "0.1.32"
+
+# async
+parking_lot = "0.12"
+futures = "0.3"
+
+# misc
+serde_json = "1.0.67"
+serde = { version = "1.0.136", features = ["derive"] }
+async-trait = "0.1.53"
+
+clap = { version = "3.0.10", features = [
+    "derive",
+    "env",
+], optional = true }

@@ -54,10 +54,13 @@ main() {
     # Remove prior installations if they exist
     rm -f "$FOUNDRY_BIN_DIR/forge"
     rm -f "$FOUNDRY_BIN_DIR/cast"
+    rm -f "$FOUNDRY_BIN_DIR/anvil"
 
     # Symlink from local repo binaries to bin dir
     ensure ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
     ensure ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
+    ensure ln -s "$PWD/target/release/anvil" "$FOUNDRY_BIN_DIR/anvil"
+
     say "done"
     exit 0
   fi
@@ -120,13 +123,14 @@ main() {
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
     # Download the binaries tarball and unpack it into the .foundry bin directory.
-    say "downloading latest forge and cast"
+    say "downloading latest forge, cast and anvil"
     ensure curl -# -L $BIN_TARBALL_URL | tar -xzC $FOUNDRY_BIN_DIR
     # Download the man tarball and unpack it into the .foundry man directory.
     say "downloading manpages"
     ensure curl -# -L $MAN_TARBALL_URL | tar -xzC $FOUNDRY_MAN_DIR
     say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
     say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/anvil --version)"
     say "done"
     
     if [[ $(which forge) =~ "cargo" ]]; then
@@ -135,6 +139,10 @@ main() {
     
     if [[ $(which cast) =~ "cargo" ]]; then
       warn "it appears your system has already has cast installed via cargo. you may need to run 'rm $(which cast)' to allow foundryup to take precedence!"
+    fi
+
+    if [[ $(which anvil) =~ "cargo" ]]; then
+      warn "it appears your system has already has anvil installed via cargo. you may need to run 'rm $(which anvil)' to allow foundryup to take precedence!"
     fi
   else
     need_cmd cargo
@@ -160,11 +168,14 @@ main() {
     # Build the repo and install it locally to the .foundry bin directory.
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
+    # install anvil
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
 
     # If help2man is installed, use it to add Foundry man pages.
     if command -v help2man &> /dev/null ; then
       help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
       help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
+      help2man -N $FOUNDRY_BIN_DIR/anvil > $FOUNDRY_MAN_DIR/anvil.1
     fi
     say "done"
   fi

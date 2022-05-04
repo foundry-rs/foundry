@@ -37,9 +37,14 @@ enum ProviderRequest<Err> {
 /// The Request type the Backend listens for
 #[derive(Debug)]
 enum BackendRequest {
+    /// Fetch the account info
     Basic(Address, OneshotSender<AccountInfo>),
+    /// Fetch a storage slot
     Storage(Address, U256, OneshotSender<U256>),
+    /// Fetch a block hash
     BlockHash(u64, OneshotSender<H256>),
+    /// Sets the pinned block to fetch data from
+    SetPinnedBlock(BlockId),
 }
 
 /// Handles an internal provider and listens for requests.
@@ -47,7 +52,7 @@ enum BackendRequest {
 /// This handler will remain active as long as it is reachable (request channel still open) and
 /// requests are in progress.
 #[must_use = "BackendHandler does nothing unless polled."]
-struct BackendHandler<M: Middleware> {
+pub struct BackendHandler<M: Middleware> {
     provider: M,
     /// Stores all the data.
     db: BlockchainDb,
@@ -136,6 +141,9 @@ where
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
                 }
+            }
+            BackendRequest::SetPinnedBlock(block_id) => {
+                self.block_id = Some(block_id);
             }
         }
     }
@@ -232,7 +240,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
-
         loop {
             // Drain queued requests first.
             while let Some(req) = pin.queued_requests.pop_front() {
@@ -249,7 +256,10 @@ where
                         trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
                         return Poll::Ready(())
                     }
-                    _ => break,
+                    Poll::Pending => {
+                        cx.waker().wake_by_ref();
+                        break
+                    }
                 }
             }
 
@@ -383,13 +393,31 @@ impl SharedBackend {
     where
         M: Middleware + Unpin + 'static + Clone,
     {
-        let (backend, backend_rx) = channel(1);
-        let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
+        let (shared, handler) = Self::new(provider, db, pin_block);
         // spawn the provider handler to background
         trace!(target: "backendhandler", "spawning Backendhandler");
         tokio::spawn(handler);
+        shared
+    }
 
-        Self { backend }
+    /// Returns a new `SharedBackend` and the `BackendHandler`
+    pub fn new<M>(
+        provider: M,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> (Self, BackendHandler<M>)
+    where
+        M: Middleware + Unpin + 'static + Clone,
+    {
+        let (backend, backend_rx) = channel(1);
+        let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
+        (Self { backend }, handler)
+    }
+
+    /// Updates the pinned block to fetch data from
+    pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
+        let req = BackendRequest::SetPinnedBlock(block.into());
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
@@ -416,6 +444,7 @@ impl SharedBackend {
 
 impl DatabaseRef for SharedBackend {
     fn basic(&self, address: H160) -> AccountInfo {
+        trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(address).unwrap_or_else(|_| {
             warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
             Default::default()
@@ -427,6 +456,7 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
+        trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         self.do_get_storage(address, index)
             .unwrap_or_else(|_| {
             warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
@@ -439,6 +469,7 @@ impl DatabaseRef for SharedBackend {
             return KECCAK_EMPTY
         }
         let number = number.as_u64();
+        trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         self.do_get_block_hash(number).unwrap_or_else(|_| {
             warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
             Default::default()

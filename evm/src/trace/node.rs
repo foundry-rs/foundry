@@ -3,16 +3,18 @@ use crate::{
     trace::{
         utils, CallTrace, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
     },
+    CallKind,
 };
 use ethers::{
     abi::{Abi, Function},
-    types::Address,
+    types::{Action, Address, Call, CallResult, Create, CreateResult, Res, Suicide},
 };
+use revm::Return;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A node in the arena
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTraceNode {
     /// Parent node index in the arena
     pub parent: Option<usize>,
@@ -30,6 +32,63 @@ pub struct CallTraceNode {
 }
 
 impl CallTraceNode {
+    /// Returns the kind of call the trace belongs to
+    pub fn kind(&self) -> CallKind {
+        self.trace.kind
+    }
+
+    /// Returns the status of the call
+    pub fn status(&self) -> Return {
+        self.trace.status
+    }
+
+    /// Returns the `Res` for a parity trace
+    pub fn parity_result(&self) -> Res {
+        match self.kind() {
+            CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
+                Res::Call(CallResult {
+                    gas_used: self.trace.gas_cost.into(),
+                    output: self.trace.output.to_raw().into(),
+                })
+            }
+            CallKind::Create => Res::Create(CreateResult {
+                gas_used: self.trace.gas_cost.into(),
+                code: self.trace.output.to_raw().into(),
+                address: self.trace.address,
+            }),
+        }
+    }
+
+    /// Returns the `Action` for a parity trace
+    pub fn parity_action(&self) -> Action {
+        if self.status() == Return::SelfDestruct {
+            return Action::Suicide(Suicide {
+                address: self.trace.address,
+                // TODO deserialize from calldata here?
+                refund_address: Default::default(),
+                balance: self.trace.value,
+            })
+        }
+        match self.kind() {
+            CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
+                Action::Call(Call {
+                    from: self.trace.caller,
+                    to: self.trace.address,
+                    value: self.trace.value,
+                    gas: self.trace.gas_cost.into(),
+                    input: self.trace.data.to_raw().into(),
+                    call_type: self.kind().into(),
+                })
+            }
+            CallKind::Create => Action::Create(Create {
+                from: self.trace.caller,
+                value: self.trace.value,
+                gas: self.trace.gas_cost.into(),
+                init: self.trace.data.to_raw().into(),
+            }),
+        }
+    }
+
     /// Decode a regular function
     pub fn decode_function(
         &mut self,
