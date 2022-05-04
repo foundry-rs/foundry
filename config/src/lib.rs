@@ -1,14 +1,6 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use std::{
-    borrow::Cow,
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
-
 use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
@@ -31,6 +23,13 @@ use figment::{
 use inflector::Inflector;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 // Macros useful for creating a figment.
 mod macros;
@@ -571,10 +570,14 @@ impl Config {
         if let Some(src_dir_name) =
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
-            remappings.push(Remapping {
+            let mut src_remapping = Remapping {
                 name: format!("{src_dir_name}/"),
                 path: format!("{}", self.src.display()),
-            });
+            };
+            if !src_remapping.path.ends_with('/') {
+                src_remapping.path.push('/')
+            }
+            remappings.push(src_remapping);
         }
         remappings
     }
@@ -903,7 +906,7 @@ impl From<Config> for Figment {
         figment = figment
             .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
                 "FOUNDRY_CONFIG",
-                Config::FILE_NAME,
+                c.__root.0.join(Config::FILE_NAME),
             ))))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
@@ -1250,16 +1253,16 @@ impl<T: AsRef<str>> From<T> for SolcReq {
 /// This will return an error if the env var is set but the file does not exist
 struct TomlFileProvider {
     pub env_var: &'static str,
-    pub default: &'static str,
+    pub default: PathBuf,
 }
 
 impl TomlFileProvider {
-    fn new(env_var: &'static str, default: &'static str) -> Self {
-        Self { env_var, default }
+    fn new(env_var: &'static str, default: impl Into<PathBuf>) -> Self {
+        Self { env_var, default: default.into() }
     }
 
-    fn file(&self) -> String {
-        Env::var_or(self.env_var, self.default)
+    fn file(&self) -> PathBuf {
+        Env::var(self.env_var).map(PathBuf::from).unwrap_or_else(|| self.default.clone())
     }
 
     fn is_missing(&self) -> bool {
@@ -1285,7 +1288,7 @@ impl Provider for TomlFileProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
 
-        let file = if let Some(file) = Env::var(self.env_var) {
+        if let Some(file) = Env::var(self.env_var) {
             let path = Path::new(&file);
             if !path.exists() {
                 return Err(Error::custom(format!(
@@ -1293,11 +1296,12 @@ impl Provider for TomlFileProvider {
                     file, self.env_var
                 )))
             }
-            file
+            Toml::file(file)
         } else {
-            self.default.to_string()
-        };
-        Toml::file(file).nested().data()
+            Toml::file(&self.default)
+        }
+        .nested()
+        .data()
     }
 }
 
@@ -1492,8 +1496,7 @@ impl<'a> RemappingsProvider<'a> {
         // check remappings.txt file
         let remappings_file = self.root.join("remappings.txt");
         if remappings_file.is_file() {
-            let content =
-                std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
+            let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
             new_remappings
@@ -1511,11 +1514,25 @@ impl<'a> RemappingsProvider<'a> {
                 .collect::<Vec<Remapping>>(),
         );
 
+        // merge all remappings of libs look up lib's foundry.toml
+        new_remappings.extend(self.lib_foundry_toml_remappings());
+
         // remove duplicates
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
         new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
 
         Ok(new_remappings)
+    }
+
+    /// Returns all remappings declared in foundry.toml files of libraries
+    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
+            |lib| {
+                // load config, of the nested lib if it exists
+                let config = Config::load_with_root(&lib).sanitized();
+                config.get_all_remappings().into_iter().filter(|r| r.name != "src/")
+            },
+        )
     }
 }
 
@@ -1821,7 +1838,7 @@ mod tests {
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
-                    Remapping::from_str("some-source/=some-source").unwrap(),
+                    Remapping::from_str("some-source/=some-source/").unwrap(),
                 ],
             );
 
@@ -1924,6 +1941,92 @@ mod tests {
                     revert_strings: Some(RevertStrings::Strip),
                     ..Config::default()
                 }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_load_remappings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                remappings = ['nested/=lib/nested/']
+            "#,
+            )?;
+
+            let config = Config::load_with_root(jail.directory());
+            assert_eq!(
+                config.remappings,
+                vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_load_full_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                auto_detect_solc = true
+                block_base_fee_per_gas = 0
+                block_coinbase = '0x0000000000000000000000000000000000000000'
+                block_difficulty = 0
+                block_number = 1
+                block_timestamp = 1
+                bytecode_hash = 'ipfs'
+                cache = true
+                cache_path = 'cache'
+                evm_version = 'london'
+                extra_output = []
+                extra_output_files = []
+                ffi = false
+                force = false
+                fuzz_max_global_rejects = 65536
+                fuzz_max_local_rejects = 1024
+                fuzz_runs = 256
+                gas_limit = 9223372036854775807
+                gas_price = 0
+                gas_reports = ['*']
+                ignored_error_codes = [1878]
+                initial_balance = '0xffffffffffffffffffffffff'
+                libraries = []
+                libs = ['lib']
+                memory_limit = 33554432
+                names = false
+                no_storage_caching = false
+                offline = false
+                optimizer = true
+                optimizer_runs = 200
+                out = 'out'
+                remappings = ['nested/=lib/nested/']
+                sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                sizes = false
+                sparse_mode = false
+                src = 'src'
+                test = 'test'
+                tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                verbosity = 0
+                via_ir = false
+                
+                [default.rpc_storage_caching]
+                chains = 'all'
+                endpoints = 'all'
+
+            "#,
+            )?;
+
+            let config = Config::load_with_root(jail.directory());
+            assert_eq!(
+                config.remappings,
+                vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
             );
 
             Ok(())

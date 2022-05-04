@@ -3,7 +3,10 @@
 use crate::Config;
 use ethers_solc::remappings::{Remapping, RemappingError};
 use figment::value::Value;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -109,4 +112,35 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
         _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
+}
+
+/// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
+///
+/// # Example
+///
+/// ```no_run
+/// use foundry_config::utils;
+/// let dirs = utils::foundry_toml_dirs("./lib");
+/// ```
+///
+/// for following layout this will return
+/// `["lib/dep1", "lib/dep2"]`
+///
+/// ```text
+/// lib
+/// └── dep1
+/// │   ├── foundry.toml
+/// └── dep2
+///     ├── foundry.toml
+/// ```
+pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
+    walkdir::WalkDir::new(root)
+        .min_depth(1)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_dir())
+        .filter(|e| e.path().join(Config::FILE_NAME).exists())
+        .map(|e| e.path().to_path_buf())
+        .collect()
 }

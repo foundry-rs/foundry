@@ -1951,6 +1951,7 @@ dependencies = [
  "serde",
  "serde_regex",
  "toml",
+ "walkdir",
 ]
 
 [[package]]
