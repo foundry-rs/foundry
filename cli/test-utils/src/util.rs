@@ -717,7 +717,7 @@ impl<'a> ScriptTester<'a> {
         let root = root_path.to_string_lossy().to_string();
         let target_contract =
             root_path.join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-        let url = "http://localhost:8545";
+        let url = "http://127.0.0.1:8545";
 
         cmd.args([
             "script",
