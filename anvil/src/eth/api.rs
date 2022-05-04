@@ -43,7 +43,7 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
-    revm::{return_ok, Return},
+    revm::{return_ok, return_revert, Return},
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::Receiver;
@@ -567,8 +567,9 @@ impl EthApi {
         let nonce = *pending_transaction.transaction.nonce();
         let prev_nonce = nonce.saturating_sub(U256::one());
 
+        let from = *pending_transaction.sender();
         let requires = if on_chain_nonce < prev_nonce {
-            vec![to_marker(prev_nonce.as_u64(), *pending_transaction.sender())]
+            vec![to_marker(prev_nonce.as_u64(), from)]
         } else {
             vec![]
         };
@@ -580,6 +581,7 @@ impl EthApi {
         };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
+        trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
     }
 
@@ -604,7 +606,11 @@ impl EthApi {
             TransactOut::Create(out, _) => out.to_vec().into(),
         };
 
-        Ok(out)
+        match exit {
+            return_ok!() => Ok(out),
+            return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
+            reason => Err(BlockchainError::EvmError(reason)),
+        }
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
@@ -1501,10 +1507,10 @@ impl EthApi {
         requires: Vec<TxMarker>,
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
+        let from = *pending_transaction.sender();
         let pool_transaction = PoolTransaction { requires, provides, pending_transaction };
-
         let tx = self.pool.add_transaction(pool_transaction)?;
-        trace!(target: "node", "Added transaction: {:?}", tx.hash());
+        trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
     }
 }
