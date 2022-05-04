@@ -13,8 +13,9 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_utils::{encode_args, to_table};
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, UIfmt};
+pub use foundry_evm::*;
+use foundry_utils::encode_args;
+use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -89,7 +90,7 @@ where
         )?;
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{}\n", res)
+            format!("{res}\n")
         } else {
             // seth compatible user-friendly return type conversions
             let out = decoded
@@ -102,7 +103,7 @@ where
                         Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
                         // print as decimal
                         Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
-                        _ => format!("{}", item),
+                        _ => format!("{item}"),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -299,7 +300,7 @@ where
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
                 get_pretty_block_attr(block, field.to_string())
-                    .unwrap_or_else(|| format!("{} is not a valid block field", field))
+                    .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
             } else {
@@ -317,7 +318,7 @@ where
                     "use --full to view transactions".to_string()
                 } else {
                     get_pretty_block_attr(block, field.to_string())
-                        .unwrap_or_else(|| format!("{} is not a valid block field", field))
+                        .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -539,14 +540,14 @@ where
             serde_json::to_value(&transaction_result)?
                 .get(field)
                 .cloned()
-                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
         } else {
             serde_json::to_value(&transaction_result)?
         };
 
         let transaction = if let Some(ref field) = field {
             get_pretty_tx_attr(transaction_result, field.to_string())
-                .unwrap_or_else(|| format!("{} is not a valid tx field", field))
+                .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
         } else {
@@ -584,7 +585,7 @@ where
 
         // if the async flag is provided, immediately exit if no tx is found,
         // otherwise try to poll for it
-        let receipt = if cast_async {
+        let receipt_result = if cast_async {
             match receipt {
                 Some(inner) => inner,
                 None => return Ok("receipt not found".to_string()),
@@ -603,15 +604,22 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt)?
+            serde_json::to_value(&receipt_result)?
                 .get(field)
                 .cloned()
-                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
         } else {
-            serde_json::to_value(&receipt)?
+            serde_json::to_value(&receipt_result)?
         };
 
-        let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
+        let receipt = if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(receipt_result, field.to_string())
+                .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
+        } else if to_json {
+            serde_json::to_string(&receipt)?
+        } else {
+            receipt_result.pretty()
+        };
         Ok(receipt)
     }
 }
@@ -638,7 +646,7 @@ impl SimpleCast {
     /// ```
     pub fn from_utf8(s: &str) -> String {
         let s: String = s.as_bytes().to_hex();
-        format!("0x{}", s)
+        format!("0x{s}")
     }
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
@@ -659,11 +667,14 @@ impl SimpleCast {
         let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
             InterfacePath::Local(path) => {
                 let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
-                (
-                    vec![serde_json::from_str(&file)
-                        .wrap_err("unable to parse json ABI from file")?],
-                    vec!["Interface".to_owned()],
-                )
+
+                let mut json: serde_json::Value = serde_json::from_str(&file)?;
+                let json = if !json["abi"].is_null() { json["abi"].take() } else { json };
+
+                let abi: Abi =
+                    serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
+
+                (vec![abi], vec!["Interface".to_owned()])
             }
             InterfacePath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
@@ -886,7 +897,7 @@ impl SimpleCast {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
-        Ok(format!("0x{}", encoded))
+        Ok(format!("0x{encoded}"))
     }
 
     /// Converts decimal input to hex
@@ -1135,7 +1146,7 @@ impl SimpleCast {
             _ => keccak256(data).to_hex(),
         };
 
-        Ok(format!("0x{}", hash))
+        Ok(format!("0x{hash}"))
     }
 
     /// Converts ENS names to their namehash representation
@@ -1172,7 +1183,7 @@ impl SimpleCast {
         }
 
         let namehash: String = node.to_hex();
-        Ok(format!("0x{}", namehash))
+        Ok(format!("0x{namehash}"))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
@@ -1271,7 +1282,7 @@ impl SimpleCast {
         from_value: &str,
         slot_number: &str,
     ) -> Result<String> {
-        let sig = format!("x({},{})", from_type, to_type);
+        let sig = format!("x({from_type},{to_type})");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)

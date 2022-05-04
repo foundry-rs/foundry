@@ -21,7 +21,7 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     // Call `cast find-block`
     cmd.args(["find-block", "--rpc-url", eth_rpc_url.as_str(), &timestamp]);
     let output = cmd.stdout_lossy();
-    println!("{}", output);
+    println!("{output}");
 
     // Expect successful block query
     // Query: 1647843609, Mar 21 2022 06:20:09 UTC

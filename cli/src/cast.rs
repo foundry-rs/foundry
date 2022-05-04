@@ -1,6 +1,7 @@
 pub mod cmd;
 pub mod compile;
 
+mod suggestions;
 mod term;
 mod utils;
 
@@ -13,7 +14,7 @@ use ethers::{
     core::{
         abi::parse_abi,
         rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest},
+        types::{BlockId, BlockNumber::Latest, H256},
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
@@ -47,6 +48,8 @@ use eyre::WrapErr;
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
+    utils::subscriber();
+    utils::enable_paint();
 
     let opts = Opts::parse();
     match opts.sub {
@@ -58,6 +61,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
+        }
+        Subcommands::AddressZero => {
+            println!("{:?}", Address::zero());
+        }
+        Subcommands::HashZero => {
+            println!("{:?}", H256::zero());
         }
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
@@ -75,7 +84,7 @@ async fn main() -> eyre::Result<()> {
                 .bytes()
                 .map(|x| format!("{:02x}", x.expect("invalid binary data")))
                 .collect();
-            println!("0x{}", hex);
+            println!("0x{hex}");
         }
 
         Subcommands::ToHexdata { input } => {
@@ -97,7 +106,7 @@ async fn main() -> eyre::Result<()> {
                     output
                 }
             };
-            println!("0x{}", output);
+            println!("0x{output}");
         }
         Subcommands::ToCheckSumAddress { address } => {
             let val = unwrap_or_stdin(address)?;
@@ -189,7 +198,7 @@ async fn main() -> eyre::Result<()> {
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
-            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            builder.etherscan_api_key(config.etherscan_api_key).set_args(&sig, args).await?;
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
@@ -369,7 +378,7 @@ async fn main() -> eyre::Result<()> {
                 println!("{:?}", pending_tx);
             } else {
                 let receipt =
-                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
+                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
                 println!("{}", serde_json::json!(receipt));
             }
         }
@@ -391,24 +400,24 @@ async fn main() -> eyre::Result<()> {
             let builder_output = builder.peek();
 
             let gas = Cast::new(&provider).estimate(builder_output).await?;
-            println!("{}", gas);
+            println!("{gas}");
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
             let tokens = foundry_utils::format_tokens(&tokens);
-            tokens.for_each(|t| println!("{}", t));
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
             let tokens = foundry_utils::format_tokens(&tokens);
-            tokens.for_each(|t| println!("{}", t));
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
         Subcommands::Index { key_type, value_type, key, slot_number } => {
             let encoded = SimpleCast::index(&key_type, &value_type, &key, &slot_number)?;
-            println!("{}", encoded);
+            println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
@@ -434,7 +443,7 @@ async fn main() -> eyre::Result<()> {
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
             let tokens = foundry_utils::format_tokens(&tokens);
 
-            tokens.for_each(|t| println!("{}", t));
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
             let sigs = foundry_utils::fourbyte_event(&topic).await?;
@@ -443,11 +452,11 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::PrettyCalldata { calldata, offline } => {
             if !calldata.starts_with("0x") {
-                eprintln!("Expected calldata hex string, received \"{}\"", calldata);
+                eprintln!("Expected calldata hex string, received \"{calldata}\"");
                 std::process::exit(0)
             }
             let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
-            println!("{}", pretty_data);
+            println!("{pretty_data}");
         }
         Subcommands::Age { block, rpc_url } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
@@ -511,13 +520,13 @@ async fn main() -> eyre::Result<()> {
             };
 
             // put it all together
-            let pragma = format!("pragma solidity {};", pragma);
+            let pragma = format!("pragma solidity {pragma};");
             let interfaces = interfaces
                 .iter()
                 .map(|iface| iface.source.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
-            let res = format!("{}\n\n{}", pragma, interfaces);
+            let res = format!("{pragma}\n\n{interfaces}");
 
             // print or write to file
             match output_location {
@@ -527,7 +536,7 @@ async fn main() -> eyre::Result<()> {
                     println!("Saved interface at {}", loc.display());
                 }
                 None => {
-                    println!("{}", res);
+                    println!("{res}");
                 }
             }
         }
@@ -559,7 +568,7 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{}", name);
+            println!("{name}");
         }
         Subcommands::Storage { address, slot, rpc_url, block } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
@@ -747,14 +756,14 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
                     WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
                 };
-                println!("Signature: 0x{}", sig);
+                println!("Signature: 0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
                 let signature = Signature::from_str(&signature)?;
                 match signature.verify(message, pubkey) {
                     Ok(_) => {
-                        println!("Validation success. Address {} signed this message.", address)
+                        println!("Validation success. Address {address} signed this message.")
                     }
                     Err(_) => println!(
                         "Validation failed. Address {} did not sign this message.",
@@ -766,6 +775,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
+        Subcommands::Run(cmd) => cmd.run()?,
     };
     Ok(())
 }
@@ -829,7 +839,7 @@ where
         println!("{:#x}", tx_hash);
     } else {
         let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
-        println!("{}", receipt);
+        println!("{receipt}");
     }
 
     Ok(())

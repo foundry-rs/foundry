@@ -48,7 +48,7 @@ fn broadcast(
     let broadcast = Broadcast { origin, original_caller, depth, single_call };
 
     if state.prank.is_some() {
-        return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into())
+        return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into());
     }
 
     if state.broadcast.is_some() {
@@ -75,7 +75,7 @@ fn prank(
     }
 
     if state.broadcast.is_some() {
-        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".to_string().encode().into())
+        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".to_string().encode().into());
     }
 
     state.prank = Some(prank);
@@ -216,6 +216,10 @@ pub fn apply<DB: Database>(
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.subroutine.state().get(&inner.0).unwrap();
             Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
+        }
+        HEVMCalls::ChainId(inner) => {
+            data.env.cfg.chain_id = inner.0;
+            Ok(Bytes::new())
         }
         HEVMCalls::Broadcast0(_) => {
             broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), true)

@@ -246,7 +246,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             {
                 Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
                 Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
-                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
+                    (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
                 }
                 Err(e) => (
                     true,

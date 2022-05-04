@@ -25,6 +25,7 @@ FLAGS:
 SUBCOMMANDS:
     bind               Generate rust bindings for your smart contracts
     build              Build your smart contracts
+    cache              Manage the foundry cache
     clean              Removes the build artifacts and cache directories
     completions        Generate shell completions script
     config             Shows the currently set config values

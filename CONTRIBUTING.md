@@ -89,7 +89,7 @@ cargo +nightly clippy --all --all-features -- -D warnings
 
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
 
-If you would like to test the binaries built from your change, see [foundryup](https://github.com/gakonst/foundry/tree/master/foundryup).
+If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/master/foundryup).
 
 #### Adding tests
 

@@ -7,7 +7,6 @@ use crate::cmd::{
     },
     Cmd,
 };
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use eyre::Context;
 use forge::TestKindGas;
@@ -23,6 +22,7 @@ use std::{
     str::FromStr,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
@@ -138,7 +138,7 @@ impl FromStr for Format {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "t" | "table" => Ok(Format::Table),
-            _ => Err(format!("Unrecognized format `{}`", s)),
+            _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
 }
@@ -231,7 +231,7 @@ impl FromStr for SnapshotEntry {
                     })
                 })
             })
-            .ok_or_else(|| format!("Could not extract Snapshot Entry for {}", s))
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))
     }
 }
 
@@ -245,8 +245,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
     )
     .lines()
     {
-        entries
-            .push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{}", err))?);
+        entries.push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
     }
     Ok(entries)
 }
@@ -383,21 +382,21 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 
 fn fmt_pct_change(change: f64) -> String {
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Colour::Green.paint(format!("{:.3}%", change)).to_string(),
+        Ordering::Less => Paint::green(format!("{:.3}%", change)).to_string(),
         Ordering::Equal => {
             format!("{:.3}%", change)
         }
-        Ordering::Greater => Colour::Red.paint(format!("{:.3}%", change)).to_string(),
+        Ordering::Greater => Paint::red(format!("{:.3}%", change)).to_string(),
     }
 }
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Colour::Green.paint(format!("{}", change)).to_string(),
+        Ordering::Less => Paint::green(format!("{change}")).to_string(),
         Ordering::Equal => {
-            format!("{}", change)
+            format!("{change}")
         }
-        Ordering::Greater => Colour::Red.paint(format!("{}", change)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change}")).to_string(),
     }
 }
 

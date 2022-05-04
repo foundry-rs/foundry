@@ -24,6 +24,7 @@ use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
+        U256,
     },
 };
 use revm::{
@@ -46,6 +47,12 @@ pub struct Cheatcodes {
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
     pub block: Option<BlockEnv>,
+
+    /// The gas price
+    ///
+    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
+    /// in the execution environment.
+    pub gas_price: Option<U256>,
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
@@ -76,8 +83,8 @@ pub struct Cheatcodes {
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv) -> Self {
-        Self { ffi, block: Some(block), ..Default::default() }
+    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
+        Self { ffi, block: Some(block), gas_price: Some(gas_price), ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -200,6 +207,9 @@ where
         if let Some(block) = self.block.take() {
             data.env.block = block;
         }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
+        }
 
         Return::Continue
     }
@@ -238,10 +248,14 @@ where
         Return::Continue
     }
 
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
-            handle_expect_emit(self, RawLog { topics: topics.to_vec(), data: data.to_vec() });
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
         }
     }
 
@@ -314,7 +328,7 @@ where
                     Return::Revert,
                     remaining_gas,
                     format!(
-                        "Expected a call to 0x{} with data {}, but got none",
+                        "Expected a call to {:?} with data {}, but got none",
                         address,
                         ethers::types::Bytes::from(expecteds[0].clone())
                     )

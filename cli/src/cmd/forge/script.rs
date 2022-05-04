@@ -4,7 +4,6 @@ use crate::{
     opts::MultiWallet,
     utils,
 };
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
@@ -38,6 +37,7 @@ use std::{
     io::Write,
     path::PathBuf,
 };
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -284,9 +284,9 @@ impl Cmd for ScriptArgs {
         }
 
         if result.success {
-            println!("{}", Colour::Green.paint("Dry running script was successful."));
+            println!("{}", Paint::green("Dry running script was successful."));
         } else {
-            println!("{}", Colour::Red.paint("Dry running script failed."));
+            println!("{}", Paint::red("Dry running script failed."));
         }
 
         println!("Gas used: {}", result.gas);

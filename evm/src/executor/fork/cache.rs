@@ -1,7 +1,10 @@
 //! Cache related abstraction
-use ethers::types::{Address, H256, U256};
+use ethers::{
+    types::{Address, H256, U256},
+    utils::keccak256,
+};
 use parking_lot::RwLock;
-use revm::AccountInfo;
+use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -13,6 +16,8 @@ use std::{
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
 use url::Url;
+
+use crate::HashMap as Map;
 
 pub type StorageInfo = BTreeMap<U256, U256>;
 
@@ -82,6 +87,11 @@ impl BlockchainDb {
     /// Returns the inner cache
     pub fn cache(&self) -> &Arc<JsonBlockCacheDB> {
         &self.cache
+    }
+
+    /// Returns the underlying storage
+    pub fn db(&self) -> &Arc<MemDb> {
+        &self.db
     }
 }
 
@@ -162,6 +172,77 @@ pub struct MemDb {
     pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
     /// All retrieved block hashes
     pub block_hashes: RwLock<BTreeMap<u64, H256>>,
+}
+
+impl MemDb {
+    /// Clears all data stored in this db
+    pub fn clear(&self) {
+        self.accounts.write().clear();
+        self.storage.write().clear();
+        self.block_hashes.write().clear();
+    }
+
+    // Inserts the account, replacing it if it exists already
+    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
+        self.accounts.write().insert(address, account);
+    }
+
+    /// The implementation of [DatabaseCommit::commit()]
+    pub fn do_commit(&self, changes: Map<Address, Account>) {
+        let mut storage = self.storage.write();
+        let mut accounts = self.accounts.write();
+        for (add, mut acc) in changes {
+            if acc.is_empty() || matches!(acc.filth, Filth::Destroyed) {
+                accounts.remove(&add);
+                storage.remove(&add);
+            } else {
+                // insert account
+                if let Some(code_hash) = acc
+                    .info
+                    .code
+                    .as_ref()
+                    .filter(|code| !code.is_empty())
+                    .map(|code| H256::from_slice(&keccak256(code)))
+                {
+                    acc.info.code_hash = code_hash;
+                } else if acc.info.code_hash.is_zero() {
+                    acc.info.code_hash = KECCAK_EMPTY;
+                }
+                accounts.insert(add, acc.info);
+
+                let acc_storage = storage.entry(add).or_default();
+                if acc.filth.abandon_old_storage() {
+                    acc_storage.clear();
+                }
+                for (index, value) in acc.storage {
+                    if value.is_zero() {
+                        acc_storage.remove(&index);
+                    } else {
+                        acc_storage.insert(index, value);
+                    }
+                }
+                if acc_storage.is_empty() {
+                    storage.remove(&add);
+                }
+            }
+        }
+    }
+}
+
+impl Clone for MemDb {
+    fn clone(&self) -> Self {
+        Self {
+            accounts: RwLock::new(self.accounts.read().clone()),
+            storage: RwLock::new(self.storage.read().clone()),
+            block_hashes: RwLock::new(self.block_hashes.read().clone()),
+        }
+    }
+}
+
+impl DatabaseCommit for MemDb {
+    fn commit(&mut self, changes: Map<Address, Account>) {
+        self.do_commit(changes)
+    }
 }
 
 /// A [BlockCacheDB] that stores the cached content in a json file

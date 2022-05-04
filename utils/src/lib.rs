@@ -20,6 +20,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt,
+    str::FromStr,
 };
 
 use tokio::runtime::{Handle, Runtime};
@@ -336,7 +337,7 @@ impl<'a> IntoFunction for &'a str {
     fn into(self) -> Function {
         AbiParser::default()
             .parse_function(self)
-            .unwrap_or_else(|_| panic!("could not convert {} to function", self))
+            .unwrap_or_else(|_| panic!("could not convert {self} to function"))
     }
 }
 
@@ -557,15 +558,29 @@ pub async fn get_func_etherscan(
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
-) -> eyre::Result<Vec<Token>> {
+) -> Result<Vec<Token>> {
     params
         .into_iter()
         .map(|(param, value)| {
-            if lenient {
+            let mut token = if lenient {
                 LenientTokenizer::tokenize(param, value)
             } else {
                 StrictTokenizer::tokenize(param, value)
+            };
+
+            if token.is_err() && value.starts_with("0x") {
+                if let ParamType::Uint(_) = param {
+                    // try again if value is hex
+                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &value)
+                        };
+                    }
+                }
             }
+            token
         })
         .collect::<Result<_, _>>()
         .wrap_err("Failed to parse tokens")
@@ -603,13 +618,13 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
     }
     let selector = &selector[..8];
 
-    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
+    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={selector}");
     let res = reqwest::get(url).await?;
     let res = res.text().await?;
     let api_response = match serde_json::from_str::<ApiResponse>(&res) {
         Ok(inner) => inner,
         Err(err) => {
-            eyre::bail!("Could not decode response:\n {}.\nError: {}", res, err)
+            eyre::bail!("Could not decode response:\n {res}.\nError: {err}")
         }
     };
 
@@ -686,8 +701,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
     }
     let topic = &topic[..8];
 
-    let url =
-        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let url = format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={topic}");
     let res = reqwest::get(url).await?;
     let api_response = res.json::<ApiResponse>().await?;
 
@@ -794,28 +808,21 @@ pub fn format_token(param: &Token) -> String {
         Token::Address(addr) => format!("{:?}", addr),
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Int(mut num) => {
-            if num.bit(255) {
-                num = num - 1;
-                format!("-{}", num.overflowing_neg().0)
-            } else {
-                num.to_string()
-            }
-        }
+        Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => num.to_string(),
-        Token::Bool(b) => format!("{}", b),
+        Token::Bool(b) => format!("{b}"),
         Token::String(s) => format!("{:?}", s),
         Token::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
+            format!("[{string}]")
         }
         Token::Array(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
+            format!("[{string}]")
         }
         Token::Tuple(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("({})", string)
+            format!("({string})")
         }
     }
 }
@@ -864,7 +871,7 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             ParamType::FixedArray(_, _) |
             ParamType::Tuple(_),
     );
-    let kind = if is_memory { format!("{} memory", kind) } else { kind };
+    let kind = if is_memory { format!("{kind} memory") } else { kind };
 
     if param.name.is_empty() {
         kind
@@ -912,7 +919,7 @@ fn get_param_type(
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            let v2_struct = format!("struct {} {{ {} }}", name, args);
+            let v2_struct = format!("struct {name} {{ {args} }}");
             (name, Some(v2_struct))
         }
         // If not, just get the string of the param kind.
@@ -957,7 +964,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
                 .join(", ");
 
             let event_final = format!("event {}({})", event.name, inputs);
-            format!("{};", event_final)
+            format!("{event_final};")
         })
         .collect::<Vec<_>>()
         .join("\n    ");
@@ -986,13 +993,13 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
 
             let mut func = format!("function {}({})", function.name, inputs);
             if !mutability.is_empty() {
-                func = format!("{} {}", func, mutability);
+                func = format!("{func} {mutability}");
             }
-            func = format!("{} external", func);
+            func = format!("{func} external");
             if !outputs.is_empty() {
-                func = format!("{} returns ({})", func, outputs);
+                func = format!("{func} returns ({outputs})");
             }
-            format!("{};", func)
+            format!("{func};")
         })
         .collect::<Vec<_>>()
         .join("\n    ");
@@ -1062,6 +1069,19 @@ mod tests {
     };
 
     #[test]
+    fn parse_hex_uint_tokens() {
+        let param = ParamType::Uint(256);
+
+        let tokens = parse_tokens(std::iter::once((&param, "100")), true).unwrap();
+        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+
+        let val: U256 = 100u64.into();
+        let hex_val = format!("0x{:x}", val);
+        let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
+        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+    }
+
+    #[test]
     fn test_linking() {
         let mut contract_names = [
             "DSTest.json:DSTest",
@@ -1126,7 +1146,7 @@ mod tests {
             &mut known_contracts,
             Address::default(),
             &mut deployable_contracts,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 match post_link_input.id.slug().as_str() {
                     "DSTest.json:DSTest" => {
@@ -1157,7 +1177,7 @@ mod tests {
                             *nested_lib_unlinked
                         );
                     }
-                    s => panic!("unexpected slug {}", s),
+                    s => panic!("unexpected slug {s}"),
                 }
                 Ok(())
             },

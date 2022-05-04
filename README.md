@@ -1,4 +1,6 @@
-# <h1 align="center">Foundry</h1>
+<img src=".github/logo.png" alt="Foundry logo" align="right" width="120" />
+
+## Foundry
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 
@@ -22,7 +24,7 @@ Foundry consists of:
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
-![Demo](./assets/demo.gif)
+![Demo](.github/demo.gif)
 
 ## Installation
 
@@ -109,7 +111,7 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 **Compilation Benchmarks**
 
-<img alt="Compilation benchmarks" src="./assets/compilation-benchmark.png" height="420px" />
+<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" height="420px" />
 
 **Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 
@@ -136,7 +138,7 @@ You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` pr
 
 `forge init` creates a basic, extendable `foundry.toml` file.
 
-To see the your current configuration, run `forge config`. To see only basic
+To see your current configuration, run `forge config`. To see only basic
 options (as set with `forge init`), run `forge config --basic`. This can be used
 to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
 

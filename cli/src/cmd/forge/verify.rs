@@ -135,7 +135,7 @@ impl VerifyArgs {
             force: false,
             libraries: vec![],
             via_ir: false,
-            config_path: None,
+            revert_strings: None,
         };
 
         let project = build_args.project()?;
@@ -163,11 +163,13 @@ impl VerifyArgs {
                 .constructor_arguments(self.constructor_args.clone())
                 .code_format(code_format);
 
-        verify_args = if let Some(optimizations) = self.num_of_optimizations {
-            verify_args.optimization(true).runs(optimizations)
-        } else {
-            verify_args.optimization(false)
-        };
+        if code_format == CodeFormat::SingleFile {
+            verify_args = if let Some(optimizations) = self.num_of_optimizations {
+                verify_args.optimization(true).runs(optimizations)
+            } else {
+                verify_args.optimization(false)
+            };
+        }
 
         Ok(verify_args)
     }

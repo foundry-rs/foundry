@@ -2,7 +2,6 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
     compile, utils,
 };
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
@@ -28,6 +27,7 @@ use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
@@ -104,7 +104,7 @@ impl Cmd for RunArgs {
             if setup_fn.name != "setUp" {
                 println!(
                     "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                    Colour::Yellow.bold().paint("Warning:"),
+                    Paint::yellow("Warning:").bold(),
                     setup_fn.signature()
                 );
             }
@@ -206,7 +206,7 @@ impl Cmd for RunArgs {
         } else {
             if verbosity >= 3 {
                 if result.traces.is_empty() {
-                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
                 }
 
                 if !result.success && verbosity == 3 || verbosity > 3 {
@@ -222,7 +222,7 @@ impl Cmd for RunArgs {
 
                         if should_include {
                             decoder.decode(trace);
-                            println!("{}", trace);
+                            println!("{trace}");
                         }
                     }
                     println!();
@@ -230,9 +230,9 @@ impl Cmd for RunArgs {
             }
 
             if result.success {
-                println!("{}", Colour::Green.paint("Script ran successfully."));
+                println!("{}", Paint::green("Script ran successfully."));
             } else {
-                println!("{}", Colour::Red.paint("Script failed."));
+                println!("{}", Paint::red("Script failed."));
             }
 
             println!("Gas used: {}", result.gas);
@@ -240,7 +240,7 @@ impl Cmd for RunArgs {
             let console_logs = decode_console_logs(&result.logs);
             if !console_logs.is_empty() {
                 for log in console_logs {
-                    println!("  {}", log);
+                    println!("  {log}");
                 }
             }
         }

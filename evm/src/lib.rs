@@ -9,14 +9,20 @@ pub mod debug;
 
 /// Forge test execution backends
 pub mod executor;
+
+use ethers::types::{ActionType, CallType};
 pub use executor::abi;
 
 /// Fuzzing wrapper for executors
 pub mod fuzz;
 
+/// utils for working with revm
+pub mod utils;
+
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::HashMap;
+pub use revm;
 
 use once_cell::sync::Lazy;
 pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
@@ -53,5 +59,28 @@ impl From<CallScheme> for CallKind {
 impl From<CreateScheme> for CallKind {
     fn from(_: CreateScheme) -> Self {
         CallKind::Create
+    }
+}
+
+impl From<CallKind> for ActionType {
+    fn from(kind: CallKind) -> Self {
+        match kind {
+            CallKind::Call | CallKind::StaticCall | CallKind::DelegateCall | CallKind::CallCode => {
+                ActionType::Call
+            }
+            CallKind::Create => ActionType::Create,
+        }
+    }
+}
+
+impl From<CallKind> for CallType {
+    fn from(ty: CallKind) -> Self {
+        match ty {
+            CallKind::Call => CallType::Call,
+            CallKind::StaticCall => CallType::StaticCall,
+            CallKind::CallCode => CallType::CallCode,
+            CallKind::DelegateCall => CallType::DelegateCall,
+            CallKind::Create => CallType::None,
+        }
     }
 }

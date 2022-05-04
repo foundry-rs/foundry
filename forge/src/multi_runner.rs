@@ -66,7 +66,7 @@ impl MultiContractRunnerBuilder {
             &mut known_contracts,
             evm_opts.sender,
             &mut deployable_contracts,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
@@ -424,7 +424,7 @@ mod tests {
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
-                    "core/DappToolsParity.t.sol:DappToolsParityTest",
+                    "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
                     vec![
                         ("testAddresses()", true, None, None, None),
                         ("testEnvironment()", true, None, None, None),

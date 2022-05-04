@@ -1,0 +1,18 @@
+[package]
+name = "anvil-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# foundry internal
+foundry-evm = { path = "../../evm" }
+
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+
+# trie
+hash-db = { version = "0.15", default-features = false }
+hash256-std-hasher = { version = "0.15", default-features = false }
+triehash = { version = "0.8", default-features = false }

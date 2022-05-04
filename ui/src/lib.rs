@@ -618,10 +618,10 @@ impl Tui {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
+                text_output.extend(Text::from(format!("Unknown contract at address {address}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
+            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
         }
 
         let paragraph =
@@ -707,7 +707,7 @@ impl Tui {
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{}{}", line_number_format, op),
+                    format!("{line_number_format}{op}"),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
@@ -779,7 +779,7 @@ impl Tui {
 
                 if stack_labels {
                     if let Some((_, name)) = affected {
-                        words.push(Span::raw(format!("| {}", name)));
+                        words.push(Span::raw(format!("| {name}")));
                     } else {
                         words.push(Span::raw("| ".to_string()));
                     }
@@ -917,7 +917,7 @@ impl Ui for Tui {
             disable_raw_mode().expect("Unable to disable raw mode");
             execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
                 .expect("unable to execute disable mouse capture");
-            println!("{}", e);
+            println!("{e}");
         }));
         // This is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);

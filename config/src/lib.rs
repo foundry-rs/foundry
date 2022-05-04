@@ -3,6 +3,8 @@
 
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -11,7 +13,10 @@ use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings},
+    artifacts::{
+        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
+        Libraries, Optimizer, RevertStrings, Settings,
+    },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
@@ -19,7 +24,7 @@ use ethers_solc::{
 };
 use eyre::{ContextCompat, WrapErr};
 use figment::{
-    providers::{Data, Env, Format, Serialized, Toml},
+    providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
@@ -40,6 +45,7 @@ pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -138,6 +144,24 @@ pub struct Config {
     pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// Only run test functions matching the specified regex pattern.
+    #[serde(rename = "match_test")]
+    pub test_pattern: Option<RegexWrapper>,
+    /// Only run test functions that do not match the specified regex pattern.
+    #[serde(rename = "no_match_test")]
+    pub test_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[serde(rename = "match_contract")]
+    pub contract_pattern: Option<RegexWrapper>,
+    /// Only run tests in contracts that do not match the specified regex pattern.
+    #[serde(rename = "no_match_contract")]
+    pub contract_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in source files matching the specified glob pattern.
+    #[serde(rename = "match_path", with = "from_opt_glob")]
+    pub path_pattern: Option<globset::Glob>,
+    /// Only run tests in source files that do not match the specified glob pattern.
+    #[serde(rename = "no_match_path", with = "from_opt_glob")]
+    pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -221,6 +245,9 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// How to treat revert (and require) reason strings.
+    #[serde(with = "serde_helpers::display_from_str_opt")]
+    pub revert_strings: Option<RevertStrings>,
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
@@ -266,6 +293,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
+    #[track_caller]
     pub fn load() -> Self {
         Config::from_provider(Config::figment())
     }
@@ -273,6 +301,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment_with_root`
+    #[track_caller]
     pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
         Config::from_provider(Config::figment_with_root(root))
     }
@@ -298,7 +327,18 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
-        Self::try_from(provider).expect("failed to extract from provider")
+        match Self::try_from(provider) {
+            Ok(config) => config,
+            Err(errors) => {
+                // providers can be nested and can return duplicate errors
+                let errors: BTreeSet<_> =
+                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
+                for error in errors {
+                    eprintln!("{}", error);
+                }
+                panic!("failed to extract foundry config")
+            }
+        }
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -532,7 +572,7 @@ impl Config {
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
             remappings.push(Remapping {
-                name: format!("{}/", src_dir_name),
+                name: format!("{src_dir_name}/"),
                 path: format!("{}", self.src.display()),
             });
         }
@@ -554,12 +594,18 @@ impl Config {
         ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
     }
 
+    /// Parses all libraries in the form of
+    /// `<file>:<lib>:<addr>`
+    pub fn parsed_libraries(&self) -> Result<Libraries, SolcError> {
+        Libraries::parse(&self.libraries)
+    }
+
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
     ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
-        let libraries = parse_libraries(&self.libraries)?;
+        let libraries = self.parsed_libraries()?.with_applied_remappings(&self.project_paths());
         let optimizer = self.optimizer();
 
         let mut settings = Settings {
@@ -567,6 +613,10 @@ impl Config {
             evm_version: Some(self.evm_version),
             libraries,
             metadata: Some(self.bytecode_hash.into()),
+            debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
+                revert_strings: Some(revert_strings),
+                debug_info: Vec::new(),
+            }),
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -656,7 +706,12 @@ impl Config {
 
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
-        Self::default()
+        Config {
+            chain_id: Some(Chain::Id(99)),
+            block_timestamp: 0,
+            block_number: 0,
+            ..Config::default()
+        }
     }
 
     /// Extracts a basic subset of the config, used for initialisations.
@@ -733,20 +788,26 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+    }
+
     /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
     pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    }
+
+    /// Returns the path to the cache dir of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>
+    pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
-        Some(
-            Config::foundry_cache_dir()?
-                .join(chain_id.into().to_string())
-                .join(format!("{}", block))
-                .join("storage.json"),
-        )
+        Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
@@ -789,6 +850,42 @@ impl Config {
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
+
+    /// Clears the foundry cache
+    pub fn clean_foundry_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain`
+    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain` and `block`
+    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_block_cache_dir");
+        }
+
+        Ok(())
+    }
 }
 
 impl From<Config> for Figment {
@@ -798,15 +895,16 @@ impl From<Config> for Figment {
 
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(BackwardsCompatProvider(ForcedSnakeCaseData(
+            figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
                 Toml::file(global_toml).nested(),
             )))
         }
 
         figment = figment
-            .merge(BackwardsCompatProvider(ForcedSnakeCaseData(
-                Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
-            )))
+            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
+                "FOUNDRY_CONFIG",
+                Config::FILE_NAME,
+            ))))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -830,6 +928,66 @@ impl From<Config> for Figment {
         let merge = figment.merge(remappings);
 
         Figment::from(c).merge(merge).select(profile)
+    }
+}
+
+/// Wrapper type for `regex::Regex` that implements `PartialEq`
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct RegexWrapper {
+    #[serde(with = "serde_regex")]
+    inner: regex::Regex,
+}
+
+impl std::ops::Deref for RegexWrapper {
+    type Target = regex::Regex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::cmp::PartialEq for RegexWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl From<RegexWrapper> for regex::Regex {
+    fn from(wrapper: RegexWrapper) -> Self {
+        wrapper.inner
+    }
+}
+
+impl From<regex::Regex> for RegexWrapper {
+    fn from(re: Regex) -> Self {
+        RegexWrapper { inner: re }
+    }
+}
+
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_opt_glob {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(glob) => serializer.serialize_str(glob.glob()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
+        }
+        Ok(None)
     }
 }
 
@@ -910,6 +1068,12 @@ impl Default for Config {
             extra_output_files: Default::default(),
             names: false,
             sizes: false,
+            test_pattern: None,
+            test_pattern_inverse: None,
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None,
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
@@ -917,14 +1081,14 @@ impl Default for Config {
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-            block_number: 0,
+            block_number: 1,
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
-            block_timestamp: 0,
+            block_timestamp: 1,
             block_difficulty: 0,
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
@@ -939,6 +1103,7 @@ impl Default for Config {
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            revert_strings: None,
             sparse_mode: false,
         }
     }
@@ -1081,12 +1246,67 @@ impl<T: AsRef<str>> From<T> for SolcReq {
     }
 }
 
-/// A Provider that ensures all keys are snake case
-struct ForcedSnakeCaseData<F: Format>(Data<F>);
+/// A convenience provider to retrieve a toml file.
+/// This will return an error if the env var is set but the file does not exist
+struct TomlFileProvider {
+    pub env_var: &'static str,
+    pub default: &'static str,
+}
 
-impl<F: Format> Provider for ForcedSnakeCaseData<F> {
+impl TomlFileProvider {
+    fn new(env_var: &'static str, default: &'static str) -> Self {
+        Self { env_var, default }
+    }
+
+    fn file(&self) -> String {
+        Env::var_or(self.env_var, self.default)
+    }
+
+    fn is_missing(&self) -> bool {
+        if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return true
+            }
+        }
+        false
+    }
+}
+
+impl Provider for TomlFileProvider {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Snake Case toml provider")
+        if self.is_missing() {
+            Metadata::named("TOML file provider")
+        } else {
+            Toml::file(self.file()).nested().metadata()
+        }
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+
+        let file = if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return Err(Error::custom(format!(
+                    "Config file `{}` set in env var `{}` does not exist",
+                    file, self.env_var
+                )))
+            }
+            file
+        } else {
+            self.default.to_string()
+        };
+        Toml::file(file).nested().data()
+    }
+}
+
+/// A Provider that ensures all keys are snake case
+struct ForcedSnakeCaseData<P>(P);
+
+impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
@@ -1098,18 +1318,22 @@ impl<F: Format> Provider for ForcedSnakeCaseData<F> {
     }
 }
 
-/// A Provider that handles breaking changes
-struct BackwardsCompatProvider<P>(P);
+/// A Provider that handles breaking changes in toml files
+struct BackwardsCompatTomlProvider<P>(P);
 
-impl<P: Provider> Provider for BackwardsCompatProvider<P> {
+impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Backwards compat provider")
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
+        let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
+            .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
+            .map(Value::from)
+            .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = dict.remove("solc_version") {
+            if let Some(v) = solc_env.clone().or_else(|| dict.remove("solc_version")) {
                 dict.insert("solc".to_string(), v);
             }
             map.insert(profile, dict);
@@ -1365,7 +1589,7 @@ impl BasicConfig {
         Ok(format!(
             r#"[{}]
 {}
-# See more config options https://github.com/gakonst/foundry/tree/master/config"#,
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
             self.profile, s
         ))
     }
@@ -1403,7 +1627,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 mod tests {
     use ethers_solc::artifacts::YulDetails;
     use figment::error::Kind::InvalidType;
-    use std::str::FromStr;
+    use std::{collections::BTreeMap, str::FromStr};
 
     use crate::caching::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
@@ -1628,6 +1852,36 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_toml_file_parse_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                eth_rpc_url = "https://example.com/
+            "#,
+            )?;
+
+            let _config = Config::load();
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_toml_file_non_existing_config_var_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_CONFIG", "this config does not exist");
+
+            let _config = Config::load();
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -1643,6 +1897,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                revert_strings = "strip"
             "#,
             )?;
 
@@ -1666,6 +1921,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    revert_strings: Some(RevertStrings::Strip),
                     ..Config::default()
                 }
             );
@@ -1710,6 +1966,9 @@ mod tests {
             let config = Config::load();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
+            jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
             Ok(())
         });
     }
@@ -1924,6 +2183,69 @@ mod tests {
                     "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
                         .to_string()
                 ]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_many_libraries() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+               libraries= [
+                        './src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuction.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
+                        './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
+                    ]       
+            "#,
+            )?;
+            let config = Config::load();
+
+            let libs = config.parsed_libraries().unwrap().libs;
+
+            pretty_assertions::assert_eq!(
+                libs,
+                BTreeMap::from([
+                    (
+                        PathBuf::from("./src/SizeAuctionDiscount.sol"),
+                        BTreeMap::from([
+                            (
+                                "Chainlink".to_string(),
+                                "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                            ),
+                            (
+                                "Math".to_string(),
+                                "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                            )
+                        ])
+                    ),
+                    (
+                        PathBuf::from("./src/SizeAuction.sol"),
+                        BTreeMap::from([
+                            (
+                                "ChainlinkTWAP".to_string(),
+                                "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                            ),
+                            (
+                                "Math".to_string(),
+                                "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                            )
+                        ])
+                    ),
+                    (
+                        PathBuf::from("./src/test/ChainlinkTWAP.t.sol"),
+                        BTreeMap::from([(
+                            "ChainlinkTWAP".to_string(),
+                            "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                        )])
+                    ),
+                ])
             );
 
             Ok(())

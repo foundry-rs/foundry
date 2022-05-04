@@ -42,8 +42,10 @@ interface Cheats {
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
     // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
-    // logs were emitted in the expected order with the expected topics and data (as specified by the booleans)
+    // logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
+    // Second form also checks supplied address against emitting contract.
     function expectEmit(bool,bool,bool,bool) external;
+    function expectEmit(bool,bool,bool,bool,address) external;
     // Mocks a call to an address, returning specified data.
     // Calldata can either be strict or a partial match, e.g. if you only
     // pass a Solidity selector to the expected calldata, then the entire Solidity
@@ -64,6 +66,8 @@ interface Cheats {
     function setNonce(address,uint64) external;
     // Get nonce for an account
     function getNonce(address) external returns(uint64);
+    // Set block.chainid (newChainId)
+    function chainId(uint256) external;
     // Using the address that deploys the test contract, has the next call (at this call depth only) create a transaction, that can later be signed and sent onchain
     function broadcast() external;
     // Has the next call (at this call depth only) create a transaction with the address provided as the sender, that can later be signed and sent onchain

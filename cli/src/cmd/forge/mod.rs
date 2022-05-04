@@ -39,6 +39,7 @@
 
 pub mod bind;
 pub mod build;
+pub mod cache;
 pub mod config;
 pub mod create;
 pub mod flatten;

@@ -202,7 +202,7 @@ async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(provider: &M, addr: 
         NameOrAddress::Name(ref ens_name) => provider.resolve_name(ens_name).await,
         NameOrAddress::Address(addr) => Ok(addr),
     }
-    .map_err(|x| eyre!("Failed to resolve ENS name: {}", x))?;
+    .map_err(|x| eyre!("Failed to resolve ENS name: {x}"))?;
     Ok(from_addr)
 }
 
@@ -270,7 +270,7 @@ mod tests {
             match ens_name {
                 "a.eth" => Ok(H160::from_str(ADDR_1).unwrap()),
                 "b.eth" => Ok(H160::from_str(ADDR_2).unwrap()),
-                _ => unreachable!("don't know how to resolve {}", ens_name),
+                _ => unreachable!("don't know how to resolve {ens_name}"),
             }
         }
     }

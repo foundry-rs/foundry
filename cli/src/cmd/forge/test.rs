@@ -8,7 +8,6 @@ use crate::{
     utils,
     utils::FoundryPathExt,
 };
-use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::FileFilter;
 use forge::{
@@ -32,6 +31,7 @@ use std::{
     time::Duration,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -69,6 +69,32 @@ pub struct Filter {
         conflicts_with = "pattern"
     )]
     pub path_pattern_inverse: Option<globset::Glob>,
+}
+
+impl Filter {
+    pub fn with_merged_config(&self) -> Self {
+        let config = Config::load();
+        let mut filter = self.clone();
+        if filter.test_pattern.is_none() {
+            filter.test_pattern = config.test_pattern.map(|p| p.into());
+        }
+        if filter.test_pattern_inverse.is_none() {
+            filter.test_pattern_inverse = config.test_pattern_inverse.map(|p| p.into());
+        }
+        if filter.contract_pattern.is_none() {
+            filter.contract_pattern = config.contract_pattern.map(|p| p.into());
+        }
+        if filter.contract_pattern_inverse.is_none() {
+            filter.contract_pattern_inverse = config.contract_pattern_inverse.map(|p| p.into());
+        }
+        if filter.path_pattern.is_none() {
+            filter.path_pattern = config.path_pattern;
+        }
+        if filter.path_pattern_inverse.is_none() {
+            filter.path_pattern_inverse = config.path_pattern_inverse;
+        }
+        filter
+    }
 }
 
 impl FileFilter for Filter {
@@ -173,6 +199,13 @@ pub struct TestArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     evm_opts: EvmArgs,
 
+    #[clap(
+        long,
+        env = "ETHERSCAN_API_KEY",
+        help = "Set etherscan api key to better decode traces"
+    )]
+    etherscan_api_key: Option<String>,
+
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
 
@@ -186,9 +219,9 @@ impl TestArgs {
         &self.opts
     }
 
-    /// Returns the flattened [`Filter`] arguments
-    pub fn filter(&self) -> &Filter {
-        &self.filter
+    /// Returns the flattened [`Filter`] arguments merged with [`Config`]
+    pub fn filter(&self) -> Filter {
+        self.filter.with_merged_config()
     }
 
     /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
@@ -196,7 +229,12 @@ impl TestArgs {
         // merge all configs
         let figment: Figment = self.into();
         let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
+        let mut config = Config::from_provider(figment).sanitized();
+
+        // merging etherscan api key into Config
+        if let Some(etherscan_api_key) = &self.etherscan_api_key {
+            config.etherscan_api_key = Some(etherscan_api_key.to_string());
+        }
         Ok((config, evm_opts))
     }
 
@@ -208,7 +246,10 @@ impl TestArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        self.watch.watchexec_config(|| Config::from(self).src)
+        self.watch.watchexec_config(|| {
+            let config = Config::from(self);
+            vec![config.src, config.test]
+        })
     }
 }
 
@@ -301,8 +342,8 @@ impl TestOutcome {
                 let successes = self.successes().count();
                 println!(
                     "Encountered a total of {} failing tests, {} tests succeeded",
-                    Colour::Red.paint(failures.to_string()),
-                    Colour::Green.paint(successes.to_string())
+                    Paint::red(failures.to_string()),
+                    Paint::green(successes.to_string())
                 );
                 std::process::exit(1);
             }
@@ -318,8 +359,7 @@ impl TestOutcome {
 
     pub fn summary(&self) -> String {
         let failed = self.failures().count();
-        let result =
-            if failed == 0 { Colour::Green.paint("ok") } else { Colour::Red.paint("FAILED") };
+        let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
             "Test result: {}. {} passed; {} failed; finished in {:.2?}",
             result,
@@ -332,28 +372,28 @@ impl TestOutcome {
 
 fn short_test_result(name: &str, result: &forge::TestResult) {
     let status = if result.success {
-        Colour::Green.paint("[PASS]")
+        Paint::green("[PASS]".to_string())
     } else {
         let txt = match (&result.reason, &result.counterexample) {
             (Some(ref reason), Some(ref counterexample)) => {
-                format!("[FAIL. Reason: {}. Counterexample: {}]", reason, counterexample)
+                format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
             }
             (None, Some(ref counterexample)) => {
-                format!("[FAIL. Counterexample: {}]", counterexample)
+                format!("[FAIL. Counterexample: {counterexample}]")
             }
             (Some(ref reason), None) => {
-                format!("[FAIL. Reason: {}]", reason)
+                format!("[FAIL. Reason: {reason}]")
             }
             (None, None) => "[FAIL]".to_string(),
         };
 
-        Colour::Red.paint(txt)
+        Paint::red(txt)
     };
 
     println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
-pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
@@ -367,12 +407,13 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
         ..Default::default()
     };
     let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+    let mut filter = args.filter();
 
     // Set up the project
     let project = config.project()?;
     let compiler = ProjectCompiler::default();
     let output = if config.sparse_mode {
-        compiler.compile_sparse(&project, args.filter.clone())
+        compiler.compile_sparse(&project, filter.clone())
     } else {
         compiler.compile(&project)
     }?;
@@ -384,7 +425,7 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
     }
 
     // Prepare the test builder
-    let evm_spec = crate::utils::evm_spec(&config.evm_version);
+    let evm_spec = utils::evm_spec(&config.evm_version);
     let mut runner = MultiContractRunnerBuilder::default()
         .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
@@ -394,11 +435,11 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
         .build(project.paths.root, output, evm_opts)?;
 
     if args.debug.is_some() {
-        args.filter.test_pattern = args.debug;
-        match runner.count_filtered_tests(&args.filter) {
+        filter.test_pattern = args.debug;
+        match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&args.filter, None, true)?;
+                    let results = runner.test(&filter, None, true)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -435,12 +476,11 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
                 }
                 n =>
                     Err(
-                    eyre::eyre!("{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                    eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
-                        Use --match-contract and --match-path to further limit the search.", n))
+                        Use --match-contract and --match-path to further limit the search."))
             }
     } else {
-        let TestArgs { filter, .. } = args;
         test(
             config,
             runner,
@@ -497,7 +537,7 @@ fn test(
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {}", Colour::Yellow.bold().paint("Warning:"), warning);
+                eprintln!("{} {}", Paint::yellow("Warning:").bold(), warning);
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
@@ -513,7 +553,7 @@ fn test(
                     if !console_logs.is_empty() {
                         println!("Logs:");
                         for log in console_logs {
-                            println!("  {}", log);
+                            println!("  {log}");
                         }
                         println!();
                     }
@@ -559,7 +599,7 @@ fn test(
 
                     if !decoded_traces.is_empty() {
                         println!("Traces:");
-                        decoded_traces.into_iter().for_each(|trace| println!("{}", trace));
+                        decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
                     }
 
                     if gas_reporting {

@@ -1,13 +1,14 @@
 //! Contains various tests for checking forge commands related to config values
 use ethers::{
     prelude::artifacts::YulDetails,
+    solc::artifacts::RevertStrings,
     types::{Address, U256},
 };
 use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, EvmVersion},
     forgetest, forgetest_init, pretty_eq,
-    util::{pretty_err, TestCommand, TestProject},
+    util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{
     caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -50,6 +51,12 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         extra_output_files: Default::default(),
         names: true,
         sizes: true,
+        test_pattern: None,
+        test_pattern_inverse: None,
+        contract_pattern: None,
+        contract_pattern_inverse: None,
+        path_pattern: None,
+        path_pattern_inverse: None,
         fuzz_runs: 1000,
         fuzz_max_local_rejects: 2000,
         fuzz_max_global_rejects: 100203,
@@ -71,7 +78,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
         verbosity: 4,
-        remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
+        remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
         libraries: vec![
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
@@ -83,6 +90,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         },
         no_storage_caching: true,
         bytecode_hash: Default::default(),
+        revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         __non_exhaustive: (),
     };
@@ -116,11 +124,14 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config, profile.clone().sanitized());
 
     // ensure remappings contain test
-    assert_eq!(profile.remappings.len(), 1);
-    assert_eq!("ds-test/=lib/ds-test/src/".to_string(), profile.remappings[0].to_string());
+    assert_eq!(profile.remappings.len(), 2);
+    assert_eq!(
+        "ds-test/=lib/forge-std/lib/ds-test/src/".to_string(),
+        profile.remappings[0].to_string()
+    );
     // the loaded config has resolved, absolute paths
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/src").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/src").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
@@ -129,32 +140,34 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
-    let remappings_txt = prj.create_file("remappings.txt", "ds-test/=lib/ds-test/from-file/");
+    let remappings_txt =
+        prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-file").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     // env vars work
-    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
+    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-env").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-env").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    let config = prj.config_from_output(["--remappings", "ds-test/=lib/ds-test/from-cli"]);
+    let config =
+        prj.config_from_output(["--remappings", "ds-test/=lib/forge-std/lib/ds-test/from-cli"]);
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-cli").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
-    assert_eq!(config.remappings.len(), 2);
+    assert_eq!(config.remappings.len(), 3);
     assert_eq!(
         format!("other-key/={}/", prj.root().join("lib/other").display()),
-        Remapping::from(config.remappings[1].clone()).to_string()
+        Remapping::from(config.remappings[2].clone()).to_string()
     );
 
     std::env::remove_var("DAPP_REMAPPINGS");
@@ -197,6 +210,7 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
+    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
 });
 
 // checks that we can set various config values
@@ -205,6 +219,7 @@ forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
     assert!(config.via_ir);
 });
 
+// tests that solc can be explicitly set
 forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     prj.inner()
@@ -287,11 +302,9 @@ contract Foo {
         .unwrap();
 
     cmd.arg("build");
-
-    assert!(
-        cmd.stderr_lossy().contains(
-"The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction."
-        )
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_set_yul_optimizer.stderr"),
     );
 
     // disable yul optimizer explicitly
@@ -308,6 +321,7 @@ Compiler run successful
     ));
 });
 
+// tests that the lib triple can be parsed
 forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     cmd.set_env(
@@ -319,4 +333,34 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
         config.libraries,
         vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
     );
+});
+
+// test that optimizer runs works
+forgetest!(can_set_optimizer_runs, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+
+    // explicitly set optimizer runs
+    let config = Config { optimizer_runs: 1337, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert_eq!(config.optimizer_runs, 1337);
+
+    let config = prj.config_from_output(["--optimizer-runs", "300"]);
+    assert_eq!(config.optimizer_runs, 300);
+});
+
+// test that gas_price can be set
+forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+
+    // explicitly set gas_price
+    let config = Config { gas_price: 1337, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert_eq!(config.gas_price, 1337);
+
+    let config = prj.config_from_output(["--gas-price", "300"]);
+    assert_eq!(config.gas_price, 300);
 });

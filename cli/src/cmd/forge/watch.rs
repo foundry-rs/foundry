@@ -69,7 +69,7 @@ impl WatchArgs {
     /// otherwise the path the closure returns will be used
     pub fn watchexec_config(
         &self,
-        f: impl FnOnce() -> PathBuf,
+        f: impl FnOnce() -> Vec<PathBuf>,
     ) -> eyre::Result<(InitConfig, RuntimeConfig)> {
         let init = init()?;
         let mut runtime = runtime(self)?;
@@ -79,7 +79,7 @@ impl WatchArgs {
 
         if !has_paths {
             // use alternative pathset
-            runtime.pathset(Some(f()));
+            runtime.pathset(f());
         }
         Ok((init, runtime))
     }
@@ -132,11 +132,12 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
 
+    let filter = args.filter();
     // marker to check whether to override the command
-    let no_reconfigure = args.filter().pattern.is_some() ||
-        args.filter().test_pattern.is_some() ||
-        args.filter().path_pattern.is_some() ||
-        args.filter().contract_pattern.is_some() ||
+    let no_reconfigure = filter.pattern.is_some() ||
+        filter.test_pattern.is_some() ||
+        filter.path_pattern.is_some() ||
+        filter.contract_pattern.is_some() ||
         args.watch.run_all;
 
     let config: Config = args.build_args().into();
@@ -328,7 +329,7 @@ fn on_action<F, T>(
             if let Some(status) = completion {
                 match status {
                     Some(ProcessEnd::ExitError(code)) => {
-                        tracing::trace!("Command exited with {}", code)
+                        tracing::trace!("Command exited with {code}")
                     }
                     Some(ProcessEnd::ExitSignal(sig)) => {
                         tracing::trace!("Command killed by {:?}", sig)
@@ -396,7 +397,7 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
         let envs = summarise_events_to_env(prespawn.events.iter());
         if let Some(mut command) = prespawn.command().await {
             for (k, v) in envs {
-                command.env(format!("CARGO_WATCH_{}_PATH", k), v);
+                command.env(format!("CARGO_WATCH_{k}_PATH"), v);
             }
         }
 

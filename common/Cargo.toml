@@ -7,7 +7,7 @@ readme = "README.md"
 description = """
 Common utilities for foundry's tools.
 """
-repository = "https://github.com/gakonst/foundry"
+repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 # foundry internal

@@ -1,13 +1,9 @@
 //! Utility functions
 
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
-
 use crate::Config;
-use ethers_solc::{
-    error::SolcError,
-    remappings::{Remapping, RemappingError},
-};
+use ethers_solc::remappings::{Remapping, RemappingError};
 use figment::value::Value;
+use std::{path::PathBuf, str::FromStr};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -96,44 +92,6 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
     Some(remappings_from_newline(&val).collect())
 }
 
-/// Parses all libraries in the form of
-/// `<file>:<lib>:<addr>`
-///
-/// # Example
-///
-/// ```
-/// use foundry_config::parse_libraries;
-/// let libs = parse_libraries(&[
-///     "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
-/// ])
-/// .unwrap();
-/// ```
-pub fn parse_libraries(
-    libs: &[String],
-) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
-    let mut libraries = BTreeMap::default();
-    for lib in libs {
-        let mut items = lib.split(':');
-        let file = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let lib = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let addr = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
-        }
-        libraries
-            .entry(file.to_string())
-            .or_insert_with(BTreeMap::default)
-            .insert(lib.to_string(), addr.to_string());
-    }
-    Ok(libraries)
-}
-
 /// Converts the `val` into a `figment::Value::Array`
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
@@ -148,7 +106,7 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
             .into(),
         Value::Empty(_, _) => Vec::<Value>::new().into(),
         val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{}`, expected an array", val).into()),
+        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
 }

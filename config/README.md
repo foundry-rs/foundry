@@ -66,6 +66,8 @@ test = 'test'
 out = 'out'
 libs = ['lib']
 remappings = []
+# list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
+# the <path to lib> supports remappings 
 libraries = []
 cache = true
 cache_path = 'cache'
@@ -94,6 +96,13 @@ block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
+# How to treat revert (and require) reason strings.
+# Possible values are: "default", "strip", "debug" and "verboseDebug".
+#  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
+# "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
+# "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
+# "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
+revert_strings = "default"
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restrictied to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"

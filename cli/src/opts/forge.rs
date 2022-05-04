@@ -6,6 +6,7 @@ use std::{path::PathBuf, str::FromStr};
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
+    cache::CacheArgs,
     config,
     create::CreateArgs,
     flatten,
@@ -45,8 +46,8 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "Run the project's tests.")]
     #[clap(alias = "t")]
+    #[clap(about = "Run the project's tests.")]
     Test(test::TestArgs),
 
     #[clap(
@@ -55,15 +56,16 @@ pub enum Subcommands {
     #[clap(alias = "s")]
     Script(ScriptArgs),
 
+    #[clap(alias = "bi")]
     #[clap(about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(about = "Build the project's smart contracts.")]
     #[clap(alias = "b")]
+    #[clap(about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(about = "Run a single smart contract as a script.")]
     #[clap(alias = "r")]
+    #[clap(about = "Run a single smart contract as a script.")]
     Run(RunArgs),
 
     #[clap(
@@ -79,10 +81,11 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    /// Install one or multiple dependencies.
-    ///
-    /// If no arguments are provided, then existing dependencies will be installed.
-    #[clap(alias = "i")]
+    #[clap(
+        alias = "i",
+        about = "Install one or multiple dependencies.",
+        long_about = "Install one or multiple dependencies. If no arguments are provided, then existing dependencies will be installed."
+    )]
     Install(InstallArgs),
 
     #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
@@ -91,16 +94,18 @@ pub enum Subcommands {
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "Get the automatically inferred remappings for the project.")]
+    #[clap(alias = "re", about = "Get the automatically inferred remappings for the project.")]
     Remappings(RemappingArgs),
 
     #[clap(
+        alias = "v",
         about = "Verify smart contracts on Etherscan.",
         long_about = "Verify smart contracts on Etherscan."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
+        alias = "vc",
         about = "Check verification status on Etherscan.",
         long_about = "Check verification status on Etherscan."
     )]
@@ -109,16 +114,16 @@ pub enum Subcommands {
     #[clap(alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "Create a new Forge project.")]
+    #[clap(about = "Create a new Forge project.")]
     Init(InitArgs),
 
-    #[clap(about = "Generate shell completions script")]
+    #[clap(alias = "com", about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 
-    #[clap(about = "Remove the build artifacts and cache directories.")]
+    #[clap(alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
             help = "The project's root path. Defaults to the current working directory.",
@@ -128,19 +133,27 @@ pub enum Subcommands {
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Create a snapshot of each test's gas usage.")]
+    #[clap(about = "Manage the Foundry cache.")]
+    Cache(CacheArgs),
+
+    #[clap(alias = "s", about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "Display the current config.")]
+    #[clap(alias = "co", about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "Flatten a source file and all of its imports into one file.")]
+    #[clap(alias = "f", about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
+
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
-    #[clap(about = "Get specialized information about a smart contract")]
+    #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
-    #[clap(about = "Display a tree visualization of the project's dependency graph.")]
+
+    #[clap(
+        alias = "tr",
+        about = "Display a tree visualization of the project's dependency graph."
+    )]
     Tree(tree::TreeArgs),
 }
 
@@ -160,7 +173,7 @@ pub struct CompilerArgs {
 
     #[clap(help = "The number of optimizer runs.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optimize_runs: Option<usize>,
+    pub optimizer_runs: Option<usize>,
 
     /// Extra output to include in the contract's artifact.
     ///
@@ -221,7 +234,7 @@ impl FromStr for FullContractInfo {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (path, name) = s
             .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
+            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{s}`"))?;
         Ok(Self { path: path.to_string(), name: name.trim().to_string() })
     }
 }
@@ -243,7 +256,7 @@ pub struct Dependency {
     /// The name of the dependency
     pub name: String,
     /// The url to the git repository corresponding to the dependency
-    pub url: String,
+    pub url: Option<String>,
     /// Optional tag corresponding to a Git SHA, tag, or branch.
     pub tag: Option<String>,
     /// Optional alias of the dependency
@@ -258,7 +271,7 @@ impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
         // everything before "=" should be considered the alias
-        let (alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
+        let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1)
         } else {
             (None, dependency)
@@ -268,26 +281,41 @@ impl FromStr for Dependency {
             let brand = captures.get(5).unwrap().as_str();
             let tld = captures.get(6).unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            format!("https://{}.{}/{}", brand, tld, project)
+            Some(format!("https://{}.{}/{}", brand, tld, project))
         } else {
+            // If we don't have a URL and we don't have a valid
+            // GitHub repository name, then we assume this is the alias.
+            //
+            // This is to allow for conveniently removing aliased dependencies
+            // using `forge remove <alias>`
             if !GH_REPO_REGEX.is_match(dependency) {
-                eyre::bail!("invalid github repository name `{}`", dependency);
+                alias = Some(dependency.to_string());
+                None
+            } else {
+                Some(format!("https://{GITHUB}/{dependency}"))
             }
-            format!("https://{}/{}", GITHUB, dependency)
         };
 
         // everything after the "@" should be considered the version
-        let mut split = url_with_version.split(VERSION_SEPARATOR);
-        let url =
-            split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
-        let name = url
-            .split('/')
-            .last()
-            .ok_or_else(|| eyre::eyre!("no dependency name found"))?
-            .to_string();
-        let tag = split.next().map(ToString::to_string);
+        let (url, name, tag) = if let Some(url_with_version) = url_with_version {
+            let mut split = url_with_version.split(VERSION_SEPARATOR);
+            let url = split
+                .next()
+                .ok_or_else(|| eyre::eyre!("no dependency path was provided"))?
+                .to_string();
+            let name = url
+                .split('/')
+                .last()
+                .ok_or_else(|| eyre::eyre!("no dependency name found"))?
+                .to_string();
+            let tag = split.next().map(ToString::to_string);
 
-        Ok(Dependency { name, url, tag, alias })
+            (Some(url), Some(name), tag)
+        } else {
+            (None, None, None)
+        };
+
+        Ok(Dependency { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
     }
 }
 
@@ -383,7 +411,7 @@ mod tests {
         .iter()
         .for_each(|(input, expected_path, expected_tag, expected_alias)| {
             let dep = Dependency::from_str(input).unwrap();
-            assert_eq!(dep.url, expected_path.to_string());
+            assert_eq!(dep.url, Some(expected_path.to_string()));
             assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
             assert_eq!(dep.name, "lootloose");
             assert_eq!(dep.alias, expected_alias.map(ToString::to_string));
@@ -391,9 +419,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    fn can_parse_alias_only() {
+        let dep = Dependency::from_str("foo").unwrap();
+        assert_eq!(dep.name, "foo");
+        assert_eq!(dep.url, None);
+        assert_eq!(dep.tag, None);
+        assert_eq!(dep.alias, Some("foo".to_string()));
+    }
+
+    #[test]
     fn test_invalid_github_repo_dependency() {
-        Dependency::from_str("solmate").unwrap();
+        let dep = Dependency::from_str("solmate").unwrap();
+        assert_eq!(dep.url, None);
     }
 
     #[test]

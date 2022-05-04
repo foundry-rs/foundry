@@ -202,11 +202,12 @@ where
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
         let mut account = self.db.basic(address);
         account.balance = amount;
 
         self.db.insert_cache(address, account);
+        self
     }
 
     /// Gets the balance of an account
@@ -215,11 +216,27 @@ where
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) {
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> &mut Self {
         let mut account = self.db.basic(address);
         account.nonce = nonce;
 
         self.db.insert_cache(address, account);
+        self
+    }
+
+    pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
+        self.inspector_config.tracing = tracing;
+        self
+    }
+
+    pub fn set_debugger(&mut self, debugger: bool) -> &mut Self {
+        self.inspector_config.debugger = debugger;
+        self
+    }
+
+    pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
+        self.gas_limit = gas_limit;
+        self
     }
 
     /// Calls the `setUp()` function on a contract.
@@ -531,6 +548,7 @@ where
         should_fail ^ success
     }
 
+    /// Creates the environment to use when executing the transaction
     fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
         Env {
             cfg: self.env.cfg.clone(),

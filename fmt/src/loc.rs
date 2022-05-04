@@ -1,10 +1,11 @@
-use solang_parser::pt::{
-    CodeLocation, ContractPart, FunctionDefinition, Import, Loc, SourceUnitPart, YulExpression,
-    YulStatement,
-};
+use solang_parser::pt::*;
 
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
+}
+
+pub trait OptionalLineOfCode {
+    fn loc(&self) -> Option<Loc>;
 }
 
 impl LineOfCode for SourceUnitPart {
@@ -86,5 +87,17 @@ impl LineOfCode for FunctionDefinition {
             self.loc.start(),
             self.body.as_ref().map(|body| body.loc().end()).unwrap_or_else(|| self.loc.end()),
         )
+    }
+}
+
+impl OptionalLineOfCode for FunctionAttribute {
+    fn loc(&self) -> Option<Loc> {
+        match self {
+            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
+            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            FunctionAttribute::Virtual(loc) |
+            FunctionAttribute::Override(loc, _) |
+            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+        }
     }
 }
