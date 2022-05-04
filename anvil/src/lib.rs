@@ -1,33 +1,27 @@
 mod config;
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID};
-
-use crate::{
-    eth::{backend::mem, miner::MiningMode, pool::Pool, EthApi},
-    service::NodeService,
-};
-use foundry_evm::revm;
-
-use crate::eth::sign::{DevSigner, Signer as EthSigner};
-use ethers::{
-    core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
-    providers::{Http, Provider},
-    signers::Signer,
-    types::{Address, U256},
-};
-
 use crate::{
     eth::{
-        backend::info::StorageInfo,
+        backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
-        miner::Miner,
+        miner::{Miner, MiningMode},
+        pool::Pool,
+        sign::{DevSigner, Signer as EthSigner},
+        EthApi,
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
+    service::NodeService,
 };
-
+pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 use eth::backend::fork::ClientFork;
-use ethers::providers::Ws;
+use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::Wallet,
+    providers::{Http, Provider, Ws},
+    signers::Signer,
+    types::{Address, U256},
+};
+use foundry_evm::revm;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{
