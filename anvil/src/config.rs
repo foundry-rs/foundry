@@ -41,13 +41,23 @@ pub const CHAIN_ID: u64 = 31337;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
+/// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
+pub const VERSION_MESSAGE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("VERGEN_GIT_SHA_SHORT"),
+    " ",
+    env!("VERGEN_BUILD_TIMESTAMP"),
+    ")"
+);
+
 const BANNER: &str = r#"
-                          _   _
-                         (_) | |
-   __ _   _ __   __   __  _  | |
-  / _` | | '_ \  \ \ / / | | | |
- | (_| | | | | |  \ V /  | | | |
-  \__,_| |_| |_|   \_/   |_| |_|
+                             _   _
+                            (_) | |
+      __ _   _ __   __   __  _  | |
+     / _` | | '_ \  \ \ / / | | | |
+    | (_| | | | | |  \ V /  | | | |
+     \__,_| |_| |_|   \_/   |_| |_|
 "#;
 
 /// Configurations of the EVM node
@@ -281,8 +291,9 @@ impl NodeConfig {
         if self.silent {
             return
         }
-        println!("  {}", BANNER.green());
-        println!("      {}", "https://github.com/foundry-rs/foundry".green());
+        println!("{}", BANNER.green());
+        println!("    {}", VERSION_MESSAGE);
+        println!("    {}", "https://github.com/foundry-rs/foundry".green());
 
         print!(
             r#"
