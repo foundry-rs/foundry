@@ -1,14 +1,6 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use std::{
-    borrow::Cow,
-    collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
-
 use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
@@ -31,6 +23,13 @@ use figment::{
 use inflector::Inflector;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 // Macros useful for creating a figment.
 mod macros;
@@ -571,10 +570,14 @@ impl Config {
         if let Some(src_dir_name) =
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
-            remappings.push(Remapping {
+            let mut src_remapping = Remapping {
                 name: format!("{src_dir_name}/"),
                 path: format!("{}", self.src.display()),
-            });
+            };
+            if !src_remapping.path.ends_with('/') {
+                src_remapping.path.push('/')
+            }
+            remappings.push(src_remapping);
         }
         remappings
     }
@@ -1492,8 +1495,7 @@ impl<'a> RemappingsProvider<'a> {
         // check remappings.txt file
         let remappings_file = self.root.join("remappings.txt");
         if remappings_file.is_file() {
-            let content =
-                std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
+            let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
             new_remappings
@@ -1511,11 +1513,33 @@ impl<'a> RemappingsProvider<'a> {
                 .collect::<Vec<Remapping>>(),
         );
 
+        // merge all remappings of libs look up lib's foundry.toml
+        new_remappings.extend(self.lib_foundry_toml_remappings());
+
         // remove duplicates
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
         new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
 
         Ok(new_remappings)
+    }
+
+    /// Returns all remappings declared in foundry.toml files of libraries
+    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.lib_paths
+            .iter()
+            .map(|p| self.root.join(p))
+            .flat_map(|lib_dir| foundry_toml_dirs(lib_dir))
+            .flat_map(|lib| {
+                // load config, of the nested lib if it exists
+                let config = Config::load_with_root(&lib).sanitized();
+
+                dbg!(config.remappings.clone());
+                config
+                    .get_all_remappings()
+                    .into_iter()
+                    .filter(|r| r.name != "src/")
+                    .collect::<Vec<_>>()
+            })
     }
 }
 
