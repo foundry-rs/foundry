@@ -701,17 +701,18 @@ mod tests {
     }
 }
 
-pub struct ScriptTester<'a> {
+/// An helper structure to test forge script scenarios
+pub struct ScriptTester {
     pub accounts_pub: Vec<String>,
     pub accounts_priv: Vec<String>,
     pub provider: Provider<Http>,
     pub nonces: BTreeMap<u32, U256>,
-    pub cmd: &'a mut TestCommand,
+    pub cmd: TestCommand,
     pub err: bool,
 }
 
-impl<'a> ScriptTester<'a> {
-    pub fn new(cmd: &'a mut TestCommand) -> Self {
+impl ScriptTester {
+    pub fn new(mut cmd: TestCommand) -> Self {
         let current_dir = std::env::current_dir().unwrap();
         let root_path = current_dir.join("../testdata");
         let root = root_path.to_string_lossy().to_string();
