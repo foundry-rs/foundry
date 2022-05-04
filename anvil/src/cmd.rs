@@ -45,6 +45,9 @@ pub struct NodeArgs {
 
     #[clap(flatten, next_help_heading = "SERVER OPTIONS")]
     pub server_config: ServerConfig,
+
+    #[clap(long, help = "don't print anything on startup")]
+    pub silent: bool,
 }
 
 impl NodeArgs {
@@ -67,6 +70,7 @@ impl NodeArgs {
             .with_fork_block_number(evm_opts.fork_block_number)
             .with_storage_caching(evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
+            .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
     }
 
