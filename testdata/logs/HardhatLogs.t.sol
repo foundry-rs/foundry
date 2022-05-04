@@ -66,38 +66,131 @@ contract HardhatLogsTest {
 		console.logBytes(testBytes);
 	}
 
-	function testLogBytes1Through32() public view {
+	function testLogBytes1() public view {
 		console.logBytes1(bytes1("1"));
+	}
+
+	function testLogBytes2() public view {
 		console.logBytes2(bytes2("2"));
+	}
+
+	function testLogBytes3() public view {
 		console.logBytes3(bytes3("3"));
+	}
+
+	function testLogBytes4() public view {
 		console.logBytes4(bytes4("4"));
+	}
+
+	function testLogBytes5() public view {
 		console.logBytes5(bytes5("5"));
+	}
+
+	function testLogBytes6() public view {
 		console.logBytes6(bytes6("6"));
+	}
+
+	function testLogBytes7() public view {
 		console.logBytes7(bytes7("7"));
+	}
+
+	function testLogBytes8() public view {
 		console.logBytes8(bytes8("8"));
+	}
+
+	function testLogBytes9() public view {
 		console.logBytes9(bytes9("9"));
+	}
+
+	function testLogBytes10() public view {
 		console.logBytes10(bytes10("10"));
-		console.logBytes11(bytes11("11"));
+	}
+
+	function testLogBytes11() public view {
+        console.logBytes11(bytes11("11"));
+    }
+
+	function testLogBytes12() public view {
 		console.logBytes12(bytes12("12"));
+	}
+
+    function testLogBytes13() public view {
 		console.logBytes13(bytes13("13"));
+	}
+
+	function testLogBytes14() public view {
 		console.logBytes14(bytes14("14"));
+	}
+
+	function testLogBytes15() public view {
 		console.logBytes15(bytes15("15"));
+	}
+
+	function testLogBytes16() public view {
 		console.logBytes16(bytes16("16"));
+	}
+
+	function testLogBytes17() public view {
 		console.logBytes17(bytes17("17"));
+	}
+
+	function testLogBytes18() public view {
 		console.logBytes18(bytes18("18"));
+	}
+
+	function testLogBytes19() public view {
 		console.logBytes19(bytes19("19"));
+	}
+
+	function testLogBytes20() public view {
 		console.logBytes20(bytes20("20"));
+	}
+
+	function testLogBytes21() public view {
 		console.logBytes21(bytes21("21"));
+	}
+
+	function testLogBytes22() public view {
 		console.logBytes22(bytes22("22"));
+	}
+
+	function testLogBytes23() public view {
 		console.logBytes23(bytes23("23"));
+	}
+
+	function testLogBytes24() public view {
 		console.logBytes24(bytes24("24"));
+	}
+
+	function testLogBytes25() public view {
 		console.logBytes25(bytes25("25"));
+	}
+
+	function testLogBytes26() public view {
 		console.logBytes26(bytes26("26"));
+	}
+
+	function testLogBytes27() public view {
 		console.logBytes27(bytes27("27"));
+	}
+
+	function testLogBytes28() public view {
 		console.logBytes28(bytes28("28"));
+	}
+
+	function testLogBytes29() public view {
 		console.logBytes29(bytes29("29"));
+	}
+
+	function testLogBytes30() public view {
 		console.logBytes30(bytes30("30"));
+	}
+
+	function testLogBytes31() public view {
 		console.logBytes31(bytes31("31"));
+	}
+
+	function testLogBytes32() public view {
 		console.logBytes32(bytes32("32"));
 	}
 
@@ -115,22 +208,6 @@ contract HardhatLogsTest {
 
 	function testConsoleLogAddress() public view {
 		console.log(testAddr);
-	}
-
-	function testLogUintUint() public view {
-		console.log(testUint, testUint);
-	}
-
-	function testLogUintString() public view {
-		console.log(testUint, testStr);
-	}
-
-	function testLogUintBool() public view {
-		console.log(testUint, testBool);
-	}
-
-	function testLogUintAddress() public view {
-		console.log(testUint, testAddr);
 	}
 
 }
