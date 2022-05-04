@@ -1862,6 +1862,7 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
+ "anvil",
  "atty",
  "cast",
  "clap",

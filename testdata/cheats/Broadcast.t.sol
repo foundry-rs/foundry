@@ -29,9 +29,9 @@ contract BroadcastTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
-    address public ACCOUNT_A = 0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1;
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
     // ganache-cli -d 2nd
-    address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deploy() public {
         cheats.broadcast(ACCOUNT_A);
@@ -113,10 +113,10 @@ contract BroadcastTestNoLinking is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     // ganache-cli -d 1st
-    address public ACCOUNT_A = 0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1;
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     // ganache-cli -d 2nd
-    address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
     function deployDoesntPanic() public {
         cheats.broadcast(address(ACCOUNT_A));
