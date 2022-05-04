@@ -1,5 +1,4 @@
 //! Contains various tests for checking forge's commands
-use ansi_term::Colour;
 use ethers::solc::{
     artifacts::{BytecodeHash, Metadata},
     ConfigurableContractArtifact,

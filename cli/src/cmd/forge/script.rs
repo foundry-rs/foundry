@@ -297,9 +297,9 @@ impl Cmd for ScriptArgs {
             }
 
             if result.success {
-                println!("{}", Colour::Green.paint("Dry running script was successful."));
+                println!("{}", Paint::green("Dry running script was successful."));
             } else {
-                println!("{}", Colour::Red.paint("Dry running script failed."));
+                println!("{}", Paint::red("Dry running script failed."));
             }
 
             println!("Gas used: {}", result.gas);
