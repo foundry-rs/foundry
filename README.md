@@ -21,6 +21,7 @@ Foundry consists of:
   Dapptools).
 - [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts,
   sending transactions and getting chain data.
+- [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
