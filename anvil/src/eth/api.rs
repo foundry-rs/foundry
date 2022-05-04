@@ -125,7 +125,7 @@ impl EthApi {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
-            EthRequest::EthChainId(_) => self.chain_id().to_rpc_result(),
+            EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
@@ -344,7 +344,7 @@ impl EthApi {
     /// available.
     ///
     /// Handler for ETH RPC call: `eth_chainId`
-    pub fn chain_id(&self) -> Result<Option<U64>> {
+    pub fn eth_chain_id(&self) -> Result<Option<U64>> {
         node_info!("eth_chainId");
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
@@ -1384,6 +1384,11 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Returns the chain ID used for transaction
+    pub fn chain_id(&self) -> u64 {
+        self.backend.chain_id().as_u64()
+    }
+
     pub fn get_fork(&self) -> Option<&ClientFork> {
         self.backend.get_fork()
     }
@@ -1428,7 +1433,7 @@ impl EthApi {
         request: EthTransactionRequest,
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
-        let chain_id = self.chain_id()?.ok_or(BlockchainError::ChainIdNotAvailable)?.as_u64();
+        let chain_id = self.chain_id();
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 
