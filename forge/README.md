@@ -124,7 +124,7 @@ which implements the following methods:
 
 - `function roll(uint x) public` Sets the block number to `x`.
 
-- `function bank(address c) public` Sets the block coinbase to `x`.
+- `function bank(address c) public` Sets the block coinbase to `c`.
 
 - `function store(address c, bytes32 loc, bytes32 val) public` Sets the slot
   `loc` of contract `c` to `val`.
