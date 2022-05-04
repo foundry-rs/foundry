@@ -547,10 +547,8 @@ impl Config {
 
     /// Returns all configured [`Remappings`]
     ///
-    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
-    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
-    ///
-    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
+    /// [Self::get_source_dir_remapping()]
     ///
     /// So that
     ///
@@ -566,7 +564,20 @@ impl Config {
     /// contracts/math/math.sol
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
-        let mut remappings: Vec<_> = self.remappings.iter().map(|m| m.clone().into()).collect();
+        self.remappings
+            .iter()
+            .map(|m| m.clone().into())
+            .chain(self.get_source_dir_remapping())
+            .collect()
+    }
+
+    /// Returns the remapping for the project's _src_ directory
+    ///
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
+    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
+    ///
+    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
         if let Some(src_dir_name) =
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
@@ -577,9 +588,10 @@ impl Config {
             if !src_remapping.path.ends_with('/') {
                 src_remapping.path.push('/')
             }
-            remappings.push(src_remapping);
+            Some(src_remapping)
+        } else {
+            None
         }
-        remappings
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -1505,6 +1517,9 @@ impl<'a> RemappingsProvider<'a> {
 
         new_remappings.extend(remappings);
 
+        // merge all remappings of libs look up lib's foundry.toml
+        new_remappings.extend(self.lib_foundry_toml_remappings());
+
         // look up lib paths
         new_remappings.extend(
             self.lib_paths
@@ -1513,9 +1528,6 @@ impl<'a> RemappingsProvider<'a> {
                 .flat_map(Remapping::find_many)
                 .collect::<Vec<Remapping>>(),
         );
-
-        // merge all remappings of libs look up lib's foundry.toml
-        new_remappings.extend(self.lib_foundry_toml_remappings());
 
         // remove duplicates
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1527,10 +1539,36 @@ impl<'a> RemappingsProvider<'a> {
     /// Returns all remappings declared in foundry.toml files of libraries
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
         self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
-            |lib| {
+            |lib: PathBuf| {
                 // load config, of the nested lib if it exists
                 let config = Config::load_with_root(&lib).sanitized();
-                config.get_all_remappings().into_iter().filter(|r| r.name != "src/")
+
+                // if the configured _src_ directory is set to something that
+                // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
+                // lib), then we need to manually add a remapping here
+                let mut src_remapping = None;
+                if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+                    .contains(&config.src.as_path())
+                {
+                    if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
+                        let mut r = Remapping {
+                            name: format!("{}/", name),
+                            path: format!("{}", lib.join(&config.src).display()),
+                        };
+                        if !r.path.ends_with('/') {
+                            r.path.push('/')
+                        }
+                        src_remapping = Some(r);
+                    }
+                }
+
+                let mut remappings =
+                    config.remappings.into_iter().map(|m| m.into()).collect::<Vec<Remapping>>();
+
+                if let Some(r) = src_remapping {
+                    remappings.push(r);
+                }
+                remappings
             },
         )
     }

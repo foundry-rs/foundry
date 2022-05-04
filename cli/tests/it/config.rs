@@ -392,6 +392,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         vec![
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "src/=src/".parse().unwrap(),
         ]
@@ -400,19 +401,38 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     // nest another lib under the already nested lib
     let mut config = config.clone();
     config.remappings = vec![Remapping::from_str("nested-twice/=lib/nested-twice").unwrap().into()];
-    let nested = nested.join("lib/nested-lib");
+    let nested = nested.join("lib/another-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
     let toml_file = nested.join("foundry.toml");
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
+    let another_config = cmd.config();
+    let remappings = another_config.get_all_remappings();
+    pretty_assertions::assert_eq!(
+        remappings,
+        vec![
+            "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
+            "src/=src/".parse().unwrap(),
+        ]
+    );
+
+    config.src = "custom-source-dir".into();
+    pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
     let config = cmd.config();
     let remappings = config.get_all_remappings();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "nested-twice/=lib/nested-lib/lib/nested-lib/lib/nested-twice/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "src/=src/".parse().unwrap(),
         ]
