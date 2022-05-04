@@ -5,10 +5,10 @@ use ethers::{
         artifacts::{CompactBytecode, CompactDeployedBytecode},
         ArtifactId, TransactionReceipt,
     },
-    types::transaction::eip2718::TypedTransaction,
     solc::{
         artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
-    }
+    },
+    types::transaction::eip2718::TypedTransaction,
 };
 use serde::{Deserialize, Serialize};
 use std::{

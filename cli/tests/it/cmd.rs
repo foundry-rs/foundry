@@ -9,9 +9,8 @@ use foundry_cli_test_utils::{
     util::{pretty_err, read_string, TestCommand, TestProject},
     ScriptTester,
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
-use foundry_utils::RuntimeOrHandle;
-use std::{env, fs, str::FromStr};
+use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use std::{env, fs};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -664,7 +663,6 @@ contract CTest is DSTest {
     let cache_after = fs::read_to_string(prj.cache_path()).unwrap();
     assert_eq!(cache, cache_after);
 });
-
 
 forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
     let mut tester = ScriptTester::new(cmd);
