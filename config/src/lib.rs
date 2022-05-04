@@ -3,6 +3,8 @@
 
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -22,7 +24,7 @@ use ethers_solc::{
 };
 use eyre::{ContextCompat, WrapErr};
 use figment::{
-    providers::{Data, Env, Format, Serialized, Toml},
+    providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
@@ -291,6 +293,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
+    #[track_caller]
     pub fn load() -> Self {
         Config::from_provider(Config::figment())
     }
@@ -298,6 +301,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment_with_root`
+    #[track_caller]
     pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
         Config::from_provider(Config::figment_with_root(root))
     }
@@ -323,7 +327,18 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
-        Self::try_from(provider).expect("failed to extract from provider")
+        match Self::try_from(provider) {
+            Ok(config) => config,
+            Err(errors) => {
+                // providers can be nested and can return duplicate errors
+                let errors: BTreeSet<_> =
+                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
+                for error in errors {
+                    eprintln!("{}", error);
+                }
+                panic!("failed to extract foundry config")
+            }
+        }
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -773,20 +788,26 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+    }
+
     /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
     pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    }
+
+    /// Returns the path to the cache dir of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>
+    pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
-        Some(
-            Config::foundry_cache_dir()?
-                .join(chain_id.into().to_string())
-                .join(format!("{block}"))
-                .join("storage.json"),
-        )
+        Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
@@ -829,6 +850,42 @@ impl Config {
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
+
+    /// Clears the foundry cache
+    pub fn clean_foundry_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain`
+    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain` and `block`
+    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_block_cache_dir");
+        }
+
+        Ok(())
+    }
 }
 
 impl From<Config> for Figment {
@@ -838,15 +895,16 @@ impl From<Config> for Figment {
 
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(BackwardsCompatProvider(ForcedSnakeCaseData(
+            figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
                 Toml::file(global_toml).nested(),
             )))
         }
 
         figment = figment
-            .merge(BackwardsCompatProvider(ForcedSnakeCaseData(
-                Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
-            )))
+            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
+                "FOUNDRY_CONFIG",
+                Config::FILE_NAME,
+            ))))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -1188,12 +1246,67 @@ impl<T: AsRef<str>> From<T> for SolcReq {
     }
 }
 
-/// A Provider that ensures all keys are snake case
-struct ForcedSnakeCaseData<F: Format>(Data<F>);
+/// A convenience provider to retrieve a toml file.
+/// This will return an error if the env var is set but the file does not exist
+struct TomlFileProvider {
+    pub env_var: &'static str,
+    pub default: &'static str,
+}
 
-impl<F: Format> Provider for ForcedSnakeCaseData<F> {
+impl TomlFileProvider {
+    fn new(env_var: &'static str, default: &'static str) -> Self {
+        Self { env_var, default }
+    }
+
+    fn file(&self) -> String {
+        Env::var_or(self.env_var, self.default)
+    }
+
+    fn is_missing(&self) -> bool {
+        if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return true
+            }
+        }
+        false
+    }
+}
+
+impl Provider for TomlFileProvider {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Snake Case toml provider")
+        if self.is_missing() {
+            Metadata::named("TOML file provider")
+        } else {
+            Toml::file(self.file()).nested().metadata()
+        }
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+
+        let file = if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return Err(Error::custom(format!(
+                    "Config file `{}` set in env var `{}` does not exist",
+                    file, self.env_var
+                )))
+            }
+            file
+        } else {
+            self.default.to_string()
+        };
+        Toml::file(file).nested().data()
+    }
+}
+
+/// A Provider that ensures all keys are snake case
+struct ForcedSnakeCaseData<P>(P);
+
+impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
@@ -1205,12 +1318,12 @@ impl<F: Format> Provider for ForcedSnakeCaseData<F> {
     }
 }
 
-/// A Provider that handles breaking changes
-struct BackwardsCompatProvider<P>(P);
+/// A Provider that handles breaking changes in toml files
+struct BackwardsCompatTomlProvider<P>(P);
 
-impl<P: Provider> Provider for BackwardsCompatProvider<P> {
+impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Backwards compat provider")
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
@@ -1733,6 +1846,36 @@ mod tests {
 
             let config = Config::load();
             assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_toml_file_parse_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                eth_rpc_url = "https://example.com/
+            "#,
+            )?;
+
+            let _config = Config::load();
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_toml_file_non_existing_config_var_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_CONFIG", "this config does not exist");
+
+            let _config = Config::load();
 
             Ok(())
         });

@@ -140,6 +140,7 @@ impl Spinner {
 /// A spinner used as [`ethers::solc::report::Reporter`]
 ///
 /// This reporter will prefix messages with a spinning cursor
+#[derive(Debug)]
 pub struct SpinnerReporter {
     /// the timeout in ms
     sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
@@ -226,18 +227,21 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
-        self.solc_io_report.log_compiler_input(input);
+        self.solc_io_report.log_compiler_input(input, version);
     }
 
     fn on_solc_success(
         &self,
         _solc: &Solc,
-        _version: &Version,
+        version: &Version,
         output: &CompilerOutput,
         duration: &Duration,
     ) {
-        self.solc_io_report.log_compiler_output(output);
-        self.send_msg(format!("Solc finished in {:.2?}", duration));
+        self.solc_io_report.log_compiler_output(output, version);
+        self.send_msg(format!(
+            "Solc {}.{}.{} finished in {:.2?}",
+            version.major, version.minor, version.patch, duration
+        ));
     }
 
     /// Invoked before a new [`Solc`] bin is installed

@@ -8,7 +8,7 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
+use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs};
 use yansi::Paint;
 
@@ -28,6 +28,50 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
+});
+
+// checks that `cache clean` can be invoked and cleans the foundry cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
+    let cache_dir = Config::foundry_cache_dir().unwrap();
+    let path = cache_dir.as_path();
+    fs::create_dir_all(path).unwrap();
+    cmd.args(["cache", "clean"]);
+    cmd.assert_empty_stdout();
+
+    assert!(!path.exists());
+});
+
+// checks that `cache clean <chain>` can be invoked and cleans the chain cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
+    let cache_dir =
+        Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
+    let path = cache_dir.as_path();
+    fs::create_dir_all(path).unwrap();
+    cmd.args(["cache", "clean", "mainnet"]);
+    cmd.assert_empty_stdout();
+
+    assert!(!path.exists());
+});
+
+// checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
+// caches this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
+    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+    let block1 = 100;
+    let block2 = 102;
+    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+    let block1_path = block1_cache_dir.as_path();
+    let block2_path = block2_cache_dir.as_path();
+    fs::create_dir_all(block1_path).unwrap();
+    fs::create_dir_all(block2_path).unwrap();
+    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
+    cmd.assert_empty_stdout();
+
+    assert!(!block1_path.exists());
+    assert!(!block2_path.exists());
 });
 
 // checks that init works

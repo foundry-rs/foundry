@@ -6,6 +6,7 @@ use std::{path::PathBuf, str::FromStr};
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
+    cache::CacheArgs,
     config,
     create::CreateArgs,
     flatten,
@@ -124,6 +125,9 @@ pub enum Subcommands {
         )]
         root: Option<PathBuf>,
     },
+
+    #[clap(about = "Manage the Foundry cache.")]
+    Cache(CacheArgs),
 
     #[clap(alias = "s", about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
