@@ -18,13 +18,13 @@ pub struct ScriptTester {
 }
 
 impl ScriptTester {
-    pub fn new(mut cmd: TestCommand) -> Self {
+    pub fn new(mut cmd: TestCommand, port: u16) -> Self {
         let current_dir = std::env::current_dir().unwrap();
         let root_path = current_dir.join("../testdata");
         let root = root_path.to_string_lossy().to_string();
         let target_contract =
             root_path.join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-        let url = "http://127.0.0.1:8545";
+        let url = format!("http://127.0.0.1:{port}");
 
         cmd.args([
             "script",
@@ -32,7 +32,7 @@ impl ScriptTester {
             "--root",
             root.as_str(),
             "--fork-url",
-            url,
+            url.as_str(),
             "-vvv",
             "--legacy", // only necessary for ganache
         ]);
