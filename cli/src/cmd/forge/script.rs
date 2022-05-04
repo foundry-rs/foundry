@@ -81,13 +81,13 @@ pub struct ScriptArgs {
 
     #[clap(
         long,
-        help = "resumes previous transaction batch. does NOT simulate execution. respects nonce constraint "
+        help = "resumes previous transaction batch. DOES NOT simulate execution. respects nonce constraint "
     )]
     pub resume: bool,
 
     #[clap(
         long,
-        help = "resumes previous transactions batch. does NOT simulate execution. does not respect nonce constraint"
+        help = "resumes previous transactions batch. DOES NOT simulate execution. DOES NOT respect nonce constraint"
     )]
     pub force_resume: bool,
 }
@@ -668,6 +668,7 @@ impl ScriptArgs {
 
         // TODO: Add trezor and ledger support (supported in multiwallet, just need to
         // add derivation + SignerMiddleware creation logic)
+        // foundry/cli/src/opts/mod.rs:110
         if local_wallets.is_empty() {
             panic!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
