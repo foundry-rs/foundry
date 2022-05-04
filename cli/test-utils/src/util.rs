@@ -717,7 +717,7 @@ impl<'a> ScriptTester<'a> {
         let root = root_path.to_string_lossy().to_string();
         let target_contract =
             root_path.join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
-        let url = "http://localhost:8545".to_string();
+        let url = "http://localhost:8545";
 
         cmd.args([
             "script",
@@ -725,20 +725,21 @@ impl<'a> ScriptTester<'a> {
             "--root",
             root.as_str(),
             "--fork-url",
-            url.as_str(),
+            url,
             "-vvv",
             "--legacy", // only necessary for ganache
         ]);
-        let str_account_a = "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1";
-        let str_account_b = "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0";
 
         ScriptTester {
-            accounts_pub: vec![str_account_a.to_string(), str_account_b.to_string()],
+            accounts_pub: vec![
+                "0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1".to_string(),
+                "0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0".to_string(),
+            ],
             accounts_priv: vec![
                 "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d".to_string(),
                 "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1".to_string(),
             ],
-            provider: Provider::<Http>::try_from(&url).unwrap(),
+            provider: Provider::<Http>::try_from(url).unwrap(),
             nonces: BTreeMap::default(),
             err: false,
             cmd,
