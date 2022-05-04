@@ -667,11 +667,11 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
+forgetest!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port);
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
             .add_sender(0)
@@ -685,11 +685,11 @@ forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
     })
 });
 
-forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
+forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port);
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
             .add_sender(0)
@@ -703,11 +703,11 @@ forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
     });
 });
 
-forgetest!(can_resume_script, |_: TestProject, cmd: TestCommand| {
+forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port);
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
             .add_sender(0)
