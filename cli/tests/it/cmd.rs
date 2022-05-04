@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::solc::{
     artifacts::{BytecodeHash, Metadata},
@@ -668,8 +669,9 @@ contract CTest is DSTest {
 
 forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
-        spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd);
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port);
 
         tester
             .add_sender(0)
@@ -685,8 +687,9 @@ forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
 
 forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
-        spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd);
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port);
 
         tester
             .add_sender(0)
@@ -702,8 +705,9 @@ forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
 
 forgetest!(can_resume_script, |_: TestProject, cmd: TestCommand| {
     RuntimeOrHandle::new().block_on(async {
-        spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd);
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port);
 
         tester
             .add_sender(0)
