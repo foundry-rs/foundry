@@ -13,7 +13,7 @@ use ethers::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
-    io::Write,
+    io::BufWriter,
     path::{Path, PathBuf},
 };
 
@@ -145,14 +145,10 @@ impl ScriptSequence {
     }
 
     pub fn save(&self) -> eyre::Result<()> {
-        let tx_json = serde_json::to_string_pretty(&self).expect("Bad serializing");
-        println!("\nGenerated Transactions:\n\n{}", tx_json);
-
-        let mut file = std::fs::File::create(&self.path)?;
-        file.write_all(tx_json.as_bytes())?;
+        serde_json::to_writer(BufWriter::new(std::fs::File::create(&self.path)?), &self)?;
 
         println!(
-            "\nTransactions written to: {}\n",
+            "\nTransactions saved to: {}\n",
             self.path.to_str().expect(
                 "Couldn't convert path to string. Transactions were written to file though."
             )

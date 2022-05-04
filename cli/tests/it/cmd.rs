@@ -666,8 +666,9 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-forgetest!(can_deploy_script_without_lib, |_: TestProject, mut cmd: TestCommand| {
-    let mut tester = ScriptTester::new(&mut cmd);
+
+forgetest!(can_deploy_script_without_lib, |_: TestProject, cmd: TestCommand| {
+    let mut tester = ScriptTester::new(cmd);
     tester
         .add_sender(0)
         .load_private_keys(vec![0, 1])
@@ -677,8 +678,8 @@ forgetest!(can_deploy_script_without_lib, |_: TestProject, mut cmd: TestCommand|
         .assert_nonce_increment(vec![(0, 1), (1, 2)]);
 });
 
-forgetest!(can_deploy_script_with_lib, |_: TestProject, mut cmd: TestCommand| {
-    let mut tester = ScriptTester::new(&mut cmd);
+forgetest!(can_deploy_script_with_lib, |_: TestProject, cmd: TestCommand| {
+    let mut tester = ScriptTester::new(cmd);
     tester
         .add_sender(0)
         .load_private_keys(vec![0, 1])
@@ -688,8 +689,8 @@ forgetest!(can_deploy_script_with_lib, |_: TestProject, mut cmd: TestCommand| {
         .assert_nonce_increment(vec![(0, 2), (1, 1)]);
 });
 
-forgetest!(can_resume_script, |_: TestProject, mut cmd: TestCommand| {
-    let mut tester = ScriptTester::new(&mut cmd);
+forgetest!(can_resume_script, |_: TestProject, cmd: TestCommand| {
+    let mut tester = ScriptTester::new(cmd);
     tester
         .add_sender(0)
         .load_private_keys(vec![0])
