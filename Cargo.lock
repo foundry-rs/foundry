@@ -1911,8 +1911,8 @@ dependencies = [
 name = "foundry-cli-test-utils"
 version = "0.1.0"
 dependencies = [
- "ethers",
  "atty",
+ "ethers",
  "ethers-solc",
  "eyre",
  "foundry-config",
