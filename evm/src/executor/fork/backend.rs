@@ -278,7 +278,7 @@ where
                             let (code, code_hash) = if !code.0.is_empty() {
                                 (Some(code.0.clone()), keccak256(&code).into())
                             } else {
-                                (None, KECCAK_EMPTY)
+                                (Some(bytes::Bytes::default()), KECCAK_EMPTY)
                             };
 
                             // update the cache
