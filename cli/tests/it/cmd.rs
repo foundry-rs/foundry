@@ -677,7 +677,7 @@ forgetest!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| {
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-            .sim("SIMULATION COMPLETE. To send these")
+            .sim("SIMULATION COMPLETE. To broadcast these")
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 1), (1, 2)])
             .await;
@@ -695,7 +695,7 @@ forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deploy()")
-            .sim("SIMULATION COMPLETE. To send these")
+            .sim("SIMULATION COMPLETE. To broadcast these")
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
@@ -713,7 +713,7 @@ forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deploy()")
-            .sim("SIMULATION COMPLETE. To send these")
+            .sim("SIMULATION COMPLETE. To broadcast these")
             .expect_err()
             .resume("No associated wallet")
             // it failed after making 2 txes
@@ -740,7 +740,7 @@ forgetest!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| {
             .load_private_keys(vec![0, 1, 2])
             .await
             .add_sig("BroadcastTest", "deployOther()")
-            .sim("SIMULATION COMPLETE. To send these")
+            .sim("SIMULATION COMPLETE. To broadcast these")
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
             .await;

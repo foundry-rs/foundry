@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use crate::TestCommand;
 
-/// An helper structure to test forge script scenarios
+/// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<String>,
     pub accounts_priv: Vec<String>,

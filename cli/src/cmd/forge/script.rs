@@ -104,7 +104,7 @@ impl Cmd for ScriptArgs {
         let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
 
-        let fork_url = evm_opts.fork_url.as_ref().expect("No url provided.");
+        let fork_url = evm_opts.fork_url.as_ref().expect("You must provide an RPC URL (see --fork-url).");
         let nonce = if let Some(deployer) = self.deployer {
             foundry_utils::next_nonce(dbg!(deployer), fork_url, None)?
         } else {
@@ -340,11 +340,11 @@ impl Cmd for ScriptArgs {
                         if self.execute {
                             self.send_transactions(&mut deployment_sequence)?;
                         } else {
-                            println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
+                            println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --execute and wallet configuration(s) to the previous command. See forge script --help for more.");
                         }
                     }
                 } else {
-                    panic!("One or more transactions failed when simulating the on-chain version. Check the trace via rerunning with `-vvv`")
+                    panic!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`")
                 }
             } else {
                 panic!("No onchain transactions generated in script");
@@ -689,9 +689,9 @@ impl ScriptArgs {
             .evm_opts
             .fork_url
             .as_ref()
-            .expect("No fork_url provided for onchain sending")
+            .expect("You must provide an RPC URL (see --fork-url).")
             .clone();
-        let provider = Provider::try_from(&fork_url).expect("Bad fork_url provider");
+        let provider = Provider::try_from(&fork_url).expect("Bad fork provider.");
 
         let rt = RuntimeOrHandle::new();
         let chain = rt.block_on(provider.get_chainid())?.as_u64();
@@ -710,7 +710,7 @@ impl ScriptArgs {
             .transactions
             .range((deployment_sequence.index as usize)..)
             .map(|tx| {
-                let from = into_legacy_ref(tx).from.expect("No from for onchain transaction!");
+                let from = into_legacy_ref(tx).from.expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
                 {
@@ -718,7 +718,7 @@ impl ScriptArgs {
                     Ok((tx.clone(), signer))
                 } else {
                     Err(eyre::eyre!(format!(
-                        "No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}",
+                        "No associated wallet for address: {:?}. Unlocked wallets: {:?}",
                         from,
                         local_wallets
                             .iter()
