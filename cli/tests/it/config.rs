@@ -438,3 +438,30 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         ]
     );
 });
+
+// test remappings with closer paths are prioritised
+// so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
+forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd: TestCommand| {
+    let config = cmd.config();
+    let remappings = config.get_all_remappings();
+
+    // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
+    let mut config = config.clone();
+    config.remappings = vec![Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into()];
+    let nested = prj.paths().libraries[0].join("dep1");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let toml_file = nested.join("foundry.toml");
+    pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
+
+    let config = cmd.config();
+    let remappings = config.get_all_remappings();
+    pretty_assertions::assert_eq!(
+        remappings,
+        vec![
+            "dep1/=lib/dep1/src/".parse().unwrap(),
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "src/=src/".parse().unwrap(),
+        ]
+    );
+});
