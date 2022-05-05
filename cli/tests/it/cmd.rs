@@ -691,7 +691,6 @@ forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_deployer(0)
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deploy()")
