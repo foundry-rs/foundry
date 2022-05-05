@@ -281,6 +281,17 @@ impl FeeDetails {
         }
     }
 
+    /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
+    pub fn or_zero_fees(self) -> Self {
+        let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
+
+        let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
+        let gas_price = if no_fees { Some(U256::zero()) } else { gas_price };
+        let max_fee_per_gas = if no_fees { Some(U256::zero()) } else { max_fee_per_gas };
+
+        Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas }
+    }
+
     /// Turns this type into a tuple
     pub fn split(self) -> (Option<U256>, Option<U256>, Option<U256>) {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;

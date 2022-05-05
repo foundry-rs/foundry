@@ -594,7 +594,8 @@ impl EthApi {
             request.gas_price,
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
-        )?;
+        )?
+        .or_zero_fees();
 
         let (exit, out, gas, _) = self.backend.call(request, fees);
 
