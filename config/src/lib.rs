@@ -25,7 +25,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
+    collections::{hash_map::Entry, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -1495,6 +1495,21 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        /// prioritizes remappings that are closer: shorter `path`
+        ///   - ("a", "1/2") over ("a", "1/2/3")
+        fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
+            match mappings.entry(key) {
+                Entry::Occupied(mut e) => {
+                    if e.get().components().count() > path.components().count() {
+                        e.insert(path);
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(path);
+                }
+            }
+        }
+
         let mut new_remappings = Vec::new();
 
         // check env var
@@ -1517,19 +1532,24 @@ impl<'a> RemappingsProvider<'a> {
 
         new_remappings.extend(remappings);
 
-        // merge all remappings of libs look up lib's foundry.toml
-        new_remappings.extend(self.lib_foundry_toml_remappings());
+        let mut lib_remappings = HashMap::new();
+        // find all remappings of from libs that use a foundry.toml
+        for r in self.lib_foundry_toml_remappings() {
+            insert_closest(&mut lib_remappings, r.name, r.path.into());
+        }
+        // use auto detection for all libs
+        for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
+        {
+            insert_closest(&mut lib_remappings, r.name, r.path.into());
+        }
 
-        // look up lib paths
         new_remappings.extend(
-            self.lib_paths
-                .iter()
-                .map(|lib| self.root.join(lib))
-                .flat_map(Remapping::find_many)
-                .collect::<Vec<Remapping>>(),
+            lib_remappings
+                .into_iter()
+                .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
         );
 
-        // remove duplicates
+        // remove duplicates at this point
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
         new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
 
