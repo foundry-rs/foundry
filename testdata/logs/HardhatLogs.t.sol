@@ -210,18 +210,80 @@ contract HardhatLogsTest {
 		console.log(testAddr);
 	}
 
-	function testConsoleLogTwoParams() public view {
+	// 2 params
+	function testUintUint() public view {
 		console.log(testUint, testUint);
 	}
 
-	function testConsoleLogThreeParams() public view {
+	function testUintStr() public view {
+		console.log(testUint, testStr);
+	}
+
+	function testUintBool() public view {
+		console.log(testUint, testBool);
+	}
+
+	function testUintAddr() public view {
+		console.log(testUint, testAddr);
+	}
+
+	function testStrUint() public view {
+		console.log(testStr, testUint);
+	}
+
+	function testStrStr() public view {
+		console.log(testStr, testStr);
+	}
+
+	function testStrBool() public view {
+		console.log(testStr, testBool);
+	}
+
+	function testStrAddr() public view {
+		console.log(testStr, testAddr);
+	}
+
+	function testBoolUint() public view {
+		console.log(testBool, testUint);
+	}
+
+	function testBoolStr() public view {
+		console.log(testBool, testStr);
+	}
+
+	function testBoolBool() public view {
+		console.log(testBool, testBool);
+	}
+
+	function testBoolAddr() public view {
+		console.log(testBool, testAddr);
+	}
+
+	function testAddrUint() public view {
+		console.log(testAddr, testUint);
+	}
+
+	function testAddrStr() public view {
+		console.log(testAddr, testStr);
+	}
+
+	function testAddrBool() public view {
+		console.log(testAddr, testBool);
+	}
+
+	function testAddrAddr() public view {
+		console.log(testAddr, testAddr);
+	}
+
+	// 3 params
+	function testUintUintUint() public view {
 		console.log(testUint, testUint, testUint);
 	}
 
-	function testConsoleLogFourParams() public view {
+	// 4 params
+	function testUintUintUintUint() public view {
 		console.log(testUint, testUint, testUint, testUint);
 	}
-
 }
 
 library console {
