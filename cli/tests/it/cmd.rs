@@ -674,7 +674,6 @@ forgetest!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| {
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_sender(0)
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
@@ -692,7 +691,7 @@ forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_sender(0)
+            .add_deployer(0)
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deploy()")
@@ -710,7 +709,7 @@ forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_sender(0)
+            .add_deployer(0)
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deploy()")
@@ -737,13 +736,28 @@ forgetest!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| {
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_sender(2)
+            .add_deployer(2)
             .load_private_keys(vec![0, 1, 2])
             .await
             .add_sig("BroadcastTest", "deployOther()")
             .sim("SIMULATION COMPLETE. To send these")
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
-            .assert_nonce_increment(vec![(0, 4), (1, 3), (2, 1)])
+            .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
             .await;
+    });
+});
+
+forgetest!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| {
+    RuntimeOrHandle::new().block_on(async {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .load_private_keys(vec![0, 1])
+            .await
+            .add_sig("BroadcastTest", "deployOther()")
+            .expect_err()
+            .sim("You have more than one deployer who could deploy libraries");
     });
 });

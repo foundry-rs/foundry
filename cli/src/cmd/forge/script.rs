@@ -90,6 +90,10 @@ pub struct ScriptArgs {
         help = "resumes previous transactions batch. DOES NOT simulate execution. DOES NOT respect nonce constraint"
     )]
     pub force_resume: bool,
+
+    #[clap(
+        long, help = "address which will deploy any library dependencies")]
+    pub deployer: Option<Address>,
 }
 
 impl Cmd for ScriptArgs {
@@ -101,7 +105,11 @@ impl Cmd for ScriptArgs {
         let config = Config::from_provider(figment).sanitized();
 
         let fork_url = evm_opts.fork_url.as_ref().expect("No url provided.");
-        let nonce = foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?;
+        let nonce = if let Some(deployer) = self.deployer {
+            foundry_utils::next_nonce(dbg!(deployer), fork_url, None)?
+        } else {
+            U256::zero()
+        };
 
         let BuildOutput {
             target,
@@ -109,7 +117,7 @@ impl Cmd for ScriptArgs {
             mut highlevel_known_contracts,
             mut predeploy_libraries,
             known_contracts: default_known_contracts,
-        } = self.build(&config, &evm_opts, nonce)?;
+        } = self.build(&config, &evm_opts, self.deployer, nonce)?;
 
         if !self.force_resume && !self.resume {
             let mut known_contracts = highlevel_known_contracts
@@ -131,32 +139,35 @@ impl Cmd for ScriptArgs {
 
             // execute once with default sender
             let mut result =
-                self.execute(contract, &evm_opts, None, &predeploy_libraries, &config)?;
+                self.execute(contract, &evm_opts, self.deployer, &predeploy_libraries, &config)?;
 
             let mut new_sender = None;
-            if let Some(ref txs) = result.transactions {
-                // If we did any linking with assumed predeploys, we cant support multiple
-                // deployers.
-                //
-                // If we didn't do any linking with predeploys, then none of the contracts will
-                // change their code based on the sender, so we can skip relinking +
-                // reexecuting.
-                if !predeploy_libraries.is_empty() {
-                    for tx in txs.iter() {
-                        match tx {
-                            TypedTransaction::Legacy(tx) => {
-                                if tx.to.is_none() {
-                                    let sender = tx.from.expect("no sender");
-                                    if let Some(ns) = new_sender {
-                                        if sender != ns {
-                                            panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
+
+            if self.deployer.is_none() {
+                if let Some(ref txs) = result.transactions {
+                    // If we did any linking with assumed predeploys, we cant support multiple
+                    // deployers.
+                    //
+                    // If we didn't do any linking with predeploys, then none of the contracts will
+                    // change their code based on the sender, so we can skip relinking +
+                    // reexecuting.
+                    if !predeploy_libraries.is_empty() {
+                        for tx in txs.iter() {
+                            match tx {
+                                TypedTransaction::Legacy(tx) => {
+                                    if tx.to.is_none() {
+                                        let sender = tx.from.expect("no sender");
+                                        if let Some(ns) = new_sender {
+                                            if sender != ns {
+                                                panic!("You have more than one deployer who could deploy libraries. Set `--deployer` to define the only one.")
+                                            }
+                                        } else if sender != evm_opts.sender {
+                                            new_sender = Some(sender);
                                         }
-                                    } else if sender != evm_opts.sender {
-                                        new_sender = Some(sender);
                                     }
                                 }
+                                _ => unreachable!(),
                             }
-                            _ => unreachable!(),
                         }
                     }
                 }
@@ -245,7 +256,7 @@ impl Cmd for ScriptArgs {
                     .enumerate()
                     .map(|(i, bytes)| {
                         TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(evm_opts.sender),
+                            from: self.deployer,
                             data: Some(bytes.clone()),
                             nonce: Some(nonce + i),
                             ..Default::default()
@@ -407,6 +418,7 @@ impl ScriptArgs {
         &self,
         config: &Config,
         evm_opts: &EvmOpts,
+        sender: Option<Address>,
         nonce: U256,
     ) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
@@ -416,7 +428,7 @@ impl ScriptArgs {
         let (contracts, _sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
             contracts.into_iter().map(|(id, artifact)| (id, artifact.into())).collect();
-        self.link(contracts, evm_opts.sender, nonce)
+        self.link(contracts, sender.unwrap_or(evm_opts.sender), nonce)
     }
 
     fn execute(
