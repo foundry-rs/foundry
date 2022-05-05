@@ -89,8 +89,8 @@ impl ScriptTester {
         self
     }
 
-    pub fn add_sender(&mut self, index: u32) -> &mut Self {
-        self.cmd.args(["--sender", &self.accounts_pub[index as usize]]);
+    pub fn add_deployer(&mut self, index: u32) -> &mut Self {
+        self.cmd.args(["--deployer", &self.accounts_pub[index as usize]]);
         self
     }
 
