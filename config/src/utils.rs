@@ -116,6 +116,8 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
 ///
+/// This will also resolve symlinks
+///
 /// # Example
 ///
 /// ```no_run
@@ -135,12 +137,11 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 /// ```
 pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
     walkdir::WalkDir::new(root)
-        .min_depth(1)
         .max_depth(1)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
-        .filter(|e| e.path().join(Config::FILE_NAME).exists())
-        .map(|e| e.path().to_path_buf())
+        .filter_map(|e| ethers_solc::utils::canonicalize(e.path()).ok())
+        .filter(|p| p.join(Config::FILE_NAME).exists())
         .collect()
 }
