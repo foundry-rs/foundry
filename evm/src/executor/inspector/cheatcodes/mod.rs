@@ -114,7 +114,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
+        is_static: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
@@ -178,20 +178,24 @@ where
                     // because we only need the from, to, value, and data. We can later change this
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
+                    if !is_static {
+                        data.subroutine.load_account(broadcast.origin, data.db);
+                        let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
 
-                    data.subroutine.load_account(broadcast.origin, data.db);
-                    let nonce = data.subroutine.account(broadcast.origin).info.nonce;
+                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                            TransactionRequest {
+                                from: Some(broadcast.origin),
+                                to: Some(NameOrAddress::Address(call.contract)),
+                                value: Some(call.transfer.value),
+                                data: Some(call.input.clone().into()),
+                                nonce: Some(account.info.nonce.into()),
+                                ..Default::default()
+                            },
+                        ));
 
-                    self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                        TransactionRequest {
-                            from: Some(broadcast.origin),
-                            to: Some(NameOrAddress::Address(call.contract)),
-                            value: Some(call.transfer.value),
-                            data: Some(call.input.clone().into()),
-                            nonce: Some(nonce.into()),
-                            ..Default::default()
-                        },
-                    ));
+                        // call_inner does not increase nonces, so we have to do it ourselves
+                        account.info.nonce += 1;
+                    }
                 }
             }
 
@@ -386,7 +390,6 @@ where
                 call.caller = broadcast.origin;
 
                 data.subroutine.load_account(broadcast.origin, data.db);
-                let nonce = data.subroutine.account(broadcast.origin).info.nonce;
 
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
@@ -394,10 +397,12 @@ where
                         to: None,
                         value: Some(call.value),
                         data: Some(call.init_code.clone().into()),
-                        nonce: Some(nonce.into()),
+                        nonce: Some(data.subroutine.account(broadcast.origin).info.nonce.into()),
                         ..Default::default()
                     },
                 ));
+
+                // no need to increase nonce, since create_inner does it by itself
             }
         }
 
