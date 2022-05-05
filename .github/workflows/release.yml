@@ -176,7 +176,7 @@ jobs:
           sudo apt-get -y install help2man
           help2man -N ./target/${TARGET}/release/forge > forge.1
           help2man -N ./target/${TARGET}/release/cast > cast.1
-          help2man -N ./target/${TARGET}/release/cast > anvil.1
+          help2man -N ./target/${TARGET}/release/anvil > anvil.1
           gzip forge.1
           gzip cast.1
           gzip anvil.1
