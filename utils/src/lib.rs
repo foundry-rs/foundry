@@ -1012,6 +1012,7 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+    use std::future::Future;
 
     #[test]
     fn parse_hex_uint_tokens() {
@@ -1167,43 +1168,72 @@ mod tests {
         );
     }
 
+    /// Executes the _fourbyte_ request and if the site is not down (502 Bad Gateway) executes the
+    /// test
+    async fn test_if_fourbyte_not_down<Req, Out, Test>(r: Req, test: Test)
+    where
+        Req: Future<Output = Result<Out>>,
+        Test: FnOnce(Out),
+    {
+        match r.await {
+            Ok(out) => test(out),
+            Err(err) => {
+                let msg = err.to_string();
+                eprintln!("fourbyte request failed:\n{}", msg);
+                if !msg.contains("502 Bad Gateway") {
+                    panic!("{}", msg)
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_fourbyte() {
-        let sigs = fourbyte("0xa9059cbb").await.unwrap();
-        assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
-        assert_eq!(sigs[0].1, 313067);
+        test_if_fourbyte_not_down(fourbyte("0xa9059cbb"), |sigs| {
+            assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
+            assert_eq!(sigs[0].1, 313067);
+        })
+        .await;
     }
 
     #[tokio::test]
     async fn test_fourbyte_possible_sigs() {
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
-        assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
-        assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None), |sigs| {
+            assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
+            assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+        }).await;
 
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())), |sigs| {
+            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+        }).await;
 
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())), |sigs| {
+            assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+        }).await;
 
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())), |sigs| {
+            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+        }).await;
     }
 
     #[tokio::test]
     async fn test_fourbyte_event() {
-        let sigs =
-            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
-                .await
-                .unwrap();
-        assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
-        assert_eq!(sigs[0].1, 79573);
+        test_if_fourbyte_not_down(
+            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
+            |sigs| {
+                assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
+                assert_eq!(sigs[0].1, 79573);
+            },
+        )
+        .await;
 
-        let sigs =
-            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
-                .await
-                .unwrap();
-        assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
+        test_if_fourbyte_not_down(
+            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
+            |sigs| {
+                assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
+            },
+        )
+        .await;
     }
 
     #[test]
