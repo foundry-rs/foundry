@@ -108,7 +108,7 @@ contract HardhatLogsTest {
 
 	function testLogBytes11() public view {
 		console.logBytes11(bytes11(testBytes));
-    }
+	}
 
 	function testLogBytes12() public view {
 		console.logBytes12(bytes12(testBytes));
