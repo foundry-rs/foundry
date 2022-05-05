@@ -17,8 +17,6 @@
 
 ### Installing from source
 
-### Installing from source
-
 ```sh
 git clone https://github.com/foundry-rs/foundry
 cd foundry
