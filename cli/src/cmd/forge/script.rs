@@ -104,15 +104,11 @@ impl Cmd for ScriptArgs {
         let nonce = foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?;
 
         let BuildOutput {
-            target,
-            mut contract,
-            mut highlevel_known_contracts,
-            mut predeploy_libraries,
-            known_contracts: default_known_contracts,
+            target, contract, highlevel_known_contracts, predeploy_libraries, ..
         } = self.build(&config, &evm_opts, nonce)?;
 
         if !self.force_resume && !self.resume {
-            let mut known_contracts = highlevel_known_contracts
+            let known_contracts = highlevel_known_contracts
                 .iter()
                 .map(|(id, c)| {
                     (
@@ -129,137 +125,33 @@ impl Cmd for ScriptArgs {
                 })
                 .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
-            // execute once with default sender
-            let mut result =
-                self.execute(contract, &evm_opts, None, &predeploy_libraries, &config)?;
+            let mut result = self.execute(
+                contract,
+                &evm_opts,
+                Some(evm_opts.sender),
+                &predeploy_libraries,
+                &config,
+            )?;
 
-            let mut new_sender = None;
-            if let Some(ref txs) = result.transactions {
-                // If we did any linking with assumed predeploys, we cant support multiple
-                // deployers.
-                //
-                // If we didn't do any linking with predeploys, then none of the contracts will
-                // change their code based on the sender, so we can skip relinking +
-                // reexecuting.
-                if !predeploy_libraries.is_empty() {
-                    for tx in txs.iter() {
-                        match tx {
-                            TypedTransaction::Legacy(tx) => {
-                                if tx.to.is_none() {
-                                    let sender = tx.from.expect("no sender");
-                                    if let Some(ns) = new_sender {
-                                        if sender != ns {
-                                            panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
-                                        }
-                                    } else if sender != evm_opts.sender {
-                                        new_sender = Some(sender);
-                                    }
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
-            }
-
-            // reexecute with the correct deployer after relinking contracts
-            if let Some(new_sender) = new_sender {
-                // if we had a new sender that requires relinking, we need to
-                // get the nonce mainnet for accurate addresses for predeploy libs
-                let nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
-
-                // relink with new sender
-                let BuildOutput {
-                    target: _,
-                    contract: c2,
-                    highlevel_known_contracts: hkc,
-                    predeploy_libraries: pl,
-                    known_contracts: _default_known_contracts,
-                } = self.link(default_known_contracts, new_sender, nonce)?;
-
-                contract = c2;
-                highlevel_known_contracts = hkc;
-                predeploy_libraries = pl;
-
-                known_contracts = highlevel_known_contracts
-                    .iter()
-                    .map(|(id, c)| {
-                        (
-                            id.clone(),
-                            (
-                                c.abi.clone(),
-                                c.deployed_bytecode
-                                    .clone()
-                                    .into_bytes()
-                                    .expect("not bytecode")
-                                    .to_vec(),
-                            ),
-                        )
+            let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
+                .iter()
+                .enumerate()
+                .map(|(i, bytes)| {
+                    TypedTransaction::Legacy(TransactionRequest {
+                        from: Some(evm_opts.sender),
+                        data: Some(bytes.clone()),
+                        nonce: Some(nonce + i),
+                        ..Default::default()
                     })
-                    .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
+                })
+                .collect();
 
-                let lib_deploy = predeploy_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bytes)| {
-                        TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(new_sender),
-                            data: Some(bytes.clone()),
-                            nonce: Some(nonce + i),
-                            ..Default::default()
-                        })
-                    })
-                    .collect();
-
-                result.transactions = Some(lib_deploy);
-
-                let result2 = self.execute(
-                    contract,
-                    &evm_opts,
-                    Some(new_sender),
-                    &predeploy_libraries,
-                    &config,
-                )?;
-
-                result.success &= result2.success;
-
-                result.gas = result2.gas;
-                result.logs = result2.logs;
-                result.traces.extend(result2.traces);
-                result.debug = result2.debug;
-                result.labeled_addresses.extend(result2.labeled_addresses);
-                match (&mut result.transactions, result2.transactions) {
-                    (Some(txs), Some(new_txs)) => {
-                        new_txs.iter().for_each(|tx| {
-                            txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
-                        });
-                    }
-                    (None, Some(new_txs)) => {
-                        result.transactions = Some(new_txs);
-                    }
-                    _ => {}
-                }
-            } else {
-                let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bytes)| {
-                        TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(evm_opts.sender),
-                            data: Some(bytes.clone()),
-                            nonce: Some(nonce + i),
-                            ..Default::default()
-                        })
-                    })
-                    .collect();
-
-                // prepend predeploy libraries
-                if let Some(txs) = &mut result.transactions {
-                    txs.iter().for_each(|tx| {
-                        lib_deploy.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
-                    });
-                    *txs = lib_deploy;
-                }
+            // prepend predeploy libraries
+            if let Some(txs) = &mut result.transactions {
+                txs.iter().for_each(|tx| {
+                    lib_deploy.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
+                });
+                *txs = lib_deploy;
             }
 
             // Identify addresses in each trace
@@ -706,7 +598,7 @@ impl ScriptArgs {
                     Ok((tx.clone(), signer))
                 } else {
                     Err(eyre::eyre!(format!(
-                        "No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}",
+                        "No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}. \nMake sure you have loaded all the private keys including of the `--sender`.",
                         from,
                         local_wallets
                             .iter()
