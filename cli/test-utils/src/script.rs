@@ -35,7 +35,6 @@ impl ScriptTester {
             "--fork-url",
             url.as_str(),
             "-vvv",
-            "--legacy", // only necessary for ganache
         ]);
 
         ScriptTester {
