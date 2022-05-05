@@ -729,3 +729,21 @@ forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
             .await;
     });
 });
+
+forgetest!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| {
+    RuntimeOrHandle::new().block_on(async {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .add_sender(2)
+            .load_private_keys(vec![0, 1, 2])
+            .await
+            .add_sig("BroadcastTest", "deployOther()")
+            .sim("SIMULATION COMPLETE. To send these")
+            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 4), (1, 3), (2, 1)])
+            .await;
+    });
+});

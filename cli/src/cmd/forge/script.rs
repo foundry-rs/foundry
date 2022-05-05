@@ -839,7 +839,7 @@ impl<DB: DatabaseRef> Runner<DB> {
     ) -> eyre::Result<ScriptResult> {
         if let Some(NameOrAddress::Address(to)) = to {
             let RawCallResult { reverted, gas, logs, traces, labels, debug, transactions, .. } =
-                self.executor.call_raw(
+                self.executor.call_raw_committing(
                     from,
                     to,
                     calldata.unwrap_or_default().0,

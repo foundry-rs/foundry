@@ -5,6 +5,7 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Test is DSTest {
+    uint256 public changed = 0; 
     function t(uint256 a) public returns (uint256) {
         uint256 b = 0;
         for (uint256 i; i < a; i++) {
@@ -12,6 +13,10 @@ contract Test is DSTest {
         }
         emit log_string("here");
         return b;
+    }
+
+    function inc() public returns (uint256) {
+        changed += 1;
     }
 
     function echoSender() public view returns (address) {
@@ -45,39 +50,45 @@ contract BroadcastTest is DSTest {
         test.t(2);     
     }
 
-    function deployWithResume() public {
-        cheats.broadcast(ACCOUNT_B);
-        Test test = new Test();
-
-        // this wont generate tx to sign
-        uint256 b = test.t(5);
-
-        // this will
-        cheats.broadcast(ACCOUNT_A);
-        test.t(b);     
-    }
-
-    function deployDefault() public {
-        cheats.broadcast();
-        Test test = new Test();
-
-        // this wont generate tx to sign
-        uint256 b = test.t(4);
-
-        // this will
-        cheats.broadcast(address(0x1338));
-        test.t(b);     
-    }
-
     function deployOther() public {
-        cheats.startBroadcast(address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+        cheats.startBroadcast(ACCOUNT_A);
+        Test tmptest = new Test();
         Test test = new Test();
-        require(test.echoSender() == address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+
+        // won't trigger a transaction: staticcall
+        test.changed();
+
+        // won't trigger a transaction: staticcall
+        require(test.echoSender() == ACCOUNT_A);
+
+        // will trigger a transaction
+        test.t(1);
+
+        // will trigger a transaction
+        test.inc();
+
         cheats.stopBroadcast();
+        
         require(test.echoSender() == address(this));
 
-        cheats.broadcast(address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
-        require(test.echoSender() == address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+        cheats.broadcast(ACCOUNT_B);
+        // won't trigger a transaction: staticcall
+        require(test.echoSender() == ACCOUNT_B);
+
+        cheats.broadcast(ACCOUNT_B);
+        // will trigger a transaction
+        test.t(2);
+
+        cheats.broadcast(ACCOUNT_B);
+        // will trigger a transaction from B
+        payable(ACCOUNT_A).transfer(2);
+
+        cheats.broadcast(ACCOUNT_B);
+        // will trigger a transaction
+        test.inc();
+
+        assert(test.changed() == 2); 
+
     }
 
     function deployPanics() public {
