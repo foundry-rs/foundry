@@ -63,11 +63,11 @@ pub struct ScriptArgs {
 
     #[clap(
         long,
-        help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+        help = "Use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559."
     )]
     pub legacy: bool,
 
-    #[clap(long, help = "execute the transactions")]
+    #[clap(long, help = "Execute the transactions.")]
     pub execute: bool,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
@@ -79,20 +79,27 @@ pub struct ScriptArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
-    #[clap(
-        long,
-        help = "resumes previous transaction batch. DOES NOT simulate execution. respects nonce constraint "
-    )]
+    /// Resumes submitting transactions that failed or timed-out previously.
+    ///
+    /// It DOES NOT simulate the script again and it expects nonces to have remained the same.
+    ///
+    /// Example: If transaction N has a nonce of 22, then the account should have a nonce of 22,
+    /// otherwise it fails.
+    #[clap(long)]
     pub resume: bool,
 
-    #[clap(
-        long,
-        help = "resumes previous transactions batch. DOES NOT simulate execution. DOES NOT respect nonce constraint"
-    )]
+    /// Resumes submitting transactions that failed or timed-out previously. SHOULD NOT be used
+    /// when deploying CREATE contracts.
+    ///
+    /// It DOES NOT simulate the script again and IT DOES NOT expect nonces to have remained the
+    /// same.
+    ///
+    /// Example: If transaction N has a nonce of 22 and the account has a nonce of 23, then
+    /// all transactions from this account will have a nonce of TX_NONCE + 1.
+    #[clap(long)]
     pub force_resume: bool,
 
-    #[clap(
-        long, help = "address which will deploy any library dependencies")]
+    #[clap(long, help = "Address which will deploy all library dependencies.")]
     pub deployer: Option<Address>,
 }
 
@@ -104,7 +111,8 @@ impl Cmd for ScriptArgs {
         let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
 
-        let fork_url = evm_opts.fork_url.as_ref().expect("You must provide an RPC URL (see --fork-url).");
+        let fork_url =
+            evm_opts.fork_url.as_ref().expect("You must provide an RPC URL (see --fork-url).");
         let nonce = if let Some(deployer) = self.deployer {
             foundry_utils::next_nonce(dbg!(deployer), fork_url, None)?
         } else {
