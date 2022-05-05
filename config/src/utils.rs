@@ -141,7 +141,7 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| std::fs::canonicalize(e.path()).ok())
+        .filter_map(|e| ethers_solc::utils::canonicalize(e.path()).ok())
         .filter(|p| p.join(Config::FILE_NAME).exists())
         .collect()
 }
