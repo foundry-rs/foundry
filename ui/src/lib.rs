@@ -118,6 +118,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        show_trace: bool,
         traces: &CallTraceArena,
     ) {
         let total_size = f.size();
@@ -135,6 +136,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                show_trace,
                 traces,
             );
         } else {
@@ -151,6 +153,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                show_trace,
                 traces,
             );
         }
@@ -170,6 +173,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        show_trace: bool,
         traces: &CallTraceArena,
     ) {
         let total_size = f.size();
@@ -219,9 +223,18 @@ impl Tui {
                     stack_labels,
                     draw_memory,
                 );
-                // Tui::draw_memory(f, debug_steps, current_step, memory_pane, mem_utf,
-                // draw_memory);
-                Tui::draw_trace(f, debug_steps, current_step, traces, memory_pane);
+                if show_trace {
+                    Tui::draw_trace(f, debug_steps, current_step, traces, draw_memory, memory_pane);
+                } else {
+                    Tui::draw_memory(
+                        f,
+                        debug_steps,
+                        current_step,
+                        memory_pane,
+                        mem_utf,
+                        draw_memory,
+                    );
+                }
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -244,6 +257,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        show_trace: bool,
         traces: &CallTraceArena,
     ) {
         let total_size = f.size();
@@ -299,16 +313,26 @@ impl Tui {
                             stack_labels,
                             draw_memory,
                         );
-                        // Tui::draw_memory(
-                        //     f,
-                        //     debug_steps,
-                        //     current_step,
-                        //     memory_pane,
-                        //     mem_utf,
-                        //     draw_memory,
-                        // );
 
-                        Tui::draw_trace(f, debug_steps, current_step, traces, memory_pane);
+                        if show_trace {
+                            Tui::draw_trace(
+                                f,
+                                debug_steps,
+                                current_step,
+                                traces,
+                                draw_memory,
+                                memory_pane,
+                            );
+                        } else {
+                            Tui::draw_memory(
+                                f,
+                                debug_steps,
+                                current_step,
+                                memory_pane,
+                                mem_utf,
+                                draw_memory,
+                            );
+                        }
                     }
                 } else {
                     panic!("Couldn't generate horizontal split layout 1:2.");
@@ -325,7 +349,7 @@ impl Tui {
         let block_controls = Block::default();
 
         let text_output = Text::from(Span::styled(
-            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels | [m]: toggle memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory",
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels | [m]: toggle memory decoding | [v]: toggle trace | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory/trace",
             Style::default().add_modifier(Modifier::DIM)
         ));
         let paragraph = Paragraph::new(text_output)
@@ -340,15 +364,21 @@ impl Tui {
         debug_steps: &[DebugStep],
         current_step: usize,
         traces: &CallTraceArena,
+        draw_memory: &mut DrawMemory,
         area: Rect,
     ) {
-        let max_index_seen = debug_steps[current_step].trace_index;
+        let end = debug_steps.len() - 1 == current_step &&
+            draw_memory.inner_call_index == draw_memory.max_call_index;
+        let max_index_seen = debug_steps[current_step].trace_index + 1;
 
-        let block_source_code = Block::default()
-            .title(format!("Call Trace: {:?}", max_index_seen))
-            .borders(Borders::ALL);
+        let block_source_code = Block::default().title("Call Trace").borders(Borders::ALL);
 
-        let text_output: Text = Text::from(traces.debugger_fmt(max_index_seen));
+        let many_spans = traces.debugger_fmt(max_index_seen, end);
+        let mut start = draw_memory.current_trace_startline;
+        if start >= many_spans.len() {
+            start = many_spans.len() - 1;
+        }
+        let text_output: Text = Text::from(many_spans[start..].to_vec());
 
         let paragraph =
             Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: false });
@@ -993,6 +1023,9 @@ impl Ui for Tui {
 
         let mut stack_labels = false;
         let mut mem_utf = false;
+        let mut show_trace = false;
+        draw_memory.max_call_index = debug_call.len() - 1;
+
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -1022,14 +1055,18 @@ impl Ui for Tui {
                         // Grab number of times to do it
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                    [self.current_step]
-                                    .memory
-                                    .len() /
-                                    32)
-                                .saturating_sub(1);
-                                if draw_memory.current_mem_startline < max_mem {
-                                    draw_memory.current_mem_startline += 1;
+                                if show_trace {
+                                    draw_memory.current_trace_startline += 1;
+                                } else {
+                                    let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                        [self.current_step]
+                                        .memory
+                                        .len() /
+                                        32)
+                                    .saturating_sub(1);
+                                    if draw_memory.current_mem_startline < max_mem {
+                                        draw_memory.current_mem_startline += 1;
+                                    }
                                 }
                             } else if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
@@ -1057,8 +1094,13 @@ impl Ui for Tui {
                     KeyCode::Char('k') | KeyCode::Up => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                draw_memory.current_mem_startline =
-                                    draw_memory.current_mem_startline.saturating_sub(1);
+                                if show_trace {
+                                    draw_memory.current_trace_startline =
+                                        draw_memory.current_trace_startline.saturating_sub(1);
+                                } else {
+                                    draw_memory.current_mem_startline =
+                                        draw_memory.current_mem_startline.saturating_sub(1);
+                                }
                             } else if self.current_step > 0 {
                                 self.current_step -= 1;
                             } else if draw_memory.inner_call_index > 0 {
@@ -1164,6 +1206,9 @@ impl Ui for Tui {
                     KeyCode::Char('m') => {
                         mem_utf = !mem_utf;
                     }
+                    KeyCode::Char('v') => {
+                        show_trace = !show_trace;
+                    }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
                             self.key_buffer.push(other);
@@ -1219,6 +1264,7 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
+                    show_trace,
                     &self.traces,
                 )
             })?;
@@ -1238,7 +1284,9 @@ enum Interrupt {
 struct DrawMemory {
     pub current_startline: usize,
     pub inner_call_index: usize,
+    pub max_call_index: usize,
     pub current_mem_startline: usize,
+    pub current_trace_startline: usize,
     pub current_stack_startline: usize,
 }
 
@@ -1247,7 +1295,9 @@ impl DrawMemory {
         DrawMemory {
             current_startline: 0,
             inner_call_index: 0,
+            max_call_index: 0,
             current_mem_startline: 0,
+            current_trace_startline: 0,
             current_stack_startline: 0,
         }
     }

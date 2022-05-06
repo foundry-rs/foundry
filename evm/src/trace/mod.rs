@@ -86,7 +86,7 @@ impl CallTraceArena {
             .collect()
     }
 
-    pub fn debugger_fmt(&'_ self, max: usize) -> Vec<Spans<'_>> {
+    pub fn debugger_fmt(&'_ self, max: usize, end: bool) -> Vec<Spans<'_>> {
         fn inner<'a>(
             arena: &'a CallTraceArena,
             idx: usize,
@@ -94,6 +94,7 @@ impl CallTraceArena {
             child_str: &str,
             spans: &mut Vec<Spans<'a>>,
             max: usize,
+            end: bool,
         ) {
             if idx >= max {
                 return
@@ -120,13 +121,14 @@ impl CallTraceArena {
                             &right_prefix,
                             spans,
                             max,
+                            end,
                         );
                     }
                 }
             }
 
             // Display trace return data
-            if idx > 0 {
+            if idx > 0 || end {
                 let color = style_trace_color(&node.trace);
                 let mut s = vec![];
                 s.push(Span::raw(format!("{}{}", child_str, EDGE)));
@@ -147,7 +149,7 @@ impl CallTraceArena {
         }
 
         let mut spans = vec![];
-        inner(self, 0, "  ", "  ", &mut spans, max);
+        inner(self, 0, "  ", "  ", &mut spans, max, end);
         spans
     }
 }

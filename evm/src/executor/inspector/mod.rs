@@ -53,14 +53,10 @@ impl InspectorStackConfig {
 
         let t = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
         if self.tracing {
-            let mut tracer = Tracer::default();
-            tracer.trace_stack = t.clone();
-            stack.tracer = Some(tracer);
+            stack.tracer = Some(Tracer { trace_stack: t.clone(), ..Default::default() });
         }
         if self.debugger {
-            let mut debugger = Debugger::default();
-            debugger.call_trace_tracker = t;
-            stack.debugger = Some(debugger);
+            stack.debugger = Some(Debugger { call_trace_tracker: t, ..Default::default() });
         }
         stack
     }
