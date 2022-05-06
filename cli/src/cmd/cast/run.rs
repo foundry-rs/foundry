@@ -95,7 +95,9 @@ impl RunArgs {
                             .call_raw_committing(past_tx.from, to, past_tx.input.0, past_tx.value)
                             .unwrap();
                     } else {
-                        executor.deploy(past_tx.from, past_tx.input.0, past_tx.value).unwrap();
+                        executor
+                            .deploy(past_tx.from, past_tx.input.0, past_tx.value, None)
+                            .unwrap();
                     }
                 }
             }
@@ -120,7 +122,7 @@ impl RunArgs {
                     }
                 } else {
                     let DeployResult { gas, traces, debug: run_debug, .. }: DeployResult =
-                        executor.deploy(tx.from, tx.input.0, tx.value).unwrap();
+                        executor.deploy(tx.from, tx.input.0, tx.value, None).unwrap();
 
                     RunResult {
                         success: true,
