@@ -10,6 +10,8 @@ use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
 
+abigen!(Greeter, "test-data/greeter.json");
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
@@ -196,8 +198,6 @@ async fn can_reject_underpriced_replacement() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_http() {
-    abigen!(Greeter, "test-data/greeter.json");
-
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
@@ -223,8 +223,6 @@ async fn can_deploy_greeter_http() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_ws() {
-    abigen!(Greeter, "test-data/greeter.json");
-
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.ws_provider().await;
 
@@ -246,6 +244,25 @@ async fn can_deploy_greeter_ws() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_get_code() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let code = client.get_code(greeter_contract.address(), None).await.unwrap();
+    assert!(!code.as_ref().is_empty());
 }
 
 #[test]
