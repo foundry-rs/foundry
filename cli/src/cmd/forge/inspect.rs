@@ -7,6 +7,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
+use comfy_table::Table;
 use ethers::prelude::artifacts::output_selection::{
     ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
 };
@@ -95,6 +96,9 @@ pub struct InspectArgs {
     #[clap(help = "The contract artifact field to inspect.")]
     pub field: ContractArtifactFields,
 
+    #[clap(long, help = "Pretty print the selected field, if supported.")]
+    pub pretty: bool,
+
     /// All build arguments are supported
     #[clap(flatten)]
     build: build::CoreBuildArgs,
@@ -103,7 +107,7 @@ pub struct InspectArgs {
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { contract, field, build } = self;
+        let InspectArgs { contract, field, build, pretty } = self;
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output.unwrap_or_default();
@@ -207,7 +211,31 @@ impl Cmd for InspectArgs {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
             }
             ContractArtifactFields::StorageLayout => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?);
+                if pretty {
+                    if let Some(storage_layout) = &artifact.storage_layout {
+                        let mut table = Table::new();
+                        table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes"]);
+
+                        for slot in &storage_layout.storage {
+                            let storage_type = storage_layout.types.get(&slot.storage_type);
+                            table.add_row(vec![
+                                slot.label.clone(),
+                                storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+                                slot.slot.clone(),
+                                slot.offset.to_string(),
+                                storage_type
+                                    .as_ref()
+                                    .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+                            ]);
+                        }
+                        println!("{table}");
+                    }
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?
+                    );
+                }
             }
             ContractArtifactFields::DevDoc => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
