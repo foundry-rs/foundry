@@ -1,4 +1,4 @@
-//! tests for anvil specifc logic
+//! tests for anvil specific logic
 
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
