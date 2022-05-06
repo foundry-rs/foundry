@@ -807,8 +807,13 @@ impl Backend {
         _block: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
-        let code = self.db.read().basic(address).code;
-        Ok(code.unwrap_or_default().into())
+        let account = self.db.read().basic(address);
+        let code = if let Some(code) = account.code {
+            code.into()
+        } else {
+            self.db.read().code_by_hash(account.code_hash).into()
+        };
+        Ok(code)
     }
 
     /// Returns the balance of the address
