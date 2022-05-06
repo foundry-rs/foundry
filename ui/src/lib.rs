@@ -375,9 +375,14 @@ impl Tui {
 
         let many_spans = traces.debugger_fmt(max_index_seen, end);
         let mut start = draw_memory.current_trace_startline;
-        if start >= many_spans.len() {
-            start = many_spans.len() - 1;
+        let height = area.height as usize;
+        let end = start + height - 10;
+        if end >= many_spans.len() {
+            let empty_lines = end - many_spans.len();
+            start = start.saturating_sub(empty_lines);
+            draw_memory.current_trace_startline = start;
         }
+
         let text_output: Text = Text::from(many_spans[start..].to_vec());
 
         let paragraph =
