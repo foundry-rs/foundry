@@ -445,27 +445,61 @@ where
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
-    pub fn deploy(&mut self, from: Address, code: Bytes, value: U256) -> Result<DeployResult> {
+    pub fn deploy(
+        &mut self,
+        from: Address,
+        code: Bytes,
+        value: U256,
+        abi: Option<&Abi>,
+    ) -> std::result::Result<DeployResult, EvmError> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
+        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+            inspector.collect_inspector_states();
+
+        let result = match out {
+            TransactOut::Create(ref data, _) => data.to_owned(),
+            _ => Bytes::default(),
+        };
+
         let address = match status {
             return_ok!() => {
                 if let TransactOut::Create(_, Some(addr)) = out {
                     addr
                 } else {
-                    panic!("deployment succeeded, but we got no address. this is a bug.");
+                    return Err(EvmError::Execution {
+                        reverted: true,
+                        reason: "Deployment succeeded, but no address was returned. This is a bug, please report it".to_string(),
+                        traces,
+                        gas,
+                        stipend: 0,
+                        logs,
+                        debug,
+                        labels,
+                        state_changeset: None,
+                    });
                 }
             }
-            // TODO: We should have better error handling logic in the test runner
-            // regarding deployments in general
-            _ => eyre::bail!("deployment failed: {:?}", status),
+            _ => {
+                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                    .unwrap_or_else(|_| format!("{:?}", status));
+                return Err(EvmError::Execution {
+                    reverted: true,
+                    reason,
+                    traces,
+                    gas,
+                    stipend: 0,
+                    logs,
+                    debug,
+                    labels,
+                    state_changeset: None,
+                })
+            }
         };
-        let InspectorData { logs, traces, debug, cheatcodes, .. } =
-            inspector.collect_inspector_states();
 
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();

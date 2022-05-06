@@ -211,25 +211,61 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = self
-            .predeploy_libs
-            .iter()
-            .filter_map(|code| {
-                let DeployResult { traces, .. } = self
-                    .executor
-                    .deploy(self.sender, code.0.clone(), 0u32.into())
-                    .expect("couldn't deploy library");
+        let mut traces: Vec<(TraceKind, CallTraceArena)> = vec![];
+        for code in self.predeploy_libs.iter() {
+            match self.executor.deploy(self.sender, code.0.clone(), 0u32.into(), self.errors) {
+                Ok(DeployResult { traces: tmp_traces, .. }) => {
+                    if let Some(tmp_traces) = tmp_traces {
+                        traces.push((TraceKind::Deployment, tmp_traces));
+                    }
+                }
+                Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
+                    // If we failed to call the constructor, force the tracekind to be setup so
+                    // a trace is shown.
+                    let traces = if let Some(traces) = traces {
+                        vec![(TraceKind::Setup, traces)]
+                    } else {
+                        vec![]
+                    };
 
-                traces
-            })
-            .map(|traces| (TraceKind::Deployment, traces))
-            .collect();
+                    return Ok(TestSetup {
+                        address: Address::zero(),
+                        logs,
+                        traces,
+                        labeled_addresses: labels,
+                        setup_failed: true,
+                        reason: Some(reason),
+                    })
+                }
+                e => eyre::bail!("Unrecoverable error: {:?}", e),
+            }
+        }
 
         // Deploy an instance of the contract
-        let DeployResult { address, mut logs, traces: constructor_traces, .. } = self
+        let DeployResult { address, mut logs, traces: constructor_traces, .. } = match self
             .executor
-            .deploy(self.sender, self.code.0.clone(), 0u32.into())
-            .expect("couldn't deploy");
+            .deploy(self.sender, self.code.0.clone(), 0u32.into(), self.errors)
+        {
+            Ok(d) => d,
+            Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
+                let traces = if let Some(traces) = traces {
+                    vec![(TraceKind::Setup, traces)]
+                } else {
+                    vec![]
+                };
+
+                return Ok(TestSetup {
+                    address: Address::zero(),
+                    logs,
+                    traces,
+                    labeled_addresses: labels,
+                    setup_failed: true,
+                    reason: Some(reason),
+                })
+            }
+            e => eyre::bail!("Unrecoverable error: {:?}", e),
+        };
+
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
 
         // Now we set the contracts initial balance, and we also reset `self.sender`s balance to
