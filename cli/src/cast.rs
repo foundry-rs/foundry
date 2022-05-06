@@ -195,8 +195,11 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
+            let chain_id = provider.get_chainid().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+
             let mut builder =
-                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+                TxBuilder::new(&provider, config.sender, address, chain, false).await?;
             builder.etherscan_api_key(config.etherscan_api_key).set_args(&sig, args).await?;
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, block).await?);
