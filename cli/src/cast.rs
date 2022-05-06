@@ -196,7 +196,7 @@ async fn main() -> eyre::Result<()> {
             )?;
 
             let chain_id = provider.get_chainid().await?;
-            let chain = Chain::try_from(chain_id.as_u64())?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, chain, false).await?;
