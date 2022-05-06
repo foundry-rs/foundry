@@ -16,11 +16,13 @@ use crate::{
         sign::Signer,
     },
     filter::{EthFilter, Filters, LogsFilter},
+    mem::transaction_build,
     revm::TransactOut,
     ClientFork, LoggingManager, Miner, MiningMode, Provider, StorageInfo,
 };
 use anvil_core::{
     eth::{
+        block::BlockInfo,
         call::CallRequest,
         filter::{Filter, FilteredParams},
         transaction::{
@@ -429,6 +431,10 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<Block<TxHash>>> {
         node_info!("eth_getBlockByNumber");
+        if number == BlockNumber::Pending {
+            return Ok(Some(self.pending_block()))
+        }
+
         self.backend.block_by_number(number).await
     }
 
@@ -440,6 +446,9 @@ impl EthApi {
         number: BlockNumber,
     ) -> Result<Option<Block<Transaction>>> {
         node_info!("eth_getBlockByNumber");
+        if number == BlockNumber::Pending {
+            return Ok(self.pending_block_full())
+        }
         self.backend.block_by_number_full(number).await
     }
 
@@ -1434,6 +1443,34 @@ impl EthApi {
 
         trace!(target: "node", "mined block {}", outcome.block_number);
         self.pool.on_mined_block(outcome);
+    }
+
+    /// Returns the pending block with tx hashes
+    fn pending_block(&self) -> Block<TxHash> {
+        let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+        let info = self.backend.pending_block(transactions);
+        self.backend.convert_block(info.block)
+    }
+
+    /// Returns the full pending block with `Transaction` objects
+    fn pending_block_full(&self) -> Option<Block<Transaction>> {
+        let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+        let BlockInfo { block, transactions, receipts: _ } =
+            self.backend.pending_block(transactions);
+
+        let ethers_block = self.backend.convert_block(block.clone());
+
+        let mut block_transactions = Vec::with_capacity(block.transactions.len());
+        let base_fee = self.backend.base_fee();
+
+        for info in transactions {
+            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+
+            let tx = transaction_build(tx, Some(block.clone()), Some(info), true, Some(base_fee));
+            block_transactions.push(tx);
+        }
+
+        Some(ethers_block.into_full_block(block_transactions))
     }
 
     fn build_typed_tx_request(
