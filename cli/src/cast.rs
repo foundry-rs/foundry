@@ -10,9 +10,8 @@ use foundry_config::Config;
 mod opts;
 use cast::InterfacePath;
 use ethers::{
-    contract::BaseContract,
     core::{
-        abi::parse_abi,
+        abi::AbiParser,
         rand::thread_rng,
         types::{BlockId, BlockNumber::Latest, H256},
     },
@@ -630,8 +629,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Sig { sig } => {
-            let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
-            let selector = contract.abi().functions().last().unwrap().short_signature();
+            let selector = AbiParser::default().parse_function(&sig).unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,

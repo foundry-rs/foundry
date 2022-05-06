@@ -87,7 +87,7 @@ pub struct DebugNode {
     pub location: usize,
     /// Execution context.
     ///
-    /// Note that this is the address of the *code*, not necessarily the adddress of the storage.
+    /// Note that this is the address of the *code*, not necessarily the address of the storage.
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
