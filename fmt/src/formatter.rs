@@ -1013,6 +1013,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_using(&mut self, using: &mut Using) -> VResult {
+        write!(self, "using {} for ", using.library.name)?;
+
+        if let Some(ty) = &mut using.ty {
+            ty.visit(self)?;
+        } else {
+            write!(self, "*")?;
+        }
+
+        write!(self, ";")?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1167,5 +1181,10 @@ mod tests {
     #[test]
     fn type_definition() {
         test_directory("TypeDefinition");
+    }
+
+    #[test]
+    fn using_directive() {
+        test_directory("UsingDirective");
     }
 }
