@@ -17,7 +17,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 - [x] Function / Modifier / Constructor definitions
 - [ ] Variable definition
 - [x] Type definition
-- [ ] Using
+- [ ] Using (waiting for https://github.com/hyperledger-labs/solang/issues/801 and https://github.com/hyperledger-labs/solang/issues/802)
 
 ### Statements
 
