@@ -224,7 +224,7 @@ pub fn recurse_link<'a>(
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&target) {
+            if let Some(deps) = dependency_tree.get(next_target) {
                 if !deps.is_empty() {
                     // actually link the nested dependencies to this dependency
                     recurse_link(

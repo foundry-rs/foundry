@@ -10,6 +10,7 @@ use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
 use forge::{
     debug::{DebugStep, Instruction},
+    trace::CallTraceArena,
     CallKind,
 };
 use std::{
@@ -57,6 +58,7 @@ pub struct Tui {
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
+    traces: CallTraceArena,
 }
 
 impl Tui {
@@ -68,6 +70,7 @@ impl Tui {
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
+        traces: CallTraceArena,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -83,6 +86,7 @@ impl Tui {
             identified_contracts,
             known_contracts,
             source_code,
+            traces,
         })
     }
 
@@ -114,6 +118,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        traces: &CallTraceArena,
     ) {
         let total_size = f.size();
         if total_size.width < 225 {
@@ -130,6 +135,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                traces,
             );
         } else {
             Tui::square_layout(
@@ -145,6 +151,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                traces,
             );
         }
     }
@@ -163,6 +170,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        traces: &CallTraceArena,
     ) {
         let total_size = f.size();
         if let [app, footer] = Layout::default()
@@ -211,7 +219,9 @@ impl Tui {
                     stack_labels,
                     draw_memory,
                 );
-                Tui::draw_memory(f, debug_steps, current_step, memory_pane, mem_utf, draw_memory);
+                // Tui::draw_memory(f, debug_steps, current_step, memory_pane, mem_utf,
+                // draw_memory);
+                Tui::draw_trace(f, debug_steps, current_step, traces, memory_pane);
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -234,6 +244,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        traces: &CallTraceArena,
     ) {
         let total_size = f.size();
 
@@ -288,14 +299,16 @@ impl Tui {
                             stack_labels,
                             draw_memory,
                         );
-                        Tui::draw_memory(
-                            f,
-                            debug_steps,
-                            current_step,
-                            memory_pane,
-                            mem_utf,
-                            draw_memory,
-                        );
+                        // Tui::draw_memory(
+                        //     f,
+                        //     debug_steps,
+                        //     current_step,
+                        //     memory_pane,
+                        //     mem_utf,
+                        //     draw_memory,
+                        // );
+
+                        Tui::draw_trace(f, debug_steps, current_step, traces, memory_pane);
                     }
                 } else {
                     panic!("Couldn't generate horizontal split layout 1:2.");
@@ -319,6 +332,26 @@ impl Tui {
             .block(block_controls)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
+    }
+
+    fn draw_trace<B: Backend>(
+        f: &mut Frame<B>,
+        debug_steps: &[DebugStep],
+        current_step: usize,
+        traces: &CallTraceArena,
+        area: Rect,
+    ) {
+        let max_index_seen = debug_steps[current_step].trace_index;
+
+        let block_source_code = Block::default()
+            .title(format!("Call Trace: {:?}", max_index_seen))
+            .borders(Borders::ALL);
+
+        let text_output: Text = Text::from(traces.debugger_fmt(max_index_seen));
+
+        let paragraph =
+            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -1186,6 +1219,7 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
+                    &self.traces,
                 )
             })?;
         }

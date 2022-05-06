@@ -124,6 +124,8 @@ pub struct DebugStep {
     pub ic: usize,
     /// Cumulative gas usage
     pub total_gas_used: u64,
+    /// Associated trace index
+    pub trace_index: usize,
 }
 
 impl Default for DebugStep {
@@ -136,6 +138,7 @@ impl Default for DebugStep {
             push_bytes: None,
             ic: 0,
             total_gas_used: 0,
+            trace_index: 0,
         }
     }
 }

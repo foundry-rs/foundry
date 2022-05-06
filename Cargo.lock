@@ -1978,6 +1978,7 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+ "tui",
  "url",
  "yansi",
 ]

@@ -12,11 +12,12 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug)]
 pub struct Tracer {
-    pub trace_stack: Vec<usize>,
+    pub trace_stack: Rc<RefCell<Vec<usize>>>,
     pub traces: CallTraceArena,
 }
 
@@ -30,7 +31,7 @@ impl Tracer {
         kind: CallKind,
         caller: Address,
     ) {
-        self.trace_stack.push(self.traces.push_trace(
+        self.trace_stack.borrow_mut().push(self.traces.push_trace(
             0,
             CallTrace {
                 depth,
@@ -54,7 +55,7 @@ impl Tracer {
     ) {
         let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
-            [self.trace_stack.pop().expect("more traces were filled than started")]
+            [self.trace_stack.borrow_mut().pop().expect("more traces were filled than started")]
         .trace;
         trace.status = status;
         trace.success = success;
@@ -90,7 +91,8 @@ where
     }
 
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        let node =
+            &mut self.traces.arena[*self.trace_stack.borrow().last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
         node.logs
             .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));

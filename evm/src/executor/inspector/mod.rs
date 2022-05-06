@@ -51,11 +51,16 @@ impl InspectorStackConfig {
             cheatcodes.gas_price = Some(self.gas_price);
         }
 
+        let t = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
         if self.tracing {
-            stack.tracer = Some(Tracer::default());
+            let mut tracer = Tracer::default();
+            tracer.trace_stack = t.clone();
+            stack.tracer = Some(tracer);
         }
         if self.debugger {
-            stack.debugger = Some(Debugger::default());
+            let mut debugger = Debugger::default();
+            debugger.call_trace_tracker = t;
+            stack.debugger = Some(debugger);
         }
         stack
     }

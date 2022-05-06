@@ -174,7 +174,19 @@ fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()
     let source_code: BTreeMap<u32, String> = BTreeMap::new();
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
+
+    let mut exec_trace = CallTraceArena::default();
+
+    for (kind, mut trace) in result.traces {
+        let should_include = matches!(kind, TraceKind::Execution);
+
+        if should_include {
+            decoder.decode(&mut trace);
+            exec_trace = trace;
+        }
+    }
+
+    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code, exec_trace)?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }

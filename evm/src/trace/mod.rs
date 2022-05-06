@@ -8,6 +8,10 @@ pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+use tui::{
+    style::Style,
+    text::{Span, Spans},
+};
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ethers::{
@@ -80,6 +84,71 @@ impl CallTraceArena {
                 (&node.trace.address, None)
             })
             .collect()
+    }
+
+    pub fn debugger_fmt(&'_ self, max: usize) -> Vec<Spans<'_>> {
+        fn inner<'a>(
+            arena: &'a CallTraceArena,
+            idx: usize,
+            left: &str,
+            child_str: &str,
+            spans: &mut Vec<Spans<'a>>,
+            max: usize,
+        ) {
+            if idx >= max {
+                return
+            }
+            let node = &arena.arena[idx];
+
+            // Display trace header
+            let func_header = node.trace.debugger_fmt(left.to_string()).to_owned();
+            spans.push(func_header);
+
+            // Display logs and subcalls
+            let left_prefix = format!("{child_str}{BRANCH}");
+            let right_prefix = format!("{child_str}{PIPE}");
+            for child in &node.ordering {
+                match child {
+                    LogCallOrder::Log(index) => {
+                        spans.extend(node.logs[*index].debugger_fmt(child_str).to_owned());
+                    }
+                    LogCallOrder::Call(index) => {
+                        inner(
+                            arena,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                            spans,
+                            max,
+                        );
+                    }
+                }
+            }
+
+            // Display trace return data
+            if idx > 0 {
+                let color = style_trace_color(&node.trace);
+                let mut s = vec![];
+                s.push(Span::raw(format!("{}{}", child_str, EDGE)));
+                s.push(Span::styled(RETURN.to_string(), color));
+                if node.trace.created() {
+                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                        s.push(Span::raw(format!("{} bytes of code\n", bytes.len())));
+                    } else {
+                        unreachable!(
+                            "We should never have decoded calldata for contract creations"
+                        );
+                    }
+                } else {
+                    s.push(node.trace.output.debugger_fmt().to_owned());
+                }
+                spans.push(Spans::from(s));
+            }
+        }
+
+        let mut spans = vec![];
+        inner(self, 0, "  ", "  ", &mut spans, max);
+        spans
     }
 }
 
@@ -159,6 +228,52 @@ pub enum RawOrDecodedLog {
     /// The first member of the tuple is the event name, and the second is a vector of decoded
     /// parameters.
     Decoded(String, Vec<(String, String)>),
+}
+
+impl RawOrDecodedLog {
+    pub fn debugger_fmt(&self, child: &str) -> Vec<Spans> {
+        let left_prefix = format!("{child}{BRANCH}");
+        let right_prefix = format!("{child}{PIPE}");
+
+        match self {
+            RawOrDecodedLog::Raw(log) => {
+                let mut spans = vec![];
+                for (i, topic) in log.topics.iter().enumerate() {
+                    let mut s = vec![];
+                    s.push(Span::raw(format!(
+                        "{}{:>13}: ",
+                        if i == 0 { &left_prefix } else { &right_prefix },
+                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") }
+                    )));
+                    s.push(Span::styled(
+                        format!("0x{}\n", hex::encode(&topic)),
+                        Style::default().fg(tui::style::Color::Cyan),
+                    ));
+                    spans.push(Spans::from(s));
+                }
+                spans.push(Spans::from(Span::styled(
+                    format!("          data: 0x{}", hex::encode(&log.data)),
+                    Style::default().fg(tui::style::Color::Cyan),
+                )));
+                spans
+            }
+            RawOrDecodedLog::Decoded(name, params) => {
+                let params = params
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                vec![Spans::from(vec![
+                    Span::raw(left_prefix),
+                    Span::styled(
+                        format!("emit {}", name.clone()),
+                        Style::default().fg(tui::style::Color::Cyan),
+                    ),
+                    Span::raw(format!("({})", params)),
+                ])]
+            }
+        }
+    }
 }
 
 impl fmt::Display for RawOrDecodedLog {
@@ -249,6 +364,19 @@ impl RawOrDecodedReturnData {
             RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
         }
     }
+
+    pub fn debugger_fmt(&self) -> Span {
+        match &self {
+            RawOrDecodedReturnData::Raw(bytes) => {
+                if bytes.is_empty() {
+                    Span::raw("()".to_string())
+                } else {
+                    Span::raw(format!("0x{}", hex::encode(&bytes)))
+                }
+            }
+            RawOrDecodedReturnData::Decoded(decoded) => Span::raw(decoded.clone()),
+        }
+    }
 }
 
 impl Default for RawOrDecodedReturnData {
@@ -328,6 +456,68 @@ impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)
+    }
+
+    fn debugger_fmt(&self, left: String) -> Spans {
+        if self.created() {
+            Spans::from(vec![
+                Span::raw(format!("{}[{}]", left, self.gas_cost,)),
+                Span::styled(
+                    format!(" {}{} ", CALL, "new",),
+                    Style::default().fg(tui::style::Color::Yellow),
+                ),
+                Span::raw(format!(
+                    "{}@{:?}\n",
+                    self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                    self.address
+                )),
+            ])
+        } else {
+            let (func, inputs) = match &self.data {
+                RawOrDecodedCall::Raw(bytes) => {
+                    // We assume that the fallback function (`data.len() < 4`) counts as decoded
+                    // calldata
+                    assert!(bytes.len() >= 4);
+                    (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
+                }
+                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+            };
+
+            let action = match self.kind {
+                // do not show anything for CALLs
+                CallKind::Call => "",
+                CallKind::StaticCall => "[staticcall]",
+                CallKind::CallCode => "[callcode]",
+                CallKind::DelegateCall => "[delegatecall]",
+                _ => unreachable!(),
+            };
+
+            let color = style_trace_color(self);
+            Spans::from(vec![
+                Span::raw(format!("{}[{}]", left, self.gas_cost,)),
+                Span::styled(
+                    format!(
+                        " {}::{}",
+                        self.label.as_ref().unwrap_or(&self.address.to_string()),
+                        func
+                    ),
+                    color,
+                ),
+                Span::raw(format!(
+                    "{}({}) ",
+                    if !self.value.is_zero() {
+                        format!("{{value: {}}}", self.value)
+                    } else {
+                        "".to_string()
+                    },
+                    inputs,
+                )),
+                Span::styled(
+                    format!("{}\n", action),
+                    Style::default().fg(tui::style::Color::Yellow),
+                ),
+            ])
+        }
     }
 }
 
@@ -420,5 +610,16 @@ fn trace_color(trace: &CallTrace) -> Color {
         Color::Green
     } else {
         Color::Red
+    }
+}
+
+/// Chooses the color of the trace depending on the destination address and status of the call.
+fn style_trace_color(trace: &CallTrace) -> Style {
+    if trace.address == CHEATCODE_ADDRESS {
+        Style::default().fg(tui::style::Color::Cyan)
+    } else if trace.success {
+        Style::default().fg(tui::style::Color::Green)
+    } else {
+        Style::default().fg(tui::style::Color::Red)
     }
 }

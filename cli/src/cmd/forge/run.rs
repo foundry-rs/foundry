@@ -171,6 +171,16 @@ impl Cmd for RunArgs {
         }
 
         if self.debug {
+            let mut exec_trace = CallTraceArena::default();
+
+            for (kind, mut trace) in result.traces {
+                let should_include = matches!(kind, TraceKind::Execution);
+
+                if should_include {
+                    decoder.decode(&mut trace);
+                    exec_trace = trace;
+                }
+            }
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
@@ -199,6 +209,7 @@ impl Cmd for RunArgs {
                     .map(|(id, artifact)| (id.name, artifact))
                     .collect(),
                 source_code,
+                exec_trace,
             )?;
             match tui.start().expect("Failed to start tui") {
                 TUIExitReason::CharExit => return Ok(()),
@@ -304,7 +315,7 @@ impl RunArgs {
                 dependencies: &mut run_dependencies,
                 matched: false,
             },
-            |file, key| (format!("{file}:{key}"), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,
