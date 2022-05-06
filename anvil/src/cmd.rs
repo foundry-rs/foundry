@@ -54,6 +54,9 @@ pub struct NodeArgs {
 
     #[clap(long, help = "the hardfork to use", default_value = "latest")]
     pub hardfork: Hardfork,
+
+    #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
+    pub block_time: Option<u64>,
 }
 
 impl NodeArgs {
@@ -69,6 +72,7 @@ impl NodeArgs {
             .with_gas_limit(self.evm_opts.env.gas_limit)
             .with_gas_price(self.evm_opts.env.gas_price)
             .with_hardfork(self.hardfork)
+            .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)

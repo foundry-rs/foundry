@@ -80,7 +80,7 @@ pub struct NodeConfig {
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub accounts: HashMap<Address, Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
-    pub automine: Option<Duration>,
+    pub block_time: Option<Duration>,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -124,7 +124,7 @@ impl Default for NodeConfig {
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
-            automine: None,
+            block_time: None,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -223,8 +223,8 @@ impl NodeConfig {
 
     /// Sets the block time to automine blocks
     #[must_use]
-    pub fn automine<D: Into<Duration>>(mut self, block_time: D) -> Self {
-        self.automine = Some(block_time.into());
+    pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
+        self.block_time = block_time.map(Into::into);
         self
     }
 
