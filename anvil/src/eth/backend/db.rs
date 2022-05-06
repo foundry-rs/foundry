@@ -4,11 +4,11 @@ use crate::{revm::AccountInfo, U256};
 use ethers::prelude::{Address, Bytes};
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{Database, DatabaseCommit},
+    revm::{db::CacheDB, Database, DatabaseCommit},
 };
 
 /// This bundles all required revm traits
-pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
+pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Inserts an account
     fn insert_account(&mut self, address: Address, account: AccountInfo);
 
@@ -43,4 +43,22 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
     ///
     /// Returns `true` if the snapshot was reverted
     fn revert(&mut self, snapshot: U256) -> bool;
+}
+
+impl<T: DatabaseRef + Send + Sync> Db for CacheDB<T> {
+    fn insert_account(&mut self, address: Address, account: AccountInfo) {
+        self.insert_cache(address, account)
+    }
+
+    fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
+        self.insert_cache_storage(address, slot, val)
+    }
+
+    fn snapshot(&mut self) -> U256 {
+        U256::zero()
+    }
+
+    fn revert(&mut self, _snapshot: U256) -> bool {
+        false
+    }
 }

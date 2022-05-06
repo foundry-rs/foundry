@@ -45,7 +45,7 @@ impl StorageInfo {
     /// Returns the block with the given hash in the format of the ethereum API
     pub fn eth_block(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.block(hash)?;
-        self.backend.convert_block(block)
+        Some(self.backend.convert_block(block))
     }
 }
 

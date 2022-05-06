@@ -46,7 +46,7 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -327,6 +327,38 @@ impl Backend {
             self.set_block_number(num.into());
         }
         self.db.write().revert(id)
+    }
+
+    /// Creates the pending block
+    ///
+    /// This will execute all transaction in the order they come but will not mine the block
+    pub fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
+        let current_base_fee = self.base_fee();
+        // acquire all locks
+        let mut env = self.env.read().clone();
+        let db = self.db.read();
+
+        let mut cache_db = CacheDB::new(&*db);
+
+        let storage = self.blockchain.storage.read();
+        //
+        // increase block number for this block
+        env.block.number = env.block.number.saturating_add(U256::one());
+        env.block.basefee = current_base_fee;
+
+        let executor = TransactionExecutor {
+            db: &mut cache_db,
+            validator: self,
+            pending: pool_transactions.into_iter(),
+            block_env: env.block.clone(),
+            cfg_env: env.cfg,
+            parent_hash: storage.best_hash,
+            gas_used: U256::zero(),
+        };
+
+        // create a new pending block
+        let executed = executor.execute(self.time.current_timestamp());
+        executed.block
     }
 
     /// Mines a new block and stores it.
@@ -639,7 +671,7 @@ impl Backend {
 
     pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
-        self.convert_block(block)
+        Some(self.convert_block(block))
     }
 
     /// Returns all transactions given a block
@@ -710,18 +742,18 @@ impl Backend {
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
-        self.convert_block(self.get_block(number)?)
+        Some(self.convert_block(self.get_block(number)?))
     }
 
     pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<EthersBlock<Transaction>> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let block = self.convert_block(block)?;
+        let block = self.convert_block(block);
         Some(block.into_full_block(transactions))
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
-    pub fn convert_block(&self, block: Block) -> Option<EthersBlock<TxHash>> {
+    pub fn convert_block(&self, block: Block) -> EthersBlock<TxHash> {
         let size = U256::from(rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
@@ -775,7 +807,7 @@ impl Backend {
             base_fee_per_gas: Some(self.base_fee()),
         };
 
-        Some(block)
+        block
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {

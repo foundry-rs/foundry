@@ -21,7 +21,7 @@ pub mod utils;
 
 // Re-exports
 pub use ethers::types::Address;
-pub use hashbrown::HashMap;
+pub use hashbrown::{self, HashMap};
 pub use revm;
 
 use once_cell::sync::Lazy;
