@@ -373,8 +373,7 @@ impl Tui {
         let max_index_seen = debug_steps[current_step].max_trace_index + 1;
         let active_index = debug_steps[current_step].trace_index;
 
-        let block_source_code =
-            Block::default().title(format!("Call Trace {:?}", active_index)).borders(Borders::ALL);
+        let block_source_code = Block::default().title("Call Trace").borders(Borders::ALL);
 
         let many_spans = arena_fmt(traces, max_index_seen, active_index);
         let mut start = draw_memory.current_trace_startline;
