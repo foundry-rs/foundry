@@ -15,7 +15,7 @@ contract HardhatLogsTest {
 
 	function setUp() public {
 		testStr = "test";
-		testInt = 1;
+		testInt = -31337;
 		testUint = 1;
 		testBool = false;
 		testAddr = 0x0000000000000000000000000000000000000001;

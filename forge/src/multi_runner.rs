@@ -527,7 +527,7 @@ mod tests {
                             "testLogInt()",
                             true,
                             None,
-                            Some(vec!["0".into(), "1".into(), "1000000000000000000".into()]),
+                            Some(vec!["0".into(), "1".into(), "-31337".into()]),
                             None,
                         ),
                         (
@@ -571,7 +571,7 @@ mod tests {
                             Some(vec![
                                 "0".into(),
                                 "1".into(),
-                                "amount: 1.000000000000000000".into()]),
+                                "amount: -0.000000000000031337".into()]),
                             None,
                         ),
                         (
@@ -591,7 +591,7 @@ mod tests {
                             Some(vec![
                                 "0".into(),
                                 "1".into(),
-                                "amount: 1000000000000000000".into()]),
+                                "amount: -31337".into()]),
                             None,
                         ),
                         (
@@ -671,7 +671,7 @@ mod tests {
                             "testLogInt()",
                             true,
                             None,
-                            Some(vec!["constructor".into(), "1".into()]),
+                            Some(vec!["constructor".into(), "-31337".into()]),
                             None,
                         ),
                         (
