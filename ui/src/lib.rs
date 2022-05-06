@@ -48,6 +48,9 @@ pub enum TUIExitReason {
 mod op_effects;
 use op_effects::stack_indices_affected;
 
+mod call_trace_fmt;
+use call_trace_fmt::*;
+
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -367,16 +370,16 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         area: Rect,
     ) {
-        let end = debug_steps.len() - 1 == current_step &&
-            draw_memory.inner_call_index == draw_memory.max_call_index;
-        let max_index_seen = debug_steps[current_step].trace_index + 1;
+        let max_index_seen = debug_steps[current_step].max_trace_index + 1;
+        let active_index = debug_steps[current_step].trace_index;
 
-        let block_source_code = Block::default().title("Call Trace").borders(Borders::ALL);
+        let block_source_code =
+            Block::default().title(format!("Call Trace {:?}", active_index)).borders(Borders::ALL);
 
-        let many_spans = traces.debugger_fmt(max_index_seen, end);
+        let many_spans = arena_fmt(traces, max_index_seen, active_index);
         let mut start = draw_memory.current_trace_startline;
         let height = area.height as usize;
-        let end = start + height - 10;
+        let end = (start + height).saturating_sub(10);
         if end >= many_spans.len() {
             let empty_lines = end - many_spans.len();
             start = start.saturating_sub(empty_lines);

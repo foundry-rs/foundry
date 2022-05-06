@@ -1978,7 +1978,6 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
- "tui",
  "url",
  "yansi",
 ]
@@ -5096,6 +5095,7 @@ dependencies = [
  "ethers",
  "eyre",
  "forge",
+ "foundry-evm",
  "hex",
  "revm",
  "tui",
