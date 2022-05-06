@@ -18,7 +18,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
-    fmt,
+    fmt::{self, Write},
     str::FromStr,
 };
 
@@ -448,7 +448,7 @@ pub fn to_table(value: serde_json::Value) -> String {
         serde_json::Value::Object(map) => {
             let mut s = String::new();
             for (k, v) in map.iter() {
-                s.push_str(&format!("{: <20} {}\n", k, v));
+                writeln!(&mut s, "{: <20} {}\n", k, v).expect("could not write k/v to table");
             }
             s
         }
