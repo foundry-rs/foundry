@@ -933,7 +933,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .map(|param| self.visit_to_string(param))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let multiline = self.is_separated_multiline(&params, ", ");
+        let multiline = !self.will_it_fit(format!(
+            "{}){};",
+            params.iter().join(", "),
+            if event.anonymous { " anonymous" } else { "" }
+        ));
 
         if multiline {
             writeln!(self)?;
