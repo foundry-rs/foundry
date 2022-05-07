@@ -97,7 +97,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
-    pub fn execute(self, timestamp: u64) -> ExecutedTransactions {
+    pub fn execute(mut self, timestamp: u64) -> ExecutedTransactions {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
@@ -156,8 +156,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let partial_header = PartialHeader {
             parent_hash,
             beneficiary,
-            // TODO need a triebackend to get this efficiently
-            state_root: Default::default(),
+            state_root: self.db.maybe_state_root().unwrap_or_default(),
             receipts_root,
             logs_bloom: bloom,
             difficulty,
@@ -190,8 +189,8 @@ pub enum TransactionExecutionOutcome {
     Exhausted(Arc<PoolTransaction>),
 }
 
-impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
-    for TransactionExecutor<'a, DB, Validator>
+impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
+    for &'b mut TransactionExecutor<'a, DB, Validator>
 {
     type Item = TransactionExecutionOutcome;
 

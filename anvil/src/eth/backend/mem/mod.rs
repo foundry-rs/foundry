@@ -1,17 +1,11 @@
 //! In memory blockchain backend
 
-use crate::eth::{
-    backend::{db::Db, executor::TransactionExecutor},
-    pool::transactions::PoolTransaction,
-};
-use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
-use std::collections::HashMap;
-
 use crate::{
     eth::{
         backend::{
             cheats::CheatsManager,
-            executor::ExecutedTransactions,
+            db::Db,
+            executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -21,6 +15,7 @@ use crate::{
         error::{BlockchainError, InvalidTransactionError},
         fees::{FeeDetails, FeeManager},
         macros::node_info,
+        pool::transactions::PoolTransaction,
     },
     mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
     revm::AccountInfo,
@@ -38,6 +33,7 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
+    prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
         Transaction, TransactionReceipt,
@@ -51,13 +47,14 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
 
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod snapshot;
+pub mod state;
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
