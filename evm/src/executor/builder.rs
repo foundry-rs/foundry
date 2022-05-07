@@ -133,7 +133,8 @@ impl ExecutorBuilder {
     /// Enables cheatcodes on the executor.
     #[must_use]
     pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.inspector_config.cheatcodes = Some(Cheatcodes::new(ffi, self.env.block.clone()));
+        self.inspector_config.cheatcodes =
+            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
         self
     }
 
@@ -171,6 +172,7 @@ impl ExecutorBuilder {
     #[must_use]
     pub fn with_config(mut self, env: Env) -> Self {
         self.inspector_config.block = env.block.clone();
+        self.inspector_config.gas_price = env.tx.gas_price;
         self.env = env;
         self
     }

@@ -28,6 +28,7 @@ impl Tracer {
         data: Vec<u8>,
         value: U256,
         kind: CallKind,
+        caller: Address,
     ) {
         self.trace_stack.push(self.traces.push_trace(
             0,
@@ -37,6 +38,8 @@ impl Tracer {
                 kind,
                 data: RawOrDecodedCall::Raw(data),
                 value,
+                status: Return::Continue,
+                caller,
                 ..Default::default()
             },
         ));
@@ -44,14 +47,16 @@ impl Tracer {
 
     pub fn fill_trace(
         &mut self,
-        success: bool,
+        status: Return,
         cost: u64,
         output: Vec<u8>,
         address: Option<Address>,
     ) {
+        let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
         .trace;
+        trace.status = status;
         trace.success = success;
         trace.gas_cost = cost;
         trace.output = RawOrDecodedReturnData::Raw(output);
@@ -78,6 +83,7 @@ where
             call.input.to_vec(),
             call.transfer.value,
             call.context.scheme.into(),
+            call.context.caller,
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
@@ -100,7 +106,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         self.fill_trace(
-            matches!(status, return_ok!()),
+            status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             retdata.to_vec(),
             None,
@@ -123,6 +129,7 @@ where
             call.init_code.to_vec(),
             call.value,
             CallKind::Create,
+            call.caller,
         );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
@@ -148,7 +155,7 @@ where
             None => vec![],
         };
         self.fill_trace(
-            matches!(status, return_ok!()),
+            status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             code,
             address,

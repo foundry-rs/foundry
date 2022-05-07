@@ -21,8 +21,8 @@ impl StorageCachingConfig {
 
     /// Whether caching should be enabled for the chain id
     pub fn enable_for_chain_id(&self, chain_id: u64) -> bool {
-        // ignore dev chain
-        if chain_id == 1337 {
+        // ignore dev chains
+        if [99, 1337, 31337].contains(&chain_id) {
             return false
         }
         self.chains.is_match(chain_id)

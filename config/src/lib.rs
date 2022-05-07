@@ -1,12 +1,6 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
-
 use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
@@ -22,13 +16,20 @@ use ethers_solc::{
 };
 use eyre::{ContextCompat, WrapErr};
 use figment::{
-    providers::{Data, Env, Format, Serialized, Toml},
+    providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{
+    borrow::Cow,
+    collections::{hash_map::Entry, BTreeSet, HashMap},
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 // Macros useful for creating a figment.
 mod macros;
@@ -291,6 +292,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
+    #[track_caller]
     pub fn load() -> Self {
         Config::from_provider(Config::figment())
     }
@@ -298,6 +300,7 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment_with_root`
+    #[track_caller]
     pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
         Config::from_provider(Config::figment_with_root(root))
     }
@@ -323,7 +326,18 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
-        Self::try_from(provider).expect("failed to extract from provider")
+        match Self::try_from(provider) {
+            Ok(config) => config,
+            Err(errors) => {
+                // providers can be nested and can return duplicate errors
+                let errors: BTreeSet<_> =
+                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
+                for error in errors {
+                    eprintln!("{}", error);
+                }
+                panic!("failed to extract foundry config")
+            }
+        }
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -533,10 +547,8 @@ impl Config {
 
     /// Returns all configured [`Remappings`]
     ///
-    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
-    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
-    ///
-    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here, see
+    /// [Self::get_source_dir_remapping()]
     ///
     /// So that
     ///
@@ -552,16 +564,34 @@ impl Config {
     /// contracts/math/math.sol
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
-        let mut remappings: Vec<_> = self.remappings.iter().map(|m| m.clone().into()).collect();
+        self.remappings
+            .iter()
+            .map(|m| m.clone().into())
+            .chain(self.get_source_dir_remapping())
+            .collect()
+    }
+
+    /// Returns the remapping for the project's _src_ directory
+    ///
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
+    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
+    ///
+    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
         if let Some(src_dir_name) =
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
-            remappings.push(Remapping {
+            let mut src_remapping = Remapping {
                 name: format!("{src_dir_name}/"),
                 path: format!("{}", self.src.display()),
-            });
+            };
+            if !src_remapping.path.ends_with('/') {
+                src_remapping.path.push('/')
+            }
+            Some(src_remapping)
+        } else {
+            None
         }
-        remappings
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -691,7 +721,12 @@ impl Config {
 
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
-        Self::default()
+        Config {
+            chain_id: Some(Chain::Id(99)),
+            block_timestamp: 0,
+            block_number: 0,
+            ..Config::default()
+        }
     }
 
     /// Extracts a basic subset of the config, used for initialisations.
@@ -768,20 +803,26 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+    }
+
     /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
     pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    }
+
+    /// Returns the path to the cache dir of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>
+    pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
-        Some(
-            Config::foundry_cache_dir()?
-                .join(chain_id.into().to_string())
-                .join(format!("{block}"))
-                .join("storage.json"),
-        )
+        Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
@@ -824,6 +865,42 @@ impl Config {
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
+
+    /// Clears the foundry cache
+    pub fn clean_foundry_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain`
+    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain` and `block`
+    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_block_cache_dir");
+        }
+
+        Ok(())
+    }
 }
 
 impl From<Config> for Figment {
@@ -833,15 +910,16 @@ impl From<Config> for Figment {
 
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(BackwardsCompatProvider(ForcedSnakeCaseData(
+            figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
                 Toml::file(global_toml).nested(),
             )))
         }
 
         figment = figment
-            .merge(BackwardsCompatProvider(ForcedSnakeCaseData(
-                Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
-            )))
+            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
+                "FOUNDRY_CONFIG",
+                c.__root.0.join(Config::FILE_NAME),
+            ))))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -1018,14 +1096,14 @@ impl Default for Config {
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-            block_number: 0,
+            block_number: 1,
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
-            block_timestamp: 0,
+            block_timestamp: 1,
             block_difficulty: 0,
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),
@@ -1183,12 +1261,68 @@ impl<T: AsRef<str>> From<T> for SolcReq {
     }
 }
 
-/// A Provider that ensures all keys are snake case
-struct ForcedSnakeCaseData<F: Format>(Data<F>);
+/// A convenience provider to retrieve a toml file.
+/// This will return an error if the env var is set but the file does not exist
+struct TomlFileProvider {
+    pub env_var: &'static str,
+    pub default: PathBuf,
+}
 
-impl<F: Format> Provider for ForcedSnakeCaseData<F> {
+impl TomlFileProvider {
+    fn new(env_var: &'static str, default: impl Into<PathBuf>) -> Self {
+        Self { env_var, default: default.into() }
+    }
+
+    fn file(&self) -> PathBuf {
+        Env::var(self.env_var).map(PathBuf::from).unwrap_or_else(|| self.default.clone())
+    }
+
+    fn is_missing(&self) -> bool {
+        if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return true
+            }
+        }
+        false
+    }
+}
+
+impl Provider for TomlFileProvider {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Snake Case toml provider")
+        if self.is_missing() {
+            Metadata::named("TOML file provider")
+        } else {
+            Toml::file(self.file()).nested().metadata()
+        }
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+
+        if let Some(file) = Env::var(self.env_var) {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return Err(Error::custom(format!(
+                    "Config file `{}` set in env var `{}` does not exist",
+                    file, self.env_var
+                )))
+            }
+            Toml::file(file)
+        } else {
+            Toml::file(&self.default)
+        }
+        .nested()
+        .data()
+    }
+}
+
+/// A Provider that ensures all keys are snake case
+struct ForcedSnakeCaseData<P>(P);
+
+impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
@@ -1200,12 +1334,12 @@ impl<F: Format> Provider for ForcedSnakeCaseData<F> {
     }
 }
 
-/// A Provider that handles breaking changes
-struct BackwardsCompatProvider<P>(P);
+/// A Provider that handles breaking changes in toml files
+struct BackwardsCompatTomlProvider<P>(P);
 
-impl<P: Provider> Provider for BackwardsCompatProvider<P> {
+impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Backwards compat provider")
+        self.0.metadata()
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
@@ -1361,6 +1495,21 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        /// prioritizes remappings that are closer: shorter `path`
+        ///   - ("a", "1/2") over ("a", "1/2/3")
+        fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
+            match mappings.entry(key) {
+                Entry::Occupied(mut e) => {
+                    if e.get().components().count() > path.components().count() {
+                        e.insert(path);
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(path);
+                }
+            }
+        }
+
         let mut new_remappings = Vec::new();
 
         // check env var
@@ -1374,8 +1523,7 @@ impl<'a> RemappingsProvider<'a> {
         // check remappings.txt file
         let remappings_file = self.root.join("remappings.txt");
         if remappings_file.is_file() {
-            let content =
-                std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
+            let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
             new_remappings
@@ -1384,20 +1532,65 @@ impl<'a> RemappingsProvider<'a> {
 
         new_remappings.extend(remappings);
 
-        // look up lib paths
+        let mut lib_remappings = HashMap::new();
+        // find all remappings of from libs that use a foundry.toml
+        for r in self.lib_foundry_toml_remappings() {
+            insert_closest(&mut lib_remappings, r.name, r.path.into());
+        }
+        // use auto detection for all libs
+        for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
+        {
+            insert_closest(&mut lib_remappings, r.name, r.path.into());
+        }
+
         new_remappings.extend(
-            self.lib_paths
-                .iter()
-                .map(|lib| self.root.join(lib))
-                .flat_map(Remapping::find_many)
-                .collect::<Vec<Remapping>>(),
+            lib_remappings
+                .into_iter()
+                .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
         );
 
-        // remove duplicates
+        // remove duplicates at this point
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
         new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
 
         Ok(new_remappings)
+    }
+
+    /// Returns all remappings declared in foundry.toml files of libraries
+    fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
+            |lib: PathBuf| {
+                // load config, of the nested lib if it exists
+                let config = Config::load_with_root(&lib).sanitized();
+
+                // if the configured _src_ directory is set to something that
+                // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
+                // lib), then we need to manually add a remapping here
+                let mut src_remapping = None;
+                if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+                    .contains(&config.src.as_path())
+                {
+                    if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
+                        let mut r = Remapping {
+                            name: format!("{}/", name),
+                            path: format!("{}", lib.join(&config.src).display()),
+                        };
+                        if !r.path.ends_with('/') {
+                            r.path.push('/')
+                        }
+                        src_remapping = Some(r);
+                    }
+                }
+
+                let mut remappings =
+                    config.remappings.into_iter().map(|m| m.into()).collect::<Vec<Remapping>>();
+
+                if let Some(r) = src_remapping {
+                    remappings.push(r);
+                }
+                remappings
+            },
+        )
     }
 }
 
@@ -1703,7 +1896,7 @@ mod tests {
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
-                    Remapping::from_str("some-source/=some-source").unwrap(),
+                    Remapping::from_str("some-source/=some-source/").unwrap(),
                 ],
             );
 
@@ -1728,6 +1921,36 @@ mod tests {
 
             let config = Config::load();
             assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_toml_file_parse_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                eth_rpc_url = "https://example.com/
+            "#,
+            )?;
+
+            let _config = Config::load();
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_toml_file_non_existing_config_var_failure() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_CONFIG", "this config does not exist");
+
+            let _config = Config::load();
 
             Ok(())
         });
@@ -1776,6 +1999,92 @@ mod tests {
                     revert_strings: Some(RevertStrings::Strip),
                     ..Config::default()
                 }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_load_remappings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                remappings = ['nested/=lib/nested/']
+            "#,
+            )?;
+
+            let config = Config::load_with_root(jail.directory());
+            assert_eq!(
+                config.remappings,
+                vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_load_full_toml() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                auto_detect_solc = true
+                block_base_fee_per_gas = 0
+                block_coinbase = '0x0000000000000000000000000000000000000000'
+                block_difficulty = 0
+                block_number = 1
+                block_timestamp = 1
+                bytecode_hash = 'ipfs'
+                cache = true
+                cache_path = 'cache'
+                evm_version = 'london'
+                extra_output = []
+                extra_output_files = []
+                ffi = false
+                force = false
+                fuzz_max_global_rejects = 65536
+                fuzz_max_local_rejects = 1024
+                fuzz_runs = 256
+                gas_limit = 9223372036854775807
+                gas_price = 0
+                gas_reports = ['*']
+                ignored_error_codes = [1878]
+                initial_balance = '0xffffffffffffffffffffffff'
+                libraries = []
+                libs = ['lib']
+                memory_limit = 33554432
+                names = false
+                no_storage_caching = false
+                offline = false
+                optimizer = true
+                optimizer_runs = 200
+                out = 'out'
+                remappings = ['nested/=lib/nested/']
+                sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                sizes = false
+                sparse_mode = false
+                src = 'src'
+                test = 'test'
+                tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
+                verbosity = 0
+                via_ir = false
+                
+                [default.rpc_storage_caching]
+                chains = 'all'
+                endpoints = 'all'
+
+            "#,
+            )?;
+
+            let config = Config::load_with_root(jail.directory());
+            assert_eq!(
+                config.remappings,
+                vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
             );
 
             Ok(())

@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 foundry-utils = { path = "./../utils" }
+foundry-common = { path = "./../common" }
 foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 

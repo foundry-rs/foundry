@@ -86,6 +86,10 @@ pub fn apply<DB: Database>(
             data.env.block.basefee = inner.0;
             Ok(Bytes::new())
         }
+        HEVMCalls::Coinbase(inner) => {
+            data.env.block.coinbase = inner.0;
+            Ok(Bytes::new())
+        }
         HEVMCalls::Store(inner) => {
             // TODO: Does this increase gas usage?
             data.subroutine.load_account(inner.0, data.db);

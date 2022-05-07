@@ -5,6 +5,8 @@ use ethers::{
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use foundry_common;
+
 use super::fork::environment;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,7 +65,7 @@ impl EvmOpts {
                     gas_limit: self.gas_limit(),
                 },
                 cfg: CfgEnv {
-                    chain_id: self.env.chain_id.unwrap_or(99).into(),
+                    chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
                     spec_id: SpecId::LONDON,
                     perf_all_precompiles_have_balance: false,
                     memory_limit: self.memory_limit,
@@ -78,6 +80,7 @@ impl EvmOpts {
         }
     }
 
+    /// Returns the gas limit to use
     pub fn gas_limit(&self) -> U256 {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into()
     }

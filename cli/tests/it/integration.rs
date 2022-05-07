@@ -1,7 +1,7 @@
 use foundry_cli_test_utils::forgetest_external;
 
 forgetest_external!(solmate, "Rari-Capital/solmate");
-forgetest_external!(geb, "reflexer-labs/geb");
+forgetest_external!(geb, "reflexer-labs/geb", &["--chain-id", "99"]);
 forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 // forgetest_external!(vaults, "Rari-Capital/vaults");
 forgetest_external!(multicall, "makerdao/multicall", &["--block-number", "1"]);

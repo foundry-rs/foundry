@@ -390,7 +390,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             .filter_map(|code| {
                 let DeployResult { traces, .. } = self
                     .executor
-                    .deploy(self.sender, code.0.clone(), 0u32.into())
+                    .deploy(self.sender, code.0.clone(), 0u32.into(), None)
                     .expect("couldn't deploy library");
 
                 traces
@@ -405,7 +405,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(self.sender, code.0, 0u32.into()).expect("couldn't deploy");
+        } = self.executor.deploy(self.sender, code.0, 0u32.into(), None).expect("couldn't deploy");
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 

@@ -425,7 +425,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     }
 
     // Prepare the test builder
-    let evm_spec = crate::utils::evm_spec(&config.evm_version);
+    let evm_spec = utils::evm_spec(&config.evm_version);
     let mut runner = MultiContractRunnerBuilder::default()
         .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
