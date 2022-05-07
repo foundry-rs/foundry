@@ -98,9 +98,11 @@ impl ForkedDatabase {
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
         if let Some(block_number) = block_number {
-            self.backend
-                .set_pinned_block(block_number)
-                .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+            tokio::task::block_in_place(|| {
+                self.backend
+                    .set_pinned_block(block_number)
+                    .map_err(|err| BlockchainError::Internal(err.to_string()))
+            })?;
         }
 
         // TODO need to find a way to update generic provider via url
@@ -118,37 +120,37 @@ impl ForkedDatabase {
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        self.backend.basic(address)
+        tokio::task::block_in_place(|| self.backend.basic(address))
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        self.backend.code_by_hash(code_hash)
+        tokio::task::block_in_place(|| self.backend.code_by_hash(code_hash))
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
-        self.backend.storage(address, index)
+        tokio::task::block_in_place(|| self.backend.storage(address, index))
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.backend.block_hash(number)
+        tokio::task::block_in_place(|| self.backend.block_hash(number))
     }
 }
 
 impl DatabaseRef for ForkedDatabase {
     fn basic(&self, address: Address) -> AccountInfo {
-        self.backend.basic(address)
+        tokio::task::block_in_place(|| self.backend.basic(address))
     }
 
     fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
-        self.backend.code_by_hash(code_hash)
+        tokio::task::block_in_place(|| self.backend.code_by_hash(code_hash))
     }
 
     fn storage(&self, address: Address, index: U256) -> U256 {
-        self.backend.storage(address, index)
+        tokio::task::block_in_place(|| self.backend.storage(address, index))
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
+        tokio::task::block_in_place(|| self.backend.block_hash(number))
     }
 }
 

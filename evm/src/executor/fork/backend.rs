@@ -256,10 +256,7 @@ where
                         trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
                         return Poll::Ready(())
                     }
-                    Poll::Pending => {
-                        cx.waker().wake_by_ref();
-                        break
-                    }
+                    Poll::Pending => break,
                 }
             }
 
