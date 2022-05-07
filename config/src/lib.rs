@@ -911,7 +911,7 @@ impl Config {
                 for entry in entries.flatten() {
                     if let Ok(blocks) = Self::get_cached_blocks(&entry.path()) {
                         cache.chains.push(ChainCache {
-                            name: entry.file_name().into_string().unwrap(),
+                            name: entry.file_name().to_string_lossy().into_owned(),
                             blocks,
                         })
                     }
@@ -941,7 +941,7 @@ impl Config {
             for block in chain_dir.flatten() {
                 if let Ok(mut block_dir) = block.path().read_dir() {
                     let size = block_dir.next().unwrap()?.metadata()?.len();
-                    blocks.push((block.file_name().into_string().unwrap(), size));
+                    blocks.push((block.file_name().to_string_lossy().into_owned(), size));
                 }
             }
             return Ok(blocks)
