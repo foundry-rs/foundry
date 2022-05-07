@@ -2598,9 +2598,13 @@ mod tests {
 
         fake_block_cache(chain_dir.path(), &"1", 100);
         fake_block_cache(chain_dir.path(), &"2", 500);
+        // Pollution file that should not show up in the cached block
+        let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
+        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>());
 
         let result = Config::get_cached_blocks(chain_dir.path())?;
 
+        assert_eq!(result.len(), 2);
         let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
         let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
         assert_eq!(block1.0, "1");
