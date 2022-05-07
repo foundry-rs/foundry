@@ -29,3 +29,4 @@ walkdir = "2.3.2"
 [dev-dependencies]
 pretty_assertions = "1.0.0"
 figment = { version = "0.10", features = ["test"] }
+tempfile = "3.3.0"

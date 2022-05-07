@@ -1801,6 +1801,9 @@ mod tests {
 
     use super::*;
 
+    use std::{fs::File, io::Write};
+    use tempfile::tempdir;
+
     #[test]
     fn test_figment_is_default() {
         figment::Jail::expect_with(|_| {
@@ -2623,5 +2626,33 @@ mod tests {
 
         let _figment: Figment = From::from(&Outer::default());
         let _config: Config = From::from(&Outer::default());
+    }
+
+    #[test]
+    fn list_cached_blocks() -> eyre::Result<()> {
+        fn fake_block_cache(chain_path: &Path, block_number: &str, size_bytes: usize) {
+            let block_path = chain_path.join(block_number);
+            fs::create_dir(block_path.as_path());
+            let file_path = block_path.join("storage.json");
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>());
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_block_cache(chain_dir.path(), &"1", 100);
+        fake_block_cache(chain_dir.path(), &"2", 500);
+
+        let result = Config::get_cached_blocks(chain_dir.path())?;
+
+        let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
+        let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        assert_eq!(block1.0, "1");
+        assert_eq!(block1.1, 100);
+        assert_eq!(block2.0, "2");
+        assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
     }
 }
