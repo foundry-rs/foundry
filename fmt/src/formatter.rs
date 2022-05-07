@@ -108,9 +108,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 
-    /// Length of the line `s` with respect to already written line
+    /// Length of the line `s` with respect to already written line and indentation
     fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        if self.pending_indent { self.config.tab_width * self.level } else { 0 }
+        (self.config.tab_width * self.level)
             .saturating_add(self.current_line)
             .saturating_add(s.as_ref().len())
     }
