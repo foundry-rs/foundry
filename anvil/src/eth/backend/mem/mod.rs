@@ -683,7 +683,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block.clone()), Some(info), true, Some(base_fee));
+            let tx = transaction_build(tx, Some(block), Some(info), true, Some(base_fee));
             transactions.push(tx);
         }
         Some(transactions)
@@ -1067,7 +1067,7 @@ impl Backend {
         let index: usize = index.into();
         let tx = block.transactions.get(index)?.clone();
         let info = self.blockchain.storage.read().transactions.get(&tx.hash())?.info.clone();
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     pub async fn transaction_by_hash(
@@ -1091,10 +1091,9 @@ impl Backend {
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
         let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
-
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     /// Returns a new block event stream
@@ -1177,9 +1176,10 @@ impl TransactionValidator for Backend {
     }
 }
 
+/// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     eth_transaction: TypedTransaction,
-    block: Option<Block>,
+    block: Option<&Block>,
     info: Option<TransactionInfo>,
     is_eip1559: bool,
     base_fee: Option<U256>,
