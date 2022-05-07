@@ -4,10 +4,10 @@ use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
 use crate::cmd::Cmd;
-use caching::{Cache, ChainCache};
+use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
-use foundry_config::{caching, Chain as FoundryConfigChain, Config};
+use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {

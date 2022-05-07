@@ -1,7 +1,7 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use crate::caching::StorageCachingConfig;
+use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
@@ -38,8 +38,8 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
-pub mod caching;
-use caching::{Cache, ChainCache};
+pub mod cache;
+use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
@@ -1751,7 +1751,7 @@ mod tests {
     use figment::error::Kind::InvalidType;
     use std::{collections::BTreeMap, str::FromStr};
 
-    use crate::caching::{CachedChains, CachedEndpoints};
+    use crate::cache::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
