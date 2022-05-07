@@ -15,7 +15,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 - [x] Event definition
 - [x] Error definition
 - [x] Function / Modifier / Constructor definitions
-- [ ] Variable definition
+- [x] Variable definition
 - [x] Type definition
 - [ ] Using (waiting for https://github.com/hyperledger-labs/solang/issues/801, https://github.com/hyperledger-labs/solang/issues/802, https://github.com/hyperledger-labs/solang/issues/803, https://github.com/hyperledger-labs/solang/issues/804)
 
