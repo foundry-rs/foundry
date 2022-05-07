@@ -2,6 +2,7 @@
 use anvil::cmd::NodeArgs;
 use clap::Parser;
 
+/// A fast local Ethereum development node.
 #[derive(Debug, Parser)]
 #[clap(name = "anvil", version = anvil::VERSION_MESSAGE)]
 pub struct App {

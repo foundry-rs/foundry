@@ -19,40 +19,36 @@ pub struct NodeArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
-    #[clap(long, short, help = "Port number to listen on", default_value = "8545")]
+    #[clap(long, short, help = "Port number to listen on.", default_value = "8545")]
     pub port: u16,
 
     #[clap(
         long,
         short,
-        help = "Number of genesis dev accounts to generate and configure",
+        help = "Number of dev accounts to generate and configure.",
         default_value = "10"
     )]
     pub accounts: u64,
 
-    #[clap(
-        long,
-        help = "the balance of every genesis account in Ether, defaults to 100ETH",
-        default_value = "10000"
-    )]
+    #[clap(long, help = "The balance of every dev account in Ether.", default_value = "10000")]
     pub balance: u64,
 
-    #[clap(long, short, help = "bip39 mnemonic phrase used for generating accounts")]
+    #[clap(long, short, help = "BIP39 mnemonic phrase used for generating accounts")]
     pub mnemonic: Option<String>,
 
     #[clap(
         long,
-        help = "Sets the derivation path of the child key to be derived [default: m/44'/60'/0'/0/]"
+        help = "Sets the derivation path of the child key to be derived. [default: m/44'/60'/0'/0/]"
     )]
     pub derivation_path: Option<String>,
 
     #[clap(flatten, next_help_heading = "SERVER OPTIONS")]
     pub server_config: ServerConfig,
 
-    #[clap(long, help = "don't print anything on startup")]
+    #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(long, help = "the hardfork to use", default_value = "latest")]
+    #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
     pub hardfork: Hardfork,
 
     #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
