@@ -1945,6 +1945,7 @@ dependencies = [
  "eyre",
  "figment",
  "globset",
+ "number_prefix",
  "pretty_assertions",
  "regex",
  "semver",

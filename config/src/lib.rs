@@ -21,11 +21,13 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use number_prefix::NumberPrefix;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
     collections::{hash_map::Entry, BTreeSet, HashMap},
+    fmt::Formatter,
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -901,6 +903,95 @@ impl Config {
 
         Ok(())
     }
+
+    /// List the data in the foundry cache
+    pub fn list_foundry_cache() -> eyre::Result<Cache> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let mut cache = Cache { chains: vec![] };
+            if let Ok(entries) = cache_dir.as_path().read_dir() {
+                for entry in entries.flatten() {
+                    if let Ok(blocks) = Self::get_cached_blocks(&entry.path()) {
+                        cache.chains.push(ChainCache {
+                            name: entry.file_name().into_string().unwrap(),
+                            blocks,
+                        })
+                    }
+                }
+                Ok(cache)
+            } else {
+                eyre::bail!("failed to access foundry_cache_dir");
+            }
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+    }
+
+    /// List the cached data for `chain`
+    pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let blocks = Self::get_cached_blocks(&cache_dir)?;
+            Ok(ChainCache { name: chain.to_string(), blocks })
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+    }
+
+    fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
+        if let Ok(chain_dir) = chain_path.read_dir() {
+            let mut blocks = vec![];
+            for block in chain_dir.flatten() {
+                if let Ok(mut block_dir) = block.path().read_dir() {
+                    let size = block_dir.next().unwrap()?.metadata()?.len();
+                    blocks.push((block.file_name().into_string().unwrap(), size));
+                }
+            }
+            return Ok(blocks)
+        }
+        eyre::bail!("Could not read the path, it is probably not a directory")
+    }
+}
+
+/// Content of the foundry cache folder
+#[derive(Debug)]
+pub struct Cache {
+    /// The list of chains in the cache
+    pub chains: Vec<ChainCache>,
+}
+
+impl std::fmt::Display for Cache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for chain in &self.chains {
+            match NumberPrefix::decimal(chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32) {
+                NumberPrefix::Standalone(size) => {
+                    writeln!(f, "-️ {} ({:.1} B)", chain.name, size)?;
+                }
+                NumberPrefix::Prefixed(prefix, size) => {
+                    writeln!(f, "-️ {} ({:.1} {}B)", chain.name, size, prefix)?;
+                }
+            }
+            for block in &chain.blocks {
+                match NumberPrefix::decimal(block.1 as f32) {
+                    NumberPrefix::Standalone(size) => {
+                        writeln!(f, "\t-️ Block {} ({:.1} B)", block.0, size)?;
+                    }
+                    NumberPrefix::Prefixed(prefix, size) => {
+                        writeln!(f, "\t-️ Block {} ({:.1} {}B)", block.0, size, prefix)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A chain folder in the foundry cache
+#[derive(Debug)]
+pub struct ChainCache {
+    /// The name of the chain
+    pub name: String,
+
+    /// A tuple containing block number and the block directory size in bytes
+    pub blocks: Vec<(String, u64)>,
 }
 
 impl From<Config> for Figment {
