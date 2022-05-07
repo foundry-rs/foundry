@@ -1066,7 +1066,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_items_separated(&attributes, " ", multiline)?;
         }
 
-        if self.will_it_fit(format!(" {}", var.name.name)) {
+        if self.will_it_fit(format!(
+            " {}{}",
+            var.name.name,
+            if var.initializer.is_some() { " =" } else { "" }
+        )) {
             write!(self, " {}", var.name.name)?;
         } else {
             writeln!(self)?;
