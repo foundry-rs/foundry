@@ -1013,6 +1013,82 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+        if !var.doc.is_empty() {
+            var.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        var.ty.visit(self)?;
+
+        let attributes = var
+            .attrs
+            .iter_mut()
+            .sorted_by_key(|attribute| match attribute {
+                VariableAttribute::Visibility(_) => 0,
+                VariableAttribute::Constant(_) => 1,
+                VariableAttribute::Immutable(_) => 2,
+                VariableAttribute::Override(_) => 3,
+            })
+            .map(|attribute| match attribute {
+                VariableAttribute::Visibility(visibility) => visibility.to_string(),
+                VariableAttribute::Constant(_) => "constant".to_string(),
+                VariableAttribute::Immutable(_) => "immutable".to_string(),
+                VariableAttribute::Override(_) => "override".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut multiline = self.is_separated_multiline(&attributes, " ");
+
+        if !var.attrs.is_empty() {
+            if multiline {
+                writeln!(self)?;
+                self.indent(1);
+            } else {
+                write!(self, " ")?;
+            }
+
+            self.write_items_separated(&attributes, " ", multiline)?;
+        }
+
+        if self.will_it_fit(format!(" {}", var.name.name)) {
+            write!(self, " {}", var.name.name)?;
+        } else {
+            writeln!(self)?;
+            if !multiline {
+                multiline = true;
+                self.indent(1);
+            }
+            write!(self, "{}", var.name.name)?;
+        }
+
+        if let Some(init) = &mut var.initializer {
+            write!(self, " =")?;
+
+            let init = self.visit_to_string(init)?;
+            if self.will_it_fit(format!(" {init}")) {
+                write!(self, " {init}")?;
+            } else {
+                writeln!(self)?;
+                if !multiline {
+                    self.indent(1);
+                }
+                write!(self, "{init}")?;
+                if !multiline {
+                    self.dedent(1);
+                }
+            }
+        }
+
+        write!(self, ";")?;
+
+        if multiline {
+            self.dedent(1);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1167,5 +1243,10 @@ mod tests {
     #[test]
     fn type_definition() {
         test_directory("TypeDefinition");
+    }
+
+    #[test]
+    fn variable_definition() {
+        test_directory("VariableDefinition");
     }
 }
