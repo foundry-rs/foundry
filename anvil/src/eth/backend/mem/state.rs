@@ -10,8 +10,10 @@ use foundry_evm::{
     HashMap as Map,
 };
 
+/// Returns the log hash for all `logs`
+///
+/// The log hash is `keccak(rlp(logs[]))`, <https://github.com/ethereum/go-ethereum/blob/356bbe343a30789e77bb38f25983c8f2f2bfbb47/cmd/evm/internal/t8ntool/execution.go#L255>
 pub fn log_rlp_hash(logs: Vec<Log>) -> H256 {
-    //https://github.com/ethereum/go-ethereum/blob/356bbe343a30789e77bb38f25983c8f2f2bfbb47/cmd/evm/internal/t8ntool/execution.go#L255
     let mut stream = RlpStream::new();
     stream.begin_unbounded_list();
     for log in logs {
