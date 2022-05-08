@@ -392,8 +392,17 @@ impl Visitor {
                 let true_body: Node = node
                     .attribute("trueBody")
                     .ok_or_else(|| eyre::eyre!("if statement had no true body"))?;
+
+                // We need to store the current branch ID here since visiting the body of either of
+                // the if blocks may increase `self.branch_id` in the case of nested if statements.
+                let branch_id = self.branch_id;
+
+                // We increase the branch ID here such that nested branches do not use the same
+                // branch ID as we do
+                self.branch_id += 1;
+
                 self.items.push(CoverageItem::Branch {
-                    id: self.branch_id,
+                    id: branch_id,
                     kind: BranchKind::True,
                     offset: true_body.src.start,
                     hits: 0,
@@ -403,7 +412,7 @@ impl Visitor {
                 let false_body: Option<Node> = node.attribute("falseBody");
                 if let Some(false_body) = false_body {
                     self.items.push(CoverageItem::Branch {
-                        id: self.branch_id,
+                        id: branch_id,
                         kind: BranchKind::False,
                         offset: false_body.src.start,
                         hits: 0,
@@ -411,7 +420,6 @@ impl Visitor {
                     self.visit_block_or_statement(false_body)?;
                 }
 
-                self.branch_id += 1;
                 Ok(())
             }
             // Try-catch statement
