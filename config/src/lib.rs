@@ -747,6 +747,54 @@ impl Config {
         }
     }
 
+    /// Updates the `foundry.toml` file for the given `root` based on the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`.
+    pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&Config, &mut toml_edit::Document) -> bool,
+    {
+        let config = Self::load_with_root(root).sanitized();
+        config.update(|doc| f(&config, doc))
+    }
+
+    /// Updates the `foundry.toml` file this `Config` ias based on with the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`
+    pub fn update<F>(&self, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&mut toml_edit::Document) -> bool,
+    {
+        let file_path = self.get_config_path();
+        if !file_path.exists() {
+            return Ok(())
+        }
+        let cargo_toml_content = fs::read_to_string(&file_path)?;
+        let mut doc = cargo_toml_content.parse::<toml_edit::Document>()?;
+        if f(&mut doc) {
+            fs::write(file_path, doc.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Sets the `libs` entry inside a `foundry.toml` file but only if it exists
+    ///
+    /// # Errors
+    ///
+    /// An error if the `foundry.toml` could not be parsed.
+    pub fn update_libs(&self) -> eyre::Result<()> {
+        self.update(|doc| {
+            let profile = self.profile.as_str().as_str();
+            let libs: toml_edit::Value =
+                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let libs = toml_edit::value(libs);
+            doc[profile]["libs"] = libs;
+            true
+        })
+    }
+
     /// Serialize the config type as a String of TOML.
     ///
     /// This serializes to a table with the name of the profile
@@ -779,6 +827,11 @@ impl Config {
 {}"#,
             self.profile, s
         ))
+    }
+
+    /// Returns the path to the `foundry.toml`  of this `Config`
+    pub fn get_config_path(&self) -> PathBuf {
+        self.__root.0.join(Config::FILE_NAME)
     }
 
     /// Returns the selected profile
@@ -1900,6 +1953,27 @@ mod tests {
                 ],
             );
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_can_update_libs() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ["node_modules"]
+            "#,
+            )?;
+
+            let mut config = Config::load();
+            config.libs.push("libs".into());
+            config.update_libs().unwrap();
+
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules"), PathBuf::from("libs"),]);
             Ok(())
         });
     }
