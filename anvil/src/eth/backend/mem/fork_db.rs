@@ -133,6 +133,11 @@ impl ForkedDatabase {
     pub fn flush_cache(&self) {
         self.db.cache().flush()
     }
+
+    /// Returns the database that holds the remote state
+    pub fn inner(&self) -> &BlockchainDb {
+        &self.db
+    }
 }
 
 impl Database for ForkedDatabase {
