@@ -908,13 +908,11 @@ impl Config {
         if let Some(cache_dir) = Config::foundry_cache_dir() {
             let mut cache = Cache { chains: vec![] };
             if let Ok(entries) = cache_dir.as_path().read_dir() {
-                for entry in entries.flatten() {
-                    if let Ok(blocks) = Self::get_cached_blocks(&entry.path()) {
-                        cache.chains.push(ChainCache {
-                            name: entry.file_name().to_string_lossy().into_owned(),
-                            blocks,
-                        })
-                    }
+                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
+                    cache.chains.push(ChainCache {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        blocks: Self::get_cached_blocks(&entry.path())?,
+                    })
                 }
                 Ok(cache)
             } else {
@@ -935,18 +933,17 @@ impl Config {
         }
     }
 
+    //The path provided to this function should point to a cached chain folder
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
-        if let Ok(chain_dir) = chain_path.read_dir() {
-            let mut blocks = vec![];
-            for block in chain_dir.flatten() {
-                if let Ok(mut block_dir) = block.path().read_dir() {
-                    let size = block_dir.next().unwrap()?.metadata()?.len();
-                    blocks.push((block.file_name().to_string_lossy().into_owned(), size));
-                }
-            }
-            return Ok(blocks)
+        let mut blocks = vec![];
+        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
+            let filepath = block.path().join("storage.json");
+            blocks.push((
+                block.file_name().to_string_lossy().into_owned(),
+                fs::metadata(filepath)?.len(),
+            ));
         }
-        eyre::bail!("Could not read the path, it is probably not a directory")
+        Ok(blocks)
     }
 }
 
