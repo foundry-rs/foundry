@@ -111,7 +111,7 @@ impl NodeArgs {
                 // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
                 if let Some(ref fork) = fork {
-                    fork.database.flush_cache();
+                    fork.database.read().flush_cache();
                 }
                 std::process::exit(0);
             }

@@ -459,7 +459,7 @@ Chain ID:       {}
                     provider,
                     chain_id,
                 })),
-                database: db.clone(),
+                database: Arc::new(RwLock::new(db.clone())),
             };
 
             let db = Arc::new(RwLock::new(db));

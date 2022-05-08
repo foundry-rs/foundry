@@ -6,7 +6,10 @@ use crate::{
 };
 use ethers::prelude::H256;
 use forge::HashMap as Map;
-use foundry_evm::executor::fork::{BlockchainDb, SharedBackend};
+use foundry_evm::{
+    executor::fork::{BlockchainDb, SharedBackend},
+    revm::db::CacheDB,
+};
 use parking_lot::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
 use tracing::{trace, warn};
@@ -14,17 +17,17 @@ use tracing::{trace, warn};
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.db.db().do_insert_account(address, account)
+        self.cache_db.insert_account(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
-        let mut db = self.db.db().storage.write();
-        db.entry(address).or_default().insert(slot, val);
+        self.cache_db.set_storage_at(address, slot, val)
     }
 
     fn snapshot(&mut self) -> U256 {
         let db = self.db.db();
         let snapshot = DbSnapshot {
+            local: self.cache_db.clone(),
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
@@ -38,7 +41,7 @@ impl Db for ForkedDatabase {
     fn revert(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots.lock().remove(id) };
         if let Some(snapshot) = snapshot {
-            let DbSnapshot { accounts, storage, block_hashes } = snapshot;
+            let DbSnapshot { accounts, storage, block_hashes, local } = snapshot;
             let db = self.db.db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -55,6 +58,8 @@ impl Db for ForkedDatabase {
                 block_hashes_lock.clear();
                 block_hashes_lock.extend(block_hashes);
             }
+
+            self.cache_db = local;
 
             trace!(target: "backend::forkdb", "Reverted snapshot {}", id);
             true
@@ -77,9 +82,15 @@ pub struct ForkedDatabase {
     ///
     /// This is responsible for getting data
     backend: SharedBackend,
+    /// Cached Database layer, ensures that changes are not written to the database that
+    /// exclusively stores the state of the remote client.
+    ///
+    /// This separates Read/Write operations
+    ///   - reads from the `SharedBackend as DatabaseRef` writes to the internal cache storage
+    cache_db: CacheDB<SharedBackend>,
     /// Contains all the data already fetched
     ///
-    /// This is used for change commits
+    /// This exclusively stores the _unchanged_ remote client state
     db: BlockchainDb,
     /// holds the snapshot state of a blockchain
     snapshots: Arc<Mutex<Snapshots<DbSnapshot>>>,
@@ -88,12 +99,17 @@ pub struct ForkedDatabase {
 impl ForkedDatabase {
     /// Creates a new instance of this DB
     pub fn new(backend: SharedBackend, db: BlockchainDb) -> Self {
-        Self { backend, db, snapshots: Arc::new(Mutex::new(Default::default())) }
+        Self {
+            cache_db: CacheDB::new(backend.clone()),
+            backend,
+            db,
+            snapshots: Arc::new(Mutex::new(Default::default())),
+        }
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub fn reset(
-        &self,
+        &mut self,
         _url: Option<String>,
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
@@ -105,7 +121,10 @@ impl ForkedDatabase {
 
         // TODO need to find a way to update generic provider via url
 
+        // wipe the storage retrieved from remote
         self.db.db().clear();
+        // create a fresh `CacheDB`, effectively wiping modified state
+        self.cache_db = CacheDB::new(self.backend.clone());
         trace!(target: "backend::forkdb", "Cleared database");
         Ok(())
     }
@@ -114,53 +133,59 @@ impl ForkedDatabase {
     pub fn flush_cache(&self) {
         self.db.cache().flush()
     }
+
+    /// Returns the database that holds the remote state
+    pub fn inner(&self) -> &BlockchainDb {
+        &self.db
+    }
 }
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        self.backend.basic(address)
+        self.cache_db.basic(address)
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        self.backend.code_by_hash(code_hash)
+        self.cache_db.code_by_hash(code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
-        self.backend.storage(address, index)
+        Database::storage(&mut self.cache_db, address, index)
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.backend.block_hash(number)
+        self.cache_db.block_hash(number)
     }
 }
 
 impl DatabaseRef for ForkedDatabase {
     fn basic(&self, address: Address) -> AccountInfo {
-        self.backend.basic(address)
+        self.cache_db.basic(address)
     }
 
     fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
-        self.backend.code_by_hash(code_hash)
+        self.cache_db.code_by_hash(code_hash)
     }
 
     fn storage(&self, address: Address, index: U256) -> U256 {
-        self.backend.storage(address, index)
+        DatabaseRef::storage(&self.cache_db, address, index)
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
+        self.cache_db.block_hash(number)
     }
 }
 
 impl DatabaseCommit for ForkedDatabase {
     fn commit(&mut self, changes: Map<Address, Account>) {
-        self.db.db().do_commit(changes)
+        self.cache_db.commit(changes)
     }
 }
 
 /// Represents a snapshot of the database
 #[derive(Debug)]
 struct DbSnapshot {
+    local: CacheDB<SharedBackend>,
     accounts: BTreeMap<Address, AccountInfo>,
     storage: BTreeMap<Address, BTreeMap<U256, U256>>,
     block_hashes: BTreeMap<u64, H256>,
