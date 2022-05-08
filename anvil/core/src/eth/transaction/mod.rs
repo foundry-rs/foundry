@@ -476,7 +476,7 @@ impl TypedTransaction {
     /// Returns the Signature of the transaction
     pub fn signature(&self) -> Signature {
         match self {
-            TypedTransaction::Legacy(tx) => tx.signature.clone(),
+            TypedTransaction::Legacy(tx) => tx.signature,
             TypedTransaction::EIP2930(tx) => {
                 let v = tx.odd_y_parity as u8;
                 let r = U256::from_big_endian(&tx.r[..]);
