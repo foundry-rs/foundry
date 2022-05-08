@@ -37,7 +37,7 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: ForkedDatabase,
+    pub database: Arc<RwLock<ForkedDatabase>>,
 }
 
 // === impl ClientFork ===
@@ -49,7 +49,7 @@ impl ClientFork {
         url: Option<String>,
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
-        self.database.reset(url.clone(), block_number)?;
+        self.database.write().reset(url.clone(), block_number)?;
         self.config.write().update(url, block_number)?;
         self.clear_cached_storage();
         Ok(())
