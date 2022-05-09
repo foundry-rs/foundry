@@ -936,7 +936,11 @@ impl Config {
     //The path provided to this function should point to a cached chain folder
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
-        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
+        for block in chain_path
+            .read_dir()?
+            .flatten()
+            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
+        {
             let filepath = block.path().join("storage.json");
             blocks.push((
                 block.file_name().to_string_lossy().into_owned(),
