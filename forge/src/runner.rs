@@ -428,7 +428,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        if has_invariants {
+        if has_invariants && fuzzer.is_some() {
             let functions = self
                 .contract
                 .functions()

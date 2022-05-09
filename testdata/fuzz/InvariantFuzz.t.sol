@@ -30,9 +30,7 @@ contract InvariantFuzzTest is DSTest {
       unbreakable = new UnbreakableMockToken();
       breakable = new BreakableMockToken();
   }
-  function testTrue() public {
-    assert(true);
-  }
+
   function invariantTestPass() public {
     emit log("invariantTestPassLog");
     require(unbreakable.totalSupply() < 10, "should not revert");
