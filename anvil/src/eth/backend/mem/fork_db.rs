@@ -76,6 +76,13 @@ impl Db for ForkedDatabase {
 /// endpoint. The inner in-memory database holds this storage and will be used for write operations.
 /// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
+// **Note**: the implementation makes use of [tokio::task::block_in_place()] when interacting with
+// the underlying [Db] which runs on a separate spawned tokio task and fetches the data from the
+// remote client asynchronously
+// [tokio::task::block_in_place()]
+// > Runs the provided blocking function on the current thread without blocking the executor.
+// This prevents an issue we ran into were the
+// (BackendHandler)[forge_evm::executor::fork::backend::BackendHandler] isn't woken up again.
 #[derive(Debug, Clone)]
 pub struct ForkedDatabase {
     /// responsible for fetching missing data
@@ -144,11 +151,11 @@ impl ForkedDatabase {
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        tokio::task::block_in_place(|| self.backend.basic(address))
+        tokio::task::block_in_place(|| self.cache_db.basic(address))
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        tokio::task::block_in_place(|| self.backend.code_by_hash(code_hash))
+        tokio::task::block_in_place(|| self.cache_db.code_by_hash(code_hash))
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
