@@ -519,16 +519,26 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendTransaction`
     pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
-        let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
-        })?;
+
+        let from =
+            request.from.or_else(|| self.get_impersonated()).map(Ok).unwrap_or_else(|| {
+                self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+            })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        let transaction = self.sign_request(&from, request)?;
-        let pending_transaction = PendingTransaction::new(transaction)?;
+        // if the sender is currently impersonated we need to "bypass" signing
+        let pending_transaction = if self.is_impersonated(from) {
+            let bypass_signature = self.backend.cheats().bypass_signature();
+            let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+            trace!(target : "node", "eth_sendTransaction: impersonating {:?}", from);
+            PendingTransaction::with_sender(transaction, from)
+        } else {
+            let transaction = self.sign_request(&from, request)?;
+            PendingTransaction::new(transaction)?
+        };
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction)?;
@@ -1515,6 +1525,11 @@ impl EthApi {
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
+    }
+
+    /// Returns true if the `addr` is currently impersonated
+    pub fn is_impersonated(&self, addr: Address) -> bool {
+        self.backend.cheats().is_impersonated(addr)
     }
 
     /// Returns the sender to associate with this request

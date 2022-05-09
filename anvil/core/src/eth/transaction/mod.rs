@@ -472,6 +472,25 @@ impl TypedTransaction {
     pub fn to(&self) -> Option<&Address> {
         self.kind().as_call()
     }
+
+    /// Returns the Signature of the transaction
+    pub fn signature(&self) -> Signature {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.signature,
+            TypedTransaction::EIP2930(tx) => {
+                let v = tx.odd_y_parity as u8;
+                let r = U256::from_big_endian(&tx.r[..]);
+                let s = U256::from_big_endian(&tx.s[..]);
+                Signature { r, s, v: v.into() }
+            }
+            TypedTransaction::EIP1559(tx) => {
+                let v = tx.odd_y_parity as u8;
+                let r = U256::from_big_endian(&tx.r[..]);
+                let s = U256::from_big_endian(&tx.s[..]);
+                Signature { r, s, v: v.into() }
+            }
+        }
+    }
 }
 
 impl Encodable for TypedTransaction {

@@ -3,6 +3,7 @@
 use crate::{
     eth::{
         backend::{
+            cheats,
             cheats::CheatsManager,
             db::Db,
             executor::{ExecutedTransactions, TransactionExecutor},
@@ -1210,7 +1211,13 @@ pub fn transaction_build(
 
     transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
 
-    transaction.from = eth_transaction.recover().unwrap();
+    // need to check if the signature of the transaction is the `BYPASS_SIGNATURE`, if so then we
+    // can't recover the sender, instead we use the sender from the executed transaction
+    if cheats::is_bypassed(&eth_transaction) {
+        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default()
+    } else {
+        transaction.from = eth_transaction.recover().expect("can recover signed tx");
+    }
 
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);
 
