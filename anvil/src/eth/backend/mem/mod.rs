@@ -1,17 +1,11 @@
 //! In memory blockchain backend
 
-use crate::eth::{
-    backend::{db::Db, executor::TransactionExecutor},
-    pool::transactions::PoolTransaction,
-};
-use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
-use std::collections::HashMap;
-
 use crate::{
     eth::{
         backend::{
             cheats::CheatsManager,
-            executor::ExecutedTransactions,
+            db::Db,
+            executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -21,6 +15,7 @@ use crate::{
         error::{BlockchainError, InvalidTransactionError},
         fees::{FeeDetails, FeeManager},
         macros::node_info,
+        pool::transactions::PoolTransaction,
     },
     mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
     revm::AccountInfo,
@@ -38,6 +33,7 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
+    prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
         Transaction, TransactionReceipt,
@@ -51,13 +47,14 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
 
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod snapshot;
+pub mod state;
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
@@ -683,7 +680,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block.clone()), Some(info), true, Some(base_fee));
+            let tx = transaction_build(tx, Some(block), Some(info), true, Some(base_fee));
             transactions.push(tx);
         }
         Some(transactions)
@@ -1067,7 +1064,7 @@ impl Backend {
         let index: usize = index.into();
         let tx = block.transactions.get(index)?.clone();
         let info = self.blockchain.storage.read().transactions.get(&tx.hash())?.info.clone();
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     pub async fn transaction_by_hash(
@@ -1091,10 +1088,9 @@ impl Backend {
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
         let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
-
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     /// Returns a new block event stream
@@ -1177,9 +1173,10 @@ impl TransactionValidator for Backend {
     }
 }
 
+/// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     eth_transaction: TypedTransaction,
-    block: Option<Block>,
+    block: Option<&Block>,
     info: Option<TransactionInfo>,
     is_eip1559: bool,
     base_fee: Option<U256>,

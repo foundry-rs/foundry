@@ -1,7 +1,10 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::{revm::AccountInfo, U256};
-use ethers::prelude::{Address, Bytes};
+use ethers::{
+    prelude::{Address, Bytes},
+    types::H256,
+};
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, DatabaseCommit},
@@ -43,6 +46,11 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     ///
     /// Returns `true` if the snapshot was reverted
     fn revert(&mut self, snapshot: U256) -> bool;
+
+    /// Returns the state root if possible to compute
+    fn maybe_state_root(&self) -> Option<H256> {
+        None
+    }
 }
 
 impl<T: DatabaseRef + Send + Sync> Db for CacheDB<T> {
