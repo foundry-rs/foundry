@@ -89,7 +89,7 @@ cargo +nightly clippy --all --all-features -- -D warnings
 
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
 
-If you would like to test the binaries built from your change, see [foundryup](https://github.com/gakonst/foundry/tree/master/foundryup).
+If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/master/foundryup).
 
 #### Adding tests
 
@@ -177,7 +177,7 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 
 [rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
 [dev-tg]: https://t.me/foundry_rs
-[foundry-book]: https://github.com/onbjerg/foundry-book
+[foundry-book]: https://github.com/foundry-rs/foundry-book
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
 [hiding-a-comment]: https://help.github.com/articles/managing-disruptive-comments/#hiding-a-comment

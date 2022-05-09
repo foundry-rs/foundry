@@ -1,10 +1,14 @@
 pub mod cmd;
+pub mod compile;
 mod opts;
+mod suggestions;
+mod term;
 mod utils;
 
-use crate::cmd::{watch, Cmd};
-
-use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
+use crate::cmd::{
+    forge::{cache::CacheSubcommands, watch},
+    Cmd,
+};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
@@ -14,12 +18,12 @@ use clap_complete::generate;
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
-    solc::report::init(BasicStdoutReporter::default());
+    utils::enable_paint();
 
     let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
-            if cmd.build_args().is_watch() {
+            if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))?;
             } else {
                 let outcome = cmd.run()?;
@@ -31,7 +35,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::watch::watch_build(cmd))?;
+                utils::block_on(crate::cmd::forge::watch::watch_build(cmd))?;
             } else {
                 cmd.run()?;
             }
@@ -40,11 +44,16 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {
-            utils::block_on(cmd::verify::run_verify(&args))?;
+            utils::block_on(args.run())?;
         }
         Subcommands::VerifyCheck(args) => {
-            utils::block_on(cmd::verify::run_verify_check(&args))?;
+            utils::block_on(args.run())?;
         }
+        Subcommands::Cache(cmd) => match cmd.sub {
+            CacheSubcommands::Clean(cmd) => {
+                cmd.run()?;
+            }
+        },
         Subcommands::Create(cmd) => {
             cmd.run()?;
         }
@@ -74,16 +83,18 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Completions { shell } => {
-            generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
+            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let paths = ProjectPathsConfig::builder().root(&root).build()?;
-            let project = Project::builder().paths(paths).build()?;
-            project.cleanup()?;
+            let config = utils::load_config_with_root(root);
+            config.project()?.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         // Subcommands::Fmt(cmd) => {
         //     cmd.run()?;
@@ -94,6 +105,12 @@ fn main() -> eyre::Result<()> {
         Subcommands::Flatten(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Inspect(cmd) => {
+            cmd.run()?;
+        }
+        Subcommands::Tree(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())
@@ -101,12 +118,13 @@ fn main() -> eyre::Result<()> {
 
 fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
     let libs = std::path::Path::new("lib");
-    let git_mod_libs = std::path::Path::new(".git/modules/lib");
+    let git_mod_root = std::path::Path::new(".git/modules");
 
     dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let path = libs.join(&dep.name);
-        let git_mod_path = git_mod_libs.join(&dep.name);
-        println!("Removing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
+        let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
+        let path = libs.join(&target_dir);
+        let git_mod_path = git_mod_root.join(&path);
+        println!("Removing {} in {:?}, (url: {:?}, tag: {:?})", dep.name, path, dep.url, dep.tag);
 
         // remove submodule entry from .git/config
         Command::new("git")

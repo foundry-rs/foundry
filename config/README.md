@@ -21,7 +21,7 @@ takes place and the absolute path is used directly.
 In `foundry.toml` you can define multiple profiles, therefore the file is assumed to be _nested_, so each top-level key
 declares a profile and its values configure the profile.
 
-The following is an example of what such a file might look like:
+The following is an example of what such a file might look like. This can also be obtained with `forge config`
 
 ```toml
 ## defaults for _all_ profiles
@@ -29,7 +29,7 @@ The following is an example of what such a file might look like:
 src = "src"
 out = "out"
 libs = ["lib"]
-solc-version = "0.8.10"
+solc = "0.8.10" # to use a specific local solc install set the path as `solc = "<path to solc>/solc"`
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
@@ -66,8 +66,11 @@ test = 'test'
 out = 'out'
 libs = ['lib']
 remappings = []
+# list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
+# the <path to lib> supports remappings 
 libraries = []
 cache = true
+cache_path = 'cache'
 force = false
 evm_version = 'london'
 gas_reports = ['*']
@@ -77,6 +80,7 @@ auto_detect_solc = true
 offline = false
 optimizer = true
 optimizer_runs = 200
+via_ir = false
 verbosity = 0
 ignored_error_codes = []
 fuzz_runs = 256
@@ -85,12 +89,33 @@ sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
+# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
+# How to treat revert (and require) reason strings.
+# Possible values are: "default", "strip", "debug" and "verboseDebug".
+#  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
+# "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
+# "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
+# "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
+revert_strings = "default"
+# caches storage retrieved locally for certain chains and endpoints
+# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
+# to disable storage caching entirely set `no_storage_caching = true`
+rpc_storage_caching = { chains = "all", endpoints = "all" }
+# this overrides `rpc_storage_caching` entirely
+no_storage_caching = false
+# use ipfs method to generate the metadata hash, solc's default.
+# To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
+bytecode_hash = "ipfs"
+# If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
+# this can reduce compile time for `forge test` a bit but is considered experimental at this point.
+sparse_mode = false
 ```
 
 ##### Additional Optimizer settings
@@ -99,7 +124,8 @@ Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
-The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond to: `[default.optimizer_details]`
+The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond
+to: `[default.optimizer_details]`
 belongs to the `[default]` profile
 
 ```toml

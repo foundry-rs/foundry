@@ -40,6 +40,24 @@ To install a **specific branch in a fork** (in this case the `patch-10` branch's
 foundryup --repo transmissions11/foundry --branch patch-10
 ```
 
+To install from a **specific Pull Request**:
+
+```sh
+foundryup --pr 1071
+```
+
+To install from a **specific commit**:
+```sh
+foundryup -C 94bfdb2
+```
+
+To install a local directory or repository (e.g. one located at `~/git/foundry`, assuming you're in the home directory)
+##### Note: --branch, --repo, and --version flags are ignored during local installations. 
+
+```sh
+foundryup --path ./git/foundry
+```
+
 ---
 
 **Tip**: All flags have a single character shorthand equivalent! You can use `-v` instead of `--version`, etc.

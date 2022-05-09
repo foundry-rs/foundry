@@ -23,20 +23,25 @@ FLAGS:
     -V, --version    Prints version information
 
 SUBCOMMANDS:
-    build              build your smart contracts
-    clean              removes the build artifacts and cache directories
-    completions        generate shell completions script
-    create             deploy a compiled contract
+    bind               Generate rust bindings for your smart contracts
+    build              Build your smart contracts
+    cache              Manage the foundry cache
+    clean              Removes the build artifacts and cache directories
+    completions        Generate shell completions script
+    config             Shows the currently set config values
+    create             Deploy a compiled contract
+    flatten            Concats a file with all of its imports
     help               Print this message or the help of the given subcommand(s)
-    init               initializes a new forge sample repository
-    install            installs one or more dependencies as git submodules
-    remappings         prints the automatically inferred remappings for this repository
-    remove             removes one or more dependencies from git submodules
-    run                run a single smart contract as a script
-    snapshot           creates a snapshot of each test's gas usage
-    test               test your smart contracts
-    update             fetches all upstream lib changes
-    verify-contract    verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
+    init               Initializes a new forge sample project
+    install            Installs one or more dependencies as git submodules
+    remappings         Prints the automatically inferred remappings for this repository
+    remove             Removes one or more dependencies from git submodules
+    run                Run a single smart contract as a script
+    snapshot           Creates a snapshot of each test's gas usage
+    test               Test your smart contracts
+    update             Fetches all upstream lib changes
+    verify-check       Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
+    verify-contract    Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
 ```
 
 The subcommands are also aliased to their first letter, e.g. you can do
@@ -283,7 +288,7 @@ no files changed, compilation skipped
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 
-## Running a Subset of Tests
+#### Running a Subset of Tests
 
 By default, `forge test` (and `forge snapshot`) will run every function in any contract if the function starts with `test`.
 
@@ -296,7 +301,7 @@ You can narrow down the amount of tests to run by using one or more of the curre
 --no-match-contract <CONTRACT_PATTERN_INVERSE>
 ```
 
-### Examples
+#### Examples
 
 `--match-contract` and `--no-match-contract` matches against the name of the contracts containing tests. Consider the following contracts, each containing a few tests.
 
@@ -334,6 +339,60 @@ contract ContractBar {
 * `forge test --no-match-test test` will run no tests
 
 You can always combine any of the four arguments, they have AND semantics.
+
+### Inspect
+
+The `inspect` subcommand compiles the specified contract and prints the specified mode.
+
+To run the `inspect` command, run `forge inspect <CONTRACT> <MODE>`.
+Where `<CONTRACT>` is the name of the contract to inspect, and `<MODE>` is the compiled artifact output field.
+
+`<MODE>` can be one of the following:
+- `abi`
+- `bytecode`
+- `deployed-bytecode`
+- `asm`
+- `asm-optimized`
+- `method-identifiers`
+- `gas-estimates`
+- `storage-layout`
+- `dev-doc`
+- `user-doc`
+- `ir`
+- `ir-optimiized`
+- `metadata`
+- `ewasm`
+
+For example, to get the bytecode of `Greeter.sol` in this project structure:
+```ml
+src
+└─ Greeter.sol
+```
+run: `forge inspect Greeter bytecode`
+
+Which will output the contract bytecode as a hex string.
+
+TIP: To save this easily to a file (for example `output.txt`),
+you can redirect the output of `forge inspect` to the file like so:
+`forge inspect Greeter bytecode > output.txt`
+
+##### Forge Inspect Command Docs
+
+Output of `forge inspect --help`:
+```
+forge-inspect
+Outputs a contract in a specified format (ir, assembly, ...)
+
+USAGE:
+    forge inspect [OPTIONS] <CONTRACT> <MODE>
+
+ARGS:
+    <CONTRACT>
+            the contract to inspect
+
+    <MODE>
+            the contract artifact field to inspect
+```
 
 ### Common Patterns
 

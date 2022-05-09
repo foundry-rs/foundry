@@ -1,61 +1,61 @@
-use ethers::abi::Abi;
-use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, VecDeque},
-    time::{Duration, Instant},
-};
-use tui::text::Text;
-
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::solc::artifacts::ContractBytecodeSome;
+use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
+use eyre::Result;
+use forge::{
+    debug::{DebugStep, Instruction},
+    CallKind,
+};
 use std::{
-    io::{self},
+    cmp::{max, min},
+    collections::{BTreeMap, HashMap, VecDeque},
+    io,
     sync::mpsc,
     thread,
+    time::{Duration, Instant},
 };
-
-use evm_adapters::sputnik::cheatcodes::debugger::DebugStep;
-use eyre::Result;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 
-use ethers::types::Address;
+use revm::opcode;
 
-/// Trait for starting the ui
+/// Trait for starting the UI
 pub trait Ui {
-    /// Start the agent that will now take over.
+    /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
 }
 
-/// Used to indicate why the Ui stopped
+/// Used to indicate why the UI stopped
 pub enum TUIExitReason {
-    /// 'q' exit
+    /// Exit using <q>
     CharExit,
 }
 
+mod op_effects;
+use op_effects::stack_indices_affected;
+
 pub struct Tui {
-    debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
+    debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
-    identified_contracts: BTreeMap<Address, (String, Abi)>,
-    known_contracts: BTreeMap<String, ContractBytecodeSome>,
+    identified_contracts: HashMap<Address, String>,
+    known_contracts: HashMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
 }
 
@@ -63,10 +63,10 @@ impl Tui {
     /// Create a tui
     #[allow(unused_must_use)]
     pub fn new(
-        debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
+        debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
         current_step: usize,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
-        known_contracts: BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: HashMap<Address, String>,
+        known_contracts: HashMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -104,14 +104,136 @@ impl Tui {
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
-        creation: bool,
+        call_kind: CallKind,
         draw_memory: &mut DrawMemory,
+        stack_labels: bool,
+        mem_utf: bool,
+    ) {
+        let total_size = f.size();
+        if total_size.width < 225 {
+            Tui::vertical_layout(
+                f,
+                address,
+                identified_contracts,
+                known_contracts,
+                source_code,
+                debug_steps,
+                opcode_list,
+                current_step,
+                call_kind,
+                draw_memory,
+                stack_labels,
+                mem_utf,
+            );
+        } else {
+            Tui::square_layout(
+                f,
+                address,
+                identified_contracts,
+                known_contracts,
+                source_code,
+                debug_steps,
+                opcode_list,
+                current_step,
+                call_kind,
+                draw_memory,
+                stack_labels,
+                mem_utf,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vertical_layout<B: Backend>(
+        f: &mut Frame<B>,
+        address: Address,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
+        source_code: &BTreeMap<u32, String>,
+        debug_steps: &[DebugStep],
+        opcode_list: &[String],
+        current_step: usize,
+        call_kind: CallKind,
+        draw_memory: &mut DrawMemory,
+        stack_labels: bool,
+        mem_utf: bool,
+    ) {
+        let total_size = f.size();
+        if let [app, footer] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
+            .split(total_size)[..]
+        {
+            if let [op_pane, stack_pane, memory_pane, src_pane] = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(
+                    [
+                        Constraint::Ratio(1, 6),
+                        Constraint::Ratio(1, 6),
+                        Constraint::Ratio(1, 6),
+                        Constraint::Ratio(3, 6),
+                    ]
+                    .as_ref(),
+                )
+                .split(app)[..]
+            {
+                Tui::draw_footer(f, footer);
+                Tui::draw_src(
+                    f,
+                    address,
+                    identified_contracts,
+                    known_contracts,
+                    source_code,
+                    debug_steps[current_step].ic,
+                    call_kind,
+                    src_pane,
+                );
+                Tui::draw_op_list(
+                    f,
+                    address,
+                    debug_steps,
+                    opcode_list,
+                    current_step,
+                    draw_memory,
+                    op_pane,
+                );
+                Tui::draw_stack(
+                    f,
+                    debug_steps,
+                    current_step,
+                    stack_pane,
+                    stack_labels,
+                    draw_memory,
+                );
+                Tui::draw_memory(f, debug_steps, current_step, memory_pane, mem_utf, draw_memory);
+            } else {
+                panic!("unable to create vertical panes")
+            }
+        } else {
+            panic!("unable to create footer / app")
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn square_layout<B: Backend>(
+        f: &mut Frame<B>,
+        address: Address,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
+        source_code: &BTreeMap<u32, String>,
+        debug_steps: &[DebugStep],
+        opcode_list: &[String],
+        current_step: usize,
+        call_kind: CallKind,
+        draw_memory: &mut DrawMemory,
+        stack_labels: bool,
+        mem_utf: bool,
     ) {
         let total_size = f.size();
 
@@ -146,7 +268,7 @@ impl Tui {
                             known_contracts,
                             source_code,
                             debug_steps[current_step].ic,
-                            creation,
+                            call_kind,
                             src_pane,
                         );
                         Tui::draw_op_list(
@@ -158,8 +280,22 @@ impl Tui {
                             draw_memory,
                             op_pane,
                         );
-                        Tui::draw_stack(f, debug_steps, current_step, stack_pane);
-                        Tui::draw_memory(f, debug_steps, current_step, memory_pane);
+                        Tui::draw_stack(
+                            f,
+                            debug_steps,
+                            current_step,
+                            stack_pane,
+                            stack_labels,
+                            draw_memory,
+                        );
+                        Tui::draw_memory(
+                            f,
+                            debug_steps,
+                            current_step,
+                            memory_pane,
+                            mem_utf,
+                            draw_memory,
+                        );
                     }
                 } else {
                     panic!("Couldn't generate horizontal split layout 1:2.");
@@ -176,7 +312,7 @@ impl Tui {
         let block_controls = Block::default();
 
         let text_output = Text::from(Span::styled(
-            "[q]: Quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels | [m]: toggle memory decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll memory",
             Style::default().add_modifier(Modifier::DIM)
         ));
         let paragraph = Paragraph::new(text_output)
@@ -190,23 +326,29 @@ impl Tui {
     fn draw_src<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
-        creation: bool,
+        call_kind: CallKind,
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(format!("Contract construction: {}", creation))
+            .title(match call_kind {
+                CallKind::Create => "Contract creation",
+                CallKind::Call => "Contract call",
+                CallKind::StaticCall => "Contract staticcall",
+                CallKind::CallCode => "Contract callcode",
+                CallKind::DelegateCall => "Contract delegatecall",
+            })
             .borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(known) = known_contracts.get(&contract_name.0) {
+            if let Some(known) = known_contracts.get(contract_name) {
                 // grab either the creation source map or runtime sourcemap
-                if let Some(sourcemap) = if creation {
+                if let Some(sourcemap) = if matches!(call_kind, CallKind::Create) {
                     known.bytecode.source_map()
                 } else {
                     known.deployed_bytecode.bytecode.as_ref().expect("no bytecode").source_map()
@@ -476,10 +618,10 @@ impl Tui {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
+                text_output.extend(Text::from(format!("Unknown contract at address {address}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
+            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
         }
 
         let paragraph =
@@ -499,7 +641,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Address: {}, pc: {}, call's gas used: {} ",
+                "Address: {} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -555,17 +697,17 @@ impl Tui {
             // Format line number
             let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}|▶", step.pc, max_pc_len = max_pc_len)
             } else if line_number < debug_steps.len() {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}| ", step.pc, max_pc_len = max_pc_len)
             } else {
                 "END CALL".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{} {}", line_number_format, op),
+                    format!("{line_number_format}{op}"),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
@@ -591,28 +733,72 @@ impl Tui {
         debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
+        stack_labels: bool,
+        draw_memory: &mut DrawMemory,
     ) {
-        let stack_space =
-            Block::default().title(format!(" Stack: {} ", current_step)).borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
+        let stack_space =
+            Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
+
+        let indices_affected =
+            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+                stack_indices_affected(op)
+            } else {
+                vec![]
+            };
 
         let text: Vec<Spans> = stack
             .iter()
+            .rev()
             .enumerate()
+            .skip(draw_memory.current_stack_startline)
             .map(|(i, stack_item)| {
-                Spans::from(Span::styled(
-                    format!("{: <min_len$}: {:?} \n", i, stack_item, min_len = min_len),
+                let affected =
+                    indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
+
+                let mut words: Vec<Span> = (0..32)
+                    .into_iter()
+                    .rev()
+                    .map(|i| stack_item.byte(i))
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if affected.is_some() {
+                                Style::default().fg(Color::Cyan)
+                            } else if byte == 0 {
+                                // this improves compatibility across terminals by not combining
+                                // color with DIM modifier
+                                Style::default().add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
+                    })
+                    .collect();
+
+                if stack_labels {
+                    if let Some((_, name)) = affected {
+                        words.push(Span::raw(format!("| {name}")));
+                    } else {
+                        words.push(Span::raw("| ".to_string()));
+                    }
+                }
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$}| ", i, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
+
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
-
-    // cargo r --manifest-path ../foundry/Cargo.toml --bin forge run ./src/test/Locke.t.sol -t
-    // StreamTest --sig "test_fundStream()" --debug
 
     /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
@@ -620,37 +806,102 @@ impl Tui {
         debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
+        mem_utf8: bool,
+        draw_mem: &mut DrawMemory,
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!(" Memory - Max Expansion: {} bytes", memory.effective_len()))
+            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
+        // color memory words based on write/read
+        let mut word = None;
+        let mut color = None;
+        if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+            let stack_len = debug_steps[current_step].stack.len();
+            if stack_len > 0 {
+                let w = debug_steps[current_step].stack[stack_len - 1];
+                match op {
+                    opcode::MLOAD => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Cyan);
+                    }
+                    opcode::MSTORE => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Red);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // color word on previous write op
+        if current_step > 0 {
+            let prev_step = current_step - 1;
+            let stack_len = debug_steps[prev_step].stack.len();
+            if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
+                if op == opcode::MSTORE {
+                    let prev_top = debug_steps[prev_step].stack[stack_len - 1];
+                    word = Some(prev_top.as_usize() / 32);
+                    color = Some(Color::Green);
+                }
+            }
+        }
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
+            .skip(draw_mem.current_mem_startline)
             .map(|(i, mem_word)| {
-                let strings: String = mem_word
-                    .chunks(4)
-                    .map(|bytes4| {
-                        bytes4
-                            .iter()
-                            .map(|byte| {
-                                let v: Vec<u8> = vec![*byte];
-                                hex::encode(&v[..])
-                            })
-                            .collect::<Vec<String>>()
-                            .join(" ")
+                let words: Vec<Span> = mem_word
+                    .iter()
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if let (Some(w), Some(color)) = (word, color) {
+                                if i == w {
+                                    Style::default().fg(color)
+                                } else if *byte == 0 {
+                                    Style::default().add_modifier(Modifier::DIM)
+                                } else {
+                                    Style::default().fg(Color::White)
+                                }
+                            } else if *byte == 0 {
+                                Style::default().add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
                     })
-                    .collect::<Vec<String>>()
-                    .join("  ");
-                Spans::from(Span::styled(
-                    format!("{:0min_len$x}: {} \n", i * 32, strings, min_len = min_len),
+                    .collect();
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$x}| ", i * 32, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+
+                if mem_utf8 {
+                    let chars: Vec<Span> = mem_word
+                        .chunks(4)
+                        .map(|utf| {
+                            if let Ok(utf_str) = std::str::from_utf8(utf) {
+                                Span::raw(utf_str.replace(char::from(0), "."))
+                            } else {
+                                Span::raw(".")
+                            }
+                        })
+                        .collect();
+                    spans.push(Span::raw("|"));
+                    spans.extend(chars);
+                }
+
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
@@ -660,23 +911,23 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
-        // if something panics inside here, we should do everything we can to
+        // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
             disable_raw_mode().expect("Unable to disable raw mode");
-            execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
                 .expect("unable to execute disable mouse capture");
-            println!("{}", e);
+            println!("{e}");
         }));
-        // this is the recommend tick rate from tui-rs, based on their examples
+        // This is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);
 
-        // setup a channel to send interrupts
+        // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // poll events since last tick
+                // Poll events since last tick
                 if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
@@ -689,7 +940,7 @@ impl Ui for Tui {
                         }
                     }
                 }
-                // force update if time has passed
+                // Force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
                         return
@@ -702,10 +953,13 @@ impl Ui for Tui {
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_call: Vec<(Address, Vec<DebugStep>, bool)> = self.debug_arena.clone();
+        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
         let mut opcode_list: Vec<String> =
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
+
+        let mut stack_labels = false;
+        let mut mem_utf = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -716,9 +970,9 @@ impl Ui for Tui {
                     .collect();
                 last_index = draw_memory.inner_call_index;
             }
-            // grab interrupt
+            // Grab interrupt
             match rx.recv()? {
-                // key press
+                // Key press
                 Interrupt::KeyPressed(event) => match event.code {
                     // Exit
                     KeyCode::Char('q') => {
@@ -732,9 +986,19 @@ impl Ui for Tui {
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
-                        // grab number of times to do it
+                        // Grab number of times to do it
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            if self.current_step < opcode_list.len() - 1 {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                    [self.current_step]
+                                    .memory
+                                    .len() /
+                                    32)
+                                .saturating_sub(1);
+                                if draw_memory.current_mem_startline < max_mem {
+                                    draw_memory.current_mem_startline += 1;
+                                }
+                            } else if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
                             } else if draw_memory.inner_call_index < debug_call.len() - 1 {
                                 draw_memory.inner_call_index += 1;
@@ -743,16 +1007,39 @@ impl Ui for Tui {
                         }
                         self.key_buffer.clear();
                     }
+                    KeyCode::Char('J') => {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            let max_stack = debug_call[draw_memory.inner_call_index].1
+                                [self.current_step]
+                                .stack
+                                .len()
+                                .saturating_sub(1);
+                            if draw_memory.current_stack_startline < max_stack {
+                                draw_memory.current_stack_startline += 1;
+                            }
+                        }
+                        self.key_buffer.clear();
+                    }
                     // Move up
                     KeyCode::Char('k') | KeyCode::Up => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            if self.current_step > 0 {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                draw_memory.current_mem_startline =
+                                    draw_memory.current_mem_startline.saturating_sub(1);
+                            } else if self.current_step > 0 {
                                 self.current_step -= 1;
                             } else if draw_memory.inner_call_index > 0 {
                                 draw_memory.inner_call_index -= 1;
                                 self.current_step =
                                     debug_call[draw_memory.inner_call_index].1.len() - 1;
                             }
+                        }
+                        self.key_buffer.clear();
+                    }
+                    KeyCode::Char('K') => {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            draw_memory.current_stack_startline =
+                                draw_memory.current_stack_startline.saturating_sub(1);
                         }
                         self.key_buffer.clear();
                     }
@@ -836,6 +1123,14 @@ impl Ui for Tui {
                         }
                         self.key_buffer.clear();
                     }
+                    // toggle stack labels
+                    KeyCode::Char('t') => {
+                        stack_labels = !stack_labels;
+                    }
+                    // toggle memory utf8 decoding
+                    KeyCode::Char('m') => {
+                        mem_utf = !mem_utf;
+                    }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
                             self.key_buffer.push(other);
@@ -855,6 +1150,8 @@ impl Ui for Tui {
                             self.current_step -= 1;
                         } else if draw_memory.inner_call_index > 0 {
                             draw_memory.inner_call_index -= 1;
+                            draw_memory.current_mem_startline = 0;
+                            draw_memory.current_stack_startline = 0;
                             self.current_step =
                                 debug_call[draw_memory.inner_call_index].1.len() - 1;
                         }
@@ -864,6 +1161,8 @@ impl Ui for Tui {
                             self.current_step += 1;
                         } else if draw_memory.inner_call_index < debug_call.len() - 1 {
                             draw_memory.inner_call_index += 1;
+                            draw_memory.current_mem_startline = 0;
+                            draw_memory.current_stack_startline = 0;
                             self.current_step = 0;
                         }
                     }
@@ -885,6 +1184,8 @@ impl Ui for Tui {
                     current_step,
                     debug_call[draw_memory.inner_call_index].2,
                     &mut draw_memory,
+                    stack_labels,
+                    mem_utf,
                 )
             })?;
         }
@@ -903,9 +1204,17 @@ enum Interrupt {
 struct DrawMemory {
     pub current_startline: usize,
     pub inner_call_index: usize,
+    pub current_mem_startline: usize,
+    pub current_stack_startline: usize,
 }
+
 impl DrawMemory {
     fn default() -> Self {
-        DrawMemory { current_startline: 0, inner_call_index: 0 }
+        DrawMemory {
+            current_startline: 0,
+            inner_call_index: 0,
+            current_mem_startline: 0,
+            current_stack_startline: 0,
+        }
     }
 }

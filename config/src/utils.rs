@@ -1,17 +1,26 @@
 //! Utility functions
 
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
-
 use crate::Config;
-use ethers_solc::{
-    error::SolcError,
-    remappings::{Remapping, RemappingError},
-};
+use ethers_solc::remappings::{Remapping, RemappingError};
 use figment::value::Value;
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
-    Config::load_with_root(find_project_root_path().unwrap()).sanitized()
+    load_config_with_root(None)
+}
+
+/// Loads the config for the current project workspace or the provided root path
+pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
+    if let Some(root) = root {
+        Config::load_with_root(root)
+    } else {
+        Config::load_with_root(find_project_root_path().unwrap())
+    }
+    .sanitized()
 }
 
 /// Returns the path of the top-level directory of the working git tree. If there is no working
@@ -86,44 +95,6 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
     Some(remappings_from_newline(&val).collect())
 }
 
-/// Parses all libraries in the form of
-/// `<file>:<lib>:<addr>`
-///
-/// # Example
-///
-/// ```
-/// use foundry_config::parse_libraries;
-/// let libs = parse_libraries(&[
-///     "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
-/// ])
-/// .unwrap();
-/// ```
-pub fn parse_libraries(
-    libs: &[String],
-) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
-    let mut libraries = BTreeMap::default();
-    for lib in libs {
-        let mut items = lib.split(':');
-        let file = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let lib = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let addr = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
-        }
-        libraries
-            .entry(file.to_string())
-            .or_insert_with(BTreeMap::default)
-            .insert(lib.to_string(), addr.to_string());
-    }
-    Ok(libraries)
-}
-
 /// Converts the `val` into a `figment::Value::Array`
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
@@ -138,7 +109,39 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
             .into(),
         Value::Empty(_, _) => Vec::<Value>::new().into(),
         val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{}`, expected an array", val).into()),
+        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
+}
+
+/// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
+///
+/// This will also resolve symlinks
+///
+/// # Example
+///
+/// ```no_run
+/// use foundry_config::utils;
+/// let dirs = utils::foundry_toml_dirs("./lib");
+/// ```
+///
+/// for following layout this will return
+/// `["lib/dep1", "lib/dep2"]`
+///
+/// ```text
+/// lib
+/// └── dep1
+/// │   ├── foundry.toml
+/// └── dep2
+///     ├── foundry.toml
+/// ```
+pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
+    walkdir::WalkDir::new(root)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_dir())
+        .filter_map(|e| ethers_solc::utils::canonicalize(e.path()).ok())
+        .filter(|p| p.join(Config::FILE_NAME).exists())
+        .collect()
 }

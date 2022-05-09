@@ -1,3 +1,4 @@
+use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
@@ -5,27 +6,32 @@ use ethers_solc::{
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use regex::Regex;
 use std::{
-    collections::HashMap,
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Display,
     fs,
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
+    time::Duration,
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+// This stores `true` if the current terminal is a tty
+pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
+
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
-    let (prj, mut cmd) = setup("init-template", PathStyle::Dapptools);
+    let (prj, mut cmd) = setup_forge("init-template", PathStyle::Dapptools);
     cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
     prj
@@ -40,7 +46,10 @@ pub fn initialize(target: impl AsRef<Path>) {
 }
 
 /// Clones a remote repository into the specified directory.
-pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
+pub fn clone_remote(
+    repo_url: &str,
+    target_dir: impl AsRef<Path>,
+) -> std::io::Result<process::Output> {
     Command::new("git")
         .args([
             "clone",
@@ -50,11 +59,7 @@ pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
             repo_url,
             target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("Could not clone repository. Is git installed?")
-        .success()
+        .output()
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -62,12 +67,21 @@ pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
 ///
 /// The name given will be used to create the directory. Generally, it should
 /// correspond to the test name.
-pub fn setup(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
-    setup_project(TestProject::new(name, style))
+pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_forge_project(TestProject::new(name, style))
 }
 
-pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
-    let cmd = test.command();
+pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.forge_command();
+    (test, cmd)
+}
+
+pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_cast_project(TestProject::new(name, style))
+}
+
+pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.cast_command();
     (test, cmd)
 }
 
@@ -88,7 +102,7 @@ impl TestProject {
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let project = pretty_err(name, TempProject::with_style(&format!("{}-{}", name, id), style));
+        let project = pretty_err(name, TempProject::with_style(&format!("{name}-{id}"), style));
         Self::with_project(project)
     }
 
@@ -116,6 +130,11 @@ impl TestProject {
         self.root().join(Config::FILE_NAME)
     }
 
+    /// Returns the path to the project's cache file
+    pub fn cache_path(&self) -> &PathBuf {
+        &self.paths().cache
+    }
+
     /// Writes the given config as toml to `foundry.toml`
     pub fn write_config(&self, config: Config) {
         let file = self.config_path();
@@ -125,6 +144,16 @@ impl TestProject {
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
         assert!(self.config_path().exists());
+    }
+
+    /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    pub fn assert_cache_exists(&self) {
+        assert!(self.cache_path().exists());
+    }
+
+    /// Asserts that the `<root>/out` file exits
+    pub fn assert_artifacts_dir_exists(&self) {
+        assert!(self.paths().artifacts.exists());
     }
 
     /// Creates all project dirs and ensure they were created
@@ -148,17 +177,26 @@ impl TestProject {
     }
 
     /// Creates a file with contents `contents` in the test project's directory. The
-    /// file will be deleted with the project is dropped.
+    /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
         if !path.is_relative() {
             panic!("create_file(): file path is absolute");
         }
         let path = self.root().join(path);
+        if let Some(parent) = path.parent() {
+            pretty_err(parent, std::fs::create_dir_all(parent));
+        }
         let file = pretty_err(&path, File::create(&path));
         let mut writer = BufWriter::new(file);
         pretty_err(&path, writer.write_all(contents.as_bytes()));
         path
+    }
+
+    /// Adds DSTest as a source under "test.sol"
+    pub fn insert_ds_test(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/lib/ds-test/src/test.sol");
+        self.inner().add_source("test.sol", s).unwrap()
     }
 
     /// Asserts all project paths exist
@@ -180,22 +218,42 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
-    pub fn command(&self) -> TestCommand {
-        let mut cmd = self.bin();
-        cmd.current_dir(&self.inner.root());
+    pub fn forge_command(&self) -> TestCommand {
+        let cmd = self.forge_bin();
+        let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
-            saved_cwd: pretty_err(".", std::env::current_dir()),
+            saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+        }
+    }
+
+    /// Creates a new command that is set to use the cast executable for this project
+    pub fn cast_command(&self) -> TestCommand {
+        let mut cmd = self.cast_bin();
+        cmd.current_dir(&self.inner.root());
+        let _lock = CURRENT_DIR_LOCK.lock();
+        TestCommand {
+            project: self.clone(),
+            cmd,
+            current_dir_lock: None,
+            saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
     }
 
     /// Returns the path to the forge executable.
-    pub fn bin(&self) -> process::Command {
+    pub fn forge_bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        process::Command::new(forge)
+        let mut cmd = process::Command::new(forge);
+        cmd.current_dir(self.inner.root());
+        cmd
+    }
+
+    /// Returns the path to the cast executable.
+    pub fn cast_bin(&self) -> process::Command {
+        let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        process::Command::new(cast)
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -204,7 +262,7 @@ impl TestProject {
         I: IntoIterator<Item = A>,
         A: AsRef<OsStr>,
     {
-        let mut cmd = self.bin();
+        let mut cmd = self.forge_bin();
         cmd.arg("config").arg("--root").arg(self.root()).args(args).arg("--json");
         let output = cmd.output().unwrap();
         let c = String::from_utf8_lossy(&output.stdout);
@@ -221,14 +279,7 @@ impl TestProject {
 
 impl Drop for TestCommand {
     fn drop(&mut self) {
-        for (key, value) in self.saved_env_vars.iter() {
-            match value {
-                Some(val) => std::env::set_var(key, val),
-                None => std::env::remove_var(key),
-            }
-        }
-        drop(self.current_dir_lock.take());
-        let _lock = CURRENT_DIR_LOCK.lock().unwrap();
+        let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
@@ -242,6 +293,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
     paths.libraries.iter().for_each(|lib| assert!(lib.exists()));
 }
 
+#[track_caller]
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
@@ -262,8 +314,8 @@ pub struct TestCommand {
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
-    saved_env_vars: HashMap<OsString, Option<OsString>>,
-    current_dir_lock: Option<std::sync::MutexGuard<'static, ()>>,
+    // initial: Command,
+    current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
 }
 
 impl TestCommand {
@@ -279,14 +331,18 @@ impl TestCommand {
     }
 
     /// Resets the command
-    pub fn fuse(&mut self) -> &mut TestCommand {
-        self.set_cmd(self.project.bin())
+    pub fn forge_fuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.forge_bin())
+    }
+
+    pub fn cast_fuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.cast_bin())
     }
 
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
-        let lock = CURRENT_DIR_LOCK.lock().unwrap();
+        let lock = CURRENT_DIR_LOCK.lock();
         self.current_dir_lock = Some(lock);
         let p = p.as_ref();
         pretty_err(p, std::env::set_current_dir(p));
@@ -308,22 +364,20 @@ impl TestCommand {
         self
     }
 
-    /// Set the environment variable `k` to value `v`. The variable will be
-    /// removed when the command is dropped.
-    pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
-        let key = k.as_ref();
-        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
-            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
-        }
-
-        std::env::set_var(key, v.to_string());
+    /// Convenience function to add `--root project.root()` argument
+    pub fn root_arg(&mut self) -> &mut TestCommand {
+        let root = self.project.root().to_path_buf();
+        self.arg("--root").arg(root)
     }
 
-    /// Unsets the environment variable `k`
-    pub fn unset_env(&mut self, k: impl AsRef<str>) {
-        let key = k.as_ref();
-        let _ = self.saved_env_vars.remove(OsStr::new(key));
-        std::env::remove_var(key);
+    /// Set the environment variable `k` to value `v` for the command.
+    pub fn set_env(&mut self, k: impl AsRef<OsStr>, v: impl Display) {
+        self.cmd.env(k, v.to_string());
+    }
+
+    /// Unsets the environment variable `k` for the command.
+    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
+        self.cmd.env_remove(k);
     }
 
     /// Set the working directory for this command.
@@ -334,6 +388,16 @@ impl TestCommand {
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut TestCommand {
         self.cmd.current_dir(dir);
         self
+    }
+
+    /// Returns the `Config` as spit out by `forge config`
+    pub fn config(&mut self) -> Config {
+        self.cmd.args(["config", "--json"]);
+        let output = self.output();
+        let c = String::from_utf8_lossy(&output.stdout);
+        let config = serde_json::from_str(c.as_ref()).unwrap();
+        self.forge_fuse();
+        config
     }
 
     /// Runs and captures the stdout of the given command.
@@ -359,6 +423,11 @@ impl TestCommand {
         String::from_utf8_lossy(&self.output().stdout).to_string()
     }
 
+    /// Returns the output but does not expect that the command was successful
+    pub fn unchecked_output(&mut self) -> process::Output {
+        self.cmd.output().unwrap()
+    }
+
     /// Gets the output of a command. If the command failed, then this panics.
     pub fn output(&mut self) -> process::Output {
         let output = self.cmd.output().unwrap();
@@ -368,8 +437,19 @@ impl TestCommand {
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
         let output = self.cmd.output().unwrap();
-        println!("{}", String::from_utf8_lossy(&output.stdout));
-        println!("{}", String::from_utf8_lossy(&output.stderr));
+        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    /// Writes the content of the output to new fixture files
+    pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
+        let name = name.as_ref();
+        if let Some(parent) = name.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let output = self.cmd.output().unwrap();
+        fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
+        fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
@@ -481,6 +561,66 @@ impl TestCommand {
     }
 }
 
+/// Extension trait for `std::process::Output`
+///
+/// These function will read the path's content and assert that the process' output matches the
+/// fixture. Since `forge` commands may emit colorized output depending on whether the current
+/// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
+pub trait OutputExt {
+    /// Ensure the command wrote the expected data to `stdout`.
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+
+    /// Ensure the command wrote the expected data to `stderr`.
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+}
+
+/// Patterns to remove from fixtures before comparing output
+///
+/// This should strip everything that can vary from run to run, like elapsed time, file paths
+static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.*?)\.rs(.*)?Backtrace)").unwrap()
+});
+
+impl OutputExt for process::Output {
+    #[track_caller]
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let stdout = String::from_utf8_lossy(&self.stdout);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "");
+
+        pretty_assertions::assert_eq!(expected, out);
+
+        self
+    }
+
+    #[track_caller]
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let stderr = String::from_utf8_lossy(&self.stderr);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "");
+
+        pretty_assertions::assert_eq!(expected, out);
+        self
+    }
+}
+
+/// Returns the fixture path depending on whether the current terminal is tty
+///
+/// This is useful in combination with [OutputExt]
+pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if *IS_TTY {
+        return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            path.with_extension(format!("tty.{}", ext))
+        } else {
+            path.with_extension("tty")
+        }
+    }
+    path.to_path_buf()
+}
+
 /// Return a recursive listing of all files and directories in the given
 /// directory. This is useful for debugging transient and odd failures in
 /// integration tests.
@@ -490,4 +630,66 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+/// A type that keeps track of attempts
+#[derive(Debug, Clone)]
+pub struct Retry {
+    /// how many attempts there are left
+    remaining: u32,
+    /// Optional timeout to apply inbetween attempts
+    delay: Option<Duration>,
+}
+
+impl Retry {
+    pub fn new(remaining: u32, delay: Option<Duration>) -> Self {
+        Self { remaining, delay }
+    }
+
+    fn r#try<T>(&mut self, f: impl FnOnce() -> eyre::Result<T>) -> eyre::Result<Option<T>> {
+        match f() {
+            Err(ref e) if self.remaining > 0 => {
+                println!(
+                    "erroneous attempt  ({} tries remaining): {}",
+                    self.remaining,
+                    e.root_cause()
+                );
+                self.remaining -= 1;
+                if let Some(delay) = self.delay {
+                    std::thread::sleep(delay);
+                }
+                Ok(None)
+            }
+            other => other.map(Some),
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        // if let Some(delay) = self.delay {
+        //     std::thread::sleep(delay);
+        // }
+        loop {
+            if let Some(ret) = self.r#try(&mut callback)? {
+                return Ok(ret)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tty_path_works() {
+        let path = "tests/fixture/test.stdout";
+        if *IS_TTY {
+            assert_eq!(tty_fixture_path(path), PathBuf::from("tests/fixture/test.tty.stdout"));
+        } else {
+            assert_eq!(tty_fixture_path(path), PathBuf::from(path));
+        }
+    }
 }

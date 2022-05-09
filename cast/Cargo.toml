@@ -1,13 +1,16 @@
 [package]
 name = "cast"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/foundry-rs/foundry"
+keywords = ["ethereum", "web3"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 foundry-utils = { path = "../utils" }
+foundry-evm = { path = "./../evm" }
 futures = "0.3.17"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -18,6 +21,12 @@ rustc-hex = "2.1.0"
 serde_json = "1.0.67"
 chrono = "0.2"
 hex = "0.4.3"
+
+[dev-dependencies]
+async-trait = "0.1.53"
+serde = "1.0.136"
+tokio = "1.17.0"
+thiserror = "1.0.30"
 
 [features]
 default = ["ledger", "trezor"]

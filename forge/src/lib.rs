@@ -1,6 +1,11 @@
-mod runner;
-pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
+/// Gas reports
+pub mod gas_report;
 
+/// The Forge test runner
+mod runner;
+pub use runner::{ContractRunner, SuiteResult, TestKind, TestKindGas, TestResult};
+
+/// Forge test runners for multiple contracts
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
@@ -10,44 +15,91 @@ pub trait TestFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
+/// The Forge EVM backend
+pub use foundry_evm::*;
+
 #[cfg(test)]
 pub mod test_helpers {
-    use super::*;
+    use crate::TestFilter;
     use ethers::{
-        prelude::Lazy,
-        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::U256,
+        prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
+        solc::{artifacts::Libraries, Project, ProjectPathsConfig},
+        types::{Address, U256},
     };
-    use evm_adapters::{
-        evm_opts::{Env, EvmOpts, EvmType},
-        sputnik::helpers::VICINITY,
-        FAUCET_ACCOUNT,
+    use foundry_evm::{
+        executor::{
+            builder::Backend,
+            opts::{Env, EvmOpts},
+            DatabaseRef, Executor, ExecutorBuilder,
+        },
+        fuzz::FuzzedExecutor,
+        CALLER,
     };
-    use sputnik::backend::MemoryBackend;
+    use foundry_utils::RuntimeOrHandle;
+    use std::str::FromStr;
 
-    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
-        // NB: should we add a test-helper function that makes creating these
-        // ephemeral projects easier?
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
-        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
+    pub static PROJECT: Lazy<Project> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
+        Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
     });
 
+    pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
+        let libs =
+            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
+
+        let settings =
+            Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
+
+        let solc_config = SolcConfig::builder().settings(settings).build();
+        Project::builder()
+            .paths(paths)
+            .ephemeral()
+            .no_artifacts()
+            .solc_config(solc_config)
+            .build()
+            .unwrap()
+    });
+
+    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
+
+    pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> =
+        Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
+
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
-        env: Env { gas_limit: 18446744073709551615, chain_id: Some(99), ..Default::default() },
+        env: Env {
+            gas_limit: 18446744073709551615,
+            chain_id: Some(foundry_common::DEV_CHAIN_ID),
+            tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+            block_number: 1,
+            block_timestamp: 1,
+            ..Default::default()
+        },
+        sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
         initial_balance: U256::MAX,
-        evm_type: EvmType::Sputnik,
+        ffi: true,
+        memory_limit: 2u64.pow(24),
         ..Default::default()
     });
 
-    pub static BACKEND: Lazy<MemoryBackend<'static>> = Lazy::new(|| {
-        let mut backend = MemoryBackend::new(&*VICINITY, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-        backend
-    });
+    pub fn test_executor() -> Executor<Backend> {
+        let env = RuntimeOrHandle::new().block_on((*EVM_OPTS).evm_env());
+        ExecutorBuilder::new().with_cheatcodes(false).with_config(env).build(Backend::simple())
+    }
+
+    pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+
+        FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)
+    }
 
     pub mod filter {
         use super::*;

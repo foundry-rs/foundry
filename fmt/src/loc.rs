@@ -1,10 +1,11 @@
-use solang_parser::pt::{
-    AssemblyExpression, AssemblyStatement, ContractPart, FunctionDefinition, Import, Loc,
-    SourceUnitPart, Statement,
-};
+use solang_parser::pt::*;
 
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
+}
+
+pub trait OptionalLineOfCode {
+    fn loc(&self) -> Option<Loc>;
 }
 
 impl LineOfCode for SourceUnitPart {
@@ -25,6 +26,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::ErrorDefinition(error) => error.loc,
             SourceUnitPart::FunctionDefinition(function) => function.loc,
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
+            SourceUnitPart::TypeDefinition(def) => def.loc,
         }
     }
 }
@@ -40,55 +42,62 @@ impl LineOfCode for ContractPart {
             ContractPart::FunctionDefinition(function) => function.loc(),
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
+            ContractPart::TypeDefinition(def) => def.loc,
         }
     }
 }
 
-impl LineOfCode for Statement {
-    fn loc(&self) -> Loc {
-        self.loc()
-    }
-}
-
-impl LineOfCode for AssemblyStatement {
+impl LineOfCode for YulStatement {
     fn loc(&self) -> Loc {
         match self {
-            AssemblyStatement::Assign(loc, _, _) |
-            AssemblyStatement::LetAssign(loc, _, _) |
-            AssemblyStatement::If(loc, _, _) |
-            AssemblyStatement::For(loc, _, _, _, _) |
-            AssemblyStatement::Switch(loc, _, _, _) |
-            AssemblyStatement::Leave(loc) |
-            AssemblyStatement::Break(loc) |
-            AssemblyStatement::Continue(loc) => *loc,
-            AssemblyStatement::Expression(expr) => expr.loc(),
+            YulStatement::Assign(loc, _, _) |
+            YulStatement::If(loc, _, _) |
+            YulStatement::Leave(loc) |
+            YulStatement::Break(loc) |
+            YulStatement::VariableDeclaration(loc, _, _) |
+            YulStatement::Continue(loc) => *loc,
+            YulStatement::For(f) => f.loc,
+            YulStatement::Block(b) => b.loc,
+            YulStatement::Switch(s) => s.loc,
+            YulStatement::FunctionDefinition(f) => f.loc,
+            YulStatement::FunctionCall(f) => f.loc,
         }
     }
 }
 
-impl LineOfCode for AssemblyExpression {
+impl LineOfCode for YulExpression {
     fn loc(&self) -> Loc {
-        *match self {
-            AssemblyExpression::BoolLiteral(loc, _) |
-            AssemblyExpression::NumberLiteral(loc, _) |
-            AssemblyExpression::HexNumberLiteral(loc, _) |
-            AssemblyExpression::Assign(loc, _, _) |
-            AssemblyExpression::LetAssign(loc, _, _) |
-            AssemblyExpression::Function(loc, _, _) |
-            AssemblyExpression::Member(loc, _, _) |
-            AssemblyExpression::Subscript(loc, _, _) => loc,
-            AssemblyExpression::StringLiteral(literal) => &literal.loc,
-            AssemblyExpression::Variable(ident) => &ident.loc,
+        match self {
+            YulExpression::BoolLiteral(loc, _, _) |
+            YulExpression::NumberLiteral(loc, _, _) |
+            YulExpression::HexNumberLiteral(loc, _, _) |
+            YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::StringLiteral(literal, _) => literal.loc,
+            YulExpression::Variable(ident) => ident.loc,
+            YulExpression::FunctionCall(f) => f.loc,
+            YulExpression::HexStringLiteral(lit, _) => lit.loc,
         }
     }
 }
 
 impl LineOfCode for FunctionDefinition {
     fn loc(&self) -> Loc {
-        Loc(
-            self.loc.0,
-            self.loc.1,
-            self.body.as_ref().map(|body| body.loc().2).unwrap_or(self.loc.2),
+        Loc::File(
+            self.loc.file_no(),
+            self.loc.start(),
+            self.body.as_ref().map(|body| body.loc().end()).unwrap_or_else(|| self.loc.end()),
         )
+    }
+}
+
+impl OptionalLineOfCode for FunctionAttribute {
+    fn loc(&self) -> Option<Loc> {
+        match self {
+            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
+            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            FunctionAttribute::Virtual(loc) |
+            FunctionAttribute::Override(loc, _) |
+            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+        }
     }
 }
