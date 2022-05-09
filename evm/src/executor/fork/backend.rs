@@ -256,10 +256,7 @@ where
                         trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
                         return Poll::Ready(())
                     }
-                    Poll::Pending => {
-                        cx.waker().wake_by_ref();
-                        break
-                    }
+                    Poll::Pending => break,
                 }
             }
 
@@ -416,29 +413,37 @@ impl SharedBackend {
 
     /// Updates the pinned block to fetch data from
     pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
-        let req = BackendRequest::SetPinnedBlock(block.into());
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
+        tokio::task::block_in_place(|| {
+            let req = BackendRequest::SetPinnedBlock(block.into());
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
+        })
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Basic(address, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Basic(address, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 
     fn do_get_storage(&self, address: Address, index: U256) -> eyre::Result<U256> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Storage(address, index, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Storage(address, index, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 
     fn do_get_block_hash(&self, number: u64) -> eyre::Result<H256> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::BlockHash(number, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::BlockHash(number, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 }
 
