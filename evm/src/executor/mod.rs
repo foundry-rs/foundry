@@ -164,12 +164,12 @@ pub struct Executor<DB: DatabaseRef> {
     // take `&mut self` when we are not committing to the database, since
     // we need to set `evm.env`.
     pub db: CacheDB<DB>,
-    env: Env,
-    inspector_config: InspectorStackConfig,
+    pub env: Env,
+    pub inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
-    gas_limit: U256,
+    pub gas_limit: U256,
 }
 
 impl<DB> Executor<DB>

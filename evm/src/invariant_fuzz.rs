@@ -1,61 +1,59 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::{fuzz::*};
-use std::{collections::BTreeMap, borrow::{Borrow,BorrowMut}};
+use crate::fuzz::*;
+
+use crate::fuzz::strategies::{
+    build_initial_state, fuzz_calldata_from_state, fuzz_param_from_state, EvmFuzzState,
+};
+// use core::slice::SlicePattern;
 use ethers::{
     abi::{Abi, Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
-};
-use revm::db::DatabaseRef;
-use std::{
-    cell::{RefCell, RefMut},
-    marker::PhantomData,
 };
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
     prelude::*,
     test_runner::{TestError, TestRunner},
 };
+use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
+use std::{
+    borrow::{Borrow, BorrowMut},
+    cell::{RefCell, RefMut},
+    collections::BTreeMap,
+    marker::PhantomData,
+};
 
-use crate::fuzz::strategies;
-use crate::executor::{RawCallResult, Executor};
+use crate::{
+    executor::{Executor, RawCallResult},
+    fuzz::strategies,
+};
 
 /// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided `TestRunner` contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct InvariantExecutor<'a, DB: DatabaseRef, S> {
+pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
     // evm: RefCell<&'a mut E>,
     /// The VM todo executor
     evm: &'a Executor<DB>,
     runner: TestRunner,
-    state: PhantomData<S>,
     sender: Address,
     contracts: &'a BTreeMap<Address, (String, Abi)>,
 }
 
-impl<'a, S, DB> InvariantExecutor<'a, DB, S>
+impl<'a, DB> InvariantExecutor<'a, DB>
 where
-    DB: DatabaseRef
+    DB: DatabaseRef + Clone,
 {
-    // pub fn into_inner(self) -> &'a mut E {
-    //     self.evm.into_inner()
-    // }
-
-    /// Returns a mutable reference to the fuzzer's internal EVM instance
-    pub fn as_mut(&self) -> &'a mut Executor<DB> {
-        self.evm.borrow_mut()
-    }
-
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        evm: &'a mut Executor<DB>,
+        evm: &'a Executor<DB>,
         runner: TestRunner,
         sender: Address,
         contracts: &'a BTreeMap<Address, (String, Abi)>,
     ) -> Self {
-        Self { evm, runner, state: PhantomData, sender, contracts }
+        Self { evm, runner, sender, contracts }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -67,13 +65,7 @@ where
         &self,
         invariant_address: Address,
         abi: Option<&Abi>,
-    ) -> Option<InvariantFuzzTestResult>
-    where
-        // We need to be able to clone the state so as to snapshot it and reset
-        // it back after every test run, to have isolation of state across each
-        // fuzz test run.
-        S: Clone,
-    {
+    ) -> Option<InvariantFuzzTestResult> {
         let invariants: Vec<Function>;
         if let Some(abi) = abi {
             invariants =
@@ -99,9 +91,6 @@ where
             .collect();
         let strat = invariant_strat(15, contracts);
 
-        // Snapshot the state before the test starts running
-        let pre_test_state = self.evm.db.clone();
-
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
@@ -119,23 +108,37 @@ where
         let mut runner = self.runner.clone();
         let _test_error = runner
             .run(&strat, |inputs| {
-                let mut evm = self.evm.borrow_mut();
                 // Before each test, we must reset to the initial state
-                evm.db = pre_test_state.clone();
 
                 // println!("inputs len: {:?}", inputs.len());
                 'all: for (address, calldata) in inputs.iter() {
+                    let mut executor = Executor::new(
+                        self.evm.db.clone(),
+                        self.evm.env.clone(),
+                        self.evm.inspector_config.clone(),
+                        self.evm.gas_limit,
+                    );
+
                     // println!("address {:?} {:?}", address, hex::encode(&calldata));
-                    let RawCallResult { reverted, gas, stipend, .. } = evm
-                        .call_raw_committing(self.sender, *address, calldata.0.clone(), U256::zero())
+                    let RawCallResult { reverted, gas, stipend, .. } = executor
+                        .call_raw_committing(
+                            self.sender,
+                            *address,
+                            calldata.0.clone(),
+                            U256::zero(),
+                        )
                         .expect("could not make raw evm call");
 
                     if !reverted {
                         // iterate over invariants, making sure they dont fail
                         for func in invariants.iter() {
-                            let RawCallResult { reverted, result, status, .. } = evm
-                                .call_raw(self.sender, invariant_address, func.encode_input(&[])?.into(), U256::zero())
-                                // .call_unchecked(self.sender, invariant_address, &func, (), 0.into())
+                            let RawCallResult { reverted, state_changeset, result, .. } = executor
+                                .call_raw(
+                                    self.sender,
+                                    invariant_address,
+                                    func.encode_input(&[])?.into(),
+                                    U256::zero(),
+                                )
                                 .expect("EVM error");
                             if reverted {
                                 invariant_doesnt_hold.borrow_mut().insert(
@@ -170,42 +173,50 @@ where
                                 break 'all
                             } else {
                                 // This will panic and get caught by the executor
-                                // if !evm.check_success(invariant_address, &reason, false) {
-                                //     invariant_doesnt_hold.borrow_mut().insert(
-                                //         func.name.clone(),
-                                //         Some(InvariantFuzzError {
-                                //             test_error: proptest::test_runner::TestError::Fail(
-                                //                 format!(
-                                //                     "{}, reason: '{}'",
-                                //                     func.name,
-                                //                     match foundry_utils::decode_revert(
-                                //                         result.as_ref(),
-                                //                         abi
-                                //                     ) {
-                                //                         Ok(e) => e,
-                                //                         Err(e) => e.to_string(),
-                                //                     }
-                                //                 )
-                                //                 .into(),
-                                //                 inputs.clone(),
-                                //             ),
-                                //             return_reason: status,
-                                //             revert_reason: foundry_utils::decode_revert(
-                                //                 result.as_ref(),
-                                //                 abi,
-                                //             )
-                                //             .unwrap_or_default(),
-                                //             addr: invariant_address,
-                                //             func: func.short_signature().into(),
-                                //         }),
-                                //     );
-                                //     break 'all
-                                // }
-                            
+                                if !executor.is_success(
+                                    invariant_address,
+                                    reverted,
+                                    state_changeset.expect("we should have a state changeset"),
+                                    false,
+                                ) {
+                                    invariant_doesnt_hold.borrow_mut().insert(
+                                        func.name.clone(),
+                                        Some(InvariantFuzzError {
+                                            test_error: proptest::test_runner::TestError::Fail(
+                                                format!(
+                                                    "{}, reason: '{}'",
+                                                    func.name,
+                                                    match foundry_utils::decode_revert(
+                                                        result.as_ref(),
+                                                        abi
+                                                    ) {
+                                                        Ok(e) => e,
+                                                        Err(e) => e.to_string(),
+                                                    }
+                                                )
+                                                .into(),
+                                                inputs.clone(),
+                                            ),
+                                            return_reason: "".into(),
+                                            revert_reason: foundry_utils::decode_revert(
+                                                result.as_ref(),
+                                                abi,
+                                            )
+                                            .unwrap_or_default(),
+                                            addr: invariant_address,
+                                            func: func.short_signature().into(),
+                                        }),
+                                    );
+                                    break 'all
+                                }
                             }
                         }
                         // push test case to the case set
-                        fuzz_cases.borrow_mut().push(FuzzCase { calldata: calldata.clone(), gas, stipend });
+                        fuzz_cases.borrow_mut().push(FuzzCase {
+                            calldata: calldata.clone(),
+                            gas,
+                            stipend,
+                        });
                     } else {
                         // call failed, continue on
                     }
@@ -222,8 +233,6 @@ where
                 addr: invariant_address,
                 func: ethers::prelude::Bytes::default(),
             });
-
-        self.evm.borrow_mut().db = pre_test_state.clone();
 
         Some(InvariantFuzzTestResult {
             invariants: invariant_doesnt_hold.into_inner(),
