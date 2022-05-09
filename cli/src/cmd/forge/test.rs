@@ -509,12 +509,9 @@ fn test(
     if runner.count_filtered_tests(&filter) == 0 {
         let mut err = String::from("No matching tests!");
         // Try to suggest a test when there's no match
-        println!("{:?}", filter);
         if let Some(ref test_pattern) = filter.test_pattern {
             let test_name = test_pattern.as_str();
-            println!("{}", test_name);
             let candidates = runner.get_tests(&filter);
-            println!("{:?}", candidates);
             if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
                 err = format!("{}\n\nDid you mean \"{}\"?", err, suggestion);
             }
