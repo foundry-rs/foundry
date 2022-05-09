@@ -5,7 +5,7 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    utils,
+    suggestions, utils,
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
@@ -507,8 +507,21 @@ fn test(
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     if runner.count_filtered_tests(&filter) == 0 {
-        eyre::bail!("No matching tests!")
+        let mut err = String::from("No matching tests!");
+        // Try to suggest a test when there's no match
+        println!("{:?}", filter);
+        if let Some(ref test_pattern) = filter.test_pattern {
+            let test_name = test_pattern.as_str();
+            println!("{}", test_name);
+            let candidates = runner.get_tests(&filter);
+            println!("{:?}", candidates);
+            if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
+                err = format!("{}\n\nDid you mean \"{}\"?", err, suggestion);
+            }
+        }
+        eyre::bail!(err)
     }
+
     if json {
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
