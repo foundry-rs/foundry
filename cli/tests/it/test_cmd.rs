@@ -40,6 +40,17 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.path_pattern_inverse, None);
 });
 
+// tests that error is issued when no tests match the pattern
+forgetest!(error_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.set_current_dir(prj.root());
+    cmd.args(["test", "--match-test", "testA"]);
+
+    // run command and assert
+    cmd.assert_err();
+    assert!(cmd.stderr_lossy().contains("No matching tests!"));
+});
+
 // tests that direct import paths are handled correctly
 forgetest!(can_fuzz_array_params, |prj: TestProject, mut cmd: TestCommand| {
     prj.insert_ds_test();

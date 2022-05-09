@@ -506,6 +506,9 @@ fn test(
     include_fuzz_tests: bool,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
+    if runner.count_filtered_tests(&filter) == 0 {
+        eyre::bail!("No matching tests!")
+    }
     if json {
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
