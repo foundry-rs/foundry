@@ -400,6 +400,14 @@ impl TestCommand {
         config
     }
 
+    /// Runs `git init` inside the project's dir
+    pub fn git_init(&self) -> process::Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("init").current_dir(self.project.root());
+        let output = cmd.output().unwrap();
+        self.expect_success(output)
+    }
+
     /// Runs and captures the stdout of the given command.
     pub fn stdout(&mut self) -> String {
         let o = self.output();

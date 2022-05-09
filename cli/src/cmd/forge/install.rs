@@ -3,7 +3,7 @@ use std::{path::PathBuf, str};
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use clap::{Parser, ValueHint};
-use foundry_config::find_project_root_path;
+use foundry_config::{find_project_root_path, Config};
 use yansi::Paint;
 
 use std::{
@@ -49,7 +49,14 @@ impl Cmd for InstallArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
-        install(root, self.dependencies, self.opts)
+        install(&root, self.dependencies, self.opts)?;
+        let mut config = Config::load_with_root(root);
+        let lib = PathBuf::from("lib");
+        if !config.libs.contains(&lib) {
+            config.libs.push(lib);
+            config.update_libs()?;
+        }
+        Ok(())
     }
 }
 
