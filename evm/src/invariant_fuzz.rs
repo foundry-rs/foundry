@@ -1,13 +1,11 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::fuzz::*;
 
-use crate::fuzz::strategies::{
-    build_initial_state, fuzz_calldata_from_state, fuzz_param_from_state, EvmFuzzState,
-};
+use crate::fuzz::strategies::fuzz_param;
 // use core::slice::SlicePattern;
 use ethers::{
-    abi::{Abi, Function, ParamType, Token, Tokenizable},
-    types::{Address, Bytes, I256, U256},
+    abi::{Abi, Function},
+    types::{Address, Bytes, U256},
 };
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
@@ -16,17 +14,9 @@ use proptest::{
 };
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{RefCell, RefMut},
-    collections::BTreeMap,
-    marker::PhantomData,
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
-use crate::{
-    executor::{Executor, RawCallResult},
-    fuzz::strategies,
-};
+use crate::executor::{Executor, RawCallResult};
 
 /// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -36,7 +26,7 @@ use crate::{
 pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
     // evm: RefCell<&'a mut E>,
     /// The VM todo executor
-    evm: &'a Executor<DB>,
+    pub evm: &'a mut Executor<DB>,
     runner: TestRunner,
     sender: Address,
     contracts: &'a BTreeMap<Address, (String, Abi)>,
@@ -48,7 +38,7 @@ where
 {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        evm: &'a Executor<DB>,
+        evm: &'a mut Executor<DB>,
         runner: TestRunner,
         sender: Address,
         contracts: &'a BTreeMap<Address, (String, Abi)>,
@@ -63,26 +53,20 @@ where
     /// Returns a list of all the consumed gas and calldata of every fuzz case
     pub fn invariant_fuzz(
         &self,
+        invariants: Vec<&Function>,
         invariant_address: Address,
         abi: Option<&Abi>,
     ) -> Option<InvariantFuzzTestResult> {
-        let invariants: Vec<Function>;
-        if let Some(abi) = abi {
-            invariants =
-                abi.functions().filter(|func| func.name.starts_with("invariant")).cloned().collect()
-        } else {
-            return None
-        };
-
         let contracts: BTreeMap<Address, _> = self
             .contracts
             .clone()
             .into_iter()
             .filter(|(addr, _)| {
-                *addr !=
-                    Address::from_slice(
-                        &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
-                    ) &&
+                *addr != invariant_address &&
+                    *addr !=
+                        Address::from_slice(
+                            &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
+                        ) &&
                     *addr !=
                         Address::from_slice(
                             &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
@@ -96,8 +80,6 @@ where
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
-        // let return_reason: RefCell<Option<E::ReturnReason>> = RefCell::new(None);
-        let return_reason: Reason = "".into();
         let revert_reason = RefCell::new(None);
         let mut all_invars = BTreeMap::new();
         invariants.iter().for_each(|f| {
@@ -109,17 +91,15 @@ where
         let _test_error = runner
             .run(&strat, |inputs| {
                 // Before each test, we must reset to the initial state
+                let mut executor = Executor::new(
+                    self.evm.db.clone(),
+                    self.evm.env.clone(),
+                    self.evm.inspector_config.clone(),
+                    self.evm.gas_limit,
+                );
+                executor.set_tracing(false);
 
-                // println!("inputs len: {:?}", inputs.len());
                 'all: for (address, calldata) in inputs.iter() {
-                    let mut executor = Executor::new(
-                        self.evm.db.clone(),
-                        self.evm.env.clone(),
-                        self.evm.inspector_config.clone(),
-                        self.evm.gas_limit,
-                    );
-
-                    // println!("address {:?} {:?}", address, hex::encode(&calldata));
                     let RawCallResult { reverted, gas, stipend, .. } = executor
                         .call_raw_committing(
                             self.sender,
@@ -241,25 +221,11 @@ where
     }
 }
 
-/// The outcome of a fuzz test
-// pub struct InvariantFuzzTestResult<Reason> {
+/// The outcome of an invariant fuzz test
 pub struct InvariantFuzzTestResult {
     pub invariants: BTreeMap<String, Option<InvariantFuzzError>>,
     /// Every successful fuzz test case
     pub cases: FuzzedCases,
-}
-
-impl InvariantFuzzTestResult {
-    /// Returns `true` if all test cases succeeded
-    pub fn is_ok(&self) -> bool {
-        !self.invariants.iter().any(|(_k, i)| i.is_some())
-        // self.test_error.is_none()
-    }
-
-    /// Returns `true` if a test case failed
-    pub fn is_err(&self) -> bool {
-        self.invariants.iter().any(|(_k, i)| i.is_some())
-    }
 }
 
 pub struct InvariantFuzzError {
@@ -274,13 +240,6 @@ pub struct InvariantFuzzError {
     /// Function data for invariant check
     pub func: ethers::prelude::Bytes,
 }
-
-// fn is_fail<S: Clone, E: Evm<S> + crate::Evm<S, ReturnReason = T>, T>(
-//     _evm: &mut E,
-//     status: &T,
-// ) -> bool {
-//     <E as crate::Evm<S>>::is_fail(status)
-// }
 
 /// Container type for all successful test cases
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -357,7 +316,7 @@ fn gen_call(contracts: BTreeMap<Address, (String, Abi)>) -> BoxedStrategy<(Addre
     random_contract
         .prop_flat_map(move |(contract, abi)| {
             let func = select_random_function(abi);
-            func.prop_flat_map(move |func| fuzz_calldata(contract, func.clone()))
+            func.prop_flat_map(move |func| fuzz_calldata(contract, func))
         })
         .boxed()
 }
@@ -401,93 +360,4 @@ pub fn fuzz_calldata(addr: Address, func: Function) -> impl Strategy<Value = (Ad
         tracing::trace!(input = ?tokens);
         (addr, func.encode_input(&tokens).unwrap().into())
     })
-}
-
-/// The max length of arrays we fuzz for is 256.
-const MAX_ARRAY_LEN: usize = 256;
-
-/// Given an ethabi parameter type, returns a proptest strategy for generating values for that
-/// datatype. Works with ABI Encoder v2 tuples.
-fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
-    match param {
-        ParamType::Address => {
-            // The key to making this work is the `boxed()` call which type erases everything
-            // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-            any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
-        }
-        ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
-        // For ints and uints we sample from a U256, then wrap it to the correct size with a
-        // modulo operation. Note that this introduces modulo bias, but it can be removed with
-        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
-        // slow down tests as it resamples bad values, so may want to benchmark the performance
-        // hit and weigh that against the current bias before implementing
-        ParamType::Int(n) => match n / 8 {
-            32 => any::<[u8; 32]>()
-                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
-                .boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    // Generate a uintN in the correct range, then shift it to the range of intN
-                    // by subtracting 2^(N-1)
-                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    num.into_token()
-                })
-                .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
-        },
-        ParamType::Uint(n) => {
-            strategies::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
-        }
-        ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::String => any::<Vec<u8>>()
-            .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))
-            .boxed(),
-        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
-            .prop_map(Token::Array)
-            .boxed(),
-        ParamType::FixedBytes(size) => (0..*size as u64)
-            .map(|_| any::<u8>())
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedBytes)
-            .boxed(),
-        ParamType::FixedArray(param, size) => (0..*size as u64)
-            .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedArray)
-            .boxed(),
-        ParamType::Tuple(params) => {
-            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
-        }
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "sputnik")]
-mod tests {
-    use super::*;
-
-    use crate::{
-        sputnik::helpers::{fuzzvm, vm},
-        test_helpers::COMPILED,
-        Evm,
-    };
-
-    #[test]
-    fn prints_fuzzed_revert_reasons() {
-        let mut evm = vm();
-
-        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
-        let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
-
-        let evm = fuzzvm(&mut evm);
-
-        let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(func, addr, false, compiled.abi);
-        let error = res.test_error.unwrap();
-        let revert_reason = error.revert_reason;
-        assert_eq!(revert_reason, "fuzztest-revert");
-    }
 }

@@ -248,7 +248,7 @@ impl MultiContractRunner {
         err,
         fields(name = %_name)
     )]
-    fn run_tests<DB: DatabaseRef + Send + Sync>(
+    fn run_tests<DB: DatabaseRef + Send + Sync + Clone>(
         &self,
         _name: &str,
         contract: &Abi,
@@ -266,7 +266,12 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
+        runner.run_tests(
+            filter,
+            self.fuzzer.clone(),
+            include_fuzz_tests,
+            Some(&self.known_contracts),
+        )
     }
 }
 

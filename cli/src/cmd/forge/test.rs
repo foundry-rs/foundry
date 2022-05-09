@@ -374,17 +374,26 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
-        let txt = match (&result.reason, &result.counterexample) {
-            (Some(ref reason), Some(ref counterexample)) => {
+        let txt = match (&result.reason, &result.counterexample, &result.counterexample_sequence) {
+            (Some(ref reason), Some(ref counterexample), None) => {
                 format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
             }
-            (None, Some(ref counterexample)) => {
+            (None, Some(ref counterexample), None) => {
                 format!("[FAIL. Counterexample: {counterexample}]")
             }
-            (Some(ref reason), None) => {
+            (Some(ref reason), None, None) => {
                 format!("[FAIL. Reason: {reason}]")
             }
-            (None, None) => "[FAIL]".to_string(),
+            (Some(ref reason), None, Some(sequence)) => {
+                let mut inner_txt = "".to_string();
+
+                for checkpoint in sequence {
+                    inner_txt += format!("{checkpoint}\n").as_str();
+                }
+
+                format!("###\nFAIL. Reason: {reason}. | Sequence:\n{inner_txt}\n")
+            }
+            _ => "[FAIL. Reason:".to_string(),
         };
 
         Paint::red(txt)
