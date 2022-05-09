@@ -352,8 +352,8 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 
 /// A cloneable backend type that shares access to the backend data with all its clones.
 ///
-/// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandlers`
-/// is spawned on a background thread and listens for incoming commands on the receiver half of the
+/// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
+/// is spawned on a tokio task and listens for incoming commands on the receiver half of the
 /// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so their can be
 /// multiple `SharedBackend`s communicating with the same `BackendHandler`, hence this `Backend`
 /// type is thread safe.
@@ -372,6 +372,12 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 /// from `B` and simply adds it as an additional listener for the request already in progress,
 /// instead of sending another one. So that after the provider returns the response all listeners
 /// (`A` and `B`) get notified.
+// **Note**: the implementation makes use of [tokio::task::block_in_place()] when interacting with
+// the underlying [BackendHandler] which runs on a separate spawned tokio task.
+// [tokio::task::block_in_place()]
+// > Runs the provided blocking function on the current thread without blocking the executor.
+// This prevents issues (hangs) we ran into were the [SharedBackend] itself is called from a spawned
+// task.
 #[derive(Debug, Clone)]
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
