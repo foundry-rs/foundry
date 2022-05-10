@@ -589,15 +589,10 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                             self.executor.db = prev_db.clone();
                             self.executor.set_tracing(true);
 
-                            for (addr, bytes) in vec_addr_bytes.iter() {
+                            for (sender, (addr, bytes)) in vec_addr_bytes.iter() {
                                 let call_result = self
                                     .executor
-                                    .call_raw_committing(
-                                        self.sender,
-                                        *addr,
-                                        bytes.0.clone(),
-                                        0.into(),
-                                    )
+                                    .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
                                     .expect("bad call to evm");
 
                                 logs.extend(call_result.logs);
@@ -617,6 +612,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                     .expect("Unable to decode input");
 
                                 counterexample_sequence.push(CounterExample {
+                                    sender: Some(*sender),
                                     addr: Some(*addr),
                                     calldata: (*bytes).clone(),
                                     args,

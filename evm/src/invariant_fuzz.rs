@@ -1,7 +1,7 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::fuzz::{strategies::fuzz_param, *};
 use ethers::{
-    abi::{Abi, Function},
+    abi::{Abi, Function, ParamType},
     types::{Address, Bytes, U256},
 };
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -57,7 +57,9 @@ where
         invariant_depth: u32,
     ) -> Option<InvariantFuzzTestResult> {
         let contracts = self.select_contracts(invariant_address, abi);
-        let strat = invariant_strat(dbg!(invariant_depth as usize), contracts);
+        let senders = self.select_senders(invariant_address, abi);
+
+        let strat = invariant_strat(invariant_depth as usize, senders, contracts);
 
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
@@ -78,15 +80,10 @@ where
         let _test_error = self
             .runner
             .run(&strat, |inputs| {
-                'all: for (address, calldata) in inputs.iter() {
+                'all: for (sender, (address, calldata)) in inputs.iter() {
                     let RawCallResult { reverted, gas, stipend, .. } = executor
                         .borrow_mut()
-                        .call_raw_committing(
-                            self.sender,
-                            *address,
-                            calldata.0.clone(),
-                            U256::zero(),
-                        )
+                        .call_raw_committing(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
                     if !reverted {
@@ -204,6 +201,25 @@ where
         })
     }
 
+    pub fn select_senders(&self, invariant_address: Address, abi: &Abi) -> Vec<Address> {
+        let mut selected: Vec<Address> = vec![];
+        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "targetSenders") {
+            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
+                self.sender,
+                invariant_address,
+                func.clone(),
+                (),
+                U256::zero(),
+                Some(abi),
+            ) {
+                selected = call_result.result;
+            } else {
+                warn!("The function targetSenders was found but there was an error querying addresses.");
+            }
+        };
+        selected
+    }
+
     pub fn select_contracts(
         &self,
         invariant_address: Address,
@@ -254,7 +270,7 @@ pub struct InvariantFuzzTestResult {
 
 pub struct InvariantFuzzError {
     /// The proptest error occurred as a result of a test case
-    pub test_error: TestError<Vec<(Address, Bytes)>>,
+    pub test_error: TestError<Vec<(Address, (Address, Bytes))>>,
     /// The return reason of the offending call
     pub return_reason: Reason,
     /// The revert string of the offending call
@@ -329,20 +345,45 @@ pub struct InvariantFuzzCase {
 
 pub fn invariant_strat(
     depth: usize,
+    senders: Vec<Address>,
     contracts: BTreeMap<Address, (String, Abi)>,
-) -> BoxedStrategy<Vec<(Address, Bytes)>> {
+) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
     let iters = 1..depth + 1;
-    proptest::collection::vec(gen_call(contracts), iters).boxed()
+    proptest::collection::vec(gen_call(senders, contracts), iters).boxed()
 }
 
-fn gen_call(contracts: BTreeMap<Address, (String, Abi)>) -> BoxedStrategy<(Address, Bytes)> {
+fn gen_call(
+    senders: Vec<Address>,
+    contracts: BTreeMap<Address, (String, Abi)>,
+) -> BoxedStrategy<(Address, (Address, Bytes))> {
     let random_contract = select_random_contract(contracts);
     random_contract
         .prop_flat_map(move |(contract, abi)| {
             let func = select_random_function(abi);
-            func.prop_flat_map(move |func| fuzz_calldata(contract, func))
+            let senders = senders.clone();
+            func.prop_flat_map(move |func| {
+                let sender = select_random_sender(senders.clone());
+                (sender, fuzz_calldata(contract, func))
+            })
         })
         .boxed()
+}
+
+fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
+    let selectors = any::<prop::sample::Selector>();
+    let senders_: Vec<Address> = senders.clone();
+
+    if !senders.is_empty() {
+        // todo should we do an union ? 80% selected 15% random + 0x0 address by default
+        selectors.prop_map(move |selector| *selector.select(&senders_)).boxed()
+    } else {
+        let fuzz = fuzz_param(&ParamType::Address);
+        fuzz.prop_map(move |selector| {
+            // assurance above
+            selector.into_address().unwrap()
+        })
+        .boxed()
+    }
 }
 
 fn select_random_contract(

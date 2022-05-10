@@ -143,7 +143,8 @@ where
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
                     .expect("could not decode fuzzer inputs");
-                result.counterexample = Some(CounterExample { addr: None, calldata, args });
+                result.counterexample =
+                    Some(CounterExample { sender: None, addr: None, calldata, args });
             }
             _ => (),
         }
@@ -154,6 +155,8 @@ where
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CounterExample {
+    /// Address which makes the call
+    pub sender: Option<Address>,
     /// Address to which to call to
     pub addr: Option<Address>,
     /// The data to provide
@@ -166,17 +169,17 @@ pub struct CounterExample {
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        if let Some(addr) = self.addr {
-            write!(
-                f,
-                "addr={:?}, calldata=0x{}, args=[{}]",
-                addr,
-                hex::encode(&self.calldata),
-                args
-            )
-        } else {
-            write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
+
+        let mut msg = "".to_string();
+
+        if let Some(sender) = self.sender {
+            msg += format!("sender={:?} ", sender).as_str();
         }
+        if let Some(addr) = self.addr {
+            msg += format!("addr={:?}", addr).as_str();
+        }
+
+        write!(f, "{msg} calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
     }
 }
 

@@ -40,6 +40,13 @@ contract InvariantFuzzTest is DSTest {
     return addrs;
   }
 
+  function targetSenders() public returns (address[] memory) {
+    address[] memory addrs = new address[](2);
+    addrs[0] = address(0x1337);
+    addrs[1] = address(0x1338);
+    return addrs;
+  }
+
   function invariantTestPass() public {
     emit log("invariantTestPassLog");
     require(unbreakable.totalSupply() < 10, "should not revert");
