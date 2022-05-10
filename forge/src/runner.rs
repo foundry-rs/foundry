@@ -22,7 +22,7 @@ use std::{
 };
 
 /// Metadata on how to run fuzz/invariant tests
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct TestOptions {
     /// Wether fuzz tests should be run
     pub include_fuzz_tests: bool,
