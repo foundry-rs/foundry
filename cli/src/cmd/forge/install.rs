@@ -1,4 +1,5 @@
 //! Create command
+use atty::{self, Stream};
 use std::{
     io::{stdin, stdout, Write},
     path::PathBuf,
@@ -231,7 +232,12 @@ fn git_checkout(
     if dep.tag.is_none() {
         return Ok(String::new())
     }
-    let tag = match_tag(dep.tag.as_ref().unwrap(), libs, target_dir)?;
+
+    let mut tag = dep.tag.as_ref().unwrap().clone();
+    // only try to match tag if current terminal is a tty
+    if atty::is(Stream::Stdout) {
+        tag = match_tag(&tag, libs, target_dir)?
+    }
     let url = dep.url.as_ref().unwrap();
 
     let args = if recurse {
@@ -269,7 +275,9 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         return Ok(tag.into())
     }
 
-    // find matching tags
+    // generate candidate list by filtering `git tag` output, valid ones are those "starting with"
+    // the user-provided tag (ignoring the starting 'v'), for example, if the user specifies 1.5,
+    // then v1.5.2 is a valid candidate, but v3.1.5 is not
     let trimmed_tag = tag.trim_start_matches('v').to_string();
     let output = Command::new("git")
         .args(&["tag"])
@@ -277,7 +285,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         .stdout(Stdio::piped())
         .output()?;
     let output = String::from_utf8_lossy(&output.stdout);
-    let candidates: Vec<String> = output
+    let mut candidates: Vec<String> = output
         .trim()
         .split('\n')
         .filter(|x| x.trim_start_matches('v').starts_with(&trimmed_tag))
@@ -297,51 +305,51 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         }
     }
 
-    // no exact match
+    // only one candidate, ask whether the user wants to accept or not
     if candidates.len() == 1 {
-        // only one candidate, ask whether user wants to accept or not
         let matched_tag = candidates[0].clone();
         print!(
-            "Found a similar version tag: {}, do you want to use this insead? ([y]/n)",
+            "Found a similar version tag: {}, do you want to use this insead? ([y]/n): ",
             matched_tag
         );
         stdout().flush()?;
         let mut input = String::new();
         stdin().read_line(&mut input)?;
         input = input.trim().to_lowercase();
-        if input.is_empty() || input == "y" || input == "yes" {
+        return if input.is_empty() || input == "y" || input == "yes" {
             Ok(matched_tag)
         } else {
             // user rejects, fall back to the user-provided tag
             Ok(tag.into())
         }
-    } else {
-        // multiple candidates, ask user to choose one or skip
-        println!("There are multiple matching tags:");
-        println!("[0] SKIP AND USE ORIGINAL TAG");
-        for (i, candidate) in candidates.iter().enumerate() {
-            println!("[{}] {}", i + 1, candidate);
-        }
+    }
 
-        let n_candidates = candidates.len();
-        loop {
-            print!("Please select a tag (0-{}, default: 1): ", n_candidates);
-            stdout().flush()?;
-            let mut input = String::new();
-            stdin().read_line(&mut input)?;
-            // default selection
-            if input.trim().is_empty() {
-                return Ok(candidates[0].clone())
+    // multiple candidates, ask the user to choose one or skip
+    candidates.insert(0, String::from("SKIP AND USE ORIGINAL TAG"));
+    println!("There are multiple matching tags:");
+    for (i, candidate) in candidates.iter().enumerate() {
+        println!("[{}] {}", i, candidate);
+    }
+
+    let n_candidates = candidates.len();
+    loop {
+        print!("Please select a tag (0-{}, default: 1): ", n_candidates - 1);
+        stdout().flush()?;
+        let mut input = String::new();
+        stdin().read_line(&mut input)?;
+        // default selection, return fist candidate
+        if input.trim().is_empty() {
+            println!("[1] {} selected", candidates[1]);
+            return Ok(candidates[1].clone())
+        }
+        // match user input, 0 indicates skipping and use original tag
+        match input.trim().parse::<usize>() {
+            Ok(i) if i == 0 => return Ok(tag.into()),
+            Ok(i) if (1..=n_candidates).contains(&i) => {
+                println!("[{}] {} selected", i, candidates[i]);
+                return Ok(candidates[i].clone())
             }
-            // match user input
-            match input.trim().parse::<usize>() {
-                Ok(i) if i == 0 => return Ok(tag.into()),
-                Ok(i) if (1..=n_candidates).contains(&i) => {
-                    println!("[{}] {} selected", i, candidates[i - 1]);
-                    return Ok(candidates[i - 1].clone())
-                }
-                _ => continue,
-            }
+            _ => continue,
         }
     }
 }
