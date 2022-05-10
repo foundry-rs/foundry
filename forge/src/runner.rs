@@ -548,7 +548,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
 
     #[tracing::instrument(name = "invariant-test", skip_all)]
     pub fn run_invariant_test(
-        &self,
+        &mut self,
         funcs: Vec<&Function>,
         runner: TestRunner,
         setup: TestSetup,
@@ -557,20 +557,14 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         let TestSetup { address, mut logs, mut traces, labeled_addresses, .. } = setup;
 
         let start = dbg!(Instant::now());
+        let prev_db = self.executor.db.clone();
+        let mut evm =
+            InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
 
-        let mut executor = Executor::new(
-            self.executor.db.clone(),
-            self.executor.env.clone(),
-            self.executor.inspector_config.clone(),
-            self.executor.gas_limit,
-        );
-
-        let evm = InvariantExecutor::new(&mut executor, runner, self.sender, identified_contracts);
         if let Some(InvariantFuzzTestResult { invariants, cases }) =
             evm.invariant_fuzz(funcs, address, Some(self.contract))
         {
             let _duration = Instant::now().duration_since(start);
-            evm.evm.set_tracing(true);
 
             let results = invariants
                 .iter()
@@ -580,9 +574,13 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                     if let Some(ref error) = test_error {
                         // we want traces for a failed fuzz
                         if let TestError::Fail(_reason, vec_addr_bytes) = &error.test_error {
+                            // Reset DB state
+                            self.executor.db = prev_db.clone();
+                            self.executor.set_tracing(true);
+
                             for (addr, bytes) in vec_addr_bytes.iter() {
-                                let call_result = evm
-                                    .evm
+                                let call_result = self
+                                    .executor
                                     .call_raw_committing(
                                         self.sender,
                                         *addr,
@@ -613,8 +611,8 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                     args,
                                 });
 
-                                let error_call_result = evm
-                                    .evm
+                                let error_call_result = self
+                                    .executor
                                     .call_raw(
                                         self.sender,
                                         error.addr,
@@ -667,6 +665,10 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                     }
                 })
                 .collect();
+
+            // Final clean-up
+            self.executor.db = prev_db.clone();
+
             Ok(results)
         } else {
             Ok(vec![])

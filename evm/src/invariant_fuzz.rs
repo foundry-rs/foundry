@@ -52,7 +52,7 @@ where
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
     pub fn invariant_fuzz(
-        &self,
+        &mut self,
         invariants: Vec<&Function>,
         invariant_address: Address,
         abi: Option<&Abi>,
@@ -87,20 +87,16 @@ where
         });
         let invariant_doesnt_hold = RefCell::new(all_invars);
 
-        let mut runner = self.runner.clone();
-        let _test_error = runner
-            .run(&strat, |inputs| {
-                // Before each test, we must reset to the initial state
-                let mut executor = Executor::new(
-                    self.evm.db.clone(),
-                    self.evm.env.clone(),
-                    self.evm.inspector_config.clone(),
-                    self.evm.gas_limit,
-                );
-                executor.set_tracing(false);
+        self.evm.set_tracing(false);
+        let clean_db = self.evm.db.clone();
+        let executor = RefCell::new(&mut self.evm);
 
+        let _test_error = self
+            .runner
+            .run(&strat, |inputs| {
                 'all: for (address, calldata) in inputs.iter() {
                     let RawCallResult { reverted, gas, stipend, .. } = executor
+                        .borrow_mut()
                         .call_raw_committing(
                             self.sender,
                             *address,
@@ -113,6 +109,7 @@ where
                         // iterate over invariants, making sure they dont fail
                         for func in invariants.iter() {
                             let RawCallResult { reverted, state_changeset, result, .. } = executor
+                                .borrow()
                                 .call_raw(
                                     self.sender,
                                     invariant_address,
@@ -153,7 +150,7 @@ where
                                 break 'all
                             } else {
                                 // This will panic and get caught by the executor
-                                if !executor.is_success(
+                                if !executor.borrow().is_success(
                                     invariant_address,
                                     reverted,
                                     state_changeset.expect("we should have a state changeset"),
@@ -201,6 +198,9 @@ where
                         // call failed, continue on
                     }
                 }
+
+                // Before each test, we must reset to the initial state
+                executor.borrow_mut().db = clean_db.clone();
 
                 Ok(())
             })
