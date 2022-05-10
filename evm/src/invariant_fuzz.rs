@@ -10,16 +10,15 @@ use proptest::{
     test_runner::{TestError, TestRunner},
 };
 use revm::db::DatabaseRef;
-use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap};
 use tracing::warn;
 
 use crate::executor::{Executor, RawCallResult};
 
-/// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
+/// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
-/// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
-/// inputs, until it finds a counterexample. The provided `TestRunner` contains all the
+/// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
+/// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
 pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
     // evm: RefCell<&'a mut E>,
@@ -44,11 +43,8 @@ where
         Self { evm, runner, sender, contracts }
     }
 
-    /// Fuzzes the provided function, assuming it is available at the contract at `address`
-    /// If `should_fail` is set to `true`, then it will stop only when there's a success
-    /// test case.
-    ///
-    /// Returns a list of all the consumed gas and calldata of every fuzz case
+    /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`
+    /// Returns a list of all the consumed gas and calldata of every invariant fuzz case
     pub fn invariant_fuzz(
         &mut self,
         invariants: Vec<&Function>,
@@ -56,12 +52,14 @@ where
         abi: &Abi,
         invariant_depth: u32,
     ) -> Option<InvariantFuzzTestResult> {
+        // Finds out the chosen deployed contracts and/or senders.
         let contracts = self.select_contracts(invariant_address, abi);
         let senders = self.select_senders(invariant_address, abi);
 
+        // Creates strategy
         let strat = invariant_strat(invariant_depth as usize, senders, contracts);
 
-        // stores the consumed gas and calldata of every successful fuzz call
+        // Stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
@@ -73,6 +71,7 @@ where
         });
         let invariant_doesnt_hold = RefCell::new(all_invars);
 
+        // Prepare executor
         self.evm.set_tracing(false);
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
@@ -81,13 +80,14 @@ where
             .runner
             .run(&strat, |inputs| {
                 'all: for (sender, (address, calldata)) in inputs.iter() {
+                    // Send nth randomly assigned sender + contract + input
                     let RawCallResult { reverted, gas, stipend, .. } = executor
                         .borrow_mut()
                         .call_raw_committing(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
                     if !reverted {
-                        // iterate over invariants, making sure they dont fail
+                        // Check if it breaks any of the listed invariants
                         for func in invariants.iter() {
                             let RawCallResult { reverted, state_changeset, result, .. } = executor
                                 .borrow()
@@ -101,32 +101,13 @@ where
                             if reverted {
                                 invariant_doesnt_hold.borrow_mut().insert(
                                     func.name.clone(),
-                                    Some(InvariantFuzzError {
-                                        test_error: proptest::test_runner::TestError::Fail(
-                                            format!(
-                                                "{}, reason: '{}'",
-                                                func.name,
-                                                match foundry_utils::decode_revert(
-                                                    result.as_ref(),
-                                                    Some(abi)
-                                                ) {
-                                                    Ok(e) => e,
-                                                    Err(e) => e.to_string(),
-                                                }
-                                            )
-                                            .into(),
-                                            inputs.clone(),
-                                        ),
-                                        return_reason: "".into(),
-                                        // return_reason: status,
-                                        revert_reason: foundry_utils::decode_revert(
-                                            result.as_ref(),
-                                            Some(abi),
-                                        )
-                                        .unwrap_or_default(),
-                                        addr: invariant_address,
-                                        func: func.short_signature().into(),
-                                    }),
+                                    Some(InvariantFuzzError::new(
+                                        invariant_address,
+                                        func,
+                                        abi,
+                                        &result,
+                                        &inputs,
+                                    )),
                                 );
                                 break 'all
                             } else {
@@ -139,31 +120,13 @@ where
                                 ) {
                                     invariant_doesnt_hold.borrow_mut().insert(
                                         func.name.clone(),
-                                        Some(InvariantFuzzError {
-                                            test_error: proptest::test_runner::TestError::Fail(
-                                                format!(
-                                                    "{}, reason: '{}'",
-                                                    func.name,
-                                                    match foundry_utils::decode_revert(
-                                                        result.as_ref(),
-                                                        Some(abi)
-                                                    ) {
-                                                        Ok(e) => e,
-                                                        Err(e) => e.to_string(),
-                                                    }
-                                                )
-                                                .into(),
-                                                inputs.clone(),
-                                            ),
-                                            return_reason: "".into(),
-                                            revert_reason: foundry_utils::decode_revert(
-                                                result.as_ref(),
-                                                Some(abi),
-                                            )
-                                            .unwrap_or_default(),
-                                            addr: invariant_address,
-                                            func: func.short_signature().into(),
-                                        }),
+                                        Some(InvariantFuzzError::new(
+                                            invariant_address,
+                                            func,
+                                            abi,
+                                            &result,
+                                            &inputs,
+                                        )),
                                     );
                                     break 'all
                                 }
@@ -281,66 +244,35 @@ pub struct InvariantFuzzError {
     pub func: ethers::prelude::Bytes,
 }
 
-/// Container type for all successful test cases
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InvariantFuzzedCases {
-    cases: Vec<FuzzCase>,
-}
-
-impl InvariantFuzzedCases {
-    pub fn new(mut cases: Vec<FuzzCase>) -> Self {
-        cases.sort_by_key(|c| c.gas);
-        Self { cases }
-    }
-
-    pub fn cases(&self) -> &[FuzzCase] {
-        &self.cases
-    }
-
-    pub fn into_cases(self) -> Vec<FuzzCase> {
-        self.cases
-    }
-
-    /// Returns the median gas of all test cases
-    pub fn median_gas(&self) -> u64 {
-        let mid = self.cases.len() / 2;
-        self.cases.get(mid).map(|c| c.gas).unwrap_or_default()
-    }
-
-    /// Returns the average gas use of all test cases
-    pub fn mean_gas(&self) -> u64 {
-        if self.cases.is_empty() {
-            return 0
+impl InvariantFuzzError {
+    fn new(
+        invariant_address: Address,
+        func: &Function,
+        abi: &Abi,
+        result: &bytes::Bytes,
+        inputs: &[(Address, (Address, Bytes))],
+    ) -> Self {
+        InvariantFuzzError {
+            test_error: proptest::test_runner::TestError::Fail(
+                format!(
+                    "{}, reason: '{}'",
+                    func.name,
+                    match foundry_utils::decode_revert(result.as_ref(), Some(abi)) {
+                        Ok(e) => e,
+                        Err(e) => e.to_string(),
+                    }
+                )
+                .into(),
+                inputs.to_vec(),
+            ),
+            return_reason: "".into(),
+            // return_reason: status,
+            revert_reason: foundry_utils::decode_revert(result.as_ref(), Some(abi))
+                .unwrap_or_default(),
+            addr: invariant_address,
+            func: func.short_signature().into(),
         }
-
-        (self.cases.iter().map(|c| c.gas as u128).sum::<u128>() / self.cases.len() as u128) as u64
     }
-
-    pub fn highest(&self) -> Option<&FuzzCase> {
-        self.cases.last()
-    }
-
-    pub fn lowest(&self) -> Option<&FuzzCase> {
-        self.cases.first()
-    }
-
-    pub fn highest_gas(&self) -> u64 {
-        self.highest().map(|c| c.gas).unwrap_or_default()
-    }
-
-    pub fn lowest_gas(&self) -> u64 {
-        self.lowest().map(|c| c.gas).unwrap_or_default()
-    }
-}
-
-/// Data of a single fuzz test case
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InvariantFuzzCase {
-    /// The calldata used for this fuzz test
-    pub calldata: Bytes,
-    // Consumed gas
-    pub gas: u64,
 }
 
 pub fn invariant_strat(
