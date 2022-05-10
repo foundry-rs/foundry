@@ -907,6 +907,9 @@ impl Config {
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Config::foundry_cache_dir() {
             let mut cache = Cache { chains: vec![] };
+            if !cache_dir.exists() {
+                return Ok(cache)
+            }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
                     cache.chains.push(ChainCache {
