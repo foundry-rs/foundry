@@ -25,3 +25,13 @@ async fn test_can_change_mining_mode() {
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_default_dev_keys() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let accounts = provider.get_accounts().await.unwrap();
+    assert_eq!(dev_accounts, accounts);
+}
