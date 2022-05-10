@@ -23,12 +23,21 @@ contract BreakableMockToken {
 
 contract InvariantFuzzTest is DSTest {
 
+    UnbreakableMockToken ignore;
     UnbreakableMockToken unbreakable;
     BreakableMockToken breakable;
 
   function setUp() public {
       unbreakable = new UnbreakableMockToken();
+      ignore = new UnbreakableMockToken();
       breakable = new BreakableMockToken();
+  }
+
+  function targetContracts() public returns (address[] memory) {
+    address[] memory addrs = new address[](2);
+    addrs[0] = address(breakable);
+    addrs[1] = address(unbreakable);
+    return addrs;
   }
 
   function invariantTestPass() public {

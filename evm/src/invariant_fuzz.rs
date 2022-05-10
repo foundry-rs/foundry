@@ -1,8 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::fuzz::*;
-
-use crate::fuzz::strategies::fuzz_param;
-// use core::slice::SlicePattern;
+use crate::fuzz::{strategies::fuzz_param, *};
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, U256},
@@ -15,6 +12,7 @@ use proptest::{
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap};
+use tracing::warn;
 
 use crate::executor::{Executor, RawCallResult};
 
@@ -55,24 +53,9 @@ where
         &mut self,
         invariants: Vec<&Function>,
         invariant_address: Address,
-        abi: Option<&Abi>,
+        abi: &Abi,
     ) -> Option<InvariantFuzzTestResult> {
-        let contracts: BTreeMap<Address, _> = self
-            .contracts
-            .clone()
-            .into_iter()
-            .filter(|(addr, _)| {
-                *addr != invariant_address &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
-                        ) &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
-                        )
-            })
-            .collect();
+        let contracts = self.select_contracts(invariant_address, abi);
         let strat = invariant_strat(15, contracts);
 
         // stores the consumed gas and calldata of every successful fuzz call
@@ -127,7 +110,7 @@ where
                                                 func.name,
                                                 match foundry_utils::decode_revert(
                                                     result.as_ref(),
-                                                    abi
+                                                    Some(abi)
                                                 ) {
                                                     Ok(e) => e,
                                                     Err(e) => e.to_string(),
@@ -140,7 +123,7 @@ where
                                         // return_reason: status,
                                         revert_reason: foundry_utils::decode_revert(
                                             result.as_ref(),
-                                            abi,
+                                            Some(abi),
                                         )
                                         .unwrap_or_default(),
                                         addr: invariant_address,
@@ -165,7 +148,7 @@ where
                                                     func.name,
                                                     match foundry_utils::decode_revert(
                                                         result.as_ref(),
-                                                        abi
+                                                        Some(abi)
                                                     ) {
                                                         Ok(e) => e,
                                                         Err(e) => e.to_string(),
@@ -177,7 +160,7 @@ where
                                             return_reason: "".into(),
                                             revert_reason: foundry_utils::decode_revert(
                                                 result.as_ref(),
-                                                abi,
+                                                Some(abi),
                                             )
                                             .unwrap_or_default(),
                                             addr: invariant_address,
@@ -218,6 +201,46 @@ where
             invariants: invariant_doesnt_hold.into_inner(),
             cases: FuzzedCases::new(fuzz_cases.into_inner()),
         })
+    }
+
+    pub fn select_contracts(
+        &self,
+        invariant_address: Address,
+        abi: &Abi,
+    ) -> BTreeMap<Address, (String, Abi)> {
+        let mut selected: Vec<Address> = vec![];
+        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "targetContracts")
+        {
+            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
+                self.sender,
+                invariant_address,
+                func.clone(),
+                (),
+                U256::zero(),
+                Some(abi),
+            ) {
+                selected = call_result.result;
+            } else {
+                warn!("The function targetContracts was found but there was an error querying addresses.");
+            }
+        };
+
+        self.contracts
+            .clone()
+            .into_iter()
+            .filter(|(addr, _)| {
+                *addr != invariant_address &&
+                    *addr !=
+                        Address::from_slice(
+                            &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
+                        ) &&
+                    *addr !=
+                        Address::from_slice(
+                            &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
+                        ) &&
+                    (selected.is_empty() || selected.contains(addr))
+            })
+            .collect()
     }
 }
 
