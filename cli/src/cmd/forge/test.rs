@@ -19,6 +19,7 @@ use forge::{
         CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
+    TestOptions,
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
@@ -406,6 +407,9 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
+    let mut test_options =
+        TestOptions { include_fuzz_tests, invariant_depth: config.invariant_depth };
+
     // Setup the fuzzer
     // TODO: Add CLI Options to modify the persistence
     let cfg = proptest::test_runner::Config {
@@ -445,10 +449,12 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
 
     if args.debug.is_some() {
         filter.test_pattern = args.debug;
+        test_options.include_fuzz_tests = true;
+
         match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, true)?;
+                    let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -497,7 +503,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             filter,
             args.json,
             args.allow_failure,
-            include_fuzz_tests,
+            test_options,
             args.gas_report,
         )
     }
@@ -512,11 +518,11 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    include_fuzz_tests: bool,
+    test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     if json {
-        let results = runner.test(&filter, None, include_fuzz_tests)?;
+        let results = runner.test(&filter, None, test_options)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -537,8 +543,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle =
-            thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports);

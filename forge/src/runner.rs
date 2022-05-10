@@ -21,6 +21,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Metadata on how to run fuzz/invariant tests
+#[derive(Clone)]
+pub struct TestOptions {
+    /// Wether fuzz tests should be run
+    pub include_fuzz_tests: bool,
+    /// The number of calls executed to attempt to break invariants
+    pub invariant_depth: u32,
+}
+
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Clone, Serialize)]
 pub struct SuiteResult {
@@ -318,7 +327,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
-        include_fuzz_tests: bool,
+        test_options: TestOptions,
         known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
@@ -408,7 +417,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             .filter(|func| {
                 func.name.starts_with("test") &&
                     filter.matches_test(func.signature()) &&
-                    (include_fuzz_tests || func.inputs.is_empty())
+                    (test_options.include_fuzz_tests || func.inputs.is_empty())
             })
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
@@ -436,7 +445,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 .filter(|func| {
                     func.name.starts_with("invariant") &&
                         filter.matches_test(func.signature()) &&
-                        include_fuzz_tests
+                        test_options.include_fuzz_tests
                 })
                 .collect();
 
@@ -444,6 +453,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 functions,
                 fuzzer.expect("no fuzzer"),
                 setup,
+                test_options,
                 &identified_contracts,
             )?;
 
@@ -552,6 +562,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         funcs: Vec<&Function>,
         runner: TestRunner,
         setup: TestSetup,
+        test_options: TestOptions,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
     ) -> Result<Vec<TestResult>> {
         let TestSetup { address, mut logs, mut traces, labeled_addresses, .. } = setup;
@@ -562,7 +573,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
 
         if let Some(InvariantFuzzTestResult { invariants, cases }) =
-            evm.invariant_fuzz(funcs, address, self.contract)
+            evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)
         {
             let _duration = Instant::now().duration_since(start);
 

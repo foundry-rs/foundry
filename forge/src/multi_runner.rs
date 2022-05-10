@@ -1,4 +1,4 @@
-use crate::{ContractRunner, SuiteResult, TestFilter};
+use crate::{runner::TestOptions, ContractRunner, SuiteResult, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -191,7 +191,7 @@ impl MultiContractRunner {
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
         stream_result: Option<Sender<(String, SuiteResult)>>,
-        include_fuzz_tests: bool,
+        test_options: TestOptions,
     ) -> Result<BTreeMap<String, SuiteResult>> {
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(self.evm_opts.evm_env());
@@ -225,7 +225,7 @@ impl MultiContractRunner {
                     executor,
                     deploy_code.clone(),
                     libs,
-                    (filter, include_fuzz_tests),
+                    (filter, test_options.clone()),
                 )?;
                 Ok((id.identifier(), result))
             })
@@ -255,7 +255,7 @@ impl MultiContractRunner {
         executor: Executor<DB>,
         deploy_code: Bytes,
         libs: &[Bytes],
-        (filter, include_fuzz_tests): (&impl TestFilter, bool),
+        (filter, test_options): (&impl TestFilter, TestOptions),
     ) -> Result<SuiteResult> {
         let mut runner = ContractRunner::new(
             executor,
@@ -266,12 +266,7 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(
-            filter,
-            self.fuzzer.clone(),
-            include_fuzz_tests,
-            Some(&self.known_contracts),
-        )
+        runner.run_tests(filter, self.fuzzer.clone(), test_options, Some(&self.known_contracts))
     }
 }
 

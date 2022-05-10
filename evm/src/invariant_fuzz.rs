@@ -54,9 +54,10 @@ where
         invariants: Vec<&Function>,
         invariant_address: Address,
         abi: &Abi,
+        invariant_depth: u32,
     ) -> Option<InvariantFuzzTestResult> {
         let contracts = self.select_contracts(invariant_address, abi);
-        let strat = invariant_strat(15, contracts);
+        let strat = invariant_strat(dbg!(invariant_depth as usize), contracts);
 
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());

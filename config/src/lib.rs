@@ -163,6 +163,8 @@ pub struct Config {
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
+    /// The number of calls executed to attempt to break invariants
+    pub invariant_depth: u32,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -1092,6 +1094,7 @@ impl Default for Config {
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
+            invariant_depth: 15,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
@@ -2050,6 +2053,7 @@ mod tests {
                 fuzz_max_global_rejects = 65536
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
+                invariant_depth = 15
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
