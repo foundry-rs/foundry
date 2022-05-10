@@ -1,7 +1,5 @@
 use colored::Colorize;
-use std::{
-    collections::HashMap, net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration,
-};
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use crate::{
     eth::{
@@ -20,7 +18,7 @@ use crate::{
 use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Address, Wallet, U256},
+    prelude::{rand::thread_rng, Wallet, U256},
     providers::{Middleware, Provider},
     signers::{
         coins_bip39::{English, Mnemonic},
@@ -80,7 +78,7 @@ pub struct NodeConfig {
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub accounts: HashMap<Address, Wallet<SigningKey>>,
+    pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
     /// port to use for the server
@@ -124,7 +122,7 @@ impl Default for NodeConfig {
             gas_limit: U256::from(30_000_000),
             gas_price: U256::from(20_000_000_000u64),
             hardfork: Hardfork::default(),
-            accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
+            signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
@@ -165,7 +163,7 @@ impl NodeConfig {
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         });
-        self.accounts.values_mut().for_each(|wallet| {
+        self.signer_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         })
     }
@@ -206,17 +204,25 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
-    /// Sets the genesis accounts
+    /// Sets the signer accounts
+    #[must_use]
+    pub fn with_signer_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+        self.signer_accounts = accounts;
+        self
+    }
+
+    /// Sets both the genesis accounts and the signer accounts
+    /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
         let accounts = generator.gen();
         self.account_generator = Some(generator);
-        self.genesis_accounts(accounts)
+        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
