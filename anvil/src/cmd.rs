@@ -1,9 +1,12 @@
 use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use tracing::log::trace;
 
@@ -53,6 +56,9 @@ pub struct NodeArgs {
 
     #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
     pub block_time: Option<u64>,
+
+    #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
+    pub host: Option<IpAddr>,
 }
 
 impl NodeArgs {
@@ -77,6 +83,7 @@ impl NodeArgs {
             .with_fork_block_number(evm_opts.fork_block_number)
             .with_storage_caching(evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
+            .with_host(self.host)
             .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
     }

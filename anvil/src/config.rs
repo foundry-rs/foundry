@@ -1,5 +1,7 @@
 use colored::Colorize;
-use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration,
+};
 
 use crate::{
     eth::{
@@ -99,6 +101,8 @@ pub struct NodeConfig {
     pub no_storage_caching: bool,
     /// How to configure the server
     pub server_config: ServerConfig,
+    /// The host the server will listen on
+    pub host: Option<IpAddr>,
 }
 
 // === impl NodeConfig ===
@@ -136,6 +140,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             no_storage_caching: false,
             server_config: Default::default(),
+            host: None,
         }
     }
 }
@@ -283,6 +288,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
+        self
+    }
+
+    /// Sets the host the server will listen on
+    #[must_use]
+    pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
+        self.host = host;
         self
     }
 
