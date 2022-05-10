@@ -166,6 +166,27 @@ pub struct CounterExample {
     pub args: Vec<Token>,
 }
 
+impl CounterExample {
+    pub fn create(
+        sender: Address,
+        addr: Address,
+        bytes: &Bytes,
+        contracts: &BTreeMap<Address, (String, Abi)>,
+    ) -> Self {
+        let abi = &contracts.get(&addr).expect("Couldnt call unknown contract").1;
+
+        let func = abi
+            .functions()
+            .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
+            .expect("Couldnt find function");
+
+        // skip the function selector when decoding
+        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+
+        CounterExample { sender: Some(sender), addr: Some(addr), calldata: bytes.clone(), args }
+    }
+}
+
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");

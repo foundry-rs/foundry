@@ -567,7 +567,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
     ) -> Result<Vec<TestResult>> {
         let TestSetup { address, mut logs, mut traces, labeled_addresses, .. } = setup;
 
-        let start = dbg!(Instant::now());
+        let start = Instant::now();
         let prev_db = self.executor.db.clone();
         let mut evm =
             InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
@@ -575,8 +575,6 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         if let Some(InvariantFuzzTestResult { invariants, cases }) =
             evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)
         {
-            let _duration = Instant::now().duration_since(start);
-
             let results = invariants
                 .iter()
                 .map(|(k, test_error)| {
@@ -598,25 +596,12 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                 logs.extend(call_result.logs);
                                 traces.push((TraceKind::Execution, call_result.traces.unwrap()));
 
-                                let abi = &identified_contracts
-                                    .get(addr)
-                                    .expect("Couldnt call unknown contract")
-                                    .1;
-                                let func = abi
-                                    .functions()
-                                    .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
-                                    .expect("Couldnt find function");
-                                // skip the function selector when decoding
-                                let args = func
-                                    .decode_input(&bytes.0.as_ref()[4..])
-                                    .expect("Unable to decode input");
-
-                                counterexample_sequence.push(CounterExample {
-                                    sender: Some(*sender),
-                                    addr: Some(*addr),
-                                    calldata: (*bytes).clone(),
-                                    args,
-                                });
+                                counterexample_sequence.push(CounterExample::create(
+                                    *sender,
+                                    *addr,
+                                    bytes,
+                                    identified_contracts,
+                                ));
 
                                 let error_call_result = self
                                     .executor
