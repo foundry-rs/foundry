@@ -1,7 +1,7 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use crate::caching::StorageCachingConfig;
+use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
@@ -38,7 +38,8 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
-pub mod caching;
+pub mod cache;
+use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
@@ -954,6 +955,56 @@ impl Config {
 
         Ok(())
     }
+
+    /// List the data in the foundry cache
+    pub fn list_foundry_cache() -> eyre::Result<Cache> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let mut cache = Cache { chains: vec![] };
+            if !cache_dir.exists() {
+                return Ok(cache)
+            }
+            if let Ok(entries) = cache_dir.as_path().read_dir() {
+                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
+                    cache.chains.push(ChainCache {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        blocks: Self::get_cached_blocks(&entry.path())?,
+                    })
+                }
+                Ok(cache)
+            } else {
+                eyre::bail!("failed to access foundry_cache_dir");
+            }
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+    }
+
+    /// List the cached data for `chain`
+    pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let blocks = Self::get_cached_blocks(&cache_dir)?;
+            Ok(ChainCache { name: chain.to_string(), blocks })
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+    }
+
+    //The path provided to this function should point to a cached chain folder
+    fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
+        let mut blocks = vec![];
+        for block in chain_path
+            .read_dir()?
+            .flatten()
+            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
+        {
+            let filepath = block.path().join("storage.json");
+            blocks.push((
+                block.file_name().to_string_lossy().into_owned(),
+                fs::metadata(filepath)?.len(),
+            ));
+        }
+        Ok(blocks)
+    }
 }
 
 impl From<Config> for Figment {
@@ -1757,11 +1808,14 @@ mod tests {
     use figment::error::Kind::InvalidType;
     use std::{collections::BTreeMap, str::FromStr};
 
-    use crate::caching::{CachedChains, CachedEndpoints};
+    use crate::cache::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    use std::{fs::File, io::Write};
+    use tempfile::tempdir;
 
     #[test]
     fn test_figment_is_default() {
@@ -2606,5 +2660,37 @@ mod tests {
 
         let _figment: Figment = From::from(&Outer::default());
         let _config: Config = From::from(&Outer::default());
+    }
+
+    #[test]
+    fn list_cached_blocks() -> eyre::Result<()> {
+        fn fake_block_cache(chain_path: &Path, block_number: &str, size_bytes: usize) {
+            let block_path = chain_path.join(block_number);
+            fs::create_dir(block_path.as_path());
+            let file_path = block_path.join("storage.json");
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>());
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_block_cache(chain_dir.path(), &"1", 100);
+        fake_block_cache(chain_dir.path(), &"2", 500);
+        // Pollution file that should not show up in the cached block
+        let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
+        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>());
+
+        let result = Config::get_cached_blocks(chain_dir.path())?;
+
+        assert_eq!(result.len(), 2);
+        let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
+        let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        assert_eq!(block1.0, "1");
+        assert_eq!(block1.1, 100);
+        assert_eq!(block2.0, "2");
+        assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
     }
 }

@@ -11,7 +11,7 @@ use foundry_cli_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{
-    caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, OptimizerDetails, SolcReq,
 };
 use std::{fs, path::PathBuf, str::FromStr};
