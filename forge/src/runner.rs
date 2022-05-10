@@ -9,7 +9,7 @@ use foundry_evm::{
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
     fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
     invariant_fuzz::{InvariantExecutor, InvariantFuzzTestResult},
-    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
+    trace::{load_contracts, CallTraceArena, TraceKind},
     CALLER,
 };
 use proptest::test_runner::{TestError, TestRunner};
@@ -715,35 +715,5 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             traces,
             labeled_addresses,
         })
-    }
-}
-
-fn load_contracts(
-    traces: Vec<(TraceKind, CallTraceArena)>,
-    known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
-) -> BTreeMap<Address, (String, Abi)> {
-    if let Some(contracts) = known_contracts {
-        let local_identifier = LocalTraceIdentifier::new(contracts);
-        let mut decoder = CallTraceDecoderBuilder::new().build();
-        for (_, trace) in &traces {
-            decoder.identify(trace, &local_identifier);
-        }
-
-        decoder
-            .contracts
-            .iter()
-            .map(|(addr, name)| {
-                let (_, (abi, _)) = contracts
-                    .iter()
-                    .find(|(artifact, _)| {
-                        artifact.name ==
-                            *name.split(':').last().expect("invalid contract").to_string()
-                    })
-                    .expect("no contract");
-                (*addr, (name.clone(), abi.clone()))
-            })
-            .collect()
-    } else {
-        BTreeMap::new()
     }
 }
