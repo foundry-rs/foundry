@@ -264,15 +264,15 @@ impl CreateArgs {
             self.contract,
             constructor_args,
             num_of_optimizations,
-            self.eth,
+            chain.into(),
+            self.eth.etherscan_api_key.ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
             self.opts.project_paths,
             false,
             false,
             true,
-            RetryArgs::new(20, Some(6)),
+            RetryArgs::new(12, Some(3)),
         )?;
         println!("Waiting for etherscan to detect contract deployment...");
-        std::thread::sleep(Duration::from_secs(30));
         verify.run().await
     }
 

@@ -85,7 +85,8 @@ impl VerifyArgs {
         contract: ContractInfo,
         constructor_args: Option<String>,
         num_of_optimizations: Option<usize>,
-        eth: EthereumOpts,
+        chain: Chain,
+        etherscan_key: String,
         project_paths: ProjectPathsArgs,
         flatten: bool,
         force: bool,
@@ -98,14 +99,12 @@ impl VerifyArgs {
             compiler_version: None, // TODO:
             constructor_args,
             num_of_optimizations,
-            chain: eth.chain.into(),
+            chain,
             flatten,
             force,
             watch,
             project_paths,
-            etherscan_key: eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
+            etherscan_key,
             retry,
         })
     }
@@ -123,8 +122,6 @@ impl VerifyArgs {
 
         trace!("submitting verification request {:?}", verify_args);
 
-        println!("addr {}", self.address.to_string());
-
         let retry = self.retry.clone();
         let resp = retry.run_async(|| {
             async {
@@ -140,8 +137,7 @@ impl VerifyArgs {
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
-                        println!("Unable to locate ContractCode at");
-                        warn!("Unable to locate ContractCode at");
+                        warn!("{}", resp.result);
                         return Err(eyre!("not ready"));
                     }
 
@@ -160,7 +156,7 @@ impl VerifyArgs {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`\nurl: {}#code",
+                "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`\nURL: {}#code",
                 resp.message,
                 resp.result,
                 etherscan.address_url(self.address)
