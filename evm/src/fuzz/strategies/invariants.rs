@@ -41,19 +41,16 @@ fn gen_call(
 }
 
 fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
-    let selectors = any::<prop::sample::Selector>();
-    let senders_: Vec<Address> = senders.clone();
+    let fuzz_strategy =
+        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
 
     if !senders.is_empty() {
-        // todo should we do an union ? 80% selected 15% random + 0x0 address by default
-        selectors.prop_map(move |selector| *selector.select(&senders_)).boxed()
+        let selector =
+            any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&senders));
+        proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
+            .boxed()
     } else {
-        let fuzz = fuzz_param(&ParamType::Address);
-        fuzz.prop_map(move |selector| {
-            // assurance above
-            selector.into_address().unwrap()
-        })
-        .boxed()
+        fuzz_strategy
     }
 }
 

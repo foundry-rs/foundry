@@ -636,8 +636,6 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                         error_call_result.traces.unwrap(),
                                     ));
                                     break
-                                } else {
-                                    // todo should we show
                                 }
                             }
                         }
