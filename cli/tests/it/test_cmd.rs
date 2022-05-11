@@ -40,18 +40,17 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.path_pattern_inverse, None);
 });
 
-// tests that error is issued when no tests match the pattern
-forgetest!(error_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+// tests that warning is issued when no tests match the pattern
+forgetest!(warn_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
     // set up command
     cmd.set_current_dir(prj.root());
     cmd.args(["test", "--match-test", "testA"]);
 
     // run command and assert
-    cmd.assert_err();
-    assert!(cmd.stderr_lossy().contains("No matching tests!"));
+    assert!(cmd.stdout_lossy().contains("No matching tests!"));
 });
 
-// tests that error is issued and suggestion is provided when no tests match the pattern
+// tests that suggestion is provided when no tests match the pattern
 forgetest!(suggest_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
     // set up project
     prj.inner()
@@ -73,8 +72,7 @@ contract ContractTest {
     cmd.args(["test", "--match-test", "tst*"]);
 
     // run command and assert
-    cmd.assert_err();
-    assert!(cmd.stderr_lossy().contains("Did you mean \"test1\"?"));
+    assert!(cmd.stdout_lossy().contains("Did you mean \"test1\"?"));
 });
 
 // tests that direct import paths are handled correctly
