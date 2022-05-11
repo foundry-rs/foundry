@@ -207,6 +207,23 @@ where
             }
         };
 
+        let mut excluded: Vec<Address> = vec![];
+        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "excludeContracts")
+        {
+            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
+                self.sender,
+                invariant_address,
+                func.clone(),
+                (),
+                U256::zero(),
+                Some(abi),
+            ) {
+                excluded = call_result.result;
+            } else {
+                warn!("The function excludeContracts was found but there was an error querying addresses.");
+            }
+        };
+
         self.contracts
             .clone()
             .into_iter()
@@ -220,7 +237,8 @@ where
                         Address::from_slice(
                             &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
                         ) &&
-                    (selected.is_empty() || selected.contains(addr))
+                    (selected.is_empty() || selected.contains(addr)) &&
+                    (excluded.is_empty() || !excluded.contains(addr))
             })
             .collect()
     }

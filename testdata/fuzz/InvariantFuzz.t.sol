@@ -7,6 +7,9 @@ contract UnbreakableMockToken {
 
     uint public totalSupply = 0;
 
+    function shouldRevert() public {
+      require(false);
+    }
     function mint(uint _a) public {
         totalSupply *= _a;
     } 
@@ -33,6 +36,12 @@ contract InvariantFuzzTest is DSTest {
       breakable = new BreakableMockToken();
   }
 
+  function excludeContracts() public returns (address[] memory) {
+    address[] memory addrs = new address[](1);
+    addrs[0] = address(unbreakable);
+    return addrs;
+  }
+
   function targetContracts() public returns (address[] memory) {
     address[] memory addrs = new address[](2);
     addrs[0] = address(breakable);
@@ -45,6 +54,11 @@ contract InvariantFuzzTest is DSTest {
     addrs[0] = address(0x1337);
     addrs[1] = address(0x1338);
     return addrs;
+  }
+
+  function invariantTestPass2() public {
+    emit log("invariantTestPassLog");
+    require(unbreakable.totalSupply() < 10, "should not revert");
   }
 
   function invariantTestPass() public {
