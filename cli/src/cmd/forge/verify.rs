@@ -1,7 +1,10 @@
 //! Verify contract source on etherscan
 
 use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::opts::forge::ContractInfo;
+use crate::{
+    cmd::RetryArgs,
+    opts::{forge::ContractInfo, EthereumOpts},
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -15,8 +18,9 @@ use ethers::{
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
-use eyre::Context;
+use eyre::{eyre, Context};
 use foundry_config::{Chain, Config, SolcReq};
+use futures::FutureExt;
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
 use tracing::{trace, warn};
@@ -41,7 +45,7 @@ pub struct VerifyArgs {
         long,
         help = "The number of optimization runs used to build the smart contract."
     )]
-    num_of_optimizations: Option<u32>,
+    num_of_optimizations: Option<usize>,
 
     #[clap(
         long,
@@ -65,11 +69,47 @@ pub struct VerifyArgs {
     )]
     force: bool,
 
+    #[clap(long, help = "Wait for verification result after submission")]
+    watch: bool,
+
+    #[clap(flatten)]
+    retry: RetryArgs,
+
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     project_paths: ProjectPathsArgs,
 }
 
 impl VerifyArgs {
+    pub fn new(
+        address: Address,
+        contract: ContractInfo,
+        constructor_args: Option<String>,
+        num_of_optimizations: Option<usize>,
+        eth: EthereumOpts,
+        project_paths: ProjectPathsArgs,
+        flatten: bool,
+        force: bool,
+        watch: bool,
+        retry: RetryArgs,
+    ) -> eyre::Result<Self> {
+        Ok(Self {
+            address,
+            contract,
+            compiler_version: None, // TODO:
+            constructor_args,
+            num_of_optimizations,
+            chain: eth.chain.into(),
+            flatten,
+            force,
+            watch,
+            project_paths,
+            etherscan_key: eth
+                .etherscan_api_key
+                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
+            retry,
+        })
+    }
+
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(&self) -> eyre::Result<()> {
         if self.contract.path.is_none() {
@@ -83,40 +123,60 @@ impl VerifyArgs {
 
         trace!("submitting verification request {:?}", verify_args);
 
-        let resp = etherscan
-            .submit_contract_verification(&verify_args)
-            .await
-            .wrap_err("Failed to submit contract verification")?;
+        println!("addr {}", self.address.to_string());
 
-        if resp.status == "0" {
-            if resp.message == "Contract source code already verified" {
-                println!("Contract source code already verified.");
-                return Ok(())
+        let retry = self.retry.clone();
+        let resp = retry.run_async(|| {
+            async {
+                let resp = etherscan
+                    .submit_contract_verification(&verify_args)
+                    .await
+                    .wrap_err("Failed to submit contract verification")?;
+
+                if resp.status == "0" {
+                    if resp.message == "Contract source code already verified" {
+                        println!("{}", resp.result);
+                        return Ok(None);
+                    }
+
+                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                        println!("Unable to locate ContractCode at");
+                        warn!("Unable to locate ContractCode at");
+                        return Err(eyre!("not ready"));
+                    }
+
+                    warn!("Failed verify submission: {:?}", resp);
+                    eprintln!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
+                    );
+                    std::process::exit(1);
+                }
+
+                Ok(Some(resp))
             }
+            .boxed()
+        }).await?;
 
-            if resp.result == "Contract source code already verified" {
-                println!("Contract source code already verified");
-                return Ok(())
-            }
-
-            warn!("Failed verify submission: {:?}", resp);
-
-            eprintln!(
-                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                resp.message, resp.result
+        if let Some(resp) = resp {
+            println!(
+                "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`\nurl: {}#code",
+                resp.message,
+                resp.result,
+                etherscan.address_url(self.address)
             );
-            std::process::exit(1)
+
+            if self.watch {
+                let check_args = VerifyCheckArgs {
+                    guid: resp.result,
+                    chain: self.chain,
+                    retry: RetryArgs::new(6, Some(10)),
+                    etherscan_key: self.etherscan_key.clone(),
+                };
+                return check_args.run().await;
+            }
         }
 
-        println!(
-            r#"Submitted contract for verification:
-    Response: `{}`
-    GUID: `{}`
-    url: {}#code"#,
-            resp.message,
-            resp.result,
-            etherscan.address_url(self.address)
-        );
         Ok(())
     }
 
@@ -171,14 +231,13 @@ impl VerifyArgs {
 
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = self.num_of_optimizations {
-                verify_args.optimized().runs(optimizations)
+                verify_args.optimized().runs(optimizations as u32)
             } else if config.optimizer {
                 verify_args.optimized().runs(config.optimizer_runs.try_into()?)
             } else {
                 verify_args.not_optimized()
             }
         }
-        println!("{:?} {:?}", verify_args.optimization_used, verify_args.runs);
 
         Ok(verify_args)
     }
@@ -355,6 +414,9 @@ pub struct VerifyCheckArgs {
     )]
     chain: Chain,
 
+    #[clap(flatten)]
+    retry: RetryArgs,
+
     #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 }
@@ -365,33 +427,39 @@ impl VerifyCheckArgs {
         let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
-        let resp = etherscan
-            .check_contract_verification_status(self.guid.clone())
+        println!("Waiting for verification result...");
+        let retry = self.retry.clone();
+        retry
+            .run_async(|| {
+                async {
+                    let resp = etherscan
+                        .check_contract_verification_status(self.guid.clone())
+                        .await
+                        .wrap_err("Failed to request verification status")?;
+
+                    if resp.status == "0" {
+                        if resp.result == "Already Verified" {
+                            println!("Contract source code already verified");
+                            return Ok(());
+                        }
+
+                        if resp.result == "Pending in queue" {
+                            return Err(eyre!("Verification is still pending...",));
+                        }
+
+                        eprintln!(
+                            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
+                            resp.message, resp.result
+                        );
+                        std::process::exit(1);
+                    }
+
+                    println!("Contract successfully verified.");
+                    Ok(())
+                }
+                .boxed()
+            })
             .await
-            .wrap_err("Failed to request verification status")?;
-
-        if resp.status == "0" {
-            if resp.result == "Pending in queue" {
-                println!("Verification is pending...");
-                return Ok(());
-            }
-
-            if resp.result == "Already Verified" {
-                println!("Contract source code already verified");
-                return Ok(());
-            }
-
-            warn!("Failed verification: {:?}", resp);
-
-            eprintln!(
-                "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-                resp.message, resp.result
-            );
-
-            std::process::exit(1);
-        }
-
-        println!("Contract successfully verified.");
-        Ok(())
+            .wrap_err("Checking verification result failed:")
     }
 }

@@ -1,4 +1,5 @@
 use crate::{opts::forge::ContractInfo, suggestions};
+use clap::Parser;
 use ethers::{
     abi::Abi,
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
@@ -6,7 +7,8 @@ use ethers::{
         artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
     },
 };
-use std::path::PathBuf;
+use futures::future::BoxFuture;
+use std::{path::PathBuf, time::Duration};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -65,7 +67,7 @@ fn get_artifact_from_name(
         let deployed_code = artifact
             .deployed_bytecode
             .ok_or_else(|| eyre::eyre!("bytecode not found for {}", contract.name))?;
-        return Ok((abi, code, deployed_code))
+        return Ok((abi, code, deployed_code));
     }
 
     let mut err = format!("could not find artifact: `{}`", contract.name);
@@ -105,4 +107,77 @@ fn get_artifact_from_path(
             .deployed_bytecode
             .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {contract_name}")))?,
     ))
+}
+
+/// A type that keeps track of attempts
+#[derive(Debug, Clone, Parser)]
+pub struct RetryArgs {
+    #[clap(
+        long,
+        help = "Number of attempts for retrying",
+        default_value = "1",
+        validator = u32_validator(1, 10)
+    )]
+    retries: u32,
+
+    #[clap(
+        long,
+        help = "Optional timeout to apply inbetween attempts in seconds.",
+        validator = u32_validator(0, 30)
+    )]
+    delay: Option<u32>,
+}
+
+fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
+    return move |v: &str| -> eyre::Result<()> {
+        let v = v.parse::<u32>()?;
+        if v >= min && v <= max {
+            Ok(())
+        } else {
+            Err(eyre::eyre!("Expected between {} and {} inclusive.", min, max))
+        }
+    };
+}
+
+/// Sample retry logic implementation
+impl RetryArgs {
+    pub fn new(retries: u32, delay: Option<u32>) -> Self {
+        RetryArgs { retries, delay }
+    }
+
+    fn handle_err(&mut self, err: eyre::Report) {
+        self.retries -= 1;
+        tracing::warn!(
+            "erroneous attempt ({} tries remaining): {}",
+            self.retries,
+            err.root_cause()
+        );
+        if let Some(delay) = self.delay {
+            std::thread::sleep(Duration::from_secs(delay.into()));
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        loop {
+            match callback() {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            }
+        }
+    }
+
+    pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
+    {
+        loop {
+            match callback().await {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            };
+        }
+    }
 }

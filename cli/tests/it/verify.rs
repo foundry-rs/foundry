@@ -5,9 +5,7 @@ use crate::utils::{self, EnvExternalities};
 use foundry_cli_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
-    Retry,
 };
-use std::time::Duration;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -63,7 +61,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
             "--chain-id".to_string(),
             info.chain.to_string(),
             "--compiler-version".to_string(),
-            "v0.8.10+commit.fc410830".to_string(),
+            "0.8.10".to_string(),
             "--optimizer-runs".to_string(),
             "200".to_string(),
             address,
@@ -72,50 +70,50 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         ]);
 
         // `verify-contract`
-        let guid = {
-            // give etherscan some time to detect the transaction
-            let retry = Retry::new(5, Some(Duration::from_secs(60)));
-            retry
-                .run(|| -> eyre::Result<String> {
-                    let output = cmd.unchecked_output();
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    utils::parse_verification_guid(&out).ok_or_else(|| {
-                        eyre::eyre!(
-                            "Failed to get guid, stdout: {}, stderr: {}",
-                            out,
-                            String::from_utf8_lossy(&output.stderr)
-                        )
-                    })
-                })
-                .expect("Failed to get verify guid")
-        };
+        // let guid = {
+        //     // give etherscan some time to detect the transaction
+        //     let retry = Retry::new(5, Some(Duration::from_secs(60)));
+        //     retry
+        //         .run(|| -> eyre::Result<String> {
+        //             let output = cmd.unchecked_output();
+        //             let out = String::from_utf8_lossy(&output.stdout);
+        //             utils::parse_verification_guid(&out).ok_or_else(|| {
+        //                 eyre::eyre!(
+        //                     "Failed to get guid, stdout: {}, stderr: {}",
+        //                     out,
+        //                     String::from_utf8_lossy(&output.stderr)
+        //                 )
+        //             })
+        //         })
+        //         .expect("Failed to get verify guid")
+        // };
 
         // verify-check
-        {
-            cmd.forge_fuse()
-                .arg("verify-check")
-                .arg("--chain-id")
-                .arg(info.chain.to_string())
-                .arg(guid)
-                .arg(info.etherscan);
+        // {
+        //     cmd.forge_fuse()
+        //         .arg("verify-check")
+        //         .arg("--chain-id")
+        //         .arg(info.chain.to_string())
+        //         .arg(guid)
+        //         .arg(info.etherscan);
 
-            // give etherscan some time to verify the contract
-            let retry = Retry::new(6, Some(Duration::from_secs(30)));
-            retry
-                .run(|| -> eyre::Result<()> {
-                    let output = cmd.unchecked_output();
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    if out.contains("Contract successfully verified") {
-                        return Ok(())
-                    }
-                    eyre::bail!(
-                        "Failed to get verification, stdout: {}, stderr: {}",
-                        out,
-                        String::from_utf8_lossy(&output.stderr)
-                    )
-                })
-                .expect("Failed to verify check")
-        }
+        //     // give etherscan some time to verify the contract
+        //     let retry = Retry::new(6, Some(Duration::from_secs(30)));
+        //     retry
+        //         .run(|| -> eyre::Result<()> {
+        //             let output = cmd.unchecked_output();
+        //             let out = String::from_utf8_lossy(&output.stdout);
+        //             if out.contains("Contract successfully verified") {
+        //                 return Ok(());
+        //             }
+        //             eyre::bail!(
+        //                 "Failed to get verification, stdout: {}, stderr: {}",
+        //                 out,
+        //                 String::from_utf8_lossy(&output.stderr)
+        //             )
+        //         })
+        //         .expect("Failed to verify check")
+        // }
     }
 }
 
