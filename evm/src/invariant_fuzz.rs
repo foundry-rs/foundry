@@ -56,8 +56,7 @@ where
         invariant_depth: u32,
     ) -> Option<InvariantFuzzTestResult> {
         // Finds out the chosen deployed contracts and/or senders.
-        let contracts = self.select_contracts(invariant_address, abi);
-        let senders = self.select_senders(invariant_address, abi);
+        let (senders, contracts) = self.select_contracts_and_senders(invariant_address, abi);
 
         // Creates strategy
         let strat = invariant_strat(invariant_depth as usize, senders, contracts);
@@ -166,81 +165,35 @@ where
         })
     }
 
-    pub fn select_senders(&self, invariant_address: Address, abi: &Abi) -> Vec<Address> {
-        let mut selected: Vec<Address> = vec![];
-        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "targetSenders") {
-            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
-                self.sender,
-                invariant_address,
-                func.clone(),
-                (),
-                U256::zero(),
-                Some(abi),
-            ) {
-                selected = call_result.result;
-            } else {
-                warn!("The function targetSenders was found but there was an error querying addresses.");
-            }
-        };
-        selected
-    }
-
-    pub fn select_contracts(
+    pub fn select_contracts_and_senders(
         &self,
         invariant_address: Address,
         abi: &Abi,
-    ) -> BTreeMap<Address, (String, Abi)> {
-        let mut selected: Vec<Address> = vec![];
-        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "targetContracts")
-        {
-            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
-                self.sender,
-                invariant_address,
-                func.clone(),
-                (),
-                U256::zero(),
-                Some(abi),
-            ) {
-                selected = call_result.result;
-            } else {
-                warn!("The function targetContracts was found but there was an error querying addresses.");
-            }
-        };
+    ) -> (Vec<Address>, BTreeMap<Address, (String, Abi)>) {
+        let [senders, selected, excluded] =
+            ["targetSenders", "targetContracts", "excludeContracts"]
+                .map(|method| get_addresses(self.evm, invariant_address, abi, method));
 
-        let mut excluded: Vec<Address> = vec![];
-        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "excludeContracts")
-        {
-            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
-                self.sender,
-                invariant_address,
-                func.clone(),
-                (),
-                U256::zero(),
-                Some(abi),
-            ) {
-                excluded = call_result.result;
-            } else {
-                warn!("The function excludeContracts was found but there was an error querying addresses.");
-            }
-        };
-
-        self.contracts
-            .clone()
-            .into_iter()
-            .filter(|(addr, _)| {
-                *addr != invariant_address &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
-                        ) &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
-                        ) &&
-                    (selected.is_empty() || selected.contains(addr)) &&
-                    (excluded.is_empty() || !excluded.contains(addr))
-            })
-            .collect()
+        (
+            senders,
+            self.contracts
+                .clone()
+                .into_iter()
+                .filter(|(addr, _)| {
+                    *addr != invariant_address &&
+                        *addr !=
+                            Address::from_slice(
+                                &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
+                            ) &&
+                        *addr !=
+                            Address::from_slice(
+                                &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
+                            ) &&
+                        (selected.is_empty() || selected.contains(addr)) &&
+                        (excluded.is_empty() || !excluded.contains(addr))
+                })
+                .collect(),
+        )
     }
 }
 
@@ -366,6 +319,38 @@ fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
         let func = selector.select(&possible_funcs);
         func.clone()
     })
+}
+
+fn get_addresses<DB>(
+    executor: &Executor<DB>,
+    address: Address,
+    abi: &Abi,
+    method_name: &str,
+) -> Vec<Address>
+where
+    DB: DatabaseRef,
+{
+    let mut addresses = vec![];
+
+    if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
+        if let Ok(call_result) = executor.call::<Vec<Address>, _, _>(
+            address,
+            address,
+            func.clone(),
+            (),
+            U256::zero(),
+            Some(abi),
+        ) {
+            addresses = call_result.result;
+        } else {
+            warn!(
+                "The function {} was found but there was an error querying addresses.",
+                method_name
+            );
+        }
+    };
+
+    addresses
 }
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
