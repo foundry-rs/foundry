@@ -98,10 +98,10 @@ impl ClientFork {
     pub async fn call(
         &self,
         request: &CallRequest,
-        block: Option<BlockId>,
+        block: Option<BlockNumber>,
     ) -> Result<Bytes, ProviderError> {
         let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
         self.provider().request("eth_call", [tx, block]).await
     }
 
@@ -109,10 +109,10 @@ impl ClientFork {
     pub async fn estimate_gas(
         &self,
         request: &CallRequest,
-        block: Option<BlockId>,
+        block: Option<BlockNumber>,
     ) -> Result<U256, ProviderError> {
         let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
         self.provider().request("eth_estimateGas", [tx, block]).await
     }
 
@@ -120,10 +120,10 @@ impl ClientFork {
     pub async fn create_access_list(
         &self,
         request: &CallRequest,
-        block: Option<BlockId>,
+        block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, ProviderError> {
         let tx = ethers::utils::serialize(request);
-        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
         self.provider().request("eth_createAccessList", [tx, block]).await
     }
 

@@ -607,15 +607,16 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub async fn call(&self, request: CallRequest, number: Option<BlockNumber>) -> Result<Bytes> {
+    pub async fn call(
+        &self,
+        request: CallRequest,
+        block_number: Option<BlockNumber>,
+    ) -> Result<Bytes> {
         node_info!("eth_call");
-        let number = self.backend.convert_block_number(number);
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-                return Ok(fork
-                    .call(&request, Some(BlockNumber::Number(number.into()).into()))
-                    .await?)
+            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+                return Ok(fork.call(&request, block_number).await?)
             }
         }
 
@@ -626,7 +627,7 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, Some(number.into()));
+        let (exit, out, gas, _) = self.backend.call(request, fees, block_number);
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
@@ -651,26 +652,19 @@ impl EthApi {
     pub async fn create_access_list(
         &self,
         request: CallRequest,
-        number: Option<BlockNumber>,
+        block_number: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
 
-        let number = self.backend.convert_block_number(number);
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-                return Ok(fork
-                    .create_access_list(&request, Some(BlockNumber::Number(number.into()).into()))
-                    .await?)
+            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+                return Ok(fork.create_access_list(&request, block_number).await?)
             }
         }
 
         let from = request.from;
-        let (_, _, gas, mut state) = self.backend.call(
-            request,
-            FeeDetails::zero(),
-            Some(BlockNumber::Number(number.into())),
-        );
+        let (_, _, gas, mut state) = self.backend.call(request, FeeDetails::zero(), block_number);
 
         // cleanup state map
         if let Some(from) = from {
@@ -699,11 +693,10 @@ impl EthApi {
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
 
-        let number = self.backend.convert_block_number(block_number);
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-                return Ok(fork.estimate_gas(&request, block_number.map(Into::into)).await?)
+            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+                return Ok(fork.estimate_gas(&request, block_number).await?)
             }
         }
 
