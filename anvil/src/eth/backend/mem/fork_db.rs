@@ -1,10 +1,14 @@
 use crate::{
-    eth::{backend::db::Db, error::BlockchainError},
+    eth::{
+        backend::db::{Db, StateDb},
+        error::BlockchainError,
+    },
     mem::snapshot::Snapshots,
     revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit},
     Address, U256,
 };
-use ethers::prelude::H256;
+use bytes::Bytes;
+use ethers::prelude::{H160, H256};
 use forge::HashMap as Map;
 use foundry_evm::{
     executor::fork::{BlockchainDb, SharedBackend},
@@ -25,13 +29,7 @@ impl Db for ForkedDatabase {
     }
 
     fn snapshot(&mut self) -> U256 {
-        let db = self.db.db();
-        let snapshot = DbSnapshot {
-            local: self.cache_db.clone(),
-            accounts: db.accounts.read().clone(),
-            storage: db.storage.read().clone(),
-            block_hashes: db.block_hashes.read().clone(),
-        };
+        let snapshot = self.create_snapshot();
         let mut snapshots = self.snapshots.lock();
         let id = snapshots.insert(snapshot);
         trace!(target: "backend::forkdb", "Created new snapshot {}", id);
@@ -67,6 +65,10 @@ impl Db for ForkedDatabase {
             warn!(target: "backend::forkdb", "No snapshot to revert for {}", id);
             false
         }
+    }
+
+    fn current_state(&self) -> StateDb {
+        StateDb::new(self.create_snapshot())
     }
 }
 
@@ -138,6 +140,16 @@ impl ForkedDatabase {
     pub fn inner(&self) -> &BlockchainDb {
         &self.db
     }
+
+    fn create_snapshot(&self) -> DbSnapshot {
+        let db = self.db.db();
+        DbSnapshot {
+            local: self.cache_db.clone(),
+            accounts: db.accounts.read().clone(),
+            storage: db.storage.read().clone(),
+            block_hashes: db.block_hashes.read().clone(),
+        }
+    }
 }
 
 impl Database for ForkedDatabase {
@@ -189,4 +201,51 @@ struct DbSnapshot {
     accounts: BTreeMap<Address, AccountInfo>,
     storage: BTreeMap<Address, BTreeMap<U256, U256>>,
     block_hashes: BTreeMap<u64, H256>,
+}
+
+// === impl DbSnapshot ===
+
+impl DbSnapshot {
+    fn get_storage(&self, address: H160, index: U256) -> Option<U256> {
+        self.local.storage().get(&address).and_then(|entry| entry.get(&index)).copied()
+    }
+}
+
+// This `DatabaseRef` implementation works similar to `CacheDB` which prioritizes modified elements,
+// and uses another db as fallback
+// We prioritize stored changed accounts/storage
+impl DatabaseRef for DbSnapshot {
+    fn basic(&self, address: H160) -> AccountInfo {
+        match self.local.cache().get(&address) {
+            Some(info) => info.clone(),
+            None => {
+                self.accounts.get(&address).cloned().unwrap_or_else(|| self.local.basic(address))
+            }
+        }
+    }
+
+    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+        self.local.code_by_hash(code_hash)
+    }
+
+    fn storage(&self, address: H160, index: U256) -> U256 {
+        match self.local.storage().get(&address) {
+            Some(entry) => match entry.get(&index) {
+                Some(entry) => *entry,
+                None => self
+                    .get_storage(address, index)
+                    .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+            },
+            None => self
+                .get_storage(address, index)
+                .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+        }
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        self.block_hashes
+            .get(&number.as_u64())
+            .copied()
+            .unwrap_or_else(|| self.local.block_hash(number))
+    }
 }

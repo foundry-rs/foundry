@@ -7,7 +7,7 @@ use ethers::{
 };
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{db::CacheDB, Database, DatabaseCommit},
+    revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
 };
 
 /// This bundles all required revm traits
@@ -51,9 +51,16 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     fn maybe_state_root(&self) -> Option<H256> {
         None
     }
+
+    /// Returns the current, standalone state of the Db
+    fn current_state(&self) -> StateDb;
 }
 
-impl<T: DatabaseRef + Send + Sync> Db for CacheDB<T> {
+/// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB
+/// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
+/// the `CacheDB` see also
+/// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
+impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_cache(address, account)
     }
@@ -68,5 +75,24 @@ impl<T: DatabaseRef + Send + Sync> Db for CacheDB<T> {
 
     fn revert(&mut self, _snapshot: U256) -> bool {
         false
+    }
+
+    fn current_state(&self) -> StateDb {
+        StateDb::new(InMemoryDB::default())
+    }
+}
+
+/// Represents a state at certain point
+pub struct StateDb(Box<dyn DatabaseRef + Send + Sync>);
+
+// === impl StateDB ===
+
+impl StateDb {
+    pub fn new(db: impl DatabaseRef + Send + Sync + 'static) -> Self {
+        Self(Box::new(db))
+    }
+
+    pub fn as_db(&self) -> impl DatabaseRef + '_ {
+        &*self.0
     }
 }

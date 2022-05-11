@@ -18,7 +18,10 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
     },
-    mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
+    mem::{
+        in_memory_db::MemDb,
+        storage::{InMemoryBlockStates, MinedBlockOutcome},
+    },
     revm::AccountInfo,
 };
 use anvil_core::{
@@ -69,6 +72,8 @@ pub struct Backend {
     db: Arc<RwLock<dyn Db>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
+    /// Historic states of previous blocks
+    states: Arc<RwLock<InMemoryBlockStates>>,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
@@ -93,6 +98,7 @@ impl Backend {
         Self {
             db,
             blockchain: Blockchain::default(),
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
             time: Default::default(),
@@ -130,6 +136,7 @@ impl Backend {
         let backend = Self {
             db,
             blockchain,
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork,
             time: Default::default(),
@@ -371,6 +378,9 @@ impl Backend {
         let mut env = self.env.write();
         let mut db = self.db.write();
         let mut storage = self.blockchain.storage.write();
+
+        // store current state
+        self.states.write().insert(storage.best_hash, db.current_state());
 
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
