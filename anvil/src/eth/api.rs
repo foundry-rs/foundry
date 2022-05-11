@@ -392,9 +392,14 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+    pub async fn balance(
+        &self,
+        address: Address,
+        block_number: Option<BlockNumber>,
+    ) -> Result<U256> {
         node_info!("eth_getBalance");
-        self.backend.get_balance(address, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_balance(address, Some(number.into())).await
     }
 
     /// Returns content of the storage at given address.
@@ -404,10 +409,11 @@ impl EthApi {
         &self,
         address: Address,
         index: U256,
-        number: Option<BlockNumber>,
+        block_number: Option<BlockNumber>,
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
-        self.backend.storage_at(address, index, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.storage_at(address, index, Some(number.into())).await
     }
 
     /// Returns block with given hash.
@@ -458,10 +464,11 @@ impl EthApi {
     pub async fn transaction_count(
         &self,
         address: Address,
-        number: Option<BlockNumber>,
+        block_number: Option<BlockNumber>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
-        self.backend.get_nonce(address, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_nonce(address, Some(number.into())).await
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -499,9 +506,14 @@ impl EthApi {
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub async fn get_code(&self, address: Address, block: Option<BlockNumber>) -> Result<Bytes> {
+    pub async fn get_code(
+        &self,
+        address: Address,
+        block_number: Option<BlockNumber>,
+    ) -> Result<Bytes> {
         node_info!("eth_getCode");
-        self.backend.get_code(address, block).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_code(address, Some(number.into())).await
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -613,9 +625,11 @@ impl EthApi {
         block_number: Option<BlockNumber>,
     ) -> Result<Bytes> {
         node_info!("eth_call");
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+            if fork.predates_fork(number) {
                 return Ok(fork.call(&request, block_number).await?)
             }
         }
@@ -655,10 +669,11 @@ impl EthApi {
         block_number: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
-
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+            if fork.predates_fork(number) {
                 return Ok(fork.create_access_list(&request, block_number).await?)
             }
         }
@@ -692,10 +707,11 @@ impl EthApi {
         block_number: Option<BlockNumber>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(self.backend.convert_block_number(block_number)) {
+            if fork.predates_fork(number) {
                 return Ok(fork.estimate_gas(&request, block_number).await?)
             }
         }

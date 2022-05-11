@@ -2,7 +2,7 @@
 
 use crate::{revm::AccountInfo, U256};
 use ethers::{
-    prelude::{Address, Bytes},
+    prelude::{Address, Bytes, H160},
     types::H256,
 };
 use foundry_evm::{
@@ -91,8 +91,22 @@ impl StateDb {
     pub fn new(db: impl DatabaseRef + Send + Sync + 'static) -> Self {
         Self(Box::new(db))
     }
+}
 
-    pub fn as_db(&self) -> impl DatabaseRef + '_ {
-        &*self.0
+impl DatabaseRef for StateDb {
+    fn basic(&self, address: H160) -> AccountInfo {
+        self.0.basic(address)
+    }
+
+    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+        self.0.code_by_hash(code_hash)
+    }
+
+    fn storage(&self, address: H160, index: U256) -> U256 {
+        self.0.storage(address, index)
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        self.0.block_hash(number)
     }
 }
