@@ -192,13 +192,15 @@ impl Provider for CoreBuildArgs {
             dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }
 
-        if let Some(ref extra) = self.compiler.extra_output {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+        if !self.compiler.extra_output.is_empty() {
+            let selection: Vec<_> =
+                self.compiler.extra_output.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output".to_string(), selection.into());
         }
 
-        if let Some(ref extra) = self.compiler.extra_output_files {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+        if !self.compiler.extra_output_files.is_empty() {
+            let selection: Vec<_> =
+                self.compiler.extra_output_files.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output_files".to_string(), selection.into());
         }
 

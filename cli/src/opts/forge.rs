@@ -173,16 +173,16 @@ pub struct CompilerArgs {
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
     /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output: Option<Vec<ContractOutputSelection>>,
+    #[clap(long, min_values = 1)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output_files: Option<Vec<ContractOutputSelection>>,
+    #[clap(long, min_values = 1)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output_files: Vec<ContractOutputSelection>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
