@@ -38,7 +38,7 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
+        transaction::eip2930::{AccessList, AccessListItem},
         Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
         H256, U256, U64,
     },
@@ -667,7 +667,7 @@ impl EthApi {
         &self,
         request: CallRequest,
         block_number: Option<BlockNumber>,
-    ) -> Result<AccessListWithGasUsed> {
+    ) -> Result<AccessList> {
         node_info!("eth_createAccessList");
         let number = self.backend.ensure_block_number(block_number)?;
         let block_number = Some(number.into());
@@ -679,7 +679,7 @@ impl EthApi {
         }
 
         let from = request.from;
-        let (_, _, gas, mut state) = self.backend.call(request, FeeDetails::zero(), block_number);
+        let (_, _, _gas, mut state) = self.backend.call(request, FeeDetails::zero(), block_number);
 
         // cleanup state map
         if let Some(from) = from {
@@ -695,7 +695,7 @@ impl EthApi {
             })
             .collect();
 
-        Ok(AccessListWithGasUsed { access_list: AccessList(items), gas_used: gas.into() })
+        Ok(AccessList(items))
     }
 
     /// Estimate gas needed for execution of given contract.
