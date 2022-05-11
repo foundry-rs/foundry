@@ -6,7 +6,7 @@ use ethers::{
 };
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::test_runner::{TestError, TestRunner};
-use revm::db::DatabaseRef;
+use revm::{db::DatabaseRef, DatabaseCommit};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -55,11 +55,15 @@ where
         // Finds out the chosen deployed contracts and/or senders.
         let (senders, contracts) = self.select_contracts_and_senders(invariant_address, abi);
 
-        // Creates strategy
-        let strat = invariant_strat(invariant_depth as usize, senders, contracts);
-
         // Stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
+
+        // Stores fuzz state for use with [fuzz_calldata_from_state]
+        let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.db);
+
+        // Creates strategy
+        let strat =
+            invariant_strat(fuzz_state.clone(), invariant_depth as usize, senders, contracts);
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -81,10 +85,17 @@ where
                 let mut sequence = vec![];
                 'all: for (sender, (address, calldata)) in inputs.iter() {
                     // Send nth randomly assigned sender + contract + input
-                    let RawCallResult { reverted, gas, stipend, .. } = executor
-                        .borrow_mut()
-                        .call_raw_committing(*sender, *address, calldata.0.clone(), U256::zero())
-                        .expect("could not make raw evm call");
+                    let RawCallResult { reverted, gas, stipend, state_changeset, logs, .. } =
+                        executor
+                            .borrow()
+                            .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
+                            .expect("could not make raw evm call");
+
+                    // Collect data for fuzzing and then commit changes
+                    let state_changeset =
+                        state_changeset.to_owned().expect("we should have a state changeset");
+                    collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
+                    executor.borrow_mut().db.commit(state_changeset);
 
                     if !reverted {
                         // Check if it breaks any of the listed invariants

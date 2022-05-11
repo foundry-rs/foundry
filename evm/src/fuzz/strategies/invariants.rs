@@ -7,18 +7,22 @@ use std::collections::BTreeMap;
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
 
-use crate::fuzz::strategies::fuzz_param;
+use crate::fuzz::{fuzz_calldata, fuzz_calldata_from_state, strategies::fuzz_param, EvmFuzzState};
+
+// use super::{};
 
 pub fn invariant_strat(
+    fuzz_state: EvmFuzzState,
     depth: usize,
     senders: Vec<Address>,
     contracts: BTreeMap<Address, (String, Abi)>,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
     let iters = 1..depth + 1;
-    proptest::collection::vec(gen_call(senders, contracts), iters).boxed()
+    proptest::collection::vec(gen_call(fuzz_state, senders, contracts), iters).boxed()
 }
 
 fn gen_call(
+    fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
     contracts: BTreeMap<Address, (String, Abi)>,
 ) -> BoxedStrategy<(Address, (Address, Bytes))> {
@@ -27,9 +31,10 @@ fn gen_call(
         .prop_flat_map(move |(contract, abi)| {
             let func = select_random_function(abi);
             let senders = senders.clone();
+            let fuzz_state = fuzz_state.clone();
             func.prop_flat_map(move |func| {
                 let sender = select_random_sender(senders.clone());
-                (sender, fuzz_contract_with_calldata(contract, func))
+                (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
         .boxed()
@@ -83,15 +88,19 @@ fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
 pub fn fuzz_contract_with_calldata(
+    fuzz_state: EvmFuzzState,
     contract: Address,
     func: Function,
 ) -> impl Strategy<Value = (Address, Bytes)> {
-    // We need to compose all the strategies generated for each parameter in all
-    // possible combinations
-    let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
+    // // We need to compose all the strategies generated for each parameter in all
+    // // possible combinations
+    let strats = proptest::strategy::Union::new_weighted(vec![
+        (60, fuzz_calldata(func.clone())),
+        (40, fuzz_calldata_from_state(func, fuzz_state)),
+    ]);
 
-    strats.prop_map(move |tokens| {
-        tracing::trace!(input = ?tokens);
-        (contract, func.encode_input(&tokens).unwrap().into())
+    strats.prop_map(move |calldata| {
+        tracing::trace!(input = ?calldata);
+        (contract, calldata)
     })
 }
