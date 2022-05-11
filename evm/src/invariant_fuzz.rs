@@ -10,7 +10,10 @@ use proptest::{
     test_runner::{TestError, TestRunner},
 };
 use revm::db::DatabaseRef;
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+};
 use tracing::warn;
 
 use crate::executor::{Executor, RawCallResult};
@@ -60,7 +63,7 @@ where
         let strat = invariant_strat(invariant_depth as usize, senders, contracts);
 
         // Stores the consumed gas and calldata of every successful fuzz call
-        let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
+        let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -75,10 +78,11 @@ where
         self.evm.set_tracing(false);
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
-
+        let reverts = Cell::new(0);
         let _test_error = self
             .runner
             .run(&strat, |inputs| {
+                let mut sequence = vec![];
                 'all: for (sender, (address, calldata)) in inputs.iter() {
                     // Send nth randomly assigned sender + contract + input
                     let RawCallResult { reverted, gas, stipend, .. } = executor
@@ -133,18 +137,15 @@ where
                             }
                         }
                         // push test case to the case set
-                        fuzz_cases.borrow_mut().push(FuzzCase {
-                            calldata: calldata.clone(),
-                            gas,
-                            stipend,
-                        });
+                        sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
                     } else {
-                        // call failed, continue on
+                        reverts.set(reverts.get() + 1);
                     }
                 }
 
                 // Before each test, we must reset to the initial state
                 executor.borrow_mut().db = clean_db.clone();
+                fuzz_cases.borrow_mut().push(FuzzedCases::new(sequence));
 
                 Ok(())
             })
@@ -160,7 +161,8 @@ where
 
         Some(InvariantFuzzTestResult {
             invariants: invariant_doesnt_hold.into_inner(),
-            cases: FuzzedCases::new(fuzz_cases.into_inner()),
+            cases: fuzz_cases.into_inner(),
+            reverts: reverts.get(),
         })
     }
 
@@ -228,7 +230,9 @@ where
 pub struct InvariantFuzzTestResult {
     pub invariants: BTreeMap<String, Option<InvariantFuzzError>>,
     /// Every successful fuzz test case
-    pub cases: FuzzedCases,
+    pub cases: Vec<FuzzedCases>,
+    /// Number of reverted fuzz calls
+    pub reverts: usize,
 }
 
 pub struct InvariantFuzzError {

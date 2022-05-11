@@ -104,6 +104,7 @@ impl TestResult {
 pub enum TestKindGas {
     Standard(u64),
     Fuzz { runs: usize, mean: u64, median: u64 },
+    Invariant { runs: usize, calls: usize, reverts: usize, mean: u64, median: u64 },
 }
 
 impl fmt::Display for TestKindGas {
@@ -114,6 +115,13 @@ impl fmt::Display for TestKindGas {
             }
             TestKindGas::Fuzz { runs, mean, median } => {
                 write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean, median)
+            }
+            TestKindGas::Invariant { runs, calls, reverts, mean, median } => {
+                write!(
+                    f,
+                    "(runs: {}, calls: {}, reverts: {}, μ: {}, ~: {})",
+                    runs, calls, reverts, mean, median
+                )
             }
         }
     }
@@ -126,6 +134,7 @@ impl TestKindGas {
             TestKindGas::Standard(gas) => *gas,
             // We use the median for comparisons
             TestKindGas::Fuzz { median, .. } => *median,
+            TestKindGas::Invariant { median, .. } => *median,
         }
     }
 }
@@ -140,7 +149,7 @@ pub enum TestKind {
     /// A solidity fuzz test, that stores all test cases
     Fuzz(FuzzedCases),
     /// Invariant
-    Invariant(String, FuzzedCases),
+    Invariant(Vec<FuzzedCases>, usize),
 }
 
 impl TestKind {
@@ -153,10 +162,13 @@ impl TestKind {
                 median: fuzzed.median_gas(false),
                 mean: fuzzed.mean_gas(false),
             },
-            TestKind::Invariant(_s, fuzzed) => TestKindGas::Fuzz {
-                runs: fuzzed.cases().len(),
-                median: fuzzed.median_gas(false),
-                mean: fuzzed.mean_gas(false),
+            TestKind::Invariant(fuzzed, reverts) => TestKindGas::Invariant {
+                runs: fuzzed.len(),
+                calls: fuzzed.iter().map(|sequence| sequence.cases().len()).sum(),
+                // todo
+                median: fuzzed.get(0).unwrap().median_gas(false),
+                mean: fuzzed.get(0).unwrap().mean_gas(false),
+                reverts: *reverts,
             },
         }
     }
@@ -438,7 +450,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             .collect::<Result<BTreeMap<_, _>>>()?;
 
         if has_invariants && fuzzer.is_some() {
-            let functions = self
+            let functions: Vec<&Function> = self
                 .contract
                 .functions()
                 .into_iter()
@@ -450,18 +462,20 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 .collect();
 
             let results = self.run_invariant_test(
-                functions,
+                functions.clone(),
                 fuzzer.expect("no fuzzer"),
                 setup,
                 test_options,
                 &identified_contracts,
             )?;
 
-            results.into_iter().for_each(|result| match result.kind {
-                TestKind::Invariant(ref name, ref _cases) => {
-                    test_results.insert(name.to_string(), result);
+            results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
+                match result.kind {
+                    TestKind::Invariant(ref _cases, _) => {
+                        test_results.insert(function.name.clone(), result);
+                    }
+                    _ => unreachable!(),
                 }
-                _ => unreachable!(),
             });
         }
 
@@ -572,12 +586,12 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         let mut evm =
             InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
 
-        if let Some(InvariantFuzzTestResult { invariants, cases }) =
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
             evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)
         {
             let results = invariants
                 .iter()
-                .map(|(k, test_error)| {
+                .map(|(_k, test_error)| {
                     let mut counterexample_sequence = vec![];
 
                     if let Some(ref error) = test_error {
@@ -651,7 +665,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                         counterexample: None,
                         counterexample_sequence: sequence,
                         logs: logs.clone(),
-                        kind: TestKind::Invariant(k.to_string(), cases.clone()),
+                        kind: TestKind::Invariant(cases.clone(), reverts),
                         traces: traces.clone(),
                         labeled_addresses: dbg!(labeled_addresses.clone()),
                     }
