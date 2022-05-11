@@ -186,7 +186,7 @@ where
 
         if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
-                address,
+                self.sender,
                 address,
                 func.clone(),
                 (),
