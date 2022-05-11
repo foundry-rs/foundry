@@ -1,5 +1,8 @@
 pub(crate) mod strategies;
 
+/// Invariant fuzzing wrapper for executors
+pub mod invariant;
+
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 
 use crate::{

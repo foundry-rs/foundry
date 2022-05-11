@@ -11,3 +11,6 @@ mod state;
 pub use state::{
     build_initial_state, collect_state_from_call, fuzz_calldata_from_state, EvmFuzzState,
 };
+
+mod invariants;
+pub use invariants::*;

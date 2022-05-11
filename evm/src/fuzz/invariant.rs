@@ -1,14 +1,11 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::fuzz::{strategies::fuzz_param, *};
+use crate::fuzz::{strategies::invariant_strat, *};
 use ethers::{
-    abi::{Abi, Function, ParamType},
+    abi::{Abi, Function},
     types::{Address, Bytes, U256},
 };
 pub use proptest::test_runner::Config as FuzzConfig;
-use proptest::{
-    prelude::*,
-    test_runner::{TestError, TestRunner},
-};
+use proptest::test_runner::{TestError, TestRunner};
 use revm::db::DatabaseRef;
 use std::{
     cell::{Cell, RefCell},
@@ -165,14 +162,14 @@ where
         })
     }
 
-    pub fn select_contracts_and_senders(
+    fn select_contracts_and_senders(
         &self,
         invariant_address: Address,
         abi: &Abi,
     ) -> (Vec<Address>, BTreeMap<Address, (String, Abi)>) {
         let [senders, selected, excluded] =
             ["targetSenders", "targetContracts", "excludeContracts"]
-                .map(|method| get_addresses(self.evm, invariant_address, abi, method));
+                .map(|method| self.get_addresses(invariant_address, abi, method));
 
         (
             senders,
@@ -194,6 +191,30 @@ where
                 })
                 .collect(),
         )
+    }
+
+    fn get_addresses(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<Address> {
+        let mut addresses = vec![];
+
+        if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
+            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
+                address,
+                address,
+                func.clone(),
+                (),
+                U256::zero(),
+                Some(abi),
+            ) {
+                addresses = call_result.result;
+            } else {
+                warn!(
+                    "The function {} was found but there was an error querying addresses.",
+                    method_name
+                );
+            }
+        };
+
+        addresses
     }
 }
 
@@ -248,120 +269,4 @@ impl InvariantFuzzError {
             func: func.short_signature().into(),
         }
     }
-}
-
-pub fn invariant_strat(
-    depth: usize,
-    senders: Vec<Address>,
-    contracts: BTreeMap<Address, (String, Abi)>,
-) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
-    let iters = 1..depth + 1;
-    proptest::collection::vec(gen_call(senders, contracts), iters).boxed()
-}
-
-fn gen_call(
-    senders: Vec<Address>,
-    contracts: BTreeMap<Address, (String, Abi)>,
-) -> BoxedStrategy<(Address, (Address, Bytes))> {
-    let random_contract = select_random_contract(contracts);
-    random_contract
-        .prop_flat_map(move |(contract, abi)| {
-            let func = select_random_function(abi);
-            let senders = senders.clone();
-            func.prop_flat_map(move |func| {
-                let sender = select_random_sender(senders.clone());
-                (sender, fuzz_calldata(contract, func))
-            })
-        })
-        .boxed()
-}
-
-fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
-    let selectors = any::<prop::sample::Selector>();
-    let senders_: Vec<Address> = senders.clone();
-
-    if !senders.is_empty() {
-        // todo should we do an union ? 80% selected 15% random + 0x0 address by default
-        selectors.prop_map(move |selector| *selector.select(&senders_)).boxed()
-    } else {
-        let fuzz = fuzz_param(&ParamType::Address);
-        fuzz.prop_map(move |selector| {
-            // assurance above
-            selector.into_address().unwrap()
-        })
-        .boxed()
-    }
-}
-
-fn select_random_contract(
-    contracts: BTreeMap<Address, (String, Abi)>,
-) -> impl Strategy<Value = (Address, Abi)> {
-    let selectors = any::<prop::sample::Selector>();
-    selectors.prop_map(move |selector| {
-        let res = selector.select(&contracts);
-        (*res.0, res.1 .1.clone())
-    })
-}
-
-fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
-    let selectors = any::<prop::sample::Selector>();
-    let possible_funcs: Vec<ethers::abi::Function> = abi
-        .functions()
-        .filter(|func| {
-            !matches!(
-                func.state_mutability,
-                ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
-            )
-        })
-        .cloned()
-        .collect();
-    selectors.prop_map(move |selector| {
-        let func = selector.select(&possible_funcs);
-        func.clone()
-    })
-}
-
-fn get_addresses<DB>(
-    executor: &Executor<DB>,
-    address: Address,
-    abi: &Abi,
-    method_name: &str,
-) -> Vec<Address>
-where
-    DB: DatabaseRef,
-{
-    let mut addresses = vec![];
-
-    if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
-        if let Ok(call_result) = executor.call::<Vec<Address>, _, _>(
-            address,
-            address,
-            func.clone(),
-            (),
-            U256::zero(),
-            Some(abi),
-        ) {
-            addresses = call_result.result;
-        } else {
-            warn!(
-                "The function {} was found but there was an error querying addresses.",
-                method_name
-            );
-        }
-    };
-
-    addresses
-}
-
-/// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
-/// for that function's input types.
-pub fn fuzz_calldata(addr: Address, func: Function) -> impl Strategy<Value = (Address, Bytes)> {
-    // We need to compose all the strategies generated for each parameter in all
-    // possible combinations
-    let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
-
-    strats.prop_map(move |tokens| {
-        tracing::trace!(input = ?tokens);
-        (addr, func.encode_input(&tokens).unwrap().into())
-    })
 }

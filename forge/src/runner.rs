@@ -7,8 +7,10 @@ use ethers::{
 use eyre::Result;
 use foundry_evm::{
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
-    fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
-    invariant_fuzz::{InvariantExecutor, InvariantFuzzTestResult},
+    fuzz::{
+        invariant::{InvariantExecutor, InvariantFuzzTestResult},
+        CounterExample, FuzzedCases, FuzzedExecutor,
+    },
     trace::{load_contracts, CallTraceArena, TraceKind},
     CALLER,
 };
