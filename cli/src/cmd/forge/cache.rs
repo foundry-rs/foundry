@@ -9,7 +9,7 @@ use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 
-use strum::VariantNames;
+use strum::{EnumString, EnumVariantNames, VariantNames};
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
@@ -37,9 +37,9 @@ impl FromStr for ChainOrAll {
     }
 }
 
-#[derive(Debug, strum::EnumString, strum::EnumVariantNames)]
+#[derive(Debug, EnumString, EnumVariantNames)]
 #[strum(serialize_all = "kebab-case")]
-enum PossibleChains {
+pub enum PossibleChains {
     All,
     Mainnet,
     Ropsten,
