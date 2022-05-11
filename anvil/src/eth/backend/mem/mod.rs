@@ -454,6 +454,7 @@ impl Backend {
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
+        _number: Option<BlockNumber>,
     ) -> (Return, TransactOut, u64, State) {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;

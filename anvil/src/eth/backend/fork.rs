@@ -9,12 +9,13 @@ use std::{collections::HashMap, sync::Arc};
 use crate::eth::error::BlockchainError;
 
 use crate::eth::backend::mem::fork_db::ForkedDatabase;
+use anvil_core::eth::call::CallRequest;
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
     types::{
-        Address, Block, BlockId, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, Filter, Log,
+        Trace, Transaction, TransactionReceipt, TxHash, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -91,6 +92,39 @@ impl ClientFork {
 
     fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
         self.storage.write()
+    }
+
+    /// Sends `eth_call`
+    pub async fn call(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockId>,
+    ) -> Result<Bytes, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        self.provider().request("eth_call", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn estimate_gas(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockId>,
+    ) -> Result<U256, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        self.provider().request("eth_estimateGas", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn create_access_list(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockId>,
+    ) -> Result<AccessListWithGasUsed, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+        self.provider().request("eth_createAccessList", [tx, block]).await
     }
 
     pub async fn storage_at(

@@ -9,7 +9,6 @@ use anvil_core::eth::{
     transaction::TransactionInfo,
 };
 use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
-use foundry_evm::executor::DatabaseRef;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
