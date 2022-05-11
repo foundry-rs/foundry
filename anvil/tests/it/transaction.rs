@@ -2,7 +2,7 @@ use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::{ContractFactory, EthEvent},
-    prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    prelude::{abigen, BlockId, Middleware, Signer, SignerMiddleware, TransactionRequest},
     types::{Address, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -229,6 +229,41 @@ async fn can_deploy_greeter_http() {
         Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_greeter_historic() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let block = client.get_block_number().await.unwrap();
+
+    greeter_contract
+        .set_greeting("Another Message".to_string())
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+
+    // returns previous state
+    let greeting =
+        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
 
