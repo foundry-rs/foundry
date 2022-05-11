@@ -9,6 +9,8 @@ use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 
+use strum::VariantNames;
+
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
     #[clap(subcommand)]
@@ -35,31 +37,44 @@ impl FromStr for ChainOrAll {
     }
 }
 
+#[derive(Debug, strum::EnumString, strum::EnumVariantNames)]
+#[strum(serialize_all = "kebab-case")]
+enum PossibleChains {
+    All,
+    Mainnet,
+    Ropsten,
+    Rinkeby,
+    Goerli,
+    Kovan,
+    Xdai,
+    Polygon,
+    PolygonMumbai,
+    Avalanche,
+    AvalancheFuji,
+    Sepolia,
+    Moonbeam,
+    MoonbeamDev,
+    Moonriver,
+    Optimism,
+    OptimismKovan,
+    Fantom,
+    FantomTestnet,
+    Arbitrum,
+    ArbitrumTestnet,
+    Bsc,
+    BscTestnet,
+    Cronos,
+    CronosTestnet,
+}
+
 #[derive(Debug, Parser)]
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = [
-            "all",
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon_mumbai",
-            "avalanche",
-            "avalanche_fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam_dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan"
-    ])]
+        possible_values = PossibleChains::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
 
     #[clap(
@@ -78,25 +93,8 @@ pub struct LsArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = [
-            "all",
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon_mumbai",
-            "avalanche",
-            "avalanche_fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam_dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan"
-    ])]
+        possible_values = PossibleChains::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
 }
 
