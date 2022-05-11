@@ -13,6 +13,7 @@ members = [
     "evm",
     "fmt",
     "forge",
+    "foundryup",
     "ui",
     "utils",
 ]

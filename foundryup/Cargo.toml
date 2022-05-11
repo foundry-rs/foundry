@@ -1,0 +1,40 @@
+[package]
+name = "foundryup"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/foundry-rs/foundry"
+description = """
+Manage foundry toolchain installations with ease
+"""
+
+[dependencies]
+
+# async
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls", "gzip"] }
+tokio = { version = "1", features = ["full"] }
+
+# cli
+clap = { version = "3.0", features = [
+    "derive",
+] }
+clap_complete = "3.0"
+
+# Error handling
+eyre = "0.6"
+thiserror = "1.0"
+
+# misc
+semver = "1.0"
+once_cell = "1.9"
+url = "2.1"
+tar = "0.4"
+remove_dir_all = "0.7.0"
+
+# tracing
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
