@@ -8,7 +8,8 @@ pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::test_runner::{TestError, TestRunner};
 use revm::{db::DatabaseRef, DatabaseCommit};
 use std::{
-    cell::{Cell, RefCell},
+    borrow::Borrow,
+    cell::{Cell, RefCell, RefMut},
     collections::BTreeMap,
 };
 use tracing::warn;
@@ -91,60 +92,36 @@ where
                             .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                             .expect("could not make raw evm call");
 
-                    // Collect data for fuzzing and then commit changes
+                    // Collect data for fuzzing
                     let state_changeset =
                         state_changeset.to_owned().expect("we should have a state changeset");
                     collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
+
+                    // Commit changes
                     executor.borrow_mut().db.commit(state_changeset);
 
+                    sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
+
                     if !reverted {
-                        // Check if it breaks any of the listed invariants
-                        for func in invariants.iter() {
-                            let RawCallResult { reverted, state_changeset, result, .. } = executor
-                                .borrow()
-                                .call_raw(
-                                    self.sender,
+                        if let Err((func, result)) = assert_invariants(
+                            self.sender,
+                            executor.borrow_mut(),
+                            invariant_address,
+                            &invariants,
+                        ) {
+                            invariant_doesnt_hold.borrow_mut().insert(
+                                func.name.clone(),
+                                Some(InvariantFuzzError::new(
                                     invariant_address,
-                                    func.encode_input(&[])?.into(),
-                                    U256::zero(),
-                                )
-                                .expect("EVM error");
-                            if reverted {
-                                invariant_doesnt_hold.borrow_mut().insert(
-                                    func.name.clone(),
-                                    Some(InvariantFuzzError::new(
-                                        invariant_address,
-                                        func,
-                                        abi,
-                                        &result,
-                                        &inputs,
-                                    )),
-                                );
-                                break 'all
-                            } else {
-                                // This will panic and get caught by the executor
-                                if !executor.borrow().is_success(
-                                    invariant_address,
-                                    reverted,
-                                    state_changeset.expect("we should have a state changeset"),
-                                    false,
-                                ) {
-                                    invariant_doesnt_hold.borrow_mut().insert(
-                                        func.name.clone(),
-                                        Some(InvariantFuzzError::new(
-                                            invariant_address,
-                                            func,
-                                            abi,
-                                            &result,
-                                            &inputs,
-                                        )),
-                                    );
-                                    break 'all
-                                }
-                            }
+                                    func,
+                                    abi,
+                                    &result,
+                                    &inputs,
+                                )),
+                            );
+
+                            break 'all
                         }
-                        // push test case to the case set
-                        sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
                     } else {
                         reverts.set(reverts.get() + 1);
                     }
@@ -229,7 +206,44 @@ where
     }
 }
 
+fn assert_invariants<'a, DB>(
+    sender: Address,
+    executor: RefMut<&mut &mut Executor<DB>>,
+    invariant_address: Address,
+    invariants: &'a [&Function],
+) -> Result<(), (&'a Function, bytes::Bytes)>
+where
+    DB: DatabaseRef,
+{
+    for func in invariants {
+        let RawCallResult { reverted, state_changeset, result, .. } = executor
+            .borrow()
+            .call_raw(
+                sender,
+                invariant_address,
+                func.encode_input(&[]).expect("invariant should have no inputs").into(),
+                U256::zero(),
+            )
+            .expect("EVM error");
+        if reverted {
+            return Err((*func, result))
+        } else {
+            // This will panic and get caught by the executor
+            if !executor.borrow().is_success(
+                invariant_address,
+                reverted,
+                state_changeset.expect("we should have a state changeset"),
+                false,
+            ) {
+                return Err((*func, result))
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The outcome of an invariant fuzz test
+#[derive(Debug)]
 pub struct InvariantFuzzTestResult {
     pub invariants: BTreeMap<String, Option<InvariantFuzzError>>,
     /// Every successful fuzz test case
@@ -238,6 +252,7 @@ pub struct InvariantFuzzTestResult {
     pub reverts: usize,
 }
 
+#[derive(Debug)]
 pub struct InvariantFuzzError {
     /// The proptest error occurred as a result of a test case
     pub test_error: TestError<Vec<(Address, (Address, Bytes))>>,
