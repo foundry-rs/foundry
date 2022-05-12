@@ -7,12 +7,11 @@ use ethers::solc::{
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
-    forgetest, forgetest_ignore, forgetest_init,
+    forgetest, forgetest_async, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
     ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use foundry_utils::RuntimeOrHandle;
 use std::{env, fs};
 use yansi::Paint;
 
@@ -702,8 +701,9 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-forgetest!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| {
-    RuntimeOrHandle::new().block_on(async {
+forgetest_async!(
+    can_deploy_script_without_lib,
+    (|prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -717,10 +717,11 @@ forgetest!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| {
             .assert_nonce_increment(vec![(0, 1), (1, 2)])
             .await;
     })
-});
+);
 
-forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
-    RuntimeOrHandle::new().block_on(async {
+forgetest_async!(
+    can_deploy_script_with_lib,
+    (|prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -733,11 +734,12 @@ forgetest!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| {
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
-    });
-});
+    })
+);
 
-forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
-    RuntimeOrHandle::new().block_on(async {
+forgetest_async!(
+    can_resume_script,
+    (|prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -760,11 +762,12 @@ forgetest!(can_resume_script, |prj: TestProject, cmd: TestCommand| {
             // it skips the first 2 txes
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
-    });
-});
+    })
+);
 
-forgetest!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| {
-    RuntimeOrHandle::new().block_on(async {
+forgetest_async!(
+    can_deploy_broadcast_wrap,
+    (|prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -778,11 +781,12 @@ forgetest!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| {
             .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
             .await;
-    });
-});
+    })
+);
 
-forgetest!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| {
-    RuntimeOrHandle::new().block_on(async {
+forgetest_async!(
+    panic_no_deployer_set,
+    (|prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -793,5 +797,5 @@ forgetest!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| {
             .add_sig("BroadcastTest", "deployOther()")
             .expect_err()
             .sim("You have more than one deployer who could deploy libraries");
-    });
-});
+    })
+);
