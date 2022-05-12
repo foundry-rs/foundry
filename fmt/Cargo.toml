@@ -13,7 +13,7 @@ keywords = ["ethereum", "web3", "solidity", "linter"]
 [dependencies]
 indent_write = "2.2.0"
 semver = "1.0.4"
-solang-parser = "0.1.12"
+solang-parser = "0.1.13"
 itertools = "0.10.3"
 
 [dev-dependencies]

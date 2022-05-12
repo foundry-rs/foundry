@@ -12,10 +12,10 @@ impl LineOfCode for SourceUnitPart {
     fn loc(&self) -> Loc {
         match self {
             SourceUnitPart::ContractDefinition(contract) => contract.loc,
-            SourceUnitPart::PragmaDirective(loc, _, _, _) | SourceUnitPart::StraySemicolon(loc) => {
+            SourceUnitPart::PragmaDirective(loc, _, _) | SourceUnitPart::StraySemicolon(loc) => {
                 *loc
             }
-            SourceUnitPart::ImportDirective(_, import) => *match import {
+            SourceUnitPart::ImportDirective(import) => *match import {
                 Import::Plain(_, loc) => loc,
                 Import::GlobalSymbol(_, _, loc) => loc,
                 Import::Rename(_, _, loc) => loc,
@@ -27,6 +27,8 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::FunctionDefinition(function) => function.loc,
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
+            SourceUnitPart::DocComment(doc) => doc.loc,
+            SourceUnitPart::Using(using) => using.loc,
         }
     }
 }
@@ -43,6 +45,7 @@ impl LineOfCode for ContractPart {
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
             ContractPart::TypeDefinition(def) => def.loc,
+            ContractPart::DocComment(doc) => doc.loc,
         }
     }
 }
@@ -50,12 +53,12 @@ impl LineOfCode for ContractPart {
 impl LineOfCode for YulStatement {
     fn loc(&self) -> Loc {
         match self {
-            YulStatement::Assign(loc, _, _) |
-            YulStatement::If(loc, _, _) |
-            YulStatement::Leave(loc) |
-            YulStatement::Break(loc) |
-            YulStatement::VariableDeclaration(loc, _, _) |
-            YulStatement::Continue(loc) => *loc,
+            YulStatement::Assign(loc, _, _)
+            | YulStatement::If(loc, _, _)
+            | YulStatement::Leave(loc)
+            | YulStatement::Break(loc)
+            | YulStatement::VariableDeclaration(loc, _, _)
+            | YulStatement::Continue(loc) => *loc,
             YulStatement::For(f) => f.loc,
             YulStatement::Block(b) => b.loc,
             YulStatement::Switch(s) => s.loc,
@@ -68,10 +71,10 @@ impl LineOfCode for YulStatement {
 impl LineOfCode for YulExpression {
     fn loc(&self) -> Loc {
         match self {
-            YulExpression::BoolLiteral(loc, _, _) |
-            YulExpression::NumberLiteral(loc, _, _) |
-            YulExpression::HexNumberLiteral(loc, _, _) |
-            YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::BoolLiteral(loc, _, _)
+            | YulExpression::NumberLiteral(loc, _, _, _)
+            | YulExpression::HexNumberLiteral(loc, _, _)
+            | YulExpression::Member(loc, _, _) => *loc,
             YulExpression::StringLiteral(literal, _) => literal.loc,
             YulExpression::Variable(ident) => ident.loc,
             YulExpression::FunctionCall(f) => f.loc,
@@ -95,9 +98,10 @@ impl OptionalLineOfCode for FunctionAttribute {
         match self {
             FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
             FunctionAttribute::Visibility(visibility) => visibility.loc(),
-            FunctionAttribute::Virtual(loc) |
-            FunctionAttribute::Override(loc, _) |
-            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+            FunctionAttribute::Virtual(loc)
+            | FunctionAttribute::Immutable(loc)
+            | FunctionAttribute::Override(loc, _)
+            | FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
         }
     }
 }
