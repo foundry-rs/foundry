@@ -456,15 +456,15 @@ impl Backend {
 
     /// Executes the `CallRequest` without writing to the DB
     ///
-    /// **Note:**: in order to make it consistent this accepts a `Option<BlockNumber>`, it's
-    /// expected that this number is in range, See [Self::ensure_block_number()].  If the block
-    /// number is out of range, then we pick the latest block
+    /// # Errors
+    ///
+    /// Returns an error if the `block_number` is greater than the current height
     pub fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
-    ) -> (Return, TransactOut, u64, State) {
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
@@ -504,7 +504,7 @@ impl Backend {
             // requested historic state
             let states = self.states.read();
 
-            if let Some(state) =
+            return if let Some(state) =
                 self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
             {
                 let mut evm = revm::EVM::new();
@@ -516,9 +516,13 @@ impl Backend {
 
                 trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
 
-                return (exit, out, gas, state)
+                Ok((exit, out, gas, state))
             } else {
                 warn!(target: "backend", "Not historic state found for block={}", block_number);
+                Err(BlockchainError::BlockOutOfRange(
+                    env.block.number.as_u64(),
+                    block_number.as_u64(),
+                ))
             }
         }
 
@@ -530,7 +534,7 @@ impl Backend {
         let (exit, out, gas, state, _) = evm.transact_ref();
         trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
 
-        (exit, out, gas, state)
+        Ok((exit, out, gas, state))
     }
 
     /// returns all receipts for the given transactions

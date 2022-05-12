@@ -641,7 +641,7 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, block_number);
+        let (exit, out, gas, _) = self.backend.call(request, fees, block_number)?;
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
@@ -679,7 +679,8 @@ impl EthApi {
         }
 
         let from = request.from;
-        let (_, _, _gas, mut state) = self.backend.call(request, FeeDetails::zero(), block_number);
+        let (_, _, _gas, mut state) =
+            self.backend.call(request, FeeDetails::zero(), block_number)?;
 
         // cleanup state map
         if let Some(from) = from {
@@ -770,7 +771,7 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number);
+        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number)?;
         match exit {
             Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                 // succeeded
@@ -784,7 +785,8 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) = self.backend.call(request.clone(), fees, block_number);
+                    let (exit, _, _gas, _) =
+                        self.backend.call(request.clone(), fees, block_number)?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
@@ -818,7 +820,8 @@ impl EthApi {
 
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) = self.backend.call(request.clone(), fees.clone(), block_number);
+            let (exit, _, _gas, _) =
+                self.backend.call(request.clone(), fees.clone(), block_number)?;
             match exit {
                 return_ok!() => {
                     highest_gas_limit = mid_gas_limit;
