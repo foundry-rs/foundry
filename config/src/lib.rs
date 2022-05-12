@@ -1,7 +1,7 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use crate::caching::StorageCachingConfig;
+use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
@@ -38,7 +38,8 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
-pub mod caching;
+pub mod cache;
+use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
@@ -747,6 +748,54 @@ impl Config {
         }
     }
 
+    /// Updates the `foundry.toml` file for the given `root` based on the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`.
+    pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&Config, &mut toml_edit::Document) -> bool,
+    {
+        let config = Self::load_with_root(root).sanitized();
+        config.update(|doc| f(&config, doc))
+    }
+
+    /// Updates the `foundry.toml` file this `Config` ias based on with the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`
+    pub fn update<F>(&self, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&mut toml_edit::Document) -> bool,
+    {
+        let file_path = self.get_config_path();
+        if !file_path.exists() {
+            return Ok(())
+        }
+        let cargo_toml_content = fs::read_to_string(&file_path)?;
+        let mut doc = cargo_toml_content.parse::<toml_edit::Document>()?;
+        if f(&mut doc) {
+            fs::write(file_path, doc.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Sets the `libs` entry inside a `foundry.toml` file but only if it exists
+    ///
+    /// # Errors
+    ///
+    /// An error if the `foundry.toml` could not be parsed.
+    pub fn update_libs(&self) -> eyre::Result<()> {
+        self.update(|doc| {
+            let profile = self.profile.as_str().as_str();
+            let libs: toml_edit::Value =
+                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let libs = toml_edit::value(libs);
+            doc[profile]["libs"] = libs;
+            true
+        })
+    }
+
     /// Serialize the config type as a String of TOML.
     ///
     /// This serializes to a table with the name of the profile
@@ -779,6 +828,11 @@ impl Config {
 {}"#,
             self.profile, s
         ))
+    }
+
+    /// Returns the path to the `foundry.toml`  of this `Config`
+    pub fn get_config_path(&self) -> PathBuf {
+        self.__root.0.join(Config::FILE_NAME)
     }
 
     /// Returns the selected profile
@@ -900,6 +954,59 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// List the data in the foundry cache
+    pub fn list_foundry_cache() -> eyre::Result<Cache> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let mut cache = Cache { chains: vec![] };
+            if !cache_dir.exists() {
+                return Ok(cache)
+            }
+            if let Ok(entries) = cache_dir.as_path().read_dir() {
+                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
+                    cache.chains.push(ChainCache {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        blocks: Self::get_cached_blocks(&entry.path())?,
+                    })
+                }
+                Ok(cache)
+            } else {
+                eyre::bail!("failed to access foundry_cache_dir");
+            }
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+    }
+
+    /// List the cached data for `chain`
+    pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let blocks = Self::get_cached_blocks(&cache_dir)?;
+            Ok(ChainCache { name: chain.to_string(), blocks })
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+    }
+
+    //The path provided to this function should point to a cached chain folder
+    fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
+        let mut blocks = vec![];
+        if !chain_path.exists() {
+            return Ok(blocks)
+        }
+        for block in chain_path
+            .read_dir()?
+            .flatten()
+            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
+        {
+            let filepath = block.path().join("storage.json");
+            blocks.push((
+                block.file_name().to_string_lossy().into_owned(),
+                fs::metadata(filepath)?.len(),
+            ));
+        }
+        Ok(blocks)
     }
 }
 
@@ -1704,11 +1811,14 @@ mod tests {
     use figment::error::Kind::InvalidType;
     use std::{collections::BTreeMap, str::FromStr};
 
-    use crate::caching::{CachedChains, CachedEndpoints};
+    use crate::cache::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    use std::{fs::File, io::Write};
+    use tempfile::tempdir;
 
     #[test]
     fn test_figment_is_default() {
@@ -1900,6 +2010,27 @@ mod tests {
                 ],
             );
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_can_update_libs() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ["node_modules"]
+            "#,
+            )?;
+
+            let mut config = Config::load();
+            config.libs.push("libs".into());
+            config.update_libs().unwrap();
+
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules"), PathBuf::from("libs"),]);
             Ok(())
         });
     }
@@ -2532,5 +2663,37 @@ mod tests {
 
         let _figment: Figment = From::from(&Outer::default());
         let _config: Config = From::from(&Outer::default());
+    }
+
+    #[test]
+    fn list_cached_blocks() -> eyre::Result<()> {
+        fn fake_block_cache(chain_path: &Path, block_number: &str, size_bytes: usize) {
+            let block_path = chain_path.join(block_number);
+            fs::create_dir(block_path.as_path());
+            let file_path = block_path.join("storage.json");
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>());
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_block_cache(chain_dir.path(), &"1", 100);
+        fake_block_cache(chain_dir.path(), &"2", 500);
+        // Pollution file that should not show up in the cached block
+        let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
+        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>());
+
+        let result = Config::get_cached_blocks(chain_dir.path())?;
+
+        assert_eq!(result.len(), 2);
+        let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
+        let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        assert_eq!(block1.0, "1");
+        assert_eq!(block1.1, 100);
+        assert_eq!(block2.0, "2");
+        assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
     }
 }

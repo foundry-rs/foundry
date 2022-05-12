@@ -185,6 +185,19 @@ impl MultiContractRunner {
             .count()
     }
 
+    // Get all tests of matching path and contract
+    pub fn get_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> Vec<String> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
+            .filter(|sig| sig.starts_with("test"))
+            .collect()
+    }
+
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),

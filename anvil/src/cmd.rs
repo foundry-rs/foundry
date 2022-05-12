@@ -1,9 +1,12 @@
 use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use tracing::log::trace;
 
@@ -51,8 +54,25 @@ pub struct NodeArgs {
     #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
     pub hardfork: Hardfork,
 
-    #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
+    #[clap(
+        short,
+        long,
+        alias = "blockTime",
+        help = "Block time in seconds for interval mining.",
+        name = "block-time"
+    )]
     pub block_time: Option<u64>,
+
+    #[clap(
+        long,
+        alias = "no-mine",
+        help = "Disable auto and interval mining, and mine on demand instead.",
+        conflicts_with = "block-time"
+    )]
+    pub no_mining: bool,
+
+    #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
+    pub host: Option<IpAddr>,
 }
 
 impl NodeArgs {
@@ -69,6 +89,7 @@ impl NodeArgs {
             .with_gas_price(self.evm_opts.env.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
+            .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
@@ -77,6 +98,7 @@ impl NodeArgs {
             .with_fork_block_number(evm_opts.fork_block_number)
             .with_storage_caching(evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
+            .with_host(self.host)
             .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
     }
@@ -111,7 +133,7 @@ impl NodeArgs {
                 // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
                 if let Some(ref fork) = fork {
-                    fork.database.flush_cache();
+                    fork.database.read().flush_cache();
                 }
                 std::process::exit(0);
             }

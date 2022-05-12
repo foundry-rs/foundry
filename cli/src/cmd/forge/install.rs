@@ -8,7 +8,7 @@ use std::{
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use clap::{Parser, ValueHint};
-use foundry_config::find_project_root_path;
+use foundry_config::{find_project_root_path, Config};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use yansi::Paint;
@@ -59,7 +59,14 @@ impl Cmd for InstallArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
-        install(root, self.dependencies, self.opts)
+        install(&root, self.dependencies, self.opts)?;
+        let mut config = Config::load_with_root(root);
+        let lib = PathBuf::from("lib");
+        if !config.libs.contains(&lib) {
+            config.libs.push(lib);
+            config.update_libs()?;
+        }
+        Ok(())
     }
 }
 
@@ -202,7 +209,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
             &target_dir
         )
     } else if stderr.contains("not a git repository") {
-        eyre::bail!("\"{}\" is not a git repository", url)
+        eyre::bail!("{stderr}")
     } else if stderr.contains("paths are ignored by one of your .gitignore files") {
         let error =
             stderr.lines().filter(|l| !l.starts_with("hint:")).collect::<Vec<&str>>().join("\n");
