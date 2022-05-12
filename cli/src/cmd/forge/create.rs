@@ -16,7 +16,7 @@ use eyre::{Context, Result};
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use serde_json::json;
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{fs, path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -244,7 +244,7 @@ impl CreateArgs {
         };
 
         if !self.verify {
-            return Ok(());
+            return Ok(())
         }
 
         println!("Starting contract verification...");
@@ -270,7 +270,7 @@ impl CreateArgs {
             false,
             false,
             true,
-            RetryArgs::new(12, Some(3)),
+            RetryArgs { retries: 12, delay: Some(3) },
         )?;
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await

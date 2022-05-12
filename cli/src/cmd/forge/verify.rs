@@ -1,10 +1,7 @@
 //! Verify contract source on etherscan
 
 use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::{
-    cmd::RetryArgs,
-    opts::{forge::ContractInfo, EthereumOpts},
-};
+use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -20,6 +17,7 @@ use ethers::{
 };
 use eyre::{eyre, Context};
 use foundry_config::{Chain, Config, SolcReq};
+use foundry_utils::Retry;
 use futures::FutureExt;
 use semver::{BuildMetadata, Version};
 use std::{collections::BTreeMap, path::Path};
@@ -122,7 +120,7 @@ impl VerifyArgs {
 
         trace!("submitting verification request {:?}", verify_args);
 
-        let retry = self.retry.clone();
+        let retry: Retry = self.retry.clone().into();
         let resp = retry.run_async(|| {
             async {
                 let resp = etherscan
@@ -165,7 +163,7 @@ impl VerifyArgs {
                 let check_args = VerifyCheckArgs {
                     guid: resp.result,
                     chain: self.chain,
-                    retry: RetryArgs::new(6, Some(10)),
+                    retry: RetryArgs { retries: 6, delay: Some(10) },
                     etherscan_key: self.etherscan_key.clone(),
                 };
                 return check_args.run().await
@@ -423,7 +421,7 @@ impl VerifyCheckArgs {
             .wrap_err("Failed to create etherscan client")?;
 
         println!("Waiting for verification result...");
-        let retry = self.retry.clone();
+        let retry: Retry = self.retry.clone().into();
         retry
             .run_async(|| {
                 async {
