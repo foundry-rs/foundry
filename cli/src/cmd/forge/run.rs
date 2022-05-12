@@ -258,7 +258,7 @@ impl Cmd for RunArgs {
 
             println!("Gas used: {}", result.gas);
 
-            println!("== Result ==");
+            println!("== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, token) in decoded.iter().enumerate() {
@@ -267,7 +267,7 @@ impl Cmd for RunArgs {
                             None => String::from("unknown"),
                         };
 
-                        println!("{}: {:<9} {}", index, internal_type, format_token(&token));
+                        println!("{}: {:<9} {}", index, internal_type, format_token(token));
                     }
                 }
                 Err(_) => {
