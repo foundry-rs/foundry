@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd},
+    cmd::{forge::build::CoreBuildArgs, needs_setup, Cmd},
     compile, utils,
 };
 use clap::{Parser, ValueHint};
@@ -92,23 +92,7 @@ impl Cmd for RunArgs {
             })
             .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
-        let CompactContractBytecode { abi, bytecode, .. } = contract;
-        let abi = abi.expect("no ABI for contract");
-        let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let setup_fns: Vec<_> =
-            abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
-
-        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
-
-        for setup_fn in setup_fns.iter() {
-            if setup_fn.name != "setUp" {
-                println!(
-                    "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                    Paint::yellow("Warning:").bold(),
-                    setup_fn.signature()
-                );
-            }
-        }
+        let (needs_setup, _, bytecode) = needs_setup(contract);
 
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(evm_opts.evm_env());

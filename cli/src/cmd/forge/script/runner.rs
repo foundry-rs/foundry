@@ -17,7 +17,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         Self { executor, initial_balance, sender }
     }
 
-    /// Deploys the libraries, broadcast contract and the setUp method if requested.
+    /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
     pub fn setup(
         &mut self,
         libraries: &[Bytes],
