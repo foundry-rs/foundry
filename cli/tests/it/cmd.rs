@@ -228,6 +228,41 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
+// checks that extra output works
+forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
+    cmd.assert_non_empty_stdout();
+
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
+    assert!(artifact.ir.is_some());
+    assert!(artifact.ir_optimized.is_some());
+
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+            "evm.bytecode.sourceMap",
+            "--force",
+        ])
+        .root_arg();
+    cmd.assert_non_empty_stdout();
+
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+
+    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    std::fs::read_to_string(iropt).unwrap();
+
+    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    std::fs::read_to_string(sourcemap).unwrap();
+});
+
 forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(

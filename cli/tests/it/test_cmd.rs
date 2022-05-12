@@ -40,27 +40,43 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.path_pattern_inverse, None);
 });
 
-// tests that error is issued when no tests match the pattern
-forgetest!(error_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+// tests that warning is displayed when there are no tests in project
+forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
     // set up command
     cmd.set_current_dir(prj.root());
-    cmd.args(["test", "--match-test", "testA"]);
+    cmd.args(["test"]);
 
     // run command and assert
-    cmd.assert_err();
-    assert!(cmd.stderr_lossy().contains("No matching tests!"));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
+    );
 });
 
-// tests that error is issued and suggestion is provided when no tests match the pattern
+// tests that warning is displayed with pattern when no tests match
+forgetest!(warn_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.set_current_dir(prj.root());
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests_match.stdout"),
+    );
+});
+
+// tests that suggestion is provided with pattern when no tests match
 forgetest!(suggest_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
     // set up project
     prj.inner()
         .add_source(
-            "Test.t.sol",
+            "TestE.t.sol",
             r#"
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 
-contract ContractTest {
+contract TestC {
     function test1() public {
     }
 }
@@ -70,11 +86,15 @@ contract ContractTest {
 
     // set up command
     cmd.set_current_dir(prj.root());
-    cmd.args(["test", "--match-test", "tst*"]);
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
     // run command and assert
-    cmd.assert_err();
-    assert!(cmd.stderr_lossy().contains("Did you mean \"test1\"?"));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
+    );
 });
 
 // tests that direct import paths are handled correctly
