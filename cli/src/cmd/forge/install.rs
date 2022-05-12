@@ -3,7 +3,7 @@ use std::{path::PathBuf, str};
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use clap::{Parser, ValueHint};
-use foundry_config::find_project_root_path;
+use foundry_config::{find_project_root_path, Config};
 use yansi::Paint;
 
 use std::{
@@ -49,7 +49,14 @@ impl Cmd for InstallArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
-        install(root, self.dependencies, self.opts)
+        install(&root, self.dependencies, self.opts)?;
+        let mut config = Config::load_with_root(root);
+        let lib = PathBuf::from("lib");
+        if !config.libs.contains(&lib) {
+            config.libs.push(lib);
+            config.update_libs()?;
+        }
+        Ok(())
     }
 }
 
@@ -105,8 +112,10 @@ pub(crate) fn install(
 /// make sure tag exists on the remote repository
 fn check_tag(dep: &Dependency) -> eyre::Result<()> {
     if let (Some(ref url), Some(ref tag)) = (&dep.url, &dep.tag) {
-        let output =
-            Command::new("git").args(&["ls-remote", url, tag]).stdout(Stdio::piped()).output()?;
+        let output = Command::new("git")
+            .args(&["ls-remote", "-t", "--refs", url, tag])
+            .stdout(Stdio::piped())
+            .output()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains(tag) {
             eyre::bail!("tag/branch/commit \"{}\" does not exists", tag)
@@ -184,7 +193,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
             &target_dir
         )
     } else if stderr.contains("not a git repository") {
-        eyre::bail!("\"{}\" is not a git repository", url)
+        eyre::bail!("{stderr}")
     } else if stderr.contains("paths are ignored by one of your .gitignore files") {
         let error =
             stderr.lines().filter(|l| !l.starts_with("hint:")).collect::<Vec<&str>>().join("\n");

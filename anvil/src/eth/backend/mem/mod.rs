@@ -1,17 +1,12 @@
 //! In memory blockchain backend
 
-use crate::eth::{
-    backend::{db::Db, executor::TransactionExecutor},
-    pool::transactions::PoolTransaction,
-};
-use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
-use std::collections::HashMap;
-
 use crate::{
     eth::{
         backend::{
+            cheats,
             cheats::CheatsManager,
-            executor::ExecutedTransactions,
+            db::Db,
+            executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -21,8 +16,12 @@ use crate::{
         error::{BlockchainError, InvalidTransactionError},
         fees::{FeeDetails, FeeManager},
         macros::node_info,
+        pool::transactions::PoolTransaction,
     },
-    mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
+    mem::{
+        in_memory_db::MemDb,
+        storage::{InMemoryBlockStates, MinedBlockOutcome},
+    },
     revm::AccountInfo,
 };
 use anvil_core::{
@@ -38,6 +37,7 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
+    prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
         Transaction, TransactionReceipt,
@@ -46,18 +46,19 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
 
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod snapshot;
+pub mod state;
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
@@ -71,6 +72,8 @@ pub struct Backend {
     db: Arc<RwLock<dyn Db>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
+    /// Historic states of previous blocks
+    states: Arc<RwLock<InMemoryBlockStates>>,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
@@ -95,6 +98,7 @@ impl Backend {
         Self {
             db,
             blockchain: Blockchain::default(),
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
             time: Default::default(),
@@ -132,6 +136,7 @@ impl Backend {
         let backend = Self {
             db,
             blockchain,
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork,
             time: Default::default(),
@@ -200,6 +205,11 @@ impl Backend {
     /// Returns the current best hash of the chain
     pub fn best_hash(&self) -> H256 {
         self.blockchain.storage.read().best_hash
+    }
+
+    fn hash_for_block_number(&self, num: u64) -> Option<H256> {
+        let num: U64 = num.into();
+        self.blockchain.storage.read().hashes.get(&num).copied()
     }
 
     /// Returns the current best number of the chain
@@ -329,6 +339,38 @@ impl Backend {
         self.db.write().revert(id)
     }
 
+    /// Creates the pending block
+    ///
+    /// This will execute all transaction in the order they come but will not mine the block
+    pub fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
+        let current_base_fee = self.base_fee();
+        // acquire all locks
+        let mut env = self.env.read().clone();
+        let db = self.db.read();
+
+        let mut cache_db = CacheDB::new(&*db);
+
+        let storage = self.blockchain.storage.read();
+        //
+        // increase block number for this block
+        env.block.number = env.block.number.saturating_add(U256::one());
+        env.block.basefee = current_base_fee;
+
+        let executor = TransactionExecutor {
+            db: &mut cache_db,
+            validator: self,
+            pending: pool_transactions.into_iter(),
+            block_env: env.block.clone(),
+            cfg_env: env.cfg,
+            parent_hash: storage.best_hash,
+            gas_used: U256::zero(),
+        };
+
+        // create a new pending block
+        let executed = executor.execute(self.time.current_timestamp());
+        executed.block
+    }
+
     /// Mines a new block and stores it.
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
@@ -341,6 +383,9 @@ impl Backend {
         let mut env = self.env.write();
         let mut db = self.db.write();
         let mut storage = self.blockchain.storage.write();
+
+        // store current state
+        self.states.write().insert(storage.best_hash, db.current_state());
 
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
@@ -410,11 +455,16 @@ impl Backend {
     }
 
     /// Executes the `CallRequest` without writing to the DB
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `block_number` is greater than the current height
     pub fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
-    ) -> (Return, TransactOut, u64, State) {
+        block_number: Option<BlockNumber>,
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
@@ -447,6 +497,35 @@ impl Backend {
 
         trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);
 
+        let block_number =
+            U256::from(self.convert_block_number(block_number)).min(env.block.number);
+
+        if block_number < env.block.number {
+            // requested historic state
+            let states = self.states.read();
+
+            return if let Some(state) =
+                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            {
+                let mut evm = revm::EVM::new();
+                env.block.number = block_number;
+                evm.env = env;
+                evm.database(state);
+
+                let (exit, out, gas, state, _) = evm.transact_ref();
+
+                trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
+
+                Ok((exit, out, gas, state))
+            } else {
+                warn!(target: "backend", "Not historic state found for block={}", block_number);
+                Err(BlockchainError::BlockOutOfRange(
+                    env.block.number.as_u64(),
+                    block_number.as_u64(),
+                ))
+            }
+        }
+
         let db = self.db.read();
         let mut evm = revm::EVM::new();
         evm.env = env;
@@ -455,7 +534,7 @@ impl Backend {
         let (exit, out, gas, state, _) = evm.transact_ref();
         trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
 
-        (exit, out, gas, state)
+        Ok((exit, out, gas, state))
     }
 
     /// returns all receipts for the given transactions
@@ -639,7 +718,7 @@ impl Backend {
 
     pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
-        self.convert_block(block)
+        Some(self.convert_block(block))
     }
 
     /// Returns all transactions given a block
@@ -651,7 +730,7 @@ impl Backend {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block.clone()), Some(info), true, Some(base_fee));
+            let tx = transaction_build(tx, Some(block), Some(info), true, Some(base_fee));
             transactions.push(tx);
         }
         Some(transactions)
@@ -710,18 +789,18 @@ impl Backend {
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
-        self.convert_block(self.get_block(number)?)
+        Some(self.convert_block(self.get_block(number)?))
     }
 
     pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<EthersBlock<Transaction>> {
         let block = self.get_block(id)?;
         let transactions = self.mined_transactions_in_block(&block)?;
-        let block = self.convert_block(block)?;
+        let block = self.convert_block(block);
         Some(block.into_full_block(transactions))
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
-    pub fn convert_block(&self, block: Block) -> Option<EthersBlock<TxHash>> {
+    pub fn convert_block(&self, block: Block) -> EthersBlock<TxHash> {
         let size = U256::from(rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
@@ -775,7 +854,22 @@ impl Backend {
             base_fee_per_gas: Some(self.base_fee()),
         };
 
-        Some(block)
+        block
+    }
+
+    /// Converts the `BlockNumber` into a numeric value
+    ///
+    /// # Errors
+    ///
+    /// returns an error if the requested number is larger than the current height
+    pub fn ensure_block_number(&self, block: Option<BlockNumber>) -> Result<u64, BlockchainError> {
+        let current = self.best_number().as_u64();
+        let requested = self.convert_block_number(block);
+        if requested > current {
+            Err(BlockchainError::BlockOutOfRange(current, requested))
+        } else {
+            Ok(requested)
+        }
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
@@ -807,8 +901,13 @@ impl Backend {
         _block: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
-        let code = self.db.read().basic(address).code;
-        Ok(code.unwrap_or_default().into())
+        let account = self.db.read().basic(address);
+        let code = if let Some(code) = account.code {
+            code.into()
+        } else {
+            self.db.read().code_by_hash(account.code_hash).into()
+        };
+        Ok(code)
     }
 
     /// Returns the balance of the address
@@ -1030,7 +1129,7 @@ impl Backend {
         let index: usize = index.into();
         let tx = block.transactions.get(index)?.clone();
         let info = self.blockchain.storage.read().transactions.get(&tx.hash())?.info.clone();
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     pub async fn transaction_by_hash(
@@ -1054,10 +1153,9 @@ impl Backend {
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
         let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
-
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
     /// Returns a new block event stream
@@ -1140,9 +1238,10 @@ impl TransactionValidator for Backend {
     }
 }
 
+/// Creates a `Transaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     eth_transaction: TypedTransaction,
-    block: Option<Block>,
+    block: Option<&Block>,
     info: Option<TransactionInfo>,
     is_eip1559: bool,
     base_fee: Option<U256>,
@@ -1176,7 +1275,13 @@ pub fn transaction_build(
 
     transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
 
-    transaction.from = eth_transaction.recover().unwrap();
+    // need to check if the signature of the transaction is the `BYPASS_SIGNATURE`, if so then we
+    // can't recover the sender, instead we use the sender from the executed transaction
+    if cheats::is_bypassed(&eth_transaction) {
+        transaction.from = info.as_ref().map(|info| info.from).unwrap_or_default()
+    } else {
+        transaction.from = eth_transaction.recover().expect("can recover signed tx");
+    }
 
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);
 

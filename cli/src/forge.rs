@@ -56,6 +56,9 @@ fn main() -> eyre::Result<()> {
             CacheSubcommands::Clean(cmd) => {
                 cmd.run()?;
             }
+            CacheSubcommands::Ls(cmd) => {
+                cmd.run()?;
+            }
         },
         Subcommands::Create(cmd) => {
             cmd.run()?;

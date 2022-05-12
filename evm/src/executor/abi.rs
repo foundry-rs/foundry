@@ -17,6 +17,7 @@ ethers::contract::abigen!(
             roll(uint256)
             warp(uint256)
             fee(uint256)
+            coinbase(address)
             store(address,bytes32,bytes32)
             load(address,bytes32)(bytes32)
             ffi(string[])(bytes)

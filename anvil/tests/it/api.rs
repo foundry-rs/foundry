@@ -5,7 +5,7 @@ use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use ethers::{
     prelude::Middleware,
     signers::Signer,
-    types::{Block, Transaction, TransactionRequest, U256},
+    types::{Block, BlockNumber, Transaction, TransactionRequest, U256},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -95,5 +95,39 @@ async fn can_get_block_by_number() {
     assert_eq!(block.transactions.len(), 1);
 
     let block = provider.get_block(block.hash.unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_block() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+
+    let block = provider.get_block(BlockNumber::Pending).await.unwrap().unwrap();
+
+    assert_eq!(block.number.unwrap().as_u64(), 1u64);
+
+    let num = provider.get_block_number().await.unwrap();
+    assert_eq!(num.as_u64(), 0u64);
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let tx = TransactionRequest::new().to(to).value(100u64).from(from);
+
+    let tx = provider.send_transaction(tx, None).await.unwrap();
+
+    let num = provider.get_block_number().await.unwrap();
+    assert_eq!(num.as_u64(), 0u64);
+
+    let block = provider.get_block(BlockNumber::Pending).await.unwrap().unwrap();
+    assert_eq!(block.number.unwrap().as_u64(), 1u64);
+    assert_eq!(block.transactions.len(), 1);
+    assert_eq!(block.transactions, vec![tx.tx_hash()]);
+
+    let block = provider.get_block_with_txs(BlockNumber::Pending).await.unwrap().unwrap();
+    assert_eq!(block.number.unwrap().as_u64(), 1u64);
     assert_eq!(block.transactions.len(), 1);
 }

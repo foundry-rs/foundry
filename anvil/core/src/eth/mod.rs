@@ -537,6 +537,10 @@ mod tests {
         let s = r#"{"method": "anvil_setBalance", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "anvil_setBalance", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", 1337]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

@@ -5,7 +5,9 @@
 use eyre::Context;
 use git2::{self, ErrorClass, ObjectType};
 use std::{
-    env, fs,
+    env,
+    fmt::Write,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -647,11 +649,13 @@ where
         if !ssh_agent_attempts.is_empty() {
             let names =
                 ssh_agent_attempts.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ");
-            msg.push_str(&format!(
+            write!(
+                &mut msg,
                 "\n* attempted ssh-agent authentication, but \
                  no usernames succeeded: {}",
                 names
-            ));
+            )
+            .expect("could not write to msg");
         }
         if let Some(failed_cred_helper) = cred_helper_bad {
             if failed_cred_helper {

@@ -1,9 +1,12 @@
 use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use tracing::log::trace;
 
@@ -19,41 +22,43 @@ pub struct NodeArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
-    #[clap(long, short, help = "Port number to listen on", default_value = "8545")]
+    #[clap(long, short, help = "Port number to listen on.", default_value = "8545")]
     pub port: u16,
 
     #[clap(
         long,
         short,
-        help = "Number of genesis dev accounts to generate and configure",
+        help = "Number of dev accounts to generate and configure.",
         default_value = "10"
     )]
     pub accounts: u64,
 
-    #[clap(
-        long,
-        help = "the balance of every genesis account in Ether, defaults to 100ETH",
-        default_value = "10000"
-    )]
+    #[clap(long, help = "The balance of every dev account in Ether.", default_value = "10000")]
     pub balance: u64,
 
-    #[clap(long, short, help = "bip39 mnemonic phrase used for generating accounts")]
+    #[clap(long, short, help = "BIP39 mnemonic phrase used for generating accounts")]
     pub mnemonic: Option<String>,
 
     #[clap(
         long,
-        help = "Sets the derivation path of the child key to be derived [default: m/44'/60'/0'/0/]"
+        help = "Sets the derivation path of the child key to be derived. [default: m/44'/60'/0'/0/]"
     )]
     pub derivation_path: Option<String>,
 
     #[clap(flatten, next_help_heading = "SERVER OPTIONS")]
     pub server_config: ServerConfig,
 
-    #[clap(long, help = "don't print anything on startup")]
+    #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(long, help = "the hardfork to use", default_value = "latest")]
+    #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
     pub hardfork: Hardfork,
+
+    #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
+    pub block_time: Option<u64>,
+
+    #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
+    pub host: Option<IpAddr>,
 }
 
 impl NodeArgs {
@@ -69,6 +74,7 @@ impl NodeArgs {
             .with_gas_limit(self.evm_opts.env.gas_limit)
             .with_gas_price(self.evm_opts.env.gas_price)
             .with_hardfork(self.hardfork)
+            .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
@@ -77,6 +83,7 @@ impl NodeArgs {
             .with_fork_block_number(evm_opts.fork_block_number)
             .with_storage_caching(evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
+            .with_host(self.host)
             .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
     }
@@ -111,7 +118,7 @@ impl NodeArgs {
                 // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
                 if let Some(ref fork) = fork {
-                    fork.database.flush_cache();
+                    fork.database.read().flush_cache();
                 }
                 std::process::exit(0);
             }

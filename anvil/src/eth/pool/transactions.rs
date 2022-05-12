@@ -170,7 +170,7 @@ impl PendingTransactions {
     }
 }
 
-/// A transaction in the poo
+/// A transaction in the pool
 #[derive(Clone)]
 pub struct PendingPoolTransaction {
     pub transaction: Arc<PoolTransaction>,

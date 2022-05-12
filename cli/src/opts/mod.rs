@@ -45,15 +45,22 @@ pub struct ClapChain {
             "kovan",
             "xdai",
             "polygon",
-            "polygon_mumbai",
+            "polygon-mumbai",
             "avalanche",
-            "avalanche_fuji",
+            "avalanche-fuji",
             "sepolia",
             "moonbeam",
-            "moonbeam_dev",
+            "moonbeam-dev",
             "moonriver",
             "optimism",
-            "optimism-kovan"
+            "optimism-kovan",
+            "fantom",
+            "fantom-testnet",
+            "arbitrum",
+            "arbitrum-testnet",
+            "bsc",
+            "bsc-testnet",
+            "cronos"
         ])]
     pub inner: Chain,
 }

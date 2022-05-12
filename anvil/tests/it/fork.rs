@@ -161,3 +161,27 @@ async fn test_fork_snapshotting() {
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 }
+
+/// tests that the remote state and local state are kept separate.
+/// changes don't make into the read only Database that holds the remote state, which is flushed to
+/// a cache file.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_separate_states() {
+    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let provider = handle.http_provider();
+
+    let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+
+    let remote_balance = provider.get_balance(addr, None).await.unwrap();
+    assert_eq!(remote_balance, 12556104082473169733500u128.into());
+
+    api.anvil_set_balance(addr, 1337u64.into()).await.unwrap();
+    let balance = provider.get_balance(addr, None).await.unwrap();
+    assert_eq!(balance, 1337u64.into());
+
+    let fork = api.get_fork().unwrap();
+    let fork_db = fork.database.read();
+    let acc = fork_db.inner().db().accounts.read().get(&addr).cloned().unwrap();
+
+    assert_eq!(acc.balance, remote_balance)
+}

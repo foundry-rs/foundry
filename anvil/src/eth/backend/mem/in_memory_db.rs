@@ -1,8 +1,8 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::Db,
-    mem::snapshot::Snapshots,
+    eth::backend::db::{Db, StateDb},
+    mem::{snapshot::Snapshots, state::state_merkle_trie_root},
     revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit},
     Address, U256,
 };
@@ -93,5 +93,13 @@ impl Db for MemDb {
             warn!(target: "backend::memdb", "No snapshot to revert for {}", id);
             false
         }
+    }
+
+    fn maybe_state_root(&self) -> Option<H256> {
+        Some(state_merkle_trie_root(self.inner.cache(), self.inner.storage()))
+    }
+
+    fn current_state(&self) -> StateDb {
+        StateDb::new(self.inner.clone())
     }
 }

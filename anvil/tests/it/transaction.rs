@@ -1,14 +1,27 @@
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::ContractFactory,
-    prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest},
-    types::U256,
+    contract::{ContractFactory, EthEvent},
+    prelude::{abigen, BlockId, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    types::{Address, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
+
+abigen!(Greeter, "test-data/greeter.json");
+abigen!(SimpleStorage, "test-data/SimpleStorage.json");
+
+#[derive(Clone, Debug, EthEvent)]
+pub struct ValueChanged {
+    #[ethevent(indexed)]
+    pub old_author: Address,
+    #[ethevent(indexed)]
+    pub new_author: Address,
+    pub old_value: String,
+    pub new_value: String,
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
@@ -196,8 +209,6 @@ async fn can_reject_underpriced_replacement() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_http() {
-    abigen!(Greeter, "test-data/greeter.json");
-
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
@@ -222,9 +233,42 @@ async fn can_deploy_greeter_http() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_deploy_greeter_ws() {
-    abigen!(Greeter, "test-data/greeter.json");
+async fn can_call_greeter_historic() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
 
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let block = client.get_block_number().await.unwrap();
+
+    greeter_contract
+        .set_greeting("Another Message".to_string())
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+
+    // returns previous state
+    let greeting =
+        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_ws() {
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.ws_provider().await;
 
@@ -246,6 +290,25 @@ async fn can_deploy_greeter_ws() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_get_code() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let code = client.get_code(greeter_contract.address(), None).await.unwrap();
+    assert!(!code.as_ref().is_empty());
 }
 
 #[test]
@@ -286,4 +349,41 @@ contract Contract {
         let err = contract.unwrap_err();
         assert!(err.to_string().contains("execution reverted:"));
     });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_past_events() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let address = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
+    let tx = func.send().await.unwrap();
+    let _receipt = tx.await.unwrap();
+
+    // and we can fetch the events
+    let logs: Vec<ValueChanged> =
+        contract.event().from_block(0u64).topic1(address).query().await.unwrap();
+
+    // 2 events, 1 in constructor, 1 in call
+    assert_eq!(logs[0].new_value, "initial value");
+    assert_eq!(logs[1].new_value, "hi");
+    assert_eq!(logs.len(), 2);
+
+    // and we can fetch the events at a block hash
+    let hash = client.get_block(1).await.unwrap().unwrap().hash.unwrap();
+
+    let logs: Vec<ValueChanged> =
+        contract.event().at_block_hash(hash).topic1(address).query().await.unwrap();
+    assert_eq!(logs[0].new_value, "initial value");
+    assert_eq!(logs.len(), 1);
 }
