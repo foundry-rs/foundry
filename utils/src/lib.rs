@@ -527,15 +527,13 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
                         }
                     }
                     ParamType::Uint(_) => {
-                        if let ParamType::Uint(_) = param {
-                            // try again if value is hex
-                            if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                                token = if lenient {
-                                    LenientTokenizer::tokenize(param, &value)
-                                } else {
-                                    StrictTokenizer::tokenize(param, &value)
-                                };
-                            }
+                        // try again if value is hex
+                        if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                            token = if lenient {
+                                LenientTokenizer::tokenize(param, &value)
+                            } else {
+                                StrictTokenizer::tokenize(param, &value)
+                            };
                         }
                     }
                     // TODO: Not sure what to do here. Put the no effect in for now, but that is not
