@@ -1863,6 +1863,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "atty",
+ "bytes",
  "cast",
  "clap",
  "clap_complete",
