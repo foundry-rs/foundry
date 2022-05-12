@@ -417,12 +417,6 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             ))
         }
 
-        let identified_contracts = if has_invariants {
-            load_contracts(setup.traces.clone(), known_contracts)
-        } else {
-            BTreeMap::new()
-        };
-
         // Collect valid test functions
         let tests: Vec<_> = self
             .contract
@@ -452,6 +446,8 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             .collect::<Result<BTreeMap<_, _>>>()?;
 
         if has_invariants && fuzzer.is_some() {
+            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
+
             let functions: Vec<&Function> = self
                 .contract
                 .functions()

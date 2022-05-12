@@ -19,6 +19,10 @@ contract BreakableMockToken {
 
     uint public totalSupply = 0;
 
+    function shouldRevert() public {
+      require(false);
+      totalSupply += 5;
+    }
     function mint(uint _a) public {
         totalSupply += 5;
     } 
@@ -37,8 +41,9 @@ contract InvariantFuzzTest is DSTest {
   }
 
   function excludeContracts() public returns (address[] memory) {
-    address[] memory addrs = new address[](1);
+    address[] memory addrs = new address[](2);
     addrs[0] = address(unbreakable);
+    addrs[1] = address(ignore);
     return addrs;
   }
 
