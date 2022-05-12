@@ -32,6 +32,7 @@ static mut GLOBAL_PROCESS: Option<Process> = None;
 /// not already set.
 ///
 /// # Errors
+///
 /// Returns an Error if the initialization was unsuccessful, likely
 /// because a global processor was already installed by another
 /// call to `try_init`.
@@ -54,6 +55,42 @@ where
     T: Processor + Send + Sync + 'static,
 {
     try_init(processor).expect("Failed to install global processor")
+}
+
+/// The core trait which bundles various utilities.
+///
+/// The main reasons for this abstraction is that this becomes customisable for tests.
+///
+/// A `Process` can be installed globally exactly once via `init`, or set for the current scope with
+/// `set_current()`, which register the process in a `thread_local!` variable, so when making new
+/// threads, e sure to clone the process into the new thread before using any functions from
+/// `Process`. Otherwise, it would fallback to the global `Process`
+pub trait Processor: 'static + fmt::Debug + Send + Sync {
+    /// If `self` is the same type as the provided `TypeId`, returns an untyped
+    /// [`NonNull`] pointer to that type. Otherwise, returns `None`.
+    ///
+    /// If you wish to downcast a `Processor`, it is strongly advised to use
+    /// the safe API provided by downcast_ref instead.
+    ///
+    /// This API is required for `downcast_raw` to be a trait method; a method
+    /// signature like downcast_ref (with a generic type parameter) is not
+    /// object-safe, and thus cannot be a trait method for `Processor`. This
+    /// means that if we only exposed downcast_ref, `Processor`
+    /// implementations could not override the downcasting behavior
+    ///
+    /// # Safety
+    ///
+    /// The downcast_ref method expects that the pointer returned by
+    /// `downcast_raw` points to a valid instance of the type
+    /// with the provided `TypeId`. Failure to ensure this will result in
+    /// undefined behaviour, so implementing `downcast_raw` is unsafe.
+    unsafe fn downcast_raw(&self, id: TypeId) -> Option<NonNull<()>> {
+        if id == TypeId::of::<Self>() {
+            Some(NonNull::from(self).cast())
+        } else {
+            None
+        }
+    }
 }
 
 /// Sets this process as the global default for the duration of the entire program.
@@ -137,35 +174,6 @@ pub fn set_current(processor: &Process) -> ScopeGuard {
     State::set_current(processor.clone())
 }
 
-/// The main trait
-pub trait Processor: 'static + fmt::Debug + Send + Sync {
-    /// If `self` is the same type as the provided `TypeId`, returns an untyped
-    /// [`NonNull`] pointer to that type. Otherwise, returns `None`.
-    ///
-    /// If you wish to downcast a `Processor`, it is strongly advised to use
-    /// the safe API provided by downcast_ref instead.
-    ///
-    /// This API is required for `downcast_raw` to be a trait method; a method
-    /// signature like downcast_ref (with a generic type parameter) is not
-    /// object-safe, and thus cannot be a trait method for `Processor`. This
-    /// means that if we only exposed downcast_ref, `Processor`
-    /// implementations could not override the downcasting behavior
-    ///
-    /// # Safety
-    ///
-    /// The downcast_ref method expects that the pointer returned by
-    /// `downcast_raw` points to a valid instance of the type
-    /// with the provided `TypeId`. Failure to ensure this will result in
-    /// undefined behaviour, so implementing `downcast_raw` is unsafe.
-    unsafe fn downcast_raw(&self, id: TypeId) -> Option<NonNull<()>> {
-        if id == TypeId::of::<Self>() {
-            Some(NonNull::from(self).cast())
-        } else {
-            None
-        }
-    }
-}
-
 /// Returned if setting the global process fails.
 #[derive(Debug)]
 pub struct SetGlobalProcessError {
@@ -238,8 +246,8 @@ impl State {
     /// Dropping the returned `ScopeGuard` will reset the current processor to
     /// the previous value.
     #[inline]
-    fn set_current(new_report: Process) -> ScopeGuard {
-        let prior = CURRENT_STATE.try_with(|state| state.current.replace(new_report)).ok();
+    fn set_current(new_process: Process) -> ScopeGuard {
+        let prior = CURRENT_STATE.try_with(|state| state.current.replace(new_process)).ok();
         EXISTS.store(true, Ordering::Release);
         CURRENT_COUNT.fetch_add(1, Ordering::Release);
         ScopeGuard(prior)
