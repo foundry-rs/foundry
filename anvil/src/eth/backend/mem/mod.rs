@@ -18,7 +18,10 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
     },
-    mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
+    mem::{
+        in_memory_db::MemDb,
+        storage::{InMemoryBlockStates, MinedBlockOutcome},
+    },
     revm::AccountInfo,
 };
 use anvil_core::{
@@ -69,6 +72,8 @@ pub struct Backend {
     db: Arc<RwLock<dyn Db>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
+    /// Historic states of previous blocks
+    states: Arc<RwLock<InMemoryBlockStates>>,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
@@ -93,6 +98,7 @@ impl Backend {
         Self {
             db,
             blockchain: Blockchain::default(),
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
             time: Default::default(),
@@ -130,6 +136,7 @@ impl Backend {
         let backend = Self {
             db,
             blockchain,
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork,
             time: Default::default(),
@@ -198,6 +205,11 @@ impl Backend {
     /// Returns the current best hash of the chain
     pub fn best_hash(&self) -> H256 {
         self.blockchain.storage.read().best_hash
+    }
+
+    fn hash_for_block_number(&self, num: u64) -> Option<H256> {
+        let num: U64 = num.into();
+        self.blockchain.storage.read().hashes.get(&num).copied()
     }
 
     /// Returns the current best number of the chain
@@ -372,6 +384,9 @@ impl Backend {
         let mut db = self.db.write();
         let mut storage = self.blockchain.storage.write();
 
+        // store current state
+        self.states.write().insert(storage.best_hash, db.current_state());
+
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
         env.block.basefee = current_base_fee;
@@ -440,11 +455,16 @@ impl Backend {
     }
 
     /// Executes the `CallRequest` without writing to the DB
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `block_number` is greater than the current height
     pub fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
-    ) -> (Return, TransactOut, u64, State) {
+        block_number: Option<BlockNumber>,
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
@@ -477,6 +497,35 @@ impl Backend {
 
         trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);
 
+        let block_number =
+            U256::from(self.convert_block_number(block_number)).min(env.block.number);
+
+        if block_number < env.block.number {
+            // requested historic state
+            let states = self.states.read();
+
+            return if let Some(state) =
+                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            {
+                let mut evm = revm::EVM::new();
+                env.block.number = block_number;
+                evm.env = env;
+                evm.database(state);
+
+                let (exit, out, gas, state, _) = evm.transact_ref();
+
+                trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
+
+                Ok((exit, out, gas, state))
+            } else {
+                warn!(target: "backend", "Not historic state found for block={}", block_number);
+                Err(BlockchainError::BlockOutOfRange(
+                    env.block.number.as_u64(),
+                    block_number.as_u64(),
+                ))
+            }
+        }
+
         let db = self.db.read();
         let mut evm = revm::EVM::new();
         evm.env = env;
@@ -485,7 +534,7 @@ impl Backend {
         let (exit, out, gas, state, _) = evm.transact_ref();
         trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
 
-        (exit, out, gas, state)
+        Ok((exit, out, gas, state))
     }
 
     /// returns all receipts for the given transactions
@@ -806,6 +855,21 @@ impl Backend {
         };
 
         block
+    }
+
+    /// Converts the `BlockNumber` into a numeric value
+    ///
+    /// # Errors
+    ///
+    /// returns an error if the requested number is larger than the current height
+    pub fn ensure_block_number(&self, block: Option<BlockNumber>) -> Result<u64, BlockchainError> {
+        let current = self.best_number().as_u64();
+        let requested = self.convert_block_number(block);
+        if requested > current {
+            Err(BlockchainError::BlockOutOfRange(current, requested))
+        } else {
+            Ok(requested)
+        }
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {

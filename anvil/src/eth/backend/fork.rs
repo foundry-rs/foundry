@@ -1,20 +1,13 @@
 //! Support for forking off another client
 
+use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
+use anvil_core::eth::call::CallRequest;
 use ethers::{
-    prelude::{Http, Provider},
-    types::H256,
-};
-use std::{collections::HashMap, sync::Arc};
-
-use crate::eth::error::BlockchainError;
-
-use crate::eth::backend::mem::fork_db::ForkedDatabase;
-use ethers::{
-    prelude::BlockNumber,
+    prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError},
     types::{
-        Address, Block, BlockId, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, U256,
+        transaction::eip2930::AccessList, Address, Block, BlockId, Bytes, Filter, Log, Trace,
+        Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -22,6 +15,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
 /// Represents a fork of a remote client
@@ -62,7 +56,7 @@ impl ClientFork {
 
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
-        block <= self.block_number()
+        block < self.block_number()
     }
 
     pub fn block_number(&self) -> u64 {
@@ -91,6 +85,39 @@ impl ClientFork {
 
     fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
         self.storage.write()
+    }
+
+    /// Sends `eth_call`
+    pub async fn call(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_call", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn estimate_gas(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<U256, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_estimateGas", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn create_access_list(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessList, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_createAccessList", [tx, block]).await
     }
 
     pub async fn storage_at(

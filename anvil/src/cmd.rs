@@ -54,8 +54,22 @@ pub struct NodeArgs {
     #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
     pub hardfork: Hardfork,
 
-    #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
+    #[clap(
+        short,
+        long,
+        alias = "blockTime",
+        help = "Block time in seconds for interval mining.",
+        name = "block-time"
+    )]
     pub block_time: Option<u64>,
+
+    #[clap(
+        long,
+        alias = "no-mine",
+        help = "Disable auto and interval mining, and mine on demand instead.",
+        conflicts_with = "block-time"
+    )]
+    pub no_mining: bool,
 
     #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
     pub host: Option<IpAddr>,
@@ -75,6 +89,7 @@ impl NodeArgs {
             .with_gas_price(self.evm_opts.env.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
+            .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)

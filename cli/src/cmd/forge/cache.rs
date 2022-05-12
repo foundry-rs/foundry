@@ -130,7 +130,7 @@ impl Cmd for LsArgs {
 
     fn run(self) -> Result<Self::Output> {
         let LsArgs { chains } = self;
-        let mut cache = Cache { chains: vec![] };
+        let mut cache = Cache::default();
         for chain_or_all in chains {
             match chain_or_all {
                 ChainOrAll::Chain(chain) => cache.chains.push(list_chain_cache(chain)?),
@@ -162,6 +162,6 @@ fn list_chain_cache(chain: Chain) -> Result<ChainCache> {
     if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
         Config::list_foundry_chain_cache(foundry_chain)
     } else {
-        eyre::bail!("failed to map chain");
+        eyre::bail!("failed to recognise chain: {}", chain);
     }
 }

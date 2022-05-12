@@ -78,13 +78,22 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let fork = backend.get_fork().cloned();
 
-    let NodeConfig { signer_accounts, block_time, port, max_transactions, server_config, .. } =
-        config.clone();
+    let NodeConfig {
+        signer_accounts,
+        block_time,
+        port,
+        max_transactions,
+        server_config,
+        no_mining,
+        ..
+    } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
         MiningMode::interval(block_time)
+    } else if no_mining {
+        MiningMode::None
     } else {
         // get a listener for ready transactions
         let listener = pool.add_ready_listener();

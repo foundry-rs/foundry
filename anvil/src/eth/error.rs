@@ -52,6 +52,8 @@ pub enum BlockchainError {
     InvalidUrl(String),
     #[error("Internal error: {0:?}")]
     Internal(String),
+    #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
+    BlockOutOfRange(u64, u64),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -194,6 +196,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),
+                err @ BlockchainError::BlockOutOfRange(_, _) => {
+                    RpcError::invalid_params(err.to_string())
+                }
             }
             .into(),
         }
