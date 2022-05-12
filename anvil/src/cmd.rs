@@ -66,7 +66,7 @@ pub struct NodeArgs {
     #[clap(
         long,
         alias = "no-mine",
-        help = "Disable auto, interval mining and mine on demand instead.",
+        help = "Disable auto and interval mining, and mine on demand instead.",
         conflicts_with = "block-time"
     )]
     pub no_mining: bool,
