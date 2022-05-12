@@ -8,8 +8,7 @@ use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
-
-use strum::{EnumString, EnumVariantNames, VariantNames};
+use strum::VariantNames;
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
@@ -37,43 +36,14 @@ impl FromStr for ChainOrAll {
     }
 }
 
-#[derive(Debug, EnumString, EnumVariantNames)]
-#[strum(serialize_all = "kebab-case")]
-pub enum PossibleChains {
-    All,
-    Mainnet,
-    Ropsten,
-    Rinkeby,
-    Goerli,
-    Kovan,
-    Xdai,
-    Polygon,
-    PolygonMumbai,
-    Avalanche,
-    AvalancheFuji,
-    Sepolia,
-    Moonbeam,
-    MoonbeamDev,
-    Moonriver,
-    Optimism,
-    OptimismKovan,
-    Fantom,
-    FantomTestnet,
-    Arbitrum,
-    ArbitrumTestnet,
-    Bsc,
-    BscTestnet,
-    Cronos,
-    CronosTestnet,
-}
-
 #[derive(Debug, Parser)]
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = PossibleChains::VARIANTS
+        possible_value = "all",
+        possible_values = Chain::VARIANTS
     )]
     chains: Vec<ChainOrAll>,
 
@@ -93,7 +63,8 @@ pub struct LsArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = PossibleChains::VARIANTS
+        possible_value = "all",
+        possible_values = Chain::VARIANTS
     )]
     chains: Vec<ChainOrAll>,
 }
