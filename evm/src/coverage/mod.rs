@@ -1,3 +1,6 @@
+mod visitor;
+pub use visitor::Visitor;
+
 use ethers::{
     prelude::{sourcemap::SourceMap, sources::VersionedSourceFile},
     types::Address,
