@@ -992,6 +992,9 @@ impl Config {
     //The path provided to this function should point to a cached chain folder
     fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
         let mut blocks = vec![];
+        if !chain_path.exists() {
+            return Ok(blocks)
+        }
         for block in chain_path
             .read_dir()?
             .flatten()
