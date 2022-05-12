@@ -132,13 +132,12 @@ impl VerifyArgs {
 
                 if resp.status == "0" {
                     if resp.message == "Contract source code already verified" {
-                        println!("{}", resp.result);
-                        return Ok(None);
+                        return Ok(None)
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
                         warn!("{}", resp.result);
-                        return Err(eyre!("not ready"));
+                        return Err(eyre!("not ready"))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
@@ -169,7 +168,7 @@ impl VerifyArgs {
                     retry: RetryArgs::new(6, Some(10)),
                     etherscan_key: self.etherscan_key.clone(),
                 };
-                return check_args.run().await;
+                return check_args.run().await
             }
         }
 
@@ -244,7 +243,7 @@ impl VerifyArgs {
     ///     2. `solc` defined in foundry.toml  
     fn compiler_version(&self, config: &Config) -> eyre::Result<Version> {
         if let Some(ref version) = self.compiler_version {
-            return Ok(version.trim_start_matches('v').parse()?);
+            return Ok(version.trim_start_matches('v').parse()?)
         }
 
         if let Some(ref solc) = config.solc {
@@ -252,7 +251,7 @@ impl VerifyArgs {
                 SolcReq::Version(version) => return Ok(version.to_owned()),
                 SolcReq::Local(solc) => {
                     if solc.is_file() {
-                        return Ok(Solc::new(solc).version()?);
+                        return Ok(Solc::new(solc).version()?)
                     }
                 }
             }
@@ -436,11 +435,11 @@ impl VerifyCheckArgs {
                     if resp.status == "0" {
                         if resp.result == "Already Verified" {
                             println!("Contract source code already verified");
-                            return Ok(());
+                            return Ok(())
                         }
 
                         if resp.result == "Pending in queue" {
-                            return Err(eyre!("Verification is still pending...",));
+                            return Err(eyre!("Verification is still pending...",))
                         }
 
                         eprintln!(
