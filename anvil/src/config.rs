@@ -1,6 +1,3 @@
-use colored::Colorize;
-use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
-
 use crate::{
     eth::{
         backend::{
@@ -16,6 +13,7 @@ use crate::{
     FeeManager,
 };
 use anvil_server::ServerConfig;
+use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
@@ -33,6 +31,7 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -81,6 +80,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
+    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -127,6 +128,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
             block_time: None,
+            no_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -236,6 +238,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
         self.block_time = block_time.map(Into::into);
+        self
+    }
+
+    /// If set to `true` auto mining will be disabled
+    #[must_use]
+    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+        self.no_mining = no_mining;
         self
     }
 
