@@ -1,8 +1,10 @@
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    fmt,
+    ffi::OsString,
+    fmt, io,
     ops::Deref,
+    path::PathBuf,
     ptr::NonNull,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -12,7 +14,7 @@ use std::{
 
 thread_local! {
     static CURRENT_STATE: State = State {
-        current: RefCell::new(Process::none()),
+        current: RefCell::new(Process::default()),
     };
 }
 
@@ -66,6 +68,16 @@ where
 /// threads, e sure to clone the process into the new thread before using any functions from
 /// `Process`. Otherwise, it would fallback to the global `Process`
 pub trait Processor: 'static + fmt::Debug + Send + Sync {
+    fn home_dir(&self) -> Option<PathBuf> {
+        dirs_next::home_dir()
+    }
+    fn current_dir(&self) -> io::Result<PathBuf> {
+        std::env::current_dir()
+    }
+    fn var_os(&self, key: &str) -> Option<OsString> {
+        std::env::var_os(key)
+    }
+
     /// If `self` is the same type as the provided `TypeId`, returns an untyped
     /// [`NonNull`] pointer to that type. Otherwise, returns `None`.
     ///
@@ -129,7 +141,7 @@ fn get_global() -> Option<&'static Process> {
 }
 
 /// Sets this processor as the scoped processor for the duration of a closure.
-pub fn with_current<T>(process: &Process, f: impl FnOnce() -> T) -> T {
+pub fn with<T>(process: &Process, f: impl FnOnce() -> T) -> T {
     // When this guard is dropped, the scoped processor will be reset to the
     // prior processor
     let _guard = set_current(process);
@@ -138,21 +150,21 @@ pub fn with_current<T>(process: &Process, f: impl FnOnce() -> T) -> T {
 
 /// Executes a closure with a reference to this thread's current Processor.
 #[inline(always)]
-pub fn get_default<T, F>(mut f: F) -> T
+pub fn with_default<T, F>(mut f: F) -> T
 where
     F: FnMut(&Process) -> T,
 {
     if CURRENT_COUNT.load(Ordering::Acquire) == 0 {
         // fast path if no scoped processor has been set; use the global
         // default.
-        return if let Some(glob) = get_global() { f(glob) } else { f(&Process::none()) }
+        return if let Some(glob) = get_global() { f(glob) } else { f(&Process::default()) }
     }
 
-    get_current(f)
+    with_current(f)
 }
 
 #[inline(never)]
-fn get_current<T, F>(mut f: F) -> T
+fn with_current<T, F>(mut f: F) -> T
 where
     F: FnMut(&Process) -> T,
 {
@@ -161,7 +173,7 @@ where
             let current = state.current.borrow_mut();
             f(&*current)
         })
-        .unwrap_or_else(|_| f(&Process::none()))
+        .unwrap_or_else(|_| f(&Process::default()))
 }
 
 /// Sets the processor as the current processor for the duration of the lifetime
@@ -195,11 +207,6 @@ pub struct Process {
 }
 
 impl Process {
-    /// Returns a new `Process` that does nothing
-    pub fn none() -> Self {
-        Process { process: Arc::new(NoopProcess::default()) }
-    }
-
     /// Returns a `Process` that forwards to the given [`Processor`].
     pub fn new<S>(process: S) -> Self
     where
@@ -209,11 +216,17 @@ impl Process {
     }
 }
 
+impl Default for Process {
+    fn default() -> Self {
+        Self { process: Arc::new(DefaultProcess::default()) }
+    }
+}
+
 impl Deref for Process {
-    type Target = Arc<dyn Processor>;
+    type Target = dyn Processor;
 
     fn deref(&self) -> &Self::Target {
-        &self.process
+        &*self.process
     }
 }
 
@@ -272,11 +285,11 @@ impl Drop for ScopeGuard {
     }
 }
 
-/// A no-op [`Process`] that does nothing.
+/// The standard `Process` impl
 #[derive(Copy, Clone, Debug, Default)]
-pub struct NoopProcess(());
+pub struct DefaultProcess(());
 
-impl Processor for NoopProcess {}
+impl Processor for DefaultProcess {}
 
 #[cfg(test)]
 mod tests {
@@ -288,8 +301,8 @@ mod tests {
         struct TestProcessor;
         impl Processor for TestProcessor {}
 
-        with_current(&Process::new(TestProcessor), || {
-            get_default(|processor| assert!(processor.is::<TestProcessor>()))
+        with(&Process::new(TestProcessor), || {
+            with_default(|processor| assert!(processor.is::<TestProcessor>()))
         });
     }
 }

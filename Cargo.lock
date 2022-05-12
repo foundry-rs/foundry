@@ -2057,6 +2057,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "dirs-next",
  "eyre",
  "once_cell",
  "remove_dir_all 0.7.0",

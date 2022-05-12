@@ -31,6 +31,7 @@ once_cell = "1.9"
 url = "2.1"
 tar = "0.4"
 remove_dir_all = "0.7.0"
+dirs-next = "2.0.0"
 
 # tracing
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
