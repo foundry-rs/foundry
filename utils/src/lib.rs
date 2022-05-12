@@ -514,15 +514,33 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
             };
 
             if token.is_err() && value.starts_with("0x") {
-                if let ParamType::Uint(_) = param {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &value)
-                        };
+                match param {
+                    ParamType::FixedBytes(32) => {
+                        if value.len() < 66 {
+                            if let Ok(pad) = String::from_utf8(vec![b'0'; 66-value.len()]) {
+                                let padded_value: String = [value, &pad].concat();
+                                token = if lenient {
+                                    LenientTokenizer::tokenize(param, &padded_value)
+                                } else {
+                                    StrictTokenizer::tokenize(param, &padded_value)
+                                };
+                            }
+                        }
                     }
+                    ParamType::Uint(_) => {
+                        println!("Not Bytes32");
+                        if let ParamType::Uint(_) = param {
+                        // try again if value is hex
+                            if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                                token = if lenient {
+                                    LenientTokenizer::tokenize(param, &value)
+                                } else {
+                                    StrictTokenizer::tokenize(param, &value)
+                                };
+                            }
+                        }
+                    }
+                    _ =>  {();}
                 }
             }
             token
