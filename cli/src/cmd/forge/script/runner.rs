@@ -17,6 +17,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         Self { executor, initial_balance, sender }
     }
 
+    /// Deploys the libraries, broadcast contract and the setUp method if requested.
     pub fn setup(
         &mut self,
         libraries: &[Bytes],
@@ -52,7 +53,9 @@ impl<DB: DatabaseRef> Runner<DB> {
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        Ok(if setup {
+        let (success, gas, labeled_addresses, transactions, debug) = if !setup {
+            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
+        } else {
             match self.executor.setup(address) {
                 Ok(CallResult {
                     reverted,
@@ -79,51 +82,29 @@ impl<DB: DatabaseRef> Runner<DB> {
                     logs.extend_from_slice(&setup_logs);
 
                     (
-                        address,
-                        ScriptResult {
-                            logs,
-                            traces,
-                            labeled_addresses: labels,
-                            success: !reverted,
-                            debug: vec![constructor_debug, debug].into_iter().collect(),
-                            gas,
-                            transactions,
-                        },
+                        !reverted,
+                        gas,
+                        labels,
+                        transactions,
+                        vec![constructor_debug, debug].into_iter().collect(),
                     )
                 }
                 Err(e) => return Err(e.into()),
             }
-        } else {
-            (
-                address,
-                ScriptResult {
-                    logs,
-                    traces,
-                    success: true,
-                    debug: vec![constructor_debug].into_iter().collect(),
-                    gas: 0,
-                    labeled_addresses: Default::default(),
-                    transactions: None,
-                },
-            )
-        })
+        };
+
+        Ok((
+            address,
+            ScriptResult { success, gas, labeled_addresses, transactions, logs, traces, debug },
+        ))
     }
 
+    /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> eyre::Result<ScriptResult> {
-        let RawCallResult {
-            reverted, gas, stipend, logs, traces, labels, debug, transactions, ..
-        } = self.executor.call_raw(*CALLER, address, calldata.0, 0.into())?;
-        Ok(ScriptResult {
-            success: !reverted,
-            gas: gas.overflowing_sub(stipend).0,
-            logs,
-            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
-            debug: vec![debug].into_iter().collect(),
-            labeled_addresses: labels,
-            transactions,
-        })
+        self.call(*CALLER, address, calldata, U256::zero(), false)
     }
 
+    /// Runs a broadcastable transaction locally and persists its state.
     pub fn sim(
         &mut self,
         from: Address,
@@ -132,28 +113,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         value: Option<U256>,
     ) -> eyre::Result<ScriptResult> {
         if let Some(NameOrAddress::Address(to)) = to {
-            let RawCallResult { reverted, gas, logs, traces, labels, debug, transactions, .. } =
-                self.executor.call_raw_committing(
-                    from,
-                    to,
-                    calldata.unwrap_or_default().0,
-                    value.unwrap_or(U256::zero()),
-                )?;
-            Ok(ScriptResult {
-                success: !reverted,
-                gas,
-                logs,
-                traces: traces
-                    .map(|mut traces| {
-                        // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas;
-                        vec![(TraceKind::Execution, traces)]
-                    })
-                    .unwrap_or_default(),
-                debug: vec![debug].into_iter().collect(),
-                labeled_addresses: labels,
-                transactions,
-            })
+            self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
             let DeployResult { address: _, gas, logs, traces, debug } = self.executor.deploy(
                 from,
@@ -180,5 +140,38 @@ impl<DB: DatabaseRef> Runner<DB> {
         } else {
             panic!("ens not supported");
         }
+    }
+
+    fn call(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        commit: bool,
+    ) -> eyre::Result<ScriptResult> {
+        let RawCallResult {
+            reverted, gas, stipend, logs, traces, labels, debug, transactions, ..
+        } = if !commit {
+            self.executor.call_raw(from, to, calldata.0, value)?
+        } else {
+            self.executor.call_raw_committing(from, to, calldata.0, value)?
+        };
+
+        Ok(ScriptResult {
+            success: !reverted,
+            gas: gas.overflowing_sub(stipend).0,
+            logs,
+            traces: traces
+                .map(|mut traces| {
+                    // Manually adjust gas for the trace to add back the stipend/real used gas
+                    traces.arena[0].trace.gas_cost = gas;
+                    vec![(TraceKind::Execution, traces)]
+                })
+                .unwrap_or_default(),
+            debug: vec![debug].into_iter().collect(),
+            labeled_addresses: labels,
+            transactions,
+        })
     }
 }
