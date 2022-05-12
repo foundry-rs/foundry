@@ -194,9 +194,13 @@ pub enum CoverageItem {
     Branch {
         /// The ID that identifies the branch.
         ///
-        /// There are two branches with the same ID,
-        /// one for each outcome (true and false).
-        id: usize,
+        /// There may be multiple items with the same branch ID - they belong to the same branch,
+        /// but represent different paths.
+        branch_id: usize,
+        /// The path ID for this branch.
+        ///
+        /// The first path has ID 0, the next ID 1, and so on.
+        path_id: usize,
         /// The branch kind.
         kind: BranchKind,
         /// The byte offset which the branch is on in the source file.

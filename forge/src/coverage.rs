@@ -108,11 +108,10 @@ where
                     CoverageItem::Line { offset, hits } => {
                         writeln!(self.destination, "DA:{offset},{hits}")?;
                     }
-                    CoverageItem::Branch { id, offset, hits, .. } => {
-                        // TODO: Block ID
+                    CoverageItem::Branch { branch_id, path_id, offset, hits, .. } => {
                         writeln!(
                             self.destination,
-                            "BRDA:{offset},{id},{id},{}",
+                            "BRDA:{offset},{branch_id},{path_id},{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }

@@ -163,7 +163,8 @@ impl Visitor {
                 self.branch_id += 1;
 
                 self.items.push(CoverageItem::Branch {
-                    id: branch_id,
+                    branch_id,
+                    path_id: 0,
                     kind: BranchKind::True,
                     offset: true_body.src.start,
                     hits: 0,
@@ -173,7 +174,8 @@ impl Visitor {
                 let false_body: Option<Node> = node.attribute("falseBody");
                 if let Some(false_body) = false_body {
                     self.items.push(CoverageItem::Branch {
-                        id: branch_id,
+                        branch_id,
+                        path_id: 1,
                         kind: BranchKind::False,
                         offset: false_body.src.start,
                         hits: 0,
@@ -202,7 +204,8 @@ impl Visitor {
                 self.branch_id += 1;
 
                 self.items.push(CoverageItem::Branch {
-                    id: branch_id,
+                    branch_id,
+                    path_id: 0,
                     kind: BranchKind::True,
                     offset: body.src.start,
                     hits: 0,
