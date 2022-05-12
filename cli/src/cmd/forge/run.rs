@@ -1,10 +1,10 @@
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, needs_setup, Cmd},
+    cmd::{forge::build::CoreBuildArgs, needs_setup, unwrap_contracts, Cmd},
     compile, utils,
 };
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, RawLog},
+    abi::RawLog,
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
@@ -79,18 +79,7 @@ impl Cmd for RunArgs {
             predeploy_libraries,
         } = self.build(&config, &evm_opts)?;
 
-        let known_contracts = highlevel_known_contracts
-            .iter()
-            .map(|(id, c)| {
-                (
-                    id.clone(),
-                    (
-                        c.abi.clone(),
-                        c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
-                    ),
-                )
-            })
-            .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
+        let known_contracts = unwrap_contracts(&highlevel_known_contracts);
 
         let (needs_setup, _, bytecode) = needs_setup(contract);
 

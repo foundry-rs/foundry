@@ -10,7 +10,7 @@ use forge::{
 };
 
 use foundry_config::Config;
-use foundry_utils::{encode_args, IntoFunction, RuntimeOrHandle};
+use foundry_utils::{encode_args, IntoFunction};
 use std::collections::VecDeque;
 
 use crate::cmd::forge::script::*;
@@ -18,7 +18,7 @@ use crate::cmd::forge::script::*;
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
     /// transactions.
-    pub fn execute(
+    pub async fn execute(
         &self,
         contract: CompactContractBytecode,
         evm_opts: &EvmOpts,
@@ -28,7 +28,8 @@ impl ScriptArgs {
     ) -> eyre::Result<ScriptResult> {
         let (needs_setup, _, bytecode) = needs_setup(contract);
 
-        let mut runner = self.prepare_runner(evm_opts, config, sender.unwrap_or(evm_opts.sender));
+        let mut runner =
+            self.prepare_runner(evm_opts, config, sender.unwrap_or(evm_opts.sender)).await;
         let (address, mut result) = runner.setup(predeploy_libraries, bytecode, needs_setup)?;
 
         let script_result = runner.script(
@@ -61,14 +62,14 @@ impl ScriptArgs {
     }
 
     /// Executes a list of transactions locally and persists their state.
-    pub fn execute_transactions(
+    pub async fn execute_transactions(
         &self,
         transactions: VecDeque<TypedTransaction>,
         evm_opts: &EvmOpts,
         config: &Config,
         decoder: &mut CallTraceDecoder,
     ) -> eyre::Result<VecDeque<TypedTransaction>> {
-        let mut runner = self.prepare_runner(evm_opts, config, evm_opts.sender);
+        let mut runner = self.prepare_runner(evm_opts, config, evm_opts.sender).await;
 
         let mut failed = false;
         let mut sum_gas = 0;
@@ -114,18 +115,16 @@ impl ScriptArgs {
         }
     }
 
-    fn prepare_runner(
+    async fn prepare_runner(
         &self,
         evm_opts: &EvmOpts,
         config: &Config,
         sender: Address,
     ) -> Runner<Backend> {
-        let runtime = RuntimeOrHandle::new();
-        let env = runtime.block_on(evm_opts.evm_env());
+        let env = evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = runtime
-            .block_on(Backend::new(utils::get_fork(evm_opts, &config.rpc_storage_caching), &env));
+        let db = Backend::new(utils::get_fork(evm_opts, &config.rpc_storage_caching), &env).await;
 
         let mut builder = ExecutorBuilder::new()
             .with_cheatcodes(evm_opts.ffi)

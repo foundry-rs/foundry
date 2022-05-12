@@ -2,7 +2,7 @@ use crate::{opts::forge::ContractInfo, suggestions};
 use ethers::{
     abi::Abi,
     prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         ArtifactId, Bytes, TransactionReceipt,
     },
     solc::{
@@ -12,7 +12,7 @@ use ethers::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
 };
@@ -138,6 +138,25 @@ pub fn needs_setup(contract: CompactContractBytecode) -> (bool, Abi, Bytes) {
     (setup_fns.len() == 1 && setup_fns[0].name == "setUp", abi, bytecode)
 }
 
+pub fn unwrap_contracts(
+    contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
+    contracts
+        .iter()
+        .map(|(id, c)| {
+            (
+                id.clone(),
+                (
+                    c.abi.clone(),
+                    c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Helper that saves the transactions sequence and its state on which transactions have been
+/// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
     pub index: u32,

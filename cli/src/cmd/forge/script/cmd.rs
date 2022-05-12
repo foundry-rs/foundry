@@ -1,25 +1,26 @@
-use crate::cmd::{Cmd, ScriptSequence};
+use crate::cmd::{unwrap_contracts, Cmd, ScriptSequence};
 
 use ethers::{
     abi::Abi,
-    prelude::ArtifactId,
-    types::{transaction::eip2718::TypedTransaction, TransactionRequest, U256},
+    prelude::{artifacts::CompactContractBytecode, ArtifactId},
+    types::{transaction::eip2718::TypedTransaction, U256},
 };
-use forge::{
-    decode::decode_console_logs,
-    executor::opts::EvmOpts,
-    trace::{identifier::LocalTraceIdentifier, CallTraceDecoderBuilder, TraceKind},
-};
+use forge::executor::opts::EvmOpts;
 
 use foundry_config::{figment::Figment, Config};
+use foundry_utils::RuntimeOrHandle;
 
 use super::*;
-use std::collections::{BTreeMap, VecDeque};
-use yansi::Paint;
 
 impl Cmd for ScriptArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
+        RuntimeOrHandle::new().block_on(self.run_script())
+    }
+}
+
+impl ScriptArgs {
+    async fn run_script(self) -> eyre::Result<()> {
         let figment: Figment = From::from(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let verbosity = evm_opts.verbosity;
@@ -27,166 +28,52 @@ impl Cmd for ScriptArgs {
 
         let fork_url =
             evm_opts.fork_url.as_ref().expect("You must provide an RPC URL (see --fork-url).");
+
+        // We want to make sure that the execution is as close as possible to the real deal.
+        // Should use forge run/script if you don't care about the nonce
         let nonce = if let Some(deployer) = self.deployer {
-            foundry_utils::next_nonce(dbg!(deployer), fork_url, None)?
+            foundry_utils::next_nonce(deployer, fork_url, None)?
         } else {
             U256::zero()
         };
 
         let BuildOutput {
             target,
-            mut contract,
-            mut highlevel_known_contracts,
-            mut predeploy_libraries,
+            contract,
+            highlevel_known_contracts,
+            predeploy_libraries,
             known_contracts: default_known_contracts,
         } = self.build(&config, &evm_opts, self.deployer, nonce)?;
 
-        if !self.force_resume && !self.resume {
-            let mut known_contracts = highlevel_known_contracts
-                .iter()
-                .map(|(id, c)| {
-                    (
-                        id.clone(),
-                        (
-                            c.abi.clone(),
-                            c.deployed_bytecode
-                                .clone()
-                                .into_bytes()
-                                .expect("not bytecode")
-                                .to_vec(),
-                        ),
-                    )
-                })
-                .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
+        if self.force_resume || self.resume {
+            let mut deployment_sequence = ScriptSequence::load(&self.sig, &target, &config.out)?;
+            self.send_transactions(&mut deployment_sequence).await?;
+        } else {
+            let mut known_contracts = unwrap_contracts(&highlevel_known_contracts);
 
             // execute once with default sender
-            let mut result =
-                self.execute(contract, &evm_opts, self.deployer, &predeploy_libraries, &config)?;
+            let mut result = self
+                .execute(contract, &evm_opts, self.deployer, &predeploy_libraries, &config)
+                .await?;
 
-            let mut new_sender = None;
-
-            if self.deployer.is_none() {
-                if let Some(ref txs) = result.transactions {
-                    // If we did any linking with assumed predeploys, we cant support multiple
-                    // deployers.
-                    //
-                    // If we didn't do any linking with predeploys, then none of the contracts will
-                    // change their code based on the sender, so we can skip relinking +
-                    // reexecuting.
-                    if !predeploy_libraries.is_empty() {
-                        for tx in txs.iter() {
-                            match tx {
-                                TypedTransaction::Legacy(tx) => {
-                                    if tx.to.is_none() {
-                                        let sender = tx.from.expect("no sender");
-                                        if let Some(ns) = new_sender {
-                                            if sender != ns {
-                                                panic!("You have more than one deployer who could deploy libraries. Set `--deployer` to define the only one.")
-                                            }
-                                        } else if sender != evm_opts.sender {
-                                            new_sender = Some(sender);
-                                        }
-                                    }
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                    }
-                }
-            }
-
-            // reexecute with the correct deployer after relinking contracts
-            if let Some(new_sender) = new_sender {
-                // if we had a new sender that requires relinking, we need to
-                // get the nonce mainnet for accurate addresses for predeploy libs
-                let nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
-
-                // relink with new sender
-                let BuildOutput {
-                    target: _,
-                    contract: c2,
-                    highlevel_known_contracts: hkc,
-                    predeploy_libraries: pl,
-                    known_contracts: _default_known_contracts,
-                } = self.link(default_known_contracts, new_sender, nonce)?;
-
-                contract = c2;
-                highlevel_known_contracts = hkc;
-                predeploy_libraries = pl;
-
-                known_contracts = highlevel_known_contracts
-                    .iter()
-                    .map(|(id, c)| {
-                        (
-                            id.clone(),
-                            (
-                                c.abi.clone(),
-                                c.deployed_bytecode
-                                    .clone()
-                                    .into_bytes()
-                                    .expect("not bytecode")
-                                    .to_vec(),
-                            ),
-                        )
-                    })
-                    .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
-
-                let lib_deploy = predeploy_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bytes)| {
-                        TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(new_sender),
-                            data: Some(bytes.clone()),
-                            nonce: Some(nonce + i),
-                            ..Default::default()
-                        })
-                    })
-                    .collect();
-
-                result.transactions = Some(lib_deploy);
-
-                let result2 = self.execute(
-                    contract,
-                    &evm_opts,
-                    Some(new_sender),
-                    &predeploy_libraries,
-                    &config,
-                )?;
-
-                result.success &= result2.success;
-
-                result.gas = result2.gas;
-                result.logs = result2.logs;
-                result.traces.extend(result2.traces);
-                result.debug = result2.debug;
-                result.labeled_addresses.extend(result2.labeled_addresses);
-                match (&mut result.transactions, result2.transactions) {
-                    (Some(txs), Some(new_txs)) => {
-                        new_txs.iter().for_each(|tx| {
-                            txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
-                        });
-                    }
-                    (None, Some(new_txs)) => {
-                        result.transactions = Some(new_txs);
-                    }
-                    _ => {}
-                }
+            if let Some(new_sender) =
+                self.maybe_new_sender(&evm_opts, result.transactions.as_ref(), &predeploy_libraries)
+            {
+                known_contracts = self
+                    .rerun_with_new_deployer(
+                        &config,
+                        &evm_opts,
+                        fork_url,
+                        new_sender,
+                        &mut result,
+                        default_known_contracts,
+                    )
+                    .await?;
             } else {
-                let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bytes)| {
-                        TypedTransaction::Legacy(TransactionRequest {
-                            from: self.deployer,
-                            data: Some(bytes.clone()),
-                            nonce: Some(nonce + i),
-                            ..Default::default()
-                        })
-                    })
-                    .collect();
-
                 // prepend predeploy libraries
+                let mut lib_deploy =
+                    self.create_transactions_from_data(self.deployer, nonce, &predeploy_libraries);
+
                 if let Some(txs) = &mut result.transactions {
                     txs.iter().for_each(|tx| {
                         lib_deploy.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
@@ -195,60 +82,13 @@ impl Cmd for ScriptArgs {
                 }
             }
 
-            // Identify addresses in each trace
-            let local_identifier = LocalTraceIdentifier::new(&known_contracts);
-            let mut decoder = CallTraceDecoderBuilder::new()
-                .with_labels(result.labeled_addresses.clone())
-                .build();
-            for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &local_identifier);
-            }
-
-            if verbosity >= 3 {
-                if result.traces.is_empty() {
-                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-                }
-
-                if !result.success && verbosity == 3 || verbosity > 3 {
-                    println!("Full Script Traces:");
-                    for (kind, trace) in &mut result.traces {
-                        let should_include = match kind {
-                            TraceKind::Setup => {
-                                (verbosity >= 5) || (verbosity == 4 && !result.success)
-                            }
-                            TraceKind::Execution => verbosity > 3 || !result.success,
-                            _ => false,
-                        };
-
-                        if should_include {
-                            decoder.decode(trace);
-                            println!("{}", trace);
-                        }
-                    }
-                    println!();
-                }
-            }
-
-            if result.success {
-                println!("{}", Paint::green("Dry running script was successful."));
-            } else {
-                println!("{}", Paint::red("Dry running script failed."));
-            }
-
-            println!("Gas used: {}", result.gas);
-            println!("== Logs ==");
-            let console_logs = decode_console_logs(&result.logs);
-            if !console_logs.is_empty() {
-                for log in console_logs {
-                    println!("  {}", log);
-                }
-            }
+            let mut decoder = self.handle_traces(verbosity, &mut result, &known_contracts)?;
 
             println!("==========================");
             println!("Simulated On-chain Traces:\n");
             if let Some(txs) = result.transactions {
                 if let Ok(gas_filled_txs) =
-                    self.execute_transactions(txs, &evm_opts, &config, &mut decoder)
+                    self.execute_transactions(txs, &evm_opts, &config, &mut decoder).await
                 {
                     println!("\n\n==========================");
                     if !result.success {
@@ -260,7 +100,7 @@ impl Cmd for ScriptArgs {
                         deployment_sequence.save()?;
 
                         if self.execute {
-                            self.send_transactions(&mut deployment_sequence)?;
+                            self.send_transactions(&mut deployment_sequence).await?;
                         } else {
                             println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --execute and wallet configuration(s) to the previous command. See forge script --help for more.");
                         }
@@ -271,11 +111,56 @@ impl Cmd for ScriptArgs {
             } else {
                 panic!("No onchain transactions generated in script");
             }
-        } else {
-            let mut deployment_sequence = ScriptSequence::load(&self.sig, &target, &config.out)?;
-            self.send_transactions(&mut deployment_sequence)?;
         }
 
         Ok(())
+    }
+}
+
+impl ScriptArgs {
+    /// Reruns the execution with a new sender and relinks the libraries accordingly
+    async fn rerun_with_new_deployer(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+        fork_url: &str,
+        new_sender: Address,
+        first_run_result: &mut ScriptResult,
+        default_known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+    ) -> eyre::Result<BTreeMap<ArtifactId, (Abi, Vec<u8>)>> {
+        // if we had a new sender that requires relinking, we need to
+        // get the nonce mainnet for accurate addresses for predeploy libs
+        let nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
+
+        let BuildOutput { contract, highlevel_known_contracts, predeploy_libraries, .. } =
+            self.link(default_known_contracts, new_sender, nonce)?;
+
+        first_run_result.transactions =
+            Some(self.create_transactions_from_data(Some(new_sender), nonce, &predeploy_libraries));
+
+        let result = self
+            .execute(contract, evm_opts, Some(new_sender), &predeploy_libraries, config)
+            .await?;
+
+        first_run_result.success &= result.success;
+        first_run_result.gas = result.gas;
+        first_run_result.logs = result.logs;
+        first_run_result.traces.extend(result.traces);
+        first_run_result.debug = result.debug;
+        first_run_result.labeled_addresses.extend(result.labeled_addresses);
+
+        match (&mut first_run_result.transactions, result.transactions) {
+            (Some(txs), Some(new_txs)) => {
+                new_txs.iter().for_each(|tx| {
+                    txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
+                });
+            }
+            (None, Some(new_txs)) => {
+                first_run_result.transactions = Some(new_txs);
+            }
+            _ => {}
+        }
+
+        Ok(unwrap_contracts(&highlevel_known_contracts))
     }
 }
