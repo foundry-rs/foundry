@@ -77,17 +77,28 @@ impl Visitor {
         Ok(())
     }
     pub fn visit_statement(&mut self, node: Node) -> eyre::Result<()> {
-        // TODO: inlineassembly
+        // TODO: YulSwitch, YulForLoop, YulFunctionDefinition, YulVariableDeclaration
         match node.node_type {
             // Blocks
-            NodeType::Block | NodeType::UncheckedBlock => self.visit_block(node),
+            NodeType::Block | NodeType::UncheckedBlock | NodeType::YulBlock => {
+                self.visit_block(node)
+            }
+            // Inline assembly block
+            NodeType::InlineAssembly => self.visit_block(
+                node.attribute("AST")
+                    .ok_or_else(|| eyre::eyre!("inline assembly block with no AST attribute"))?,
+            ),
             // Simple statements
             NodeType::Break |
             NodeType::Continue |
             NodeType::EmitStatement |
             NodeType::PlaceholderStatement |
             NodeType::Return |
-            NodeType::RevertStatement => {
+            NodeType::RevertStatement |
+            NodeType::YulAssignment |
+            NodeType::YulBreak |
+            NodeType::YulContinue |
+            NodeType::YulLeave => {
                 self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
                 Ok(())
             }
@@ -127,13 +138,13 @@ impl Visitor {
                 self.visit_block_or_statement(*body)
             }
             // Expression statement
-            NodeType::ExpressionStatement => self.visit_expression(
-                node.attribute("expression")
-                    .ok_or_else(|| eyre::eyre!("expression statement had no expression"))?,
-            ),
+            NodeType::ExpressionStatement | NodeType::YulExpressionStatement => self
+                .visit_expression(
+                    node.attribute("expression")
+                        .ok_or_else(|| eyre::eyre!("expression statement had no expression"))?,
+                ),
             // If statement
             NodeType::IfStatement => {
-                // TODO: create branch
                 self.visit_expression(
                     node.attribute("condition")
                         .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
@@ -172,6 +183,34 @@ impl Visitor {
 
                 Ok(())
             }
+            NodeType::YulIf => {
+                self.visit_expression(
+                    node.attribute("condition")
+                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                )?;
+
+                let body: Node = node
+                    .attribute("body")
+                    .ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
+
+                // We need to store the current branch ID here since visiting the body of either of
+                // the if blocks may increase `self.branch_id` in the case of nested if statements.
+                let branch_id = self.branch_id;
+
+                // We increase the branch ID here such that nested branches do not use the same
+                // branch ID as we do
+                self.branch_id += 1;
+
+                self.items.push(CoverageItem::Branch {
+                    id: branch_id,
+                    kind: BranchKind::True,
+                    offset: body.src.start,
+                    hits: 0,
+                });
+                self.visit_block(body)?;
+
+                Ok(())
+            }
             // Try-catch statement
             NodeType::TryStatement => {
                 // TODO: Clauses
@@ -194,6 +233,7 @@ impl Visitor {
         //  memberaccess
         //  newexpression
         //  tupleexpression
+        //  yulfunctioncall
         match node.node_type {
             NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
                 // TODO: Should we explore the subexpressions?
@@ -215,7 +255,9 @@ impl Visitor {
             NodeType::Identifier |
             NodeType::IndexAccess |
             NodeType::IndexRangeAccess |
-            NodeType::Literal => Ok(()),
+            NodeType::Literal |
+            NodeType::YulLiteralValue |
+            NodeType::YulIdentifier => Ok(()),
             _ => {
                 warn!("unexpected node type, expected an expression: {:?}", node.node_type);
                 Ok(())
