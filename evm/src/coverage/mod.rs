@@ -79,22 +79,17 @@ impl CoverageMap {
             // Get the coverage items corresponding to the source ID in the source map.
             if let Some(source) = self.sources.get_mut(&(source_version.clone(), source_id)) {
                 for item in source.items.iter_mut() {
-                    match item {
-                        CoverageItem::Line { offset, hits } |
-                        CoverageItem::Statement { offset, hits } |
-                        CoverageItem::Branch { offset, hits, .. } |
-                        CoverageItem::Function { offset, hits, .. } => {
-                            // We've reached a point where we will no longer be able to map this
-                            // instruction to coverage items
-                            if instruction_offset < *offset {
-                                break
-                            }
+                    let loc = item.source_location();
 
-                            // We found a matching coverage item, but there may be more
-                            if instruction_offset == *offset {
-                                *hits += instruction_hits;
-                            }
-                        }
+                    // We've reached a point where we will no longer be able to map this
+                    // instruction to coverage items
+                    if instruction_offset < loc.start {
+                        break
+                    }
+
+                    // We found a matching coverage item, but there may be more
+                    if instruction_offset == loc.start {
+                        item.increment_hits(instruction_hits);
                     }
                 }
             }
@@ -176,22 +171,24 @@ impl SourceFile {
 pub enum CoverageItem {
     /// An executable line in the code.
     Line {
-        /// The byte offset in the source file for the start of the line.
-        offset: usize,
+        /// The location of the line in the source code.
+        loc: SourceLocation,
         /// The number of times this item was hit.
         hits: u64,
     },
 
     /// A statement in the code.
     Statement {
-        /// The byte offset in the source file for the start of the statement.
-        offset: usize,
+        /// The location of the statement in the source code.
+        loc: SourceLocation,
         /// The number of times this statement was hit.
         hits: u64,
     },
 
     /// A branch in the code.
     Branch {
+        /// The location of the branch in the source code.
+        loc: SourceLocation,
         /// The ID that identifies the branch.
         ///
         /// There may be multiple items with the same branch ID - they belong to the same branch,
@@ -203,21 +200,49 @@ pub enum CoverageItem {
         path_id: usize,
         /// The branch kind.
         kind: BranchKind,
-        /// The byte offset which the branch is on in the source file.
-        offset: usize,
         /// The number of times this item was hit.
         hits: u64,
     },
 
     /// A function in the code.
     Function {
+        /// The location of the function in the source code.
+        loc: SourceLocation,
         /// The name of the function.
         name: String,
-        /// The byte offset which the function is on in the source file.
-        offset: usize,
         /// The number of times this item was hit.
         hits: u64,
     },
+}
+
+impl CoverageItem {
+    pub fn source_location(&self) -> &SourceLocation {
+        match self {
+            Self::Line { loc, .. } |
+            Self::Statement { loc, .. } |
+            Self::Branch { loc, .. } |
+            Self::Function { loc, .. } => loc,
+        }
+    }
+
+    pub fn increment_hits(&mut self, delta: u64) {
+        match self {
+            Self::Line { hits, .. } |
+            Self::Statement { hits, .. } |
+            Self::Branch { hits, .. } |
+            Self::Function { hits, .. } => *hits += delta,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceLocation {
+    /// Start byte in the source code.
+    pub start: usize,
+    /// Number of bytes in the source code.
+    pub length: Option<usize>,
+    /// The line in the source code.
+    pub line: usize,
 }
 
 #[derive(Debug, Clone)]

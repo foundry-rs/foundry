@@ -1,5 +1,5 @@
-use super::{BranchKind, CoverageItem};
-use ethers::solc::artifacts::ast::{Ast, Node, NodeType};
+use super::{BranchKind, CoverageItem, SourceLocation};
+use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
 use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
@@ -60,7 +60,11 @@ impl Visitor {
         match node.body.take() {
             // Skip virtual functions
             Some(body) if !is_virtual => {
-                self.items.push(CoverageItem::Function { name, offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Function {
+                    name,
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 self.visit_block(*body)
             }
             _ => Ok(()),
@@ -99,12 +103,18 @@ impl Visitor {
             NodeType::YulBreak |
             NodeType::YulContinue |
             NodeType::YulLeave => {
-                self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Statement {
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 Ok(())
             }
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
-                self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Statement {
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 if let Some(expr) = node.attribute("initialValue") {
                     self.visit_expression(expr)?;
                 }
@@ -166,7 +176,7 @@ impl Visitor {
                     branch_id,
                     path_id: 0,
                     kind: BranchKind::True,
-                    offset: true_body.src.start,
+                    loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
                 self.visit_block_or_statement(true_body)?;
@@ -177,7 +187,7 @@ impl Visitor {
                         branch_id,
                         path_id: 1,
                         kind: BranchKind::False,
-                        offset: false_body.src.start,
+                        loc: self.source_location_for(&node.src),
                         hits: 0,
                     });
                     self.visit_block_or_statement(false_body)?;
@@ -207,7 +217,7 @@ impl Visitor {
                     branch_id,
                     path_id: 0,
                     kind: BranchKind::True,
-                    offset: body.src.start,
+                    loc: self.source_location_for(&node.src),
                     hits: 0,
                 });
                 self.visit_block(body)?;
@@ -240,17 +250,26 @@ impl Visitor {
         match node.node_type {
             NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
                 // TODO: Should we explore the subexpressions?
-                self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Statement {
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 Ok(())
             }
             NodeType::FunctionCall => {
                 // TODO: Handle assert and require
-                self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Statement {
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 Ok(())
             }
             NodeType::Conditional => {
                 // TODO: Do we count these as branches?
-                self.items.push(CoverageItem::Statement { offset: node.src.start, hits: 0 });
+                self.items.push(CoverageItem::Statement {
+                    loc: self.source_location_for(&node.src),
+                    hits: 0,
+                });
                 Ok(())
             }
             // Does not count towards coverage
@@ -290,5 +309,10 @@ impl Visitor {
                 Ok(())
             }
         }
+    }
+
+    fn source_location_for(&self, loc: &ast::SourceLocation) -> SourceLocation {
+        // TODO: Map to line
+        SourceLocation { start: loc.start, length: loc.length, line: 0 }
     }
 }

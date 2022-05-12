@@ -98,20 +98,27 @@ where
             writeln!(self.destination, "TN:")?;
             writeln!(self.destination, "SF:{}", file.path.to_string_lossy())?;
 
-            // TODO: Line numbers instead of byte offsets
             for item in file.items {
                 match item {
-                    CoverageItem::Function { name, offset, hits } => {
-                        writeln!(self.destination, "FN:{offset},{name}")?;
+                    CoverageItem::Function {
+                        loc: SourceLocation { line, .. }, name, hits, ..
+                    } => {
+                        writeln!(self.destination, "FN:{line},{name}")?;
                         writeln!(self.destination, "FNDA:{hits},{name}")?;
                     }
-                    CoverageItem::Line { offset, hits } => {
-                        writeln!(self.destination, "DA:{offset},{hits}")?;
+                    CoverageItem::Line { loc: SourceLocation { line, .. }, hits, .. } => {
+                        writeln!(self.destination, "DA:{line},{hits}")?;
                     }
-                    CoverageItem::Branch { branch_id, path_id, offset, hits, .. } => {
+                    CoverageItem::Branch {
+                        loc: SourceLocation { line, .. },
+                        branch_id,
+                        path_id,
+                        hits,
+                        ..
+                    } => {
                         writeln!(
                             self.destination,
-                            "BRDA:{offset},{branch_id},{path_id},{}",
+                            "BRDA:{line},{branch_id},{path_id},{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
