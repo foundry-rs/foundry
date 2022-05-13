@@ -8,7 +8,7 @@ use anvil_rpc::{
 use ethers::{
     providers::ProviderError,
     signers::WalletError,
-    types::{Bytes, SignatureError, U256},
+    types::{Bytes, SignatureError, H256, U256},
 };
 use foundry_evm::revm::Return;
 use serde::Serialize;
@@ -54,6 +54,8 @@ pub enum BlockchainError {
     Internal(String),
     #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
     BlockOutOfRange(u64, u64),
+    #[error("Resource not found")]
+    BlockNotFound(H256),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -199,6 +201,12 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::BlockOutOfRange(_, _) => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::BlockNotFound(_) => RpcError {
+                    // <https://eips.ethereum.org/EIPS/eip-1898>
+                    code: ErrorCode::ServerError(-32001),
+                    message: err.to_string().into(),
+                    data: None,
+                },
             }
             .into(),
         }

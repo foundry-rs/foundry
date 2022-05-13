@@ -387,3 +387,54 @@ async fn get_past_events() {
     assert_eq!(logs[0].new_value, "initial value");
     assert_eq!(logs.len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_past_state() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let deployed_block = client.get_block_number().await.unwrap();
+
+    // assert initial state
+    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
+    assert_eq!(value, "initial value");
+
+    // make a call with `client`
+    let _tx_hash =
+        *contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap().send().await.unwrap();
+
+    // assert new value
+    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
+    assert_eq!(value, "hi");
+
+    // assert previous value
+    let value = contract
+        .method::<_, String>("getValue", ())
+        .unwrap()
+        .block(BlockId::Number(deployed_block.into()))
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(value, "initial value");
+
+    dbg!(deployed_block);
+
+    let hash = client.get_block(1).await.unwrap().unwrap().hash.unwrap();
+    let value = contract
+        .method::<_, String>("getValue", ())
+        .unwrap()
+        .block(BlockId::Hash(hash))
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(value, "initial value");
+}
