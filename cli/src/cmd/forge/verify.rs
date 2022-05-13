@@ -246,7 +246,7 @@ impl VerifyArgs {
                     return Ok(version)
                 }
 
-                if artifacts.len() == 0 {
+                if artifacts.is_empty() {
                     warn!("no artiacts detected")
                 } else {
                     warn!(
