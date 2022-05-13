@@ -70,6 +70,9 @@ pub struct Filter {
         conflicts_with = "pattern"
     )]
     pub path_pattern_inverse: Option<globset::Glob>,
+
+    #[clap(long="list",alias="l")]
+    pub list: bool
 }
 
 impl Filter {
