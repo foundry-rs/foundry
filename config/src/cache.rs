@@ -184,14 +184,14 @@ impl Serialize for CachedEndpoints {
 }
 
 /// Content of the foundry cache folder
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Cache {
     /// The list of chains in the cache
     pub chains: Vec<ChainCache>,
 }
 
-impl std::fmt::Display for Cache {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Cache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for chain in &self.chains {
             match NumberPrefix::decimal(chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32) {
                 NumberPrefix::Standalone(size) => {

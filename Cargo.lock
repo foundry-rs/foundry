@@ -1875,6 +1875,7 @@ version = "0.2.0"
 dependencies = [
  "anvil",
  "atty",
+ "bytes",
  "cast",
  "clap",
  "clap_complete",
