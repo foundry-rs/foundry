@@ -14,7 +14,8 @@ members = [
     "fmt",
     "forge",
     "ui",
-    "utils", ]
+    "utils",
+]
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
