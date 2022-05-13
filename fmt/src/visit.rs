@@ -95,11 +95,6 @@ pub trait Visitor {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
-        // TODO investigate where comments went
-        // if !var.doc.is_empty() {
-        //     self.visit_doc_comments(&mut var.doc)?;
-        //     self.visit_newline()?;
-        // }
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -197,11 +192,6 @@ pub trait Visitor {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
-        // TODO investigate where comments went
-        // if !func.doc.is_empty() {
-        //     self.visit_doc_comments(&mut func.doc)?;
-        //     self.visit_newline()?;
-        // }
         self.visit_source(func.loc())?;
         if func.body.is_none() {
             self.visit_stray_semicolon()?;
@@ -253,22 +243,12 @@ pub trait Visitor {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        // TODO investigate where comments went
-        // if !structure.doc.is_empty() {
-        //     self.visit_doc_comments(&mut structure.doc)?;
-        //     self.visit_newline()?;
-        // }
         self.visit_source(structure.loc)?;
 
         Ok(())
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        // TODO investigate where comments went
-        // if !event.doc.is_empty() {
-        //     self.visit_doc_comments(&mut event.doc)?;
-        //     self.visit_newline()?;
-        // }
         self.visit_source(event.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -280,11 +260,6 @@ pub trait Visitor {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        // TODO investigate where comments went
-        // if !error.doc.is_empty() {
-        //     self.visit_doc_comments(&mut error.doc)?;
-        //     self.visit_newline()?;
-        // }
         self.visit_source(error.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -339,11 +314,8 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
-            SourceUnitPart::DocComment(doc) => {
-                // TODO implement me
-                Ok(())
-            }
-            SourceUnitPart::Using(using) => {
+            SourceUnitPart::DocComment(doc) => v.visit_doc_comment(doc),
+            SourceUnitPart::Using(_using) => {
                 // TODO implement me
                 Ok(())
             }
@@ -373,10 +345,7 @@ impl Visitable for ContractPart {
             ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
-            ContractPart::DocComment(doc) => {
-                // TODO implement me
-                Ok(())
-            }
+            ContractPart::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }
@@ -408,7 +377,7 @@ impl Visitable for Statement {
             Statement::Break(_) => v.visit_break(),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
-            Statement::RevertNamedArgs(loc, expr, args) => {
+            Statement::RevertNamedArgs(_loc, _error, _args) => {
                 // TODO implement me
                 Ok(())
             }
@@ -416,9 +385,7 @@ impl Visitable for Statement {
             Statement::Try(loc, expr, returns, clauses) => {
                 v.visit_try(*loc, expr, returns, clauses)
             }
-            // TODO: statement doc comments are parsed differently than doc comments attached to
-            //  another node. Ideally, Solang should parse them into `solang::pt::DocComment` enum.
-            Statement::DocComment(..) => Ok(()),
+            Statement::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }

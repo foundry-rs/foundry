@@ -262,31 +262,38 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
-        // TODO fixme
-        // match doc_comment {
-        //     DocComment { comment, .. } => {
-        //         write!(self, "/// @{}", comment.tag)?;
-        //         if !comment.value.is_empty() {
-        //             let mut lines = comment.value.split('\n');
-        //             write!(self, " {}", lines.next().unwrap())?;
-
-        //             for line in lines {
-        //                 writeln!(self)?; // Write newline separately to trigger an indentation
-        //                 write!(self, "/// {}", line)?;
-        //             }
-        //         }
-        //     }
-        //     DocComment::Block { comments, .. } => {
-        //         writeln!(self, "/**")?;
-        //         for comment in comments {
-        //             write!(self, "@{} ", comment.tag)?;
-        //             for line in comment.value.split('\n') {
-        //                 writeln!(self, "{}", line)?;
-        //             }
-        //         }
-        //         write!(self, "*/")?;
-        //     }
-        // };
+        match doc_comment.ty {
+            CommentType::Line => {
+                write!(self, "///{}", doc_comment.comment)?;
+            }
+            CommentType::Block => {
+                let mut lines = doc_comment
+                    .comment
+                    .lines()
+                    .map(|line| line.trim_start())
+                    .peekable()
+                    .collect::<Vec<_>>();
+                if lines.last() == Some(&"") {
+                    lines.pop();
+                }
+                if lines.iter().skip(1).all(|line| line.starts_with('*')) {
+                    writeln!(self, "/**")?;
+                    let mut lines = lines.into_iter();
+                    if let Some(first_line) = lines.next() {
+                        if !first_line.is_empty() {
+                            // write the original first line
+                            writeln!(self, " *{}", doc_comment.comment.lines().next().unwrap())?;
+                        }
+                    }
+                    for line in lines {
+                        writeln!(self, " *{}", &line[1..])?;
+                    }
+                    write!(self, " */")?;
+                } else {
+                    write!(self, "/**{}*/", doc_comment.comment)?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -306,12 +313,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         self.context.contract = Some(contract.clone());
-
-        // TODO doc comment
-        // if !contract.doc.is_empty() {
-        //     contract.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
 
         write!(self, "{} {} ", contract.ty, contract.name.name)?;
 
@@ -465,12 +466,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
-        // TODO doc comment
-        // if !enumeration.doc.is_empty() {
-        //     enumeration.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         write!(self, "enum {} ", &enumeration.name.name)?;
 
         if enumeration.values.is_empty() {
@@ -558,12 +553,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
-
-        // TODO doc comment
-        // if !func.doc.is_empty() {
-        //     func.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
 
         write!(self, "{}", func.ty)?;
 
@@ -813,12 +802,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        // TODO doc comment
-        // if !structure.doc.is_empty() {
-        //     structure.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         write!(self, "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
@@ -840,12 +823,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        // TODO doc comment
-        // if !def.doc.is_empty() {
-        //     def.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         write!(self, "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
         write!(self, ";")?;
@@ -928,12 +905,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        // TODO doc comment
-        // if !event.doc.is_empty() {
-        //     event.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         write!(self, "event {}(", event.name.name)?;
 
         let params = event
@@ -985,12 +956,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        // TODO doc comment
-        // if !error.doc.is_empty() {
-        //     error.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         write!(self, "error {}(", error.name.name)?;
 
         let params = error
@@ -1056,12 +1021,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
-        // TODO fix doc comment
-        // if !var.doc.is_empty() {
-        //     var.doc.visit(self)?;
-        //     writeln!(self)?;
-        // }
-
         var.ty.visit(self)?;
 
         let attributes = var
@@ -1220,6 +1179,7 @@ mod tests {
         }
 
         let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
+        println!("{:?}", source_unit);
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, source, config);
 
@@ -1259,4 +1219,5 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
+    test_directory! { DocComments }
 }
