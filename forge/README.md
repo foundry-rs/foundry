@@ -310,6 +310,8 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
+    // Expect to be called with particular msg.value
+    function expectCall(address,uint256,bytes calldata) external;
     // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
     // Label an address in test traces
