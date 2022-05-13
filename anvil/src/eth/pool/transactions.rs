@@ -1,11 +1,12 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use anvil_core::eth::transaction::PendingTransaction;
+use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use ethers::types::{Address, TxHash, U256};
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap, HashSet},
     fmt,
+    str::FromStr,
     sync::Arc,
     time::Instant,
 };
@@ -22,6 +23,59 @@ pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
     data.to_vec()
 }
 
+/// Modes that determine the transaction ordering of the mempool
+///
+/// This type controls the transaction order via the priority metric of a transaction
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub enum TransactionOrder {
+    /// Keep the pool transaction transactions sorted in the order they arrive.
+    ///
+    /// This will essentially assign every transaction the exact priority so the order is
+    /// determined by their internal id
+    Fifo,
+    /// This means that it prioritizes transactions based on the fees paid to the miner.
+    Fees,
+}
+
+// === impl TransactionOrder ===
+
+impl TransactionOrder {
+    /// Returns the priority of the transactions
+    pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+        match self {
+            TransactionOrder::Fifo => TransactionPriority::default(),
+            TransactionOrder::Fees => TransactionPriority(tx.gas_price()),
+        }
+    }
+}
+
+impl FromStr for TransactionOrder {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.to_lowercase();
+        let order = match s.as_str() {
+            "fees" => TransactionOrder::Fees,
+            "fifo" => TransactionOrder::Fifo,
+            _ => return Err(format!("Unknown TransactionOrder: `{}`", s)),
+        };
+        Ok(order)
+    }
+}
+
+impl Default for TransactionOrder {
+    fn default() -> Self {
+        TransactionOrder::Fees
+    }
+}
+
+/// Metric value for the priority of a transaction.
+///
+/// The `TransactionPriority` determines the ordering of two transactions that have all  their
+/// markers satisfied.
+#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Default)]
+pub struct TransactionPriority(pub U256);
+
 /// Internal Transaction type
 #[derive(Clone, PartialEq)]
 pub struct PoolTransaction {
@@ -31,6 +85,8 @@ pub struct PoolTransaction {
     pub requires: Vec<TxMarker>,
     /// Markers that this transaction provides
     pub provides: Vec<TxMarker>,
+    /// priority of the transaction
+    pub priority: TransactionPriority,
 }
 
 // == impl PoolTransaction ==
@@ -581,7 +637,10 @@ impl PartialOrd<Self> for PoolTransactionRef {
 
 impl Ord for PoolTransactionRef {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.id.cmp(&other.id)
+        self.transaction
+            .priority
+            .cmp(&other.transaction.priority)
+            .then_with(|| other.id.cmp(&self.id))
     }
 }
 

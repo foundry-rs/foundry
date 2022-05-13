@@ -3,7 +3,7 @@ use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::{ContractFactory, EthEvent},
     prelude::{abigen, BlockId, Middleware, Signer, SignerMiddleware, TransactionRequest},
-    types::{Address, H256, U256},
+    types::{Address, BlockNumber, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
 use futures::StreamExt;
@@ -57,6 +57,40 @@ async fn can_transfer_eth() {
     let to_balance = provider.get_balance(to, None).await.unwrap();
 
     assert_eq!(balance_before.saturating_add(amount), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    // disable automine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // craft the tx with lower price
+    let tx = TransactionRequest::new().to(to).from(from).value(amount).gas_price(gas_price);
+    let tx_lower = provider.send_transaction(tx, None).await.unwrap();
+
+    // craft the tx with higher price
+    let tx = TransactionRequest::new().to(from).from(to).value(amount).gas_price(gas_price + 1);
+    let tx_higher = provider.send_transaction(tx, None).await.unwrap();
+
+    // manually mine the block with the transactions
+    api.mine_one();
+
+    // get the block, await receipts
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let lower_price = tx_lower.await.unwrap().unwrap().transaction_hash;
+    let higher_price = tx_higher.await.unwrap().unwrap().transaction_hash;
+    assert_eq!(block.transactions, vec![higher_price, lower_price])
 }
 
 #[tokio::test(flavor = "multi_thread")]

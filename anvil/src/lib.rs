@@ -85,6 +85,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         max_transactions,
         server_config,
         no_mining,
+        transaction_order,
         ..
     } = config.clone();
 
@@ -123,6 +124,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         miner.clone(),
         logger,
         filters.clone(),
+        transaction_order,
     );
 
     // spawn the node service

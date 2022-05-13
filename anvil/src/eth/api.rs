@@ -9,7 +9,9 @@ use crate::{
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
-            transactions::{to_marker, PoolTransaction, TxMarker},
+            transactions::{
+                to_marker, PoolTransaction, TransactionOrder, TransactionPriority, TxMarker,
+            },
             Pool,
         },
         sign,
@@ -49,6 +51,7 @@ use foundry_evm::{
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::Receiver;
+use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
@@ -82,6 +85,8 @@ pub struct EthApi {
     logger: LoggingManager,
     /// Tracks all active filters
     filters: Filters,
+    /// How transactions are ordered in the pool
+    transaction_order: Arc<RwLock<TransactionOrder>>,
 }
 
 // === impl Eth RPC API ===
@@ -98,6 +103,7 @@ impl EthApi {
         miner: Miner,
         logger: LoggingManager,
         filters: Filters,
+        transactions_order: TransactionOrder,
     ) -> Self {
         Self {
             pool,
@@ -109,6 +115,7 @@ impl EthApi {
             miner,
             logger,
             filters,
+            transaction_order: Arc::new(RwLock::new(transactions_order)),
         }
     }
 
@@ -597,10 +604,12 @@ impl EthApi {
             vec![]
         };
 
+        let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
             requires,
             provides: vec![to_marker(nonce.as_u64(), *pending_transaction.sender())],
             pending_transaction,
+            priority,
         };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
@@ -1444,6 +1453,16 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Updates the `TransactionOrder`
+    pub fn set_transaction_order(&self, order: TransactionOrder) {
+        *self.transaction_order.write() = order;
+    }
+
+    /// Returns the priority of the transaction based on the current `TransactionOrder`
+    fn transaction_priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+        self.transaction_order.read().priority(tx)
+    }
+
     /// Returns the chain ID used for transaction
     pub fn chain_id(&self) -> u64 {
         self.backend.chain_id().as_u64()
@@ -1595,7 +1614,9 @@ impl EthApi {
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
         let from = *pending_transaction.sender();
-        let pool_transaction = PoolTransaction { requires, provides, pending_transaction };
+        let priority = self.transaction_priority(&pending_transaction.transaction);
+        let pool_transaction =
+            PoolTransaction { requires, provides, pending_transaction, priority };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
