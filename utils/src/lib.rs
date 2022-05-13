@@ -538,9 +538,7 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
                     }
                     // TODO: Not sure what to do here. Put the no effect in for now, but that is not
                     // ideal. We could attempt massage for every value type?
-                    _ => {
-                        ();
-                    }
+                    _ => {}
                 }
             }
             token
