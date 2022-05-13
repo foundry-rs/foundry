@@ -453,8 +453,6 @@ async fn call_past_state() {
         .unwrap();
     assert_eq!(value, "initial value");
 
-    dbg!(deployed_block);
-
     let hash = client.get_block(1).await.unwrap().unwrap().hash.unwrap();
     let value = contract
         .method::<_, String>("getValue", ())
