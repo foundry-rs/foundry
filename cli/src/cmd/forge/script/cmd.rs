@@ -110,9 +110,7 @@ impl ScriptArgs {
 
         Ok(())
     }
-}
 
-impl ScriptArgs {
     /// Reruns the execution with a new sender and relinks the libraries accordingly
     async fn rerun_with_new_deployer(
         &self,
@@ -164,41 +162,5 @@ impl ScriptArgs {
         }
 
         Ok(unwrap_contracts(&highlevel_known_contracts))
-    }
-
-    pub async fn handle_broadcastable_transactions(
-        &self,
-        target: &ArtifactId,
-        result: ScriptResult,
-        decoder: &mut CallTraceDecoder,
-        script_config: &ScriptConfig,
-    ) -> eyre::Result<()> {
-        if let Some(txs) = result.transactions {
-            println!("==========================");
-            println!("Simulated On-chain Traces:\n");
-            if let Ok(gas_filled_txs) = self.execute_transactions(txs, script_config, decoder).await
-            {
-                println!("\n\n==========================");
-                if !result.success {
-                    panic!("\nSIMULATION FAILED");
-                } else {
-                    let txs = gas_filled_txs;
-                    let mut deployment_sequence =
-                        ScriptSequence::new(txs, &self.sig, target, &script_config.config.out)?;
-                    deployment_sequence.save()?;
-
-                    if self.broadcast {
-                        self.send_transactions(&mut deployment_sequence).await?;
-                    } else {
-                        println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
-                    }
-                }
-            } else {
-                eyre::bail!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`")
-            }
-        } else if self.broadcast {
-            eyre::bail!("No onchain transactions generated in script");
-        }
-        Ok(())
     }
 }

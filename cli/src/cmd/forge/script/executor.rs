@@ -1,7 +1,6 @@
 use crate::{cmd::needs_setup, utils};
 
 use ethers::{
-    abi::Function,
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
@@ -10,7 +9,6 @@ use forge::{
     trace::CallTraceDecoder,
 };
 
-use foundry_utils::{encode_args, IntoFunction};
 use std::collections::VecDeque;
 
 use crate::cmd::forge::script::*;
@@ -146,28 +144,5 @@ impl ScriptArgs {
         }
 
         Runner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
-    }
-
-    pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
-        let (func, data) = match self.sig.strip_prefix("0x") {
-            Some(calldata) => (
-                abi.functions()
-                    .find(|&func| {
-                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
-                    })
-                    .expect("Function selector not found in the ABI"),
-                hex::decode(calldata).unwrap().into(),
-            ),
-            _ => {
-                let func = IntoFunction::into(self.sig.clone());
-                (
-                    abi.functions()
-                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .expect("Function signature not found in the ABI"),
-                    encode_args(&func, &self.args)?.into(),
-                )
-            }
-        };
-        Ok((func.clone(), data))
     }
 }
