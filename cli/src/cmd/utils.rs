@@ -129,7 +129,7 @@ pub struct RetryArgs {
 }
 
 fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
-    return move |v: &str| -> eyre::Result<()> {
+    move |v: &str| -> eyre::Result<()> {
         let v = v.parse::<u32>()?;
         if v >= min && v <= max {
             Ok(())
@@ -139,8 +139,8 @@ fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
     }
 }
 
-impl Into<Retry> for RetryArgs {
-    fn into(self) -> Retry {
-        Retry::new(self.retries, self.delay)
+impl From<RetryArgs> for Retry {
+    fn from(r: RetryArgs) -> Self {
+        Retry::new(r.retries, r.delay)
     }
 }

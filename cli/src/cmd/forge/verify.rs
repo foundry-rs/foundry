@@ -312,7 +312,7 @@ impl VerifyArgs {
         let out = solc.compile(&input)?;
         if out.has_error() {
             let mut o = AggregatedCompilerOutput::default();
-            o.extend(version.clone(), out);
+            o.extend(version, out);
             eprintln!("{}", o.diagnostics(&[]));
 
             eprintln!(
