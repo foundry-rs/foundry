@@ -70,9 +70,6 @@ pub struct Filter {
         conflicts_with = "pattern"
     )]
     pub path_pattern_inverse: Option<globset::Glob>,
-
-    #[clap(long="list",alias="l")]
-    pub list: bool
 }
 
 impl Filter {
@@ -109,10 +106,10 @@ impl FileFilter for Filter {
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
             if let Some(ref glob) = self.path_pattern {
-                return glob.compile_matcher().is_match(file)
+                return glob.compile_matcher().is_match(file);
             }
             if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.compile_matcher().is_match(file)
+                return !glob.compile_matcher().is_match(file);
             }
         }
         file.is_sol_test()
@@ -243,6 +240,10 @@ pub struct TestArgs {
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     pub watch: WatchArgs,
+
+    /// List tests instead of running them
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    list: bool,
 }
 
 impl TestArgs {
@@ -519,6 +520,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             verbosity,
             filter,
             args.json,
+            args.list,
             args.allow_failure,
             include_fuzz_tests,
             args.gas_report,
@@ -534,6 +536,7 @@ fn test(
     verbosity: u8,
     filter: Filter,
     json: bool,
+    list: bool,
     allow_failure: bool,
     include_fuzz_tests: bool,
     gas_reporting: bool,
@@ -562,6 +565,10 @@ fn test(
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
+    } else if list {
+        let l = runner.list(&filter);
+        println!("{:?}", serde_json::to_string(&l)?);
+        Ok(TestOutcome::new(BTreeMap::new(), allow_failure))
     } else {
         // Set up identifiers
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
