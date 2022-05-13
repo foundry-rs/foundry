@@ -168,7 +168,8 @@ pub struct FixedBlockTimeMiner {
 impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
-        Self { interval: tokio::time::interval(duration) }
+        let start = tokio::time::Instant::now() + duration;
+        Self { interval: tokio::time::interval_at(start, duration) }
     }
 
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {

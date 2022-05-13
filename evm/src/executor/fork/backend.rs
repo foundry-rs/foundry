@@ -354,7 +354,7 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 ///
 /// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
 /// is spawned on a tokio task and listens for incoming commands on the receiver half of the
-/// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so their can be
+/// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so there can be
 /// multiple `SharedBackend`s communicating with the same `BackendHandler`, hence this `Backend`
 /// type is thread safe.
 ///

@@ -19,11 +19,11 @@ async fn test_can_change_mining_mode() {
     // changing the mining mode will instantly mine a new block
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let num = provider.get_block_number().await.unwrap();
-    assert_eq!(num.as_u64(), 1);
+    assert_eq!(num.as_u64(), 0);
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let num = provider.get_block_number().await.unwrap();
-    assert_eq!(num.as_u64(), 2);
+    assert_eq!(num.as_u64(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
