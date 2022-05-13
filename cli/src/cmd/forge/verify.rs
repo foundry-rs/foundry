@@ -113,7 +113,7 @@ impl VerifyArgs {
 
                     if resp.result.starts_with("Unable to locate ContractCode at") {
                         warn!("{}", resp.result);
-                        return Err(eyre!("not ready"))
+                        return Err(eyre!("Etherscan could not detect the deployment."))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
@@ -131,7 +131,7 @@ impl VerifyArgs {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`\nURL: {}#code",
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}#code",
                 resp.message,
                 resp.result,
                 etherscan.address_url(self.address)

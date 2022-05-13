@@ -274,7 +274,7 @@ impl CreateArgs {
             flatten: false,
             force: false,
             watch: true,
-            retry: RetryArgs { retries: 12, delay: Some(3) },
+            retry: RetryArgs { retries: 15, delay: Some(3) },
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
