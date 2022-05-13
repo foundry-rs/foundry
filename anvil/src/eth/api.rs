@@ -1229,7 +1229,7 @@ impl EthApi {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
-            self.backend.reset_fork(forking)
+            self.backend.reset_fork(forking).await
         } else {
             Err(BlockchainError::RpcUnimplemented)
         }

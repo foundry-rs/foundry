@@ -487,17 +487,16 @@ Chain ID:       {}
             .await;
 
             let db = ForkedDatabase::new(backend, block_chain_db);
-            let fork = ClientFork {
-                storage: Default::default(),
-                config: Arc::new(RwLock::new(ClientForkConfig {
+            let fork = ClientFork::new(
+                ClientForkConfig {
                     eth_rpc_url,
                     block_number: fork_block_number,
                     block_hash,
                     provider,
                     chain_id,
-                })),
-                database: Arc::new(RwLock::new(db.clone())),
-            };
+                },
+                db.clone(),
+            );
 
             let db = Arc::new(RwLock::new(db));
 
