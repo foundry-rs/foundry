@@ -39,8 +39,8 @@ use ethers::{
     providers::ProviderError,
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -392,11 +392,7 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(
-        &self,
-        address: Address,
-        block_number: Option<BlockNumber>,
-    ) -> Result<U256> {
+    pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
         node_info!("eth_getBalance");
         let number = self.backend.ensure_block_number(block_number)?;
         self.backend.get_balance(address, Some(number.into())).await
@@ -409,7 +405,7 @@ impl EthApi {
         &self,
         address: Address,
         index: U256,
-        block_number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
         let number = self.backend.ensure_block_number(block_number)?;
@@ -464,7 +460,7 @@ impl EthApi {
     pub async fn transaction_count(
         &self,
         address: Address,
-        block_number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
         let number = self.backend.ensure_block_number(block_number)?;
@@ -506,11 +502,7 @@ impl EthApi {
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub async fn get_code(
-        &self,
-        address: Address,
-        block_number: Option<BlockNumber>,
-    ) -> Result<Bytes> {
+    pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_getCode");
         let number = self.backend.ensure_block_number(block_number)?;
         self.backend.get_code(address, Some(number.into())).await
@@ -619,11 +611,7 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub async fn call(
-        &self,
-        request: CallRequest,
-        block_number: Option<BlockNumber>,
-    ) -> Result<Bytes> {
+    pub async fn call(&self, request: CallRequest, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_call");
         let number = self.backend.ensure_block_number(block_number)?;
         let block_number = Some(number.into());
@@ -666,7 +654,7 @@ impl EthApi {
     pub async fn create_access_list(
         &self,
         request: CallRequest,
-        block_number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<AccessList> {
         node_info!("eth_createAccessList");
         let number = self.backend.ensure_block_number(block_number)?;
@@ -705,7 +693,7 @@ impl EthApi {
     pub async fn estimate_gas(
         &self,
         mut request: CallRequest,
-        block_number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
         let number = self.backend.ensure_block_number(block_number)?;

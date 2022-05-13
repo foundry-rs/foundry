@@ -864,9 +864,31 @@ impl Backend {
     /// # Errors
     ///
     /// returns an error if the requested number is larger than the current height
-    pub fn ensure_block_number(&self, block: Option<BlockNumber>) -> Result<u64, BlockchainError> {
+    pub fn ensure_block_number<T: Into<BlockId>>(
+        &self,
+        block_id: Option<T>,
+    ) -> Result<u64, BlockchainError> {
         let current = self.best_number().as_u64();
-        let requested = self.convert_block_number(block);
+
+        let requested =
+            match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
+                BlockId::Hash(hash) => self
+                    .blockchain
+                    .storage
+                    .read()
+                    .blocks
+                    .get(&hash)
+                    .ok_or(BlockchainError::BlockNotFound)?
+                    .header
+                    .number
+                    .as_u64(),
+                BlockId::Number(num) => match num {
+                    BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
+                    BlockNumber::Earliest => 0,
+                    BlockNumber::Number(num) => num.as_u64(),
+                },
+            };
+
         if requested > current {
             Err(BlockchainError::BlockOutOfRange(current, requested))
         } else {
