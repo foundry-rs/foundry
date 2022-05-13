@@ -177,7 +177,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines between two LOCs
     fn blank_lines(&self, a: Loc, b: Loc) -> usize {
-        return self.source[a.end()..b.start()].matches('\n').count();
+        return self.source[a.end()..b.start()].matches('\n').count()
     }
 }
 
@@ -250,13 +250,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if let Some(next_unit) = source_unit_parts_iter.peek() {
                 // If source has zero blank lines between imports or errors, leave it as is. If one
                 // or more, separate with one blank line.
-                let separate = (is_import(unit) || is_error(unit))
-                    && (is_import(next_unit) || is_error(next_unit))
-                    && self.blank_lines(unit.loc(), next_unit.loc()) > 1;
+                let separate = (is_import(unit) || is_error(unit)) &&
+                    (is_import(next_unit) || is_error(next_unit)) &&
+                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
 
-                if (is_declaration(unit) || is_declaration(next_unit))
-                    || (is_pragma(unit) || is_pragma(next_unit))
-                    || separate
+                if (is_declaration(unit) || is_declaration(next_unit)) ||
+                    (is_pragma(unit) || is_pragma(next_unit)) ||
+                    separate
                 {
                     writeln!(self)?;
                 }
@@ -371,9 +371,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             matches!(
                                 **function_definition,
                                 FunctionDefinition {
-                                    ty: FunctionTy::Function
-                                        | FunctionTy::Receive
-                                        | FunctionTy::Fallback,
+                                    ty: FunctionTy::Function |
+                                        FunctionTy::Receive |
+                                        FunctionTy::Fallback,
                                     ..
                                 }
                             )
@@ -644,8 +644,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         };
 
         let attributes_returns_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_returns}{body_first_line}"))
-            && !returns_multiline;
+            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
+            !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
         if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
@@ -677,8 +677,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         match body {
             Some(body) => {
-                if self.will_it_fit(format!(" {}", body_first_line))
-                    && attributes_returns_fits_one_line
+                if self.will_it_fit(format!(" {}", body_first_line)) &&
+                    attributes_returns_fits_one_line
                 {
                     write!(self, " ")?;
                 } else {
@@ -901,7 +901,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if statements.is_empty() {
             self.write_empty_brackets()?;
-            return Ok(());
+            return Ok(())
         }
 
         let multiline = self.source[loc.start()..loc.end()].contains('\n');
@@ -1195,7 +1195,7 @@ mod tests {
                             .and_then(|line| line.trim().strip_prefix("config:"))
                             .map(str::trim);
                         if entry.is_none() {
-                            break;
+                            break
                         }
 
                         if let Some((key, value)) = entry.unwrap().split_once("=") {
@@ -1212,7 +1212,7 @@ mod tests {
                         lines.next();
                     }
 
-                    return Some((filename.to_string(), config, lines.join("\n")));
+                    return Some((filename.to_string(), config, lines.join("\n")))
                 }
             }
 
