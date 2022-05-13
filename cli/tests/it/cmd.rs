@@ -366,7 +366,7 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("run").arg(script);
+    cmd.arg("script").arg(script);
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
         "Compiler run successful
@@ -399,7 +399,7 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("run").arg(script).arg("--sig").arg("myFunction()");
+    cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
         "Compiler run successful
@@ -435,7 +435,7 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("run").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
+    cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
         "Compiler run successful
@@ -469,7 +469,7 @@ contract Demo {
 }"#,
         )
         .unwrap();
-    cmd.arg("run").arg(script);
+    cmd.arg("script").arg(script);
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
         "Compiler run successful
@@ -750,7 +750,7 @@ forgetest_async!(
             .await
             .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
             .sim("SIMULATION COMPLETE. To broadcast these")
-            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 1), (1, 2)])
             .await;
     })
@@ -768,7 +768,7 @@ forgetest_async!(
             .await
             .add_sig("BroadcastTest", "deploy()")
             .sim("SIMULATION COMPLETE. To broadcast these")
-            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
     })
@@ -815,7 +815,7 @@ forgetest_async!(
             .await
             .add_sig("BroadcastTest", "deployOther()")
             .sim("SIMULATION COMPLETE. To broadcast these")
-            .execute("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
             .await;
     })

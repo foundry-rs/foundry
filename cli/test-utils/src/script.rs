@@ -103,8 +103,8 @@ impl ScriptTester {
         self.run(expected)
     }
 
-    pub fn execute(&mut self, expected: &str) -> &mut Self {
-        self.cmd.arg("--execute");
+    pub fn broadcast(&mut self, expected: &str) -> &mut Self {
+        self.cmd.arg("--broadcast");
         self.run(expected)
     }
 

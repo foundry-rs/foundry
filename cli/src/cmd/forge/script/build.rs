@@ -1,13 +1,11 @@
 use crate::compile;
 
 use ethers::{
-    prelude::ArtifactId,
+    prelude::{ArtifactId, Project},
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
 };
-use forge::executor::opts::EvmOpts;
 
-use foundry_config::Config;
 use foundry_utils::PostLinkInput;
 use std::collections::BTreeMap;
 
@@ -17,23 +15,30 @@ impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(
         &self,
-        config: &Config,
-        evm_opts: &EvmOpts,
+        script_config: &ScriptConfig,
         sender: Option<Address>,
-        nonce: U256,
     ) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
-        let project = config.ephemeral_no_artifacts_project()?;
+        let project = script_config.config.ephemeral_no_artifacts_project()?;
         let output = compile::compile_files(&project, vec![target_contract])?;
 
-        let (contracts, _sources) = output.into_artifacts_with_sources();
+        let (contracts, sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
             contracts.into_iter().map(|(id, artifact)| (id, artifact.into())).collect();
-        self.link(contracts, sender.unwrap_or(evm_opts.sender), nonce)
+
+        let mut output = self.link(
+            project,
+            contracts,
+            sender.unwrap_or(script_config.evm_opts.sender),
+            script_config.sender_nonce,
+        )?;
+        output.sources = sources.into_ids().collect();
+        Ok(output)
     }
 
     pub fn link(
         &self,
+        project: Project,
         contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
         sender: Address,
         nonce: U256,
@@ -115,6 +120,8 @@ impl ScriptArgs {
             known_contracts: contracts,
             highlevel_known_contracts,
             predeploy_libraries: run_dependencies,
+            sources: BTreeMap::new(),
+            project,
         })
     }
 }
@@ -129,9 +136,11 @@ struct ExtraLinkingInfo<'a> {
 }
 
 pub struct BuildOutput {
+    pub project: Project,
     pub target: ArtifactId,
     pub contract: CompactContractBytecode,
     pub known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
+    pub sources: BTreeMap<u32, String>,
 }

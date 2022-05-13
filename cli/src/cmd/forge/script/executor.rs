@@ -1,15 +1,15 @@
 use crate::{cmd::needs_setup, utils};
 
 use ethers::{
+    abi::Function,
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{builder::Backend, opts::EvmOpts, ExecutorBuilder},
+    executor::{builder::Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
 
-use foundry_config::Config;
 use foundry_utils::{encode_args, IntoFunction};
 use std::collections::VecDeque;
 
@@ -20,26 +20,28 @@ impl ScriptArgs {
     /// transactions.
     pub async fn execute(
         &self,
+        script_config: &mut ScriptConfig,
         contract: CompactContractBytecode,
-        evm_opts: &EvmOpts,
         sender: Option<Address>,
         predeploy_libraries: &[ethers::types::Bytes],
-        config: &Config,
     ) -> eyre::Result<ScriptResult> {
-        let (needs_setup, _, bytecode) = needs_setup(contract);
+        let (needs_setup, abi, bytecode) = needs_setup(contract);
 
-        let mut runner =
-            self.prepare_runner(evm_opts, config, sender.unwrap_or(evm_opts.sender)).await;
-        let (address, mut result) = runner.setup(predeploy_libraries, bytecode, needs_setup)?;
-
-        let script_result = runner.script(
-            address,
-            if let Some(calldata) = self.sig.strip_prefix("0x") {
-                hex::decode(calldata)?.into()
-            } else {
-                encode_args(&IntoFunction::into(self.sig.clone()), &self.args)?.into()
-            },
+        let mut runner = self
+            .prepare_runner(script_config, sender.unwrap_or(script_config.evm_opts.sender))
+            .await;
+        let (address, mut result) = runner.setup(
+            predeploy_libraries,
+            bytecode,
+            needs_setup,
+            self.broadcast,
+            script_config.sender_nonce,
         )?;
+
+        let (func, calldata) = self.get_method_and_calldata(&abi)?;
+        script_config.called_function = Some(func);
+
+        let script_result = runner.script(address, calldata)?;
 
         result.success &= script_result.success;
         result.gas = script_result.gas;
@@ -47,6 +49,7 @@ impl ScriptArgs {
         result.traces.extend(script_result.traces);
         result.debug = script_result.debug;
         result.labeled_addresses.extend(script_result.labeled_addresses);
+        result.returned = script_result.returned;
 
         match (&mut result.transactions, script_result.transactions) {
             (Some(txs), Some(new_txs)) => {
@@ -65,11 +68,10 @@ impl ScriptArgs {
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<TypedTransaction>,
-        evm_opts: &EvmOpts,
-        config: &Config,
+        script_config: &ScriptConfig,
         decoder: &mut CallTraceDecoder,
     ) -> eyre::Result<VecDeque<TypedTransaction>> {
-        let mut runner = self.prepare_runner(evm_opts, config, evm_opts.sender).await;
+        let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
 
         let mut failed = false;
         let mut sum_gas = 0;
@@ -117,25 +119,55 @@ impl ScriptArgs {
 
     async fn prepare_runner(
         &self,
-        evm_opts: &EvmOpts,
-        config: &Config,
+        script_config: &ScriptConfig,
         sender: Address,
     ) -> Runner<Backend> {
-        let env = evm_opts.evm_env().await;
+        let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = Backend::new(utils::get_fork(evm_opts, &config.rpc_storage_caching), &env).await;
+        let db = Backend::new(
+            utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
+            &env,
+        )
+        .await;
 
         let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(evm_opts.ffi)
+            .with_cheatcodes(script_config.evm_opts.ffi)
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&config.evm_version))
-            .with_gas_limit(evm_opts.gas_limit());
+            .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
+            .with_gas_limit(script_config.evm_opts.gas_limit());
 
-        if evm_opts.verbosity >= 3 {
+        if script_config.evm_opts.verbosity >= 3 {
             builder = builder.with_tracing();
         }
 
-        Runner::new(builder.build(db), evm_opts.initial_balance, sender)
+        if self.debug {
+            builder = builder.with_tracing().with_debugger();
+        }
+
+        Runner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+    }
+
+    pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
+        let (func, data) = match self.sig.strip_prefix("0x") {
+            Some(calldata) => (
+                abi.functions()
+                    .find(|&func| {
+                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
+                    })
+                    .expect("Function selector not found in the ABI"),
+                hex::decode(calldata).unwrap().into(),
+            ),
+            _ => {
+                let func = IntoFunction::into(self.sig.clone());
+                (
+                    abi.functions()
+                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                        .expect("Function signature not found in the ABI"),
+                    encode_args(&func, &self.args)?.into(),
+                )
+            }
+        };
+        Ok((func.clone(), data))
     }
 }
