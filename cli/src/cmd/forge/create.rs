@@ -259,19 +259,23 @@ impl CreateArgs {
         };
         let num_of_optimizations =
             if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
-        let verify = verify::VerifyArgs::new(
+        let verify = verify::VerifyArgs {
             address,
-            self.contract,
+            contract: self.contract,
+            compiler_version: None,
             constructor_args,
             num_of_optimizations,
-            chain.into(),
-            self.eth.etherscan_api_key.ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            self.opts.project_paths,
-            false,
-            false,
-            true,
-            RetryArgs { retries: 12, delay: Some(3) },
-        )?;
+            chain: chain.into(),
+            etherscan_key: self
+                .eth
+                .etherscan_api_key
+                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
+            project_paths: self.opts.project_paths,
+            flatten: false,
+            force: false,
+            watch: true,
+            retry: RetryArgs { retries: 12, delay: Some(3) },
+        };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
     }

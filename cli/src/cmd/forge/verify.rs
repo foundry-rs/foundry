@@ -34,23 +34,23 @@ pub static RE_BUILD_COMMIT: Lazy<Regex> =
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
     #[clap(help = "The address of the contract to verify.")]
-    address: Address,
+    pub address: Address,
 
     #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
-    contract: ContractInfo,
+    pub contract: ContractInfo,
 
     #[clap(long, help = "the encoded constructor arguments")]
-    constructor_args: Option<String>,
+    pub constructor_args: Option<String>,
 
     #[clap(long, help = "The compiler version used to build the smart contract.")]
-    compiler_version: Option<String>,
+    pub compiler_version: Option<String>,
 
     #[clap(
         alias = "optimizer-runs",
         long,
         help = "The number of optimization runs used to build the smart contract."
     )]
-    num_of_optimizations: Option<usize>,
+    pub num_of_optimizations: Option<usize>,
 
     #[clap(
         long,
@@ -59,61 +59,32 @@ pub struct VerifyArgs {
         help = "The chain ID the contract is deployed to.",
         default_value = "mainnet"
     )]
-    chain: Chain,
+    pub chain: Chain,
 
     #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
-    etherscan_key: String,
+    pub etherscan_key: String,
 
     #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
-    flatten: bool,
+    pub flatten: bool,
 
     #[clap(
         short,
         long,
         help = "Do not compile the flattened smart contract before verifying (if --flatten is passed)."
     )]
-    force: bool,
+    pub force: bool,
 
     #[clap(long, help = "Wait for verification result after submission")]
-    watch: bool,
+    pub watch: bool,
 
     #[clap(flatten)]
-    retry: RetryArgs,
+    pub retry: RetryArgs,
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
-    project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathsArgs,
 }
 
 impl VerifyArgs {
-    pub fn new(
-        address: Address,
-        contract: ContractInfo,
-        constructor_args: Option<String>,
-        num_of_optimizations: Option<usize>,
-        chain: Chain,
-        etherscan_key: String,
-        project_paths: ProjectPathsArgs,
-        flatten: bool,
-        force: bool,
-        watch: bool,
-        retry: RetryArgs,
-    ) -> eyre::Result<Self> {
-        Ok(Self {
-            address,
-            contract,
-            compiler_version: None, // TODO:
-            constructor_args,
-            num_of_optimizations,
-            chain,
-            flatten,
-            force,
-            watch,
-            project_paths,
-            etherscan_key,
-            retry,
-        })
-    }
-
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(&self) -> eyre::Result<()> {
         if self.contract.path.is_none() {
