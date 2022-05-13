@@ -878,7 +878,7 @@ impl Backend {
                     .read()
                     .blocks
                     .get(&hash)
-                    .ok_or(BlockchainError::BlockNotFound(hash))?
+                    .ok_or(BlockchainError::BlockNotFound)?
                     .header
                     .number
                     .as_u64(),
