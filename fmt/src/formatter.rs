@@ -108,9 +108,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 
-    /// Length of the line `s` with respect to already written line
+    /// Length of the line `s` with respect to already written line and indentation
     fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        if self.pending_indent { self.config.tab_width * self.level } else { 0 }
+        (self.config.tab_width * self.level)
             .saturating_add(self.current_line)
             .saturating_add(s.as_ref().len())
     }
@@ -933,7 +933,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .map(|param| self.visit_to_string(param))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let multiline = self.is_separated_multiline(&params, ", ");
+        let multiline = !self.will_it_fit(format!(
+            "{}){};",
+            params.iter().join(", "),
+            if event.anonymous { " anonymous" } else { "" }
+        ));
 
         if multiline {
             writeln!(self)?;
@@ -1024,6 +1028,86 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+        if !var.doc.is_empty() {
+            var.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        var.ty.visit(self)?;
+
+        let attributes = var
+            .attrs
+            .iter_mut()
+            .sorted_by_key(|attribute| match attribute {
+                VariableAttribute::Visibility(_) => 0,
+                VariableAttribute::Constant(_) => 1,
+                VariableAttribute::Immutable(_) => 2,
+                VariableAttribute::Override(_) => 3,
+            })
+            .map(|attribute| match attribute {
+                VariableAttribute::Visibility(visibility) => visibility.to_string(),
+                VariableAttribute::Constant(_) => "constant".to_string(),
+                VariableAttribute::Immutable(_) => "immutable".to_string(),
+                VariableAttribute::Override(_) => "override".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut multiline = self.is_separated_multiline(&attributes, " ");
+
+        if !var.attrs.is_empty() {
+            if multiline {
+                writeln!(self)?;
+                self.indent(1);
+            } else {
+                write!(self, " ")?;
+            }
+
+            self.write_items_separated(&attributes, " ", multiline)?;
+        }
+
+        if self.will_it_fit(format!(
+            " {}{}",
+            var.name.name,
+            if var.initializer.is_some() { " =" } else { "" }
+        )) {
+            write!(self, " {}", var.name.name)?;
+        } else {
+            writeln!(self)?;
+            if !multiline {
+                multiline = true;
+                self.indent(1);
+            }
+            write!(self, "{}", var.name.name)?;
+        }
+
+        if let Some(init) = &mut var.initializer {
+            write!(self, " =")?;
+
+            let init = self.visit_to_string(init)?;
+            if self.will_it_fit(format!(" {init}")) {
+                write!(self, " {init}")?;
+            } else {
+                writeln!(self)?;
+                if !multiline {
+                    self.indent(1);
+                }
+                write!(self, "{init}")?;
+                if !multiline {
+                    self.dedent(1);
+                }
+            }
+        }
+
+        write!(self, ";")?;
+
+        if multiline {
+            self.dedent(1);
+        }
 
         Ok(())
     }
@@ -1186,5 +1270,10 @@ mod tests {
     #[test]
     fn using_directive() {
         test_directory("UsingDirective");
+    }
+
+    #[test]
+    fn variable_definition() {
+        test_directory("VariableDefinition");
     }
 }

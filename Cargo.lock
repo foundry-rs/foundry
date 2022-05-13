@@ -1876,6 +1876,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "atty",
+ "bytes",
  "cast",
  "clap",
  "clap_complete",
@@ -1958,11 +1959,13 @@ dependencies = [
  "eyre",
  "figment",
  "globset",
+ "number_prefix",
  "pretty_assertions",
  "regex",
  "semver",
  "serde",
  "serde_regex",
+ "tempfile",
  "toml",
  "toml_edit",
  "walkdir",

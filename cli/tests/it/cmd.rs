@@ -228,6 +228,41 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
+// checks that extra output works
+forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
+    cmd.assert_non_empty_stdout();
+
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
+    assert!(artifact.ir.is_some());
+    assert!(artifact.ir_optimized.is_some());
+
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+            "evm.bytecode.sourceMap",
+            "--force",
+        ])
+        .root_arg();
+    cmd.assert_non_empty_stdout();
+
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+
+    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    std::fs::read_to_string(iropt).unwrap();
+
+    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    std::fs::read_to_string(sourcemap).unwrap();
+});
+
 forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
@@ -334,6 +369,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -366,6 +402,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -401,6 +438,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 3957
+== Return ==
 == Logs ==
   script ran
   1
@@ -408,6 +446,40 @@ Gas used: 3957
 ",
         Paint::green("Script ran successfully.")
     ),));
+});
+
+// Tests that the run command can run functions with return values
+forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external returns (uint256 result, uint8) {
+        emit log_string("script ran");
+        return (255, 3);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("run").arg(script);
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 1836
+== Return ==
+result: uint256 255
+1: uint8 3
+== Logs ==
+  script ran
+",
+        Paint::green("Script ran successfully.")
+    )));
 });
 
 // tests that the `inspect` command works correctly

@@ -1,6 +1,3 @@
-use colored::Colorize;
-use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
-
 use crate::{
     eth::{
         backend::{
@@ -16,9 +13,10 @@ use crate::{
     FeeManager,
 };
 use anvil_server::ServerConfig;
+use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Address, Wallet, U256},
+    prelude::{rand::thread_rng, Wallet, U256},
     providers::{Middleware, Provider},
     signers::{
         coins_bip39::{English, Mnemonic},
@@ -33,6 +31,7 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -78,9 +77,11 @@ pub struct NodeConfig {
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub accounts: HashMap<Address, Wallet<SigningKey>>,
+    pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
+    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -99,6 +100,8 @@ pub struct NodeConfig {
     pub no_storage_caching: bool,
     /// How to configure the server
     pub server_config: ServerConfig,
+    /// The host the server will listen on
+    pub host: Option<IpAddr>,
 }
 
 // === impl NodeConfig ===
@@ -120,11 +123,12 @@ impl Default for NodeConfig {
             gas_limit: U256::from(30_000_000),
             gas_price: U256::from(20_000_000_000u64),
             hardfork: Hardfork::default(),
-            accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
+            signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
             block_time: None,
+            no_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -136,6 +140,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             no_storage_caching: false,
             server_config: Default::default(),
+            host: None,
         }
     }
 }
@@ -160,7 +165,7 @@ impl NodeConfig {
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         });
-        self.accounts.values_mut().for_each(|wallet| {
+        self.signer_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         })
     }
@@ -201,17 +206,25 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
-    /// Sets the genesis accounts
+    /// Sets the signer accounts
+    #[must_use]
+    pub fn with_signer_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+        self.signer_accounts = accounts;
+        self
+    }
+
+    /// Sets both the genesis accounts and the signer accounts
+    /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
         let accounts = generator.gen();
         self.account_generator = Some(generator);
-        self.genesis_accounts(accounts)
+        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -225,6 +238,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
         self.block_time = block_time.map(Into::into);
+        self
+    }
+
+    /// If set to `true` auto mining will be disabled
+    #[must_use]
+    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+        self.no_mining = no_mining;
         self
     }
 
@@ -283,6 +303,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
+        self
+    }
+
+    /// Sets the host the server will listen on
+    #[must_use]
+    pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
+        self.host = host;
         self
     }
 

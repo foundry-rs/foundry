@@ -2,18 +2,20 @@
 #![allow(unused)]
 use crate::init_tracing;
 use ethers::{
+    abi::Address,
     contract::ContractFactory,
     core::k256::SecretKey,
     prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest, Ws},
     providers::{Http, Provider},
     signers::LocalWallet,
+    types::BlockNumber,
     utils::hex,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
 use std::sync::Arc;
 
 fn ganache_wallet() -> LocalWallet {
-    let key_str = "3cb6fcd4261b21b2398fdbdc2b589d3b9aca4a63a6a40c8ab28773c1406b842b";
+    let key_str = "200fd426f5dc07b57c645007e8947253c0cde02050f0fafcf54c7cb81e05e3f9";
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
     let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
     key.into()
@@ -27,6 +29,15 @@ fn http_client() -> Arc<SignerMiddleware<Provider<Http>, LocalWallet>> {
 async fn ws_client() -> Arc<SignerMiddleware<Provider<Ws>, LocalWallet>> {
     let provider = Provider::<Ws>::connect("ws://127.0.0.1:8545").await.unwrap();
     Arc::new(SignerMiddleware::new(provider, ganache_wallet()))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn test_ganache_block_number() {
+    let client = http_client();
+    let balance = client
+        .get_balance(Address::random(), Some(BlockNumber::Number(100u64.into()).into()))
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -209,10 +209,6 @@ impl VerifyArgs {
             eyre::bail!("Contract {:?} does not exist.", contract_path);
         }
 
-        if !contract_path.starts_with(project.sources_path()) {
-            eyre::bail!("Contract {:?} is outside of project source directory", contract_path);
-        }
-
         let config = Config::load();
         let compiler_version = self.compiler_version(&config)?;
 

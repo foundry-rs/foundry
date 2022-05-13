@@ -4,7 +4,7 @@ use ethers::{
     types::U256,
 };
 use forge::executor::{opts::EvmOpts, Fork, SpecId};
-use foundry_config::{caching::StorageCachingConfig, Config};
+use foundry_config::{cache::StorageCachingConfig, Config};
 use std::{
     future::Future,
     path::{Path, PathBuf},
