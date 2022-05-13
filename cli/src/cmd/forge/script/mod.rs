@@ -24,17 +24,19 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     trace::{
-        identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder,
-        CallTraceDecoderBuilder, TraceKind,
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
 
 use foundry_common::evm::EvmArgs;
+use foundry_config::Config;
 use foundry_utils::format_token;
 
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
+    time::Duration,
 };
 
 use yansi::Paint;
@@ -121,14 +123,23 @@ pub struct ScriptResult {
 impl ScriptArgs {
     pub fn decode_traces(
         &self,
+        script_config: &ScriptConfig,
         result: &mut ScriptResult,
         known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> eyre::Result<CallTraceDecoder> {
-        // Identify addresses in each trace
+        let etherscan_identifier = EtherscanIdentifier::new(
+            script_config.evm_opts.get_remote_chain_id(),
+            script_config.config.etherscan_api_key.clone(),
+            Config::foundry_etherscan_cache_dir(script_config.evm_opts.get_chain_id()),
+            Duration::from_secs(24 * 60 * 60),
+        );
+
         let local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
+
         for (_, trace) in &mut result.traces {
+            decoder.identify(trace, &etherscan_identifier);
             decoder.identify(trace, &local_identifier);
         }
         Ok(decoder)

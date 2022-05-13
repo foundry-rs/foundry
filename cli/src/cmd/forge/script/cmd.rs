@@ -59,7 +59,7 @@ impl ScriptArgs {
                 .execute(&mut script_config, contract, self.deployer, &predeploy_libraries)
                 .await?;
 
-            let mut decoder = self.decode_traces(&mut result, &known_contracts)?;
+            let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
             if self.debug {
                 self.run_debugger(&decoder, sources, result, project, highlevel_known_contracts)?;
@@ -79,7 +79,7 @@ impl ScriptArgs {
                         )
                         .await?;
                     // redo traces
-                    decoder = self.decode_traces(&mut result, &known_contracts)?;
+                    decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
                 } else {
                     // prepend predeploy libraries
                     let mut lib_deploy = self.create_transactions_from_data(
