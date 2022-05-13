@@ -1437,8 +1437,8 @@ dependencies = [
 
 [[package]]
 name = "ethers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1453,7 +1453,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1463,8 +1463,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1481,8 +1481,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-abigen"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1503,8 +1503,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-derive"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1517,8 +1517,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1545,8 +1545,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-etherscan"
-version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.2.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1561,8 +1561,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-middleware"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1585,8 +1585,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-providers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1620,8 +1620,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-signers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1644,7 +1644,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#135bca4680ebf247e5f2efa518ac8dfbc6866bc8"
+source = "git+https://github.com/gakonst/ethers-rs#eb94e53d1f87dc5fe10f25b7268e977cfad24984"
 dependencies = [
  "colored",
  "dunce",
@@ -5261,7 +5261,7 @@ checksum = "3893329bee75c101278e0234b646fa72221547d63f97fb66ac112a0569acd110"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
- "chrono 0.4.19",
+ "chrono 0.2.25",
  "enum-iterator",
  "getset",
  "git2",
