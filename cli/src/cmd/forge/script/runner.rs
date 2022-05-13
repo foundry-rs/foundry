@@ -157,7 +157,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                 transactions: Default::default(),
             })
         } else {
-            panic!("ens not supported");
+            eyre::bail!("ENS not supported.");
         }
     }
 

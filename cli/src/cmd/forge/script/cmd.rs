@@ -68,7 +68,7 @@ impl ScriptArgs {
                     &script_config.evm_opts,
                     result.transactions.as_ref(),
                     &predeploy_libraries,
-                ) {
+                )? {
                     known_contracts = self
                         .rerun_with_new_deployer(
                             project,
@@ -89,9 +89,10 @@ impl ScriptArgs {
                     );
 
                     if let Some(txs) = &mut result.transactions {
-                        txs.iter().for_each(|tx| {
-                            lib_deploy.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
-                        });
+                        for tx in txs.iter() {
+                            lib_deploy
+                                .push_back(TypedTransaction::Legacy(into_legacy(tx.clone())?));
+                        }
                         *txs = lib_deploy;
                     }
                 }
@@ -151,9 +152,9 @@ impl ScriptArgs {
 
         match (&mut first_run_result.transactions, result.transactions) {
             (Some(txs), Some(new_txs)) => {
-                new_txs.iter().for_each(|tx| {
-                    txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
-                });
+                for tx in new_txs.iter() {
+                    txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())?));
+                }
             }
             (None, Some(new_txs)) => {
                 first_run_result.transactions = Some(new_txs);

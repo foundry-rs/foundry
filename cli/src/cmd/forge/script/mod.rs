@@ -221,7 +221,7 @@ impl ScriptArgs {
         evm_opts: &EvmOpts,
         transactions: Option<&VecDeque<TypedTransaction>>,
         predeploy_libraries: &[Bytes],
-    ) -> Option<Address> {
+    ) -> eyre::Result<Option<Address>> {
         let mut new_sender = None;
 
         if self.deployer.is_none() {
@@ -234,7 +234,7 @@ impl ScriptArgs {
                                     let sender = tx.from.expect("no sender");
                                     if let Some(ns) = new_sender {
                                         if sender != ns {
-                                            panic!("You have more than one deployer who could deploy libraries. Set `--deployer` to define the only one.")
+                                            eyre::bail!("You have more than one deployer who could deploy libraries. Set `--deployer` to define the only one.")
                                         }
                                     } else if sender != evm_opts.sender {
                                         new_sender = Some(sender);
@@ -247,7 +247,7 @@ impl ScriptArgs {
                 }
             }
         }
-        new_sender
+        Ok(new_sender)
     }
 
     fn create_transactions_from_data(

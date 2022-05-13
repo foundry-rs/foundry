@@ -41,7 +41,7 @@ impl ScriptArgs {
         // add derivation + SignerMiddleware creation logic)
         // foundry/cli/src/opts/mod.rs:110
         if local_wallets.is_empty() {
-            panic!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
+            eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
 
         let fork_url = self
@@ -66,7 +66,7 @@ impl ScriptArgs {
         let sequence = deployment_sequence.clone();
         let sequence =
             sequence.transactions.range((deployment_sequence.index as usize)..).map(|tx| {
-                let from = into_legacy_ref(tx).from.expect("No sender for onchain transaction!");
+                let from = into_legacy_ref(tx)?.from.expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
                 {
@@ -88,8 +88,8 @@ impl ScriptArgs {
             match payload {
                 Ok((tx, signer)) => {
                     let mut legacy_or_1559 =
-                        if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx)) };
-                    set_chain_id(&mut legacy_or_1559, chain);
+                        if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx)?) };
+                    set_chain_id(&mut legacy_or_1559, chain)?;
 
                     let from = *legacy_or_1559.from().expect("no sender");
                     match foundry_utils::next_nonce(from, &fork_url, None) {
@@ -112,7 +112,7 @@ impl ScriptArgs {
                                 deployment_sequence
                                     .save()
                                     .expect("not able to save deployment sequence");
-                                panic!(
+                                eyre::bail!(
                                     "EOA nonce changed unexpectedly while sending transactions."
                                 );
                             } else if !offset.is_zero() {
@@ -123,7 +123,7 @@ impl ScriptArgs {
                             deployment_sequence
                                 .save()
                                 .expect("not able to save deployment sequence");
-                            panic!("Not able to query the EOA nonce.");
+                            eyre::bail!("Not able to query the EOA nonce.");
                         }
                     }
 
@@ -154,13 +154,13 @@ impl ScriptArgs {
                             deployment_sequence
                                 .save()
                                 .expect("not able to save deployment sequence");
-                            panic!("Failed to get transaction receipt?")
+                            eyre::bail!("Failed to get transaction receipt?")
                         }
                         Err(e) => {
                             deployment_sequence
                                 .save()
                                 .expect("not able to save deployment sequence");
-                            panic!("Aborting! A transaction failed to send: {:#?}", e)
+                            eyre::bail!("Aborting! A transaction failed to send: {:#?}", e)
                         }
                     };
 
@@ -169,7 +169,7 @@ impl ScriptArgs {
                 }
                 Err(e) => {
                     deployment_sequence.save().expect("not able to save deployment sequence");
-                    panic!("{e}");
+                    eyre::bail!("{e}");
                 }
             }
         }
@@ -198,7 +198,7 @@ impl ScriptArgs {
             {
                 println!("\n\n==========================");
                 if !result.success {
-                    panic!("\nSIMULATION FAILED");
+                    eyre::bail!("\nSIMULATION FAILED");
                 } else {
                     let txs = gas_filled_txs;
                     let mut deployment_sequence =
@@ -221,30 +221,31 @@ impl ScriptArgs {
     }
 }
 
-pub fn set_chain_id(tx: &mut TypedTransaction, chain_id: u64) {
+pub fn set_chain_id(tx: &mut TypedTransaction, chain_id: u64) -> eyre::Result<()> {
     match tx {
         TypedTransaction::Legacy(tx) => tx.chain_id = Some(chain_id.into()),
         TypedTransaction::Eip1559(tx) => tx.chain_id = Some(chain_id.into()),
-        _ => panic!("Wrong transaction type for expected output"),
+        _ => eyre::bail!("Wrong transaction type for expected output"),
     }
+    Ok(())
 }
 
-pub fn into_legacy(tx: TypedTransaction) -> TransactionRequest {
-    match tx {
+pub fn into_legacy(tx: TypedTransaction) -> eyre::Result<TransactionRequest> {
+    Ok(match tx {
         TypedTransaction::Legacy(tx) => tx,
-        _ => panic!("Wrong transaction type for expected output"),
-    }
+        _ => eyre::bail!("Wrong transaction type for expected output"),
+    })
 }
 
-pub fn into_legacy_ref(tx: &TypedTransaction) -> &TransactionRequest {
-    match tx {
+pub fn into_legacy_ref(tx: &TypedTransaction) -> eyre::Result<&TransactionRequest> {
+    Ok(match tx {
         TypedTransaction::Legacy(ref tx) => tx,
-        _ => panic!("Wrong transaction type for expected output"),
-    }
+        _ => eyre::bail!("Wrong transaction type for expected output"),
+    })
 }
 
-pub fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
-    match tx {
+pub fn into_1559(tx: TypedTransaction) -> eyre::Result<Eip1559TransactionRequest> {
+    Ok(match tx {
         TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
             from: tx.from,
             to: tx.to,
@@ -254,6 +255,6 @@ pub fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
             ..Default::default()
         },
         TypedTransaction::Eip1559(tx) => tx,
-        _ => panic!("Wrong transaction type for expected output"),
-    }
+        _ => eyre::bail!("Wrong transaction type for expected output"),
+    })
 }
