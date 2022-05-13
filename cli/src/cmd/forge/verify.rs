@@ -348,7 +348,7 @@ To skip this solc dry, pass `--force`.
 
         eyre::ensure!(
             bch == BytecodeHash::Ipfs,
-            "When using flattened source, bytecodeHash must be set to ipfs. BytecodeHash is currently: {}. Hint: Set the bytecodeHash key in your foundry.toml :)",
+            "When using flattened source, bytecodeHash must be set to ipfs because Etherscan uses IPFS in its Compiler Settings when re-compiling your code. BytecodeHash is currently: {}. Hint: Set the bytecodeHash key in your foundry.toml :)",
             bch,
         );
 
