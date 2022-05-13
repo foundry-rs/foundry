@@ -261,13 +261,15 @@ impl Cmd for RunArgs {
             println!("== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
-                    for (index, token) in decoded.iter().enumerate() {
-                        let internal_type = match &func.outputs[index].internal_type {
-                            Some(t) => String::from(t),
-                            None => String::from("unknown"),
-                        };
+                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                        let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
 
-                        println!("{}: {:<9} {}", index, internal_type, format_token(token));
+                        let label = if !output.name.is_empty() {
+                            output.name.to_string()
+                        } else {
+                            index.to_string()
+                        };
+                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
                     }
                 }
                 Err(_) => {

@@ -424,9 +424,9 @@ forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: Te
 pragma solidity 0.8.10;
 contract Demo {
     event log_string(string);
-    function run() external returns (uint256) {
+    function run() external returns (uint256 result, uint8) {
         emit log_string("script ran");
-        return 255;
+        return (255, 3);
     }
 }"#,
         )
@@ -436,9 +436,10 @@ contract Demo {
     assert!(output.ends_with(&format!(
         "Compiler run successful
 {}
-Gas used: 1801
+Gas used: 1836
 == Return ==
-0: uint256   255
+result: uint256 255
+1: uint8 3
 == Logs ==
   script ran
 ",
