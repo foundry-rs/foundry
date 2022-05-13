@@ -37,14 +37,45 @@ pub struct ClientFork {
 // === impl ClientFork ===
 
 impl ClientFork {
+    /// Creates a new instance of the fork
+    pub fn new(config: ClientForkConfig, db: ForkedDatabase) -> Self {
+        Self {
+            storage: Default::default(),
+            config: Arc::new(RwLock::new(config)),
+            database: Arc::new(RwLock::new(db)),
+        }
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(
+    pub async fn reset(
         &self,
         url: Option<String>,
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
-        self.database.write().reset(url.clone(), block_number)?;
-        self.config.write().update(url, block_number)?;
+        {
+            self.database.write().reset(url.clone(), block_number)?;
+        }
+
+        if let Some(url) = url {
+            self.config.write().update_url(url)?;
+            let chain_id = self.provider().get_chainid().await?;
+            self.config.write().chain_id = chain_id.as_u64();
+        }
+
+        let block = if let Some(block_number) = block_number {
+            let provider = self.provider();
+            let block_hash = provider
+                .get_block(block_number)
+                .await?
+                .ok_or(BlockchainError::BlockNotFound)?
+                .hash
+                .ok_or(BlockchainError::BlockNotFound)?;
+            Some((block_number, block_hash))
+        } else {
+            None
+        };
+
+        self.config.write().update_block(block);
         self.clear_cached_storage();
         Ok(())
     }
@@ -351,29 +382,26 @@ pub struct ClientForkConfig {
 // === impl ClientForkConfig ===
 
 impl ClientForkConfig {
-    /// Updates the forking metadata
+    /// Updates the provider URL
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    pub fn update(
-        &mut self,
-        url: Option<String>,
-        block_number: Option<u64>,
-    ) -> Result<(), BlockchainError> {
-        if let Some(url) = url {
-            self.provider = Arc::new(
-                Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
-            );
-            trace!(target: "fork", "Updated rpc url  {}", url);
-            self.eth_rpc_url = url;
-        }
-        if let Some(block_number) = block_number {
-            self.block_number = block_number;
-            trace!(target: "fork", "Updated block number {}", block_number);
-        }
-
+    fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
+        self.provider = Arc::new(
+            Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+        );
+        trace!(target: "fork", "Updated rpc url  {}", url);
+        self.eth_rpc_url = url;
         Ok(())
+    }
+    /// Updates the block forked off
+    pub fn update_block(&mut self, block: Option<(u64, H256)>) {
+        if let Some((block_number, block_hash)) = block {
+            self.block_number = block_number;
+            self.block_hash = block_hash;
+            trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
+        }
     }
 }
 

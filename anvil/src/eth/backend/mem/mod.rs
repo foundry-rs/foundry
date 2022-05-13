@@ -20,7 +20,7 @@ use crate::{
     },
     mem::{
         in_memory_db::MemDb,
-        storage::{InMemoryBlockStates, MinedBlockOutcome},
+        storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
     revm::AccountInfo,
 };
@@ -171,10 +171,21 @@ impl Backend {
     }
 
     /// Resets the fork to a fresh state
-    pub fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+    pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if let Some(fork) = self.get_fork() {
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), forking.block_number)?;
+            fork.reset(forking.json_rpc_url.clone(), forking.block_number).await?;
+            // update env settings
+            {
+                let mut env = self.env.write();
+                env.cfg.chain_id = fork.chain_id().into();
+                env.block.number = fork.block_number().into();
+            }
+
+            // reset storage
+            *self.blockchain.storage.write() =
+                BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+
             self.apply_genesis();
             Ok(())
         } else {

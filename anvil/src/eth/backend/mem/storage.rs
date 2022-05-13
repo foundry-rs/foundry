@@ -94,6 +94,17 @@ pub struct BlockchainStorage {
 }
 
 impl BlockchainStorage {
+    pub fn forked(block_number: u64, block_hash: H256) -> Self {
+        BlockchainStorage {
+            blocks: Default::default(),
+            hashes: HashMap::from([(block_number.into(), block_hash)]),
+            best_hash: block_hash,
+            best_number: block_number.into(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+        }
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -155,15 +166,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
-        let storage = BlockchainStorage {
-            blocks: Default::default(),
-            hashes: HashMap::from([(block_number.into(), block_hash)]),
-            best_hash: block_hash,
-            best_number: block_number.into(),
-            genesis_hash: Default::default(),
-            transactions: Default::default(),
-        };
-        Self { storage: Arc::new(RwLock::new(storage)) }
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
     }
 
     /// returns the header hash of given block
