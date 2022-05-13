@@ -43,7 +43,7 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        Subcommands::Run(cmd) => {
+        Subcommands::Debug(cmd) => {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {

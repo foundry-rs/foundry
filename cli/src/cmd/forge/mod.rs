@@ -6,7 +6,7 @@
 //! [`foundry_config::Config`].
 //!
 //! See [`BuildArgs`] for a reference implementation.
-//! And [`RunArgs`] for how to merge `Providers`.
+//! And [`DebugArgs`] for how to merge `Providers`.
 //!
 //! # Example
 //!
@@ -42,13 +42,13 @@ pub mod build;
 pub mod cache;
 pub mod config;
 pub mod create;
+pub mod debug;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod remappings;
-pub mod run;
 pub mod script;
 pub mod snapshot;
 pub mod test;

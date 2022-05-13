@@ -12,10 +12,10 @@ use std::path::PathBuf;
 use super::{build::BuildArgs, script::ScriptArgs};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
+foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-pub struct RunArgs {
+pub struct DebugArgs {
     /// The path of the contract to run.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
@@ -45,7 +45,7 @@ pub struct RunArgs {
     pub evm_opts: EvmArgs,
 }
 
-impl Cmd for RunArgs {
+impl Cmd for DebugArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
         let script = ScriptArgs {

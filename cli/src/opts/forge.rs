@@ -9,12 +9,12 @@ use crate::cmd::forge::{
     cache::CacheArgs,
     config,
     create::CreateArgs,
+    debug::DebugArgs,
     flatten,
     init::InitArgs,
     inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
-    run::RunArgs,
     script::ScriptArgs,
     snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
@@ -51,7 +51,7 @@ pub enum Subcommands {
     Test(test::TestArgs),
 
     #[clap(
-        about = "Run a smart contract as a script, building transactions that will be sent onchain."
+        about = "Run a smart contract as a script, building transactions that can be sent onchain."
     )]
     #[clap(alias = "s")]
     Script(ScriptArgs),
@@ -64,9 +64,9 @@ pub enum Subcommands {
     #[clap(about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(alias = "r")]
-    #[clap(about = "Run a single smart contract as a script.")]
-    Run(RunArgs),
+    #[clap(alias = "d")]
+    #[clap(about = "Debugs a single smart contract as a script.")]
+    Debug(DebugArgs),
 
     #[clap(
         alias = "u",

@@ -348,7 +348,7 @@ Compiler run successful
 });
 
 // Tests that the `run` command works correctly
-forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -381,7 +381,7 @@ Gas used: 1751
 });
 
 // Tests that the run command can run arbitrary functions
-forgetest!(can_execute_run_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -414,7 +414,7 @@ Gas used: 1751
 });
 
 // Tests that the run command can run functions with arguments
-forgetest!(can_execute_run_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -452,7 +452,7 @@ Gas used: 3957
 });
 
 // Tests that the run command can run functions with return values
-forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
