@@ -3,7 +3,7 @@ use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
     abi::{AbiEncode, RawLog},
-    types::{Address, H160},
+    types::{Address, H160, U256},
 };
 use revm::{return_ok, Database, EVMData, Return};
 
@@ -46,11 +46,11 @@ pub fn handle_expect_revert(
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     if matches!(status, return_ok!()) {
-        return Err("Call did not revert as expected".to_string().encode().into())
+        return Err("Call did not revert as expected".to_string().encode().into());
     }
 
     if !expected_revert.is_empty() && retdata.is_empty() {
-        return Err("Call reverted as expected, but without data".to_string().encode().into())
+        return Err("Call reverted as expected, but without data".to_string().encode().into());
     }
 
     let (err, actual_revert): (_, Bytes) = match retdata {
@@ -160,6 +160,14 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ExpectedCallData {
+    /// The expected calldata
+    pub calldata: Bytes,
+    /// The expected value sent in the call
+    pub value: Option<U256>,
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -190,8 +198,20 @@ pub fn apply<DB: Database>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectCall(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push(inner.1.to_vec().into());
+        HEVMCalls::ExpectCall0(inner) => {
+            state
+                .expected_calls
+                .entry(inner.0)
+                .or_default()
+                .push(ExpectedCallData { calldata: inner.1.to_vec().into(), value: None });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall1(inner) => {
+            state
+                .expected_calls
+                .entry(inner.0)
+                .or_default()
+                .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall(inner) => {

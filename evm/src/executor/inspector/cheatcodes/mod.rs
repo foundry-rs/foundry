@@ -3,7 +3,7 @@ mod env;
 pub use env::{Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
-pub use expect::{ExpectedEmit, ExpectedRevert};
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert};
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
 /// Cheatcodes that configure the fuzzer
@@ -64,7 +64,7 @@ pub struct Cheatcodes {
     pub mocked_calls: BTreeMap<Address, BTreeMap<Bytes, Bytes>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, Vec<Bytes>>,
+    pub expected_calls: BTreeMap<Address, Vec<ExpectedCallData>>,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
@@ -113,7 +113,9 @@ where
             // Handle expected calls
             if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
-                    expected.len() <= call.input.len() && expected == &call.input[..expected.len()]
+                    expected.calldata.len() <= call.input.len()
+                        && expected.calldata == &call.input[..expected.calldata.len()]
+                        && expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -122,18 +124,18 @@ where
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&call.contract) {
                 if let Some(mock_retdata) = mocks.get(&call.input) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone());
                 } else if let Some((_, mock_retdata)) =
                     mocks.iter().find(|(mock, _)| *mock == &call.input[..mock.len()])
                 {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone());
                 }
             }
 
             // Apply our prank
             if let Some(prank) = &self.prank {
-                if data.subroutine.depth() >= prank.depth &&
-                    call.context.caller == prank.prank_caller
+                if data.subroutine.depth() >= prank.depth
+                    && call.context.caller == prank.prank_caller
                 {
                     // At the target depth we set `msg.sender`
                     if data.subroutine.depth() == prank.depth {
@@ -227,7 +229,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return (status, remaining_gas, retdata)
+            return (status, remaining_gas, retdata);
         }
 
         // Clean up pranks
@@ -247,7 +249,7 @@ where
                 return match handle_expect_revert(false, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
-                }
+                };
             }
         }
 
@@ -262,7 +264,7 @@ where
                 Return::Revert,
                 remaining_gas,
                 "Log != expected log".to_string().encode().into(),
-            )
+            );
         } else {
             // Clear the emits we expected at this depth that have been found
             self.expected_emits.retain(|expected| !expected.found)
@@ -278,13 +280,17 @@ where
                     Return::Revert,
                     remaining_gas,
                     format!(
-                        "Expected a call to {:?} with data {}, but got none",
+                        "Expected a call to {:?} with data {}{}, but got none",
                         address,
-                        ethers::types::Bytes::from(expecteds[0].clone())
+                        ethers::types::Bytes::from(expecteds[0].calldata.clone()),
+                        expecteds[0]
+                            .value
+                            .map(|v| format!(" and value {}", v))
+                            .unwrap_or("".to_string())
                     )
                     .encode()
                     .into(),
-                )
+                );
             }
 
             // Check if we have any leftover expected emits
@@ -296,7 +302,7 @@ where
                         .to_string()
                         .encode()
                         .into(),
-                )
+                );
             }
         }
 
@@ -352,7 +358,7 @@ where
                 return match handle_expect_revert(true, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, None, remaining_gas, retdata),
                     Ok((address, retdata)) => (Return::Return, address, remaining_gas, retdata),
-                }
+                };
             }
         }
 
