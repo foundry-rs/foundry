@@ -7,7 +7,7 @@ pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, Optimizer, RevertStrings, Settings,
+        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -136,6 +136,8 @@ pub struct Config {
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
     pub optimizer_details: Option<OptimizerDetails>,
+    /// Model checker settings.
+    pub model_checker: Option<ModelCheckerSettings>,
     /// verbosity to use
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
@@ -624,6 +626,16 @@ impl Config {
         let libraries = self.parsed_libraries()?.with_applied_remappings(&self.project_paths());
         let optimizer = self.optimizer();
 
+        // By default if no targets are specifically selected the model checker uses all targets.
+        // This might be too much here, so only enable assertion checks.
+        // If users wish to enable all options they need to do so explicitly.
+        let mut model_checker = self.model_checker.clone();
+        if let Some(ref mut model_checker_settings) = model_checker {
+            if model_checker_settings.targets.is_none() {
+                model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
+            }
+        }
+
         let mut settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
@@ -633,6 +645,7 @@ impl Config {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
             }),
+            model_checker,
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -820,6 +833,19 @@ impl Config {
                     "[optimizer_details.yulDetails]",
                     &format!("[{}.optimizer_details.yulDetails]", self.profile),
                 );
+        }
+        if self.model_checker.is_some() {
+            // similarly to the optimizer details above,
+            // this is a hack to make nested tables work because this requires the config's profile
+            s = ["contracts", "engine", "targets", "timeout"]
+                .iter()
+                .fold(s, |acc, op| {
+                    acc.replace(
+                        &format!("[model_checker.{}]", op),
+                        &format!("[{}.model_checker.{}]", self.profile, op),
+                    )
+                })
+                .replace("[model_checker]", &format!("[{}.model_checker]", self.profile));
         }
         s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
 
@@ -1186,6 +1212,7 @@ impl Default for Config {
             optimizer: true,
             optimizer_runs: 200,
             optimizer_details: None,
+            model_checker: None,
             extra_output: Default::default(),
             extra_output_files: Default::default(),
             names: false,
@@ -1807,7 +1834,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use ethers_solc::artifacts::YulDetails;
+    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
     use figment::error::Kind::InvalidType;
     use std::{collections::BTreeMap, str::FromStr};
 
@@ -2591,6 +2618,48 @@ mod tests {
                         ..Default::default()
                     }),
                     ..Default::default()
+                })
+            );
+
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let reloaded = Config::load();
+            assert_eq!(loaded, reloaded);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_model_checker_settings_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+
+                [default.model_checker]
+                contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
+                engine = 'chc'
+                targets = [ 'assert', 'outOfBounds' ]
+                timeout = 10000
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(
+                loaded.model_checker,
+                Some(ModelCheckerSettings {
+                    contracts: BTreeMap::from([
+                        ("a.sol".to_string(), vec!["A1".to_string(), "A2".to_string()]),
+                        ("b.sol".to_string(), vec!["B1".to_string(), "B2".to_string()]),
+                    ]),
+                    engine: Some(ModelCheckerEngine::CHC),
+                    targets: Some(vec![
+                        ModelCheckerTarget::Assert,
+                        ModelCheckerTarget::OutOfBounds
+                    ]),
+                    timeout: Some(10000)
                 })
             );
 
