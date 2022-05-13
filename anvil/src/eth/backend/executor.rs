@@ -97,7 +97,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
-    pub fn execute(mut self, timestamp: u64) -> ExecutedTransactions {
+    pub fn execute(mut self) -> ExecutedTransactions {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
@@ -110,6 +110,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
+        let timestamp = self.block_env.timestamp.as_u64();
 
         for (idx, tx) in self.enumerate() {
             let tx = match tx {

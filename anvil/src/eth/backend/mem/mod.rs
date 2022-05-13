@@ -351,10 +351,11 @@ impl Backend {
         let mut cache_db = CacheDB::new(&*db);
 
         let storage = self.blockchain.storage.read();
-        //
+
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
         env.block.basefee = current_base_fee;
+        env.block.timestamp = self.time.current_call_timestamp().into();
 
         let executor = TransactionExecutor {
             db: &mut cache_db,
@@ -367,7 +368,7 @@ impl Backend {
         };
 
         // create a new pending block
-        let executed = executor.execute(self.time.current_timestamp());
+        let executed = executor.execute();
         executed.block
     }
 
@@ -390,6 +391,7 @@ impl Backend {
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
         env.block.basefee = current_base_fee;
+        env.block.timestamp = self.time.next_timestamp().into();
 
         let executor = TransactionExecutor {
             db: &mut *db,
@@ -402,8 +404,7 @@ impl Backend {
         };
 
         // create the new block with the current timestamp
-        let ExecutedTransactions { block, included, invalid } =
-            executor.execute(self.time.current_timestamp());
+        let ExecutedTransactions { block, included, invalid } = executor.execute();
         let BlockInfo { block, transactions, receipts } = block;
 
         let header = block.header.clone();
@@ -472,6 +473,7 @@ impl Backend {
 
         let gas_limit = gas.unwrap_or_else(|| self.gas_limit());
         let mut env = self.env.read().clone();
+        env.block.timestamp = self.time.current_call_timestamp().into();
 
         if let Some(base) = max_fee_per_gas {
             env.block.basefee = base;

@@ -12,6 +12,7 @@ use tokio::time::timeout;
 
 abigen!(Greeter, "test-data/greeter.json");
 abigen!(SimpleStorage, "test-data/SimpleStorage.json");
+abigen!(MulticallContract, "test-data/multicall.json");
 
 #[derive(Clone, Debug, EthEvent)]
 pub struct ValueChanged {
@@ -386,4 +387,30 @@ async fn get_past_events() {
         contract.event().at_block_hash(hash).topic1(address).query().await.unwrap();
     assert_eq!(logs[0].new_value, "initial value");
     assert_eq!(logs.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_blocktimestamp_works() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract =
+        MulticallContract::deploy(Arc::clone(&client), ()).unwrap().send().await.unwrap();
+
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+
+    assert!(timestamp > U256::one());
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(1337).unwrap();
+
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+    assert_eq!(timestamp, 1337u64.into());
+
+    // repeat call same result
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+    assert_eq!(timestamp, 1337u64.into());
 }
