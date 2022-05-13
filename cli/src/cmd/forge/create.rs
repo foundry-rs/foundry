@@ -14,7 +14,7 @@ use ethers::{
 };
 use eyre::{Context, Result};
 use foundry_config::Config;
-use foundry_utils::parse_tokens;
+use foundry_utils::{parse_tokens, RuntimeOrHandle};
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -106,8 +106,13 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 
 impl Cmd for CreateArgs {
     type Output = ();
+    fn run(self) -> eyre::Result<Self::Output> {
+        RuntimeOrHandle::new().block_on(self.run_create())
+    }
+}
 
-    fn run(self) -> Result<Self::Output> {
+impl CreateArgs {
+    pub async fn run_create(self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
         let compiled = if self.json {
@@ -149,22 +154,19 @@ impl Cmd for CreateArgs {
         };
 
         // Deploy with signer
-        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-        let chain_id = rt.block_on(provider.get_chainid())?;
-        match rt.block_on(self.eth.signer_with(chain_id, provider))? {
+        let chain_id = provider.get_chainid().await?;
+        match self.eth.signer_with(chain_id, provider).await? {
             Some(signer) => match signer {
-                WalletType::Ledger(signer) => rt.block_on(self.deploy(abi, bin, params, signer))?,
-                WalletType::Local(signer) => rt.block_on(self.deploy(abi, bin, params, signer))?,
-                WalletType::Trezor(signer) => rt.block_on(self.deploy(abi, bin, params, signer))?,
+                WalletType::Ledger(signer) => self.deploy(abi, bin, params, signer).await?,
+                WalletType::Local(signer) => self.deploy(abi, bin, params, signer).await?,
+                WalletType::Trezor(signer) => self.deploy(abi, bin, params, signer).await?,
             },
             None => eyre::bail!("could not find artifact"),
         };
 
         Ok(())
     }
-}
 
-impl CreateArgs {
     async fn deploy<M: Middleware + 'static>(
         self,
         abi: Abi,
@@ -249,11 +251,11 @@ impl CreateArgs {
 
         println!("Starting contract verification...");
         let constructor_args = if !args.is_empty() {
-            Some(String::from_utf8(
-                abi.constructor()
-                    .ok_or(eyre::eyre!("could not find constructor"))?
-                    .encode_input(bin.to_vec(), &args)?,
-            )?)
+            let encoded_args = abi
+                .constructor()
+                .ok_or(eyre::eyre!("could not find constructor"))?
+                .encode_input(bin.to_vec(), &args)?;
+            Some(String::from_utf8(encoded_args)?)
         } else {
             None
         };

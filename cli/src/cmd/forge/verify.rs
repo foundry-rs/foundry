@@ -86,7 +86,7 @@ pub struct VerifyArgs {
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(&self) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         if self.contract.path.is_none() {
             eyre::bail!("Contract info must be provided in the format <path>:<name>")
         }
@@ -98,7 +98,7 @@ impl VerifyArgs {
 
         trace!("submitting verification request {:?}", verify_args);
 
-        let retry: Retry = self.retry.clone().into();
+        let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
                 let resp = etherscan
@@ -142,7 +142,7 @@ impl VerifyArgs {
                     guid: resp.result,
                     chain: self.chain,
                     retry: RetryArgs { retries: 6, delay: Some(10) },
-                    etherscan_key: self.etherscan_key.clone(),
+                    etherscan_key: self.etherscan_key,
                 };
                 return check_args.run().await
             }
@@ -246,7 +246,14 @@ impl VerifyArgs {
                     return Ok(version)
                 }
 
-                warn!("ambiguous compiler versions found in cache");
+                if artifacts.len() == 0 {
+                    warn!("no artiacts detected")
+                } else {
+                    warn!(
+                        "ambiguous compiler versions found in cache: {}",
+                        artifacts.iter().map(|a| a.0.to_string()).collect::<Vec<_>>().join(", ")
+                    );
+                }
             }
         }
 
@@ -411,12 +418,12 @@ pub struct VerifyCheckArgs {
 
 impl VerifyCheckArgs {
     /// Executes the command to check verification status on Etherscan
-    pub async fn run(&self) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
         println!("Waiting for verification result...");
-        let retry: Retry = self.retry.clone().into();
+        let retry: Retry = self.retry.into();
         retry
             .run_async(|| {
                 async {
