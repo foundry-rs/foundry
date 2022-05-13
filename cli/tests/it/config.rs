@@ -443,7 +443,6 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
 
     // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
     let mut config = config.clone();
