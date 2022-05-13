@@ -493,13 +493,15 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::Interface {
             path_or_address,
+            name,
             pragma,
             chain,
             output_location,
             etherscan_api_key,
         } => {
             let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
+                SimpleCast::generate_interface(InterfacePath::Local { path: path_or_address, name })
+                    .await?
             } else {
                 let api_key = match etherscan_api_key {
                     Some(inner) => inner,
