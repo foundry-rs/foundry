@@ -12,6 +12,8 @@ use ethers::{
     },
     solc::{
         artifacts::{BytecodeHash, Source},
+        cache::{SolFilesCache, SOLIDITY_FILES_CACHE_FILENAME},
+        utils::canonicalized,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
@@ -19,9 +21,14 @@ use eyre::{eyre, Context};
 use foundry_config::{Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use semver::{BuildMetadata, Version};
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, fs, io::BufReader, path::Path};
 use tracing::{trace, warn};
+
+pub static RE_BUILD_COMMIT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -229,7 +236,7 @@ impl VerifyArgs {
                 verify_args.optimized().runs(config.optimizer_runs.try_into()?)
             } else {
                 verify_args.not_optimized()
-            }
+            };
         }
 
         Ok(verify_args)
@@ -252,6 +259,27 @@ impl VerifyArgs {
                         return Ok(Solc::new(solc).version()?)
                     }
                 }
+            }
+        }
+
+        if config.cache {
+            let path = canonicalized(config.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME));
+            let reader = BufReader::new(fs::File::open(path.as_path())?);
+            let cache: SolFilesCache = serde_json::from_reader(reader)?;
+            let root = config.project_paths().root;
+            let file_path = root.join(self.contract.path.as_ref().expect("Is present; qed"));
+            if let Some(entry) = cache.entry(file_path) {
+                let artifacts = entry.artifacts_versions().collect::<Vec<_>>();
+                if artifacts.len() == 1 {
+                    let mut version = artifacts[0].0.to_owned();
+                    version.build = match RE_BUILD_COMMIT.captures(version.build.as_str()) {
+                        Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
+                        _ => BuildMetadata::EMPTY,
+                    };
+                    return Ok(version)
+                }
+
+                warn!("ambiguous compiler versions found in cache");
             }
         }
 
