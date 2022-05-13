@@ -7,6 +7,7 @@ use crate::{
             mem::fork_db::ForkedDatabase,
         },
         fees::INITIAL_BASE_FEE,
+        pool::transactions::TransactionOrder,
     },
     mem,
     mem::in_memory_db::MemDb,
@@ -102,6 +103,8 @@ pub struct NodeConfig {
     pub server_config: ServerConfig,
     /// The host the server will listen on
     pub host: Option<IpAddr>,
+    /// How transactions are sorted in the mempool
+    pub transaction_order: TransactionOrder,
 }
 
 // === impl NodeConfig ===
@@ -141,6 +144,7 @@ impl Default for NodeConfig {
             no_storage_caching: false,
             server_config: Default::default(),
             host: None,
+            transaction_order: Default::default(),
         }
     }
 }
@@ -310,6 +314,12 @@ impl NodeConfig {
     #[must_use]
     pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
         self.host = host;
+        self
+    }
+
+    #[must_use]
+    pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
+        self.transaction_order = transaction_order;
         self
     }
 
