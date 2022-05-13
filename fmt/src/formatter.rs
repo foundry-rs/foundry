@@ -2,6 +2,7 @@
 
 use std::fmt::Write;
 
+use crate::operators::Operator;
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::*;
@@ -496,6 +497,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
+        let op = Operator::for_expr(expr);
+        // let is_literal = |exp: &Expression| {
+        //     matches!(
+        //         exp,
+        //         Expression::AddressLiteral(..)
+        //             | Expression::ArrayLiteral(..)
+        //             | Expression::BoolLiteral(..)
+        //             | Expression::HexLiteral(..)
+        //             | Expression::HexNumberLiteral(..)
+        //             | Expression::NumberLiteral(..)
+        //             | Expression::RationalNumberLiteral(..)
+        //             | Expression::StringLiteral(..)
+        //     )
+        // };
+
         match expr {
             Expression::Type(_, typ) => match typ {
                 Type::Address => write!(self, "address")?,
@@ -517,6 +533,39 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Function { .. } => self.visit_source(loc)?,
             },
+            Expression::ArraySubscript(_, ty_exp, size_exp) => {
+                ty_exp.visit(self)?;
+                write!(self, "[")?;
+                if let Some(size_exp) = size_exp {
+                    size_exp.visit(self)?;
+                }
+                write!(self, "]")?;
+            }
+            Expression::Assign(_, var_expr, value_expr) => {
+                // TODO handle with operators?
+                self.visit_expr(var_expr.loc(), var_expr)?;
+                write!(self, " = ")?;
+                self.visit_expr(value_expr.loc(), value_expr)?;
+            }
+            Expression::Add(_, left, right) | Expression::Multiply(_, left, right) => {
+                let left_op = op.unwrap();
+                // TODO
+                // * handle order of operations for unknown operators
+                // * handle line wrapping appropriately
+                self.visit_expr(left.loc(), left)?;
+                write!(self, " {} ", left_op)?;
+                if let Some(right_op) = Operator::for_expr(right) {
+                    if left_op >= right_op {
+                        write!(self, "(")?;
+                        self.visit_expr(right.loc(), right)?;
+                        write!(self, ")")?;
+                    } else {
+                        self.visit_expr(right.loc(), right)?;
+                    }
+                } else {
+                    self.visit_expr(right.loc(), right)?;
+                }
+            }
             _ => self.visit_source(loc)?,
         };
 
@@ -1192,7 +1241,7 @@ mod tests {
         }
 
         let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
-        println!("{:?}", source_unit);
+        println!("{:#?}", source_unit);
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, source, config);
 
@@ -1221,10 +1270,13 @@ mod tests {
 
     test_directory! { ConstructorDefinition }
     test_directory! { ContractDefinition }
-    test_directory! { ErrorDefinition }
+    test_directory! { DocComments }
     test_directory! { EnumDefinition }
+    test_directory! { ErrorDefinition }
     test_directory! { EventDefinition }
+    test_directory! { ExpressionPrecedence }
     test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
     test_directory! { ImportDirective }
     test_directory! { ModifierDefinition }
     test_directory! { StatementBlock }
@@ -1232,5 +1284,4 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
-    test_directory! { DocComments }
 }
