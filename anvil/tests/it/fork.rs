@@ -119,6 +119,9 @@ async fn test_fork_reset() {
     .await
     .unwrap();
 
+    // reset block number
+    assert_eq!(block_number, provider.get_block_number().await.unwrap());
+
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     assert_eq!(nonce, 0u64.into());
     let balance = provider.get_balance(from, None).await.unwrap();
