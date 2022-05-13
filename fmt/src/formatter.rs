@@ -238,9 +238,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let is_error = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ErrorDefinition(_));
             let is_declaration =
                 |u: &SourceUnitPart| !(is_pragma(u) || is_import(u) || is_error(u));
+            let is_comment = |u: &SourceUnitPart| matches!(u, SourceUnitPart::DocComment(_));
 
             unit.visit(self)?;
-            writeln!(self)?;
+
+            if !is_comment(unit) {
+                writeln!(self)?;
+            }
 
             if let Some(next_unit) = source_unit_parts_iter.peek() {
                 // If source has zero blank lines between imports or errors, leave it as is. If one
@@ -994,16 +998,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
-        // TODO fix me
-        // write!(self, "using {} for ", using.library.name)?;
         write!(self, "using ")?;
 
         match &mut using.list {
             UsingList::Library(library) => {
                 self.visit_expr(library.loc(), library)?;
             }
-            UsingList::Functions(_functions) => {
-                todo!()
+            UsingList::Functions(funcs) => {
+                let func_strs = funcs
+                    .iter_mut()
+                    .map(|func| self.visit_to_string(func))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let multiline = self.is_separated_multiline(func_strs.iter(), ", ");
+                self.write_opening_bracket()?;
+                self.write_items_separated(func_strs, ", ", multiline)?;
+                self.write_closing_bracket()?;
             }
         }
 
@@ -1013,6 +1022,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             ty.visit(self)?;
         } else {
             write!(self, "*")?;
+        }
+
+        if let Some(global) = &mut using.global {
+            write!(self, " {}", global.name)?;
         }
 
         write!(self, ";")?;

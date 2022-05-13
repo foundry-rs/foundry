@@ -1,7 +1,6 @@
 pragma solidity ^0.8.13;
 
 /// @title A Hello world example
-
 contract HelloWorld {
     /// Some example struct
     struct Person {
