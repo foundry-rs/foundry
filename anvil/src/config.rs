@@ -486,7 +486,7 @@ Chain ID:       {}
             )
             .await;
 
-            let db = ForkedDatabase::new(backend, block_chain_db);
+            let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
             let fork = ClientFork::new(
                 ClientForkConfig {
                     eth_rpc_url,
@@ -495,10 +495,8 @@ Chain ID:       {}
                     provider,
                     chain_id,
                 },
-                db.clone(),
+                Arc::clone(&db),
             );
-
-            let db = Arc::new(RwLock::new(db));
 
             (db, Some(fork))
         } else {

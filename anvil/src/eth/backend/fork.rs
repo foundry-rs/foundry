@@ -38,12 +38,8 @@ pub struct ClientFork {
 
 impl ClientFork {
     /// Creates a new instance of the fork
-    pub fn new(config: ClientForkConfig, db: ForkedDatabase) -> Self {
-        Self {
-            storage: Default::default(),
-            config: Arc::new(RwLock::new(config)),
-            database: Arc::new(RwLock::new(db)),
-        }
+    pub fn new(config: ClientForkConfig, database: Arc<RwLock<ForkedDatabase>>) -> Self {
+        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config

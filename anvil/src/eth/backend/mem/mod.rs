@@ -152,11 +152,23 @@ impl Backend {
     }
 
     /// Applies the configured genesis settings
+    ///
+    /// This will fund, create the genesis accounts
     fn apply_genesis(&self) {
         trace!(target: "backend", "setting genesis balances");
         let mut db = self.db.write();
-        for (account, info) in self.genesis.account_infos() {
-            db.insert_account(account, info);
+
+        if self.fork.is_some() {
+            // in fork mode we only set the balance, this way the accountinfo is fetched from the
+            // remote client, preserving code and nonce. The reason for that is private keys for dev
+            // accounts are commonly known and are used on testnets
+            for address in self.genesis.accounts.iter().copied() {
+                db.set_balance(address, self.genesis.balance)
+            }
+        } else {
+            for (account, info) in self.genesis.account_infos() {
+                db.insert_account(account, info);
+            }
         }
     }
 
@@ -185,6 +197,7 @@ impl Backend {
             // reset storage
             *self.blockchain.storage.write() =
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+            self.states.write().clear();
 
             self.apply_genesis();
             Ok(())

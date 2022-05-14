@@ -4,19 +4,27 @@ use crate::{next_port, utils};
 use anvil::{spawn, NodeConfig};
 use anvil_core::types::Forking;
 use ethers::{
-    prelude::Middleware,
+    contract::abigen,
+    prelude::{Middleware, SignerMiddleware},
     signers::Signer,
     types::{Address, BlockNumber, Chain, TransactionRequest},
 };
+use std::sync::Arc;
 
-const RPC_RPC_URL: &str = "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
+abigen!(Greeter, "test-data/greeter.json");
+
+const MAINNET_RPC_URL: &str =
+    "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
+
+const RINKEBY_RPC_URL: &str =
+    "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W";
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_port(next_port())
-        .with_eth_rpc_url(Some(RPC_RPC_URL))
+        .with_eth_rpc_url(Some(MAINNET_RPC_URL))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
 }
@@ -101,6 +109,8 @@ async fn test_fork_reset() {
     let balance_before = provider.get_balance(to, None).await.unwrap();
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
 
+    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
+
     let tx = TransactionRequest::new().to(to).value(amount).from(from);
 
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
@@ -108,10 +118,9 @@ async fn test_fork_reset() {
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
 
-    assert_eq!(nonce, 1u64.into());
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
-
     api.anvil_reset(Some(Forking {
         json_rpc_url: None,
         block_number: Some(block_number.as_u64()),
@@ -123,7 +132,7 @@ async fn test_fork_reset() {
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, 0u64.into());
+    assert_eq!(nonce, initial_nonce);
     let balance = provider.get_balance(from, None).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     let balance = provider.get_balance(to, None).await.unwrap();
@@ -142,6 +151,7 @@ async fn test_fork_snapshotting() {
     let to = accounts[1].address();
     let block_number = provider.get_block_number().await.unwrap();
 
+    let initial_nonce = provider.get_transaction_count(from, None).await.unwrap();
     let balance_before = provider.get_balance(to, None).await.unwrap();
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
 
@@ -150,14 +160,14 @@ async fn test_fork_snapshotting() {
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, 1u64.into());
+    assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
     assert!(api.evm_revert(snapshot).await.unwrap());
 
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
-    assert_eq!(nonce, 0u64.into());
+    assert_eq!(nonce, initial_nonce);
     let balance = provider.get_balance(from, None).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
     let balance = provider.get_balance(to, None).await.unwrap();
@@ -187,4 +197,61 @@ async fn test_separate_states() {
     let acc = fork_db.inner().db().accounts.read().get(&addr).cloned().unwrap();
 
     assert_eq!(acc.balance, remote_balance)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_on_fork() {
+    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+/// tests that we can deploy from dev account that already has an onchain presence: https://rinkeby.etherscan.io/address/0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_on_rinkeby_fork() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_port(next_port())
+            .with_eth_rpc_url(Some(RINKEBY_RPC_URL))
+            .silent()
+            .with_fork_block_number(Some(10074295u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 5845u64.into());
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }
