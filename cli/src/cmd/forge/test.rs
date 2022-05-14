@@ -9,7 +9,7 @@ use crate::{
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
-use ethers::solc::FileFilter;
+use ethers::{prelude::U256, solc::FileFilter};
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
@@ -247,7 +247,7 @@ pub struct TestArgs {
     list: bool,
 
     #[clap(long, help = "Set seed used to generate randomness during your fuzz runs")]
-    pub fuzz_seed: Option<u32>,
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
@@ -451,7 +451,9 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     }
 
     let fuzzer = if let Some(ref fuzz_seed) = fuzz_seed {
-        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &fuzz_seed.to_be_bytes());
+        let mut bytes: [u8; 32] = [0; 32];
+        fuzz_seed.to_big_endian(&mut bytes);
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
         proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
     } else {
         proptest::test_runner::TestRunner::new(cfg)

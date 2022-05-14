@@ -231,7 +231,7 @@ pub struct Config {
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
-    pub fuzz_seed: Option<u32>,
+    pub fuzz_seed: Option<U256>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
