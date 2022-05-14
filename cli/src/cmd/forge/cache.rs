@@ -15,7 +15,7 @@ pub struct CacheArgs {
     pub sub: CacheSubcommands,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, ArgEnum)]
 pub enum ChainOrAll {
     Chain(Chain),
     All,
