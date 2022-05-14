@@ -2,11 +2,14 @@ use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::{ContractFactory, EthEvent},
-    prelude::{abigen, BlockId, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    prelude::{
+        abigen, signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
+        TransactionRequest,
+    },
     types::{Address, BlockNumber, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
-use futures::StreamExt;
+use futures::{future::join_all, StreamExt};
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
 
@@ -496,4 +499,69 @@ async fn call_past_state() {
         .await
         .unwrap();
     assert_eq!(value, "initial value");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    let provider = handle.ws_provider().await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
+    // explicitly set the nonce
+    let tx = TransactionRequest::new().to(to).value(100u64).from(from).nonce(nonce).gas(21_000u64);
+    let mut tasks = Vec::new();
+    for _ in 0..10 {
+        let provider = provider.clone();
+        let tx = tx.clone();
+        let task =
+            tokio::task::spawn(async move { provider.send_transaction(tx, None).await?.await });
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let nonce = client.get_transaction_count(from, None).await.unwrap();
+    // explicitly set the nonce
+    let mut tasks = Vec::new();
+    let mut tx =
+        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    tx.set_nonce(nonce);
+    tx.set_gas(300_000u64);
+
+    for _ in 0..10 {
+        let client = Arc::clone(&client);
+        let tx = tx.clone();
+        let task = tokio::task::spawn(async move {
+            Ok::<_, SignerMiddlewareError<_, _>>(
+                client.send_transaction(tx, None).await?.await.unwrap(),
+            )
+        });
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
 }
