@@ -1,9 +1,9 @@
 //! cache command
 
-use clap::{Parser, Subcommand};
+use clap::{ArgEnum, Parser, Subcommand};
 use std::str::FromStr;
 
-use crate::cmd::Cmd;
+use crate::{cmd::Cmd, opts::ClapChain};
 use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
@@ -19,6 +19,13 @@ pub struct CacheArgs {
 pub enum ChainOrAll {
     Chain(Chain),
     All,
+}
+
+#[derive(Debug, Clone, ArgEnum)]
+pub enum ChainOptions {
+    All,
+    Mainnet,
+    Goerli,
 }
 
 impl FromStr for ChainOrAll {
@@ -39,7 +46,6 @@ impl FromStr for ChainOrAll {
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
-        arg_enum,
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
@@ -113,6 +119,9 @@ pub struct LsArgs {
             "cronos"
         ])]
     chains: Vec<ChainOrAll>,
+
+    #[clap(long, arg_enum, default_value = "all", help = "Name of chain")]
+    chains2: ChainOptions,
 }
 
 #[derive(Debug, Subcommand)]
@@ -144,7 +153,7 @@ impl Cmd for LsArgs {
     type Output = ();
 
     fn run(self) -> Result<Self::Output> {
-        let LsArgs { chains } = self;
+        let LsArgs { chains, .. } = self;
         let mut cache = Cache { chains: vec![] };
         for chain_or_all in chains {
             match chain_or_all {
