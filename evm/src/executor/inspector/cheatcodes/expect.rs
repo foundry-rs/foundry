@@ -48,11 +48,11 @@ pub fn handle_expect_revert(
     retdata: Bytes,
 ) -> Result<(Option<Address>, Bytes), Bytes> {
     if matches!(status, return_ok!()) {
-        return Err("Call did not revert as expected".to_string().encode().into());
+        return Err("Call did not revert as expected".to_string().encode().into())
     }
 
     if !expected_revert.is_empty() && retdata.is_empty() {
-        return Err("Call reverted as expected, but without data".to_string().encode().into());
+        return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
     let (err, actual_revert): (_, Bytes) = match retdata {
@@ -180,13 +180,18 @@ pub struct MockCallDataContext {
 
 impl Ord for MockCallDataContext {
     fn cmp(&self, other: &Self) -> Ordering {
+        // Calldata matching is reversed to ensure that a tighter match is
+        // returned if an exact match is not found. In case, there is
+        // a partial match to calldata that is more specific than
+        // a match to a msg.value, then the more specific calldata takes
+        // precedence.
         self.calldata.cmp(&other.calldata).reverse().then(self.value.cmp(&other.value).reverse())
     }
 }
 
 impl PartialOrd for MockCallDataContext {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 

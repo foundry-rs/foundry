@@ -188,5 +188,4 @@ contract MockCallTest is DSTest {
         assertEq(mock.pay{value: 10}(2), 2);
         assertEq(mock.pay(2), 2);
     }
-
 }

@@ -20,7 +20,6 @@ contract Contract {
     function pay(uint256 a) public payable returns (uint256) {
       return a;
     }
-
 }
 
 contract NestedContract {

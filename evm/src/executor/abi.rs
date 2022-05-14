@@ -92,7 +92,7 @@ pub use hardhatconsole_mod::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
 /// it with the selector `abigen!` bindings expect.
 pub fn patch_hardhat_console_selector(mut input: Vec<u8>) -> Vec<u8> {
     if input.len() < 4 {
-        return input;
+        return input
     }
 
     let selector = Selector::try_from(&input[..4]).unwrap();

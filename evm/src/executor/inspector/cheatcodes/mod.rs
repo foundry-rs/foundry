@@ -113,9 +113,9 @@ where
             // Handle expected calls
             if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
-                    expected.calldata.len() <= call.input.len()
-                        && expected.calldata == &call.input[..expected.calldata.len()]
-                        && expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
+                    expected.calldata.len() <= call.input.len() &&
+                        expected.calldata == call.input[..expected.calldata.len()] &&
+                        expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -128,19 +128,19 @@ where
                     value: Some(call.transfer.value),
                 };
                 if let Some(mock_retdata) = mocks.get(&ctx) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone());
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
-                    &*mock.calldata == &call.input[..mock.calldata.len()]
-                        && mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
+                    *mock.calldata == call.input[..mock.calldata.len()] &&
+                        mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
-                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone());
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 }
             }
 
             // Apply our prank
             if let Some(prank) = &self.prank {
-                if data.subroutine.depth() >= prank.depth
-                    && call.context.caller == prank.prank_caller
+                if data.subroutine.depth() >= prank.depth &&
+                    call.context.caller == prank.prank_caller
                 {
                     // At the target depth we set `msg.sender`
                     if data.subroutine.depth() == prank.depth {
@@ -234,7 +234,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
-            return (status, remaining_gas, retdata);
+            return (status, remaining_gas, retdata)
         }
 
         // Clean up pranks
@@ -254,7 +254,7 @@ where
                 return match handle_expect_revert(false, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
-                };
+                }
             }
         }
 
@@ -269,7 +269,7 @@ where
                 Return::Revert,
                 remaining_gas,
                 "Log != expected log".to_string().encode().into(),
-            );
+            )
         } else {
             // Clear the emits we expected at this depth that have been found
             self.expected_emits.retain(|expected| !expected.found)
@@ -291,11 +291,11 @@ where
                         expecteds[0]
                             .value
                             .map(|v| format!(" and value {}", v))
-                            .unwrap_or("".to_string())
+                            .unwrap_or_else(|| "".to_string())
                     )
                     .encode()
                     .into(),
-                );
+                )
             }
 
             // Check if we have any leftover expected emits
@@ -307,7 +307,7 @@ where
                         .to_string()
                         .encode()
                         .into(),
-                );
+                )
             }
         }
 
@@ -363,7 +363,7 @@ where
                 return match handle_expect_revert(true, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, None, remaining_gas, retdata),
                     Ok((address, retdata)) => (Return::Return, address, remaining_gas, retdata),
-                };
+                }
             }
         }
 
