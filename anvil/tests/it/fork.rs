@@ -4,10 +4,14 @@ use crate::{next_port, utils};
 use anvil::{spawn, NodeConfig};
 use anvil_core::types::Forking;
 use ethers::{
-    prelude::Middleware,
+    contract::abigen,
+    prelude::{Middleware, SignerMiddleware},
     signers::Signer,
     types::{Address, BlockNumber, Chain, TransactionRequest},
 };
+use std::sync::Arc;
+
+abigen!(Greeter, "test-data/greeter.json");
 
 const RPC_RPC_URL: &str = "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
 
@@ -187,4 +191,28 @@ async fn test_separate_states() {
     let acc = fork_db.inner().db().accounts.read().get(&addr).cloned().unwrap();
 
     assert_eq!(acc.balance, remote_balance)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_on_fork() {
+    let (_api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }
