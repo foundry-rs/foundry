@@ -81,13 +81,13 @@ impl MultiContractRunnerBuilder {
                     if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
                         b
                     } else {
-                        return Ok(());
+                        return Ok(())
                     };
 
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if its a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                    && abi.functions().any(|func| func.name.starts_with("test"))
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
                         .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
@@ -176,8 +176,8 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy())
-                    && filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
             .flat_map(|(_, (abi, _, _))| {
                 abi.functions().filter(|func| filter.matches_test(func.signature()))
@@ -190,8 +190,8 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy())
-                    && filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
             .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
             .filter(|sig| sig.starts_with("test"))
@@ -205,8 +205,8 @@ impl MultiContractRunner {
         self.contracts
             .iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy())
-                    && filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, _, _))| {
@@ -243,8 +243,8 @@ impl MultiContractRunner {
             .contracts
             .par_iter()
             .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy())
-                    && filter.matches_contract(&id.name)
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
@@ -1099,7 +1099,7 @@ mod tests {
         let rpc_url = std::env::var("ETH_RPC_URL");
         if rpc_url.is_err() {
             eprintln!("Skipping test, ETH_RPC_URL is not set.");
-            return;
+            return
         }
         let mut runner = forked_runner(&(rpc_url.unwrap()));
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();

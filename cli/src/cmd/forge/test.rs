@@ -106,10 +106,10 @@ impl FileFilter for Filter {
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
             if let Some(ref glob) = self.path_pattern {
-                return glob.compile_matcher().is_match(file);
+                return glob.compile_matcher().is_match(file)
             }
             if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.compile_matcher().is_match(file);
+                return !glob.compile_matcher().is_match(file)
             }
         }
         file.is_sol_test()
