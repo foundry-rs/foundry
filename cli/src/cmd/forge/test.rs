@@ -240,6 +240,10 @@ pub struct TestArgs {
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     pub watch: WatchArgs,
+
+    /// List tests instead of running them
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    list: bool,
 }
 
 impl TestArgs {
@@ -509,6 +513,8 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         \n
                         Use --match-contract and --match-path to further limit the search."))
             }
+    } else if args.list {
+        list(runner, filter, args.json)
     } else {
         test(
             config,
@@ -521,6 +527,24 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             args.gas_report,
         )
     }
+}
+
+/// Lists all matching tests
+fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+    let results = runner.list(&filter);
+
+    if json {
+        println!("{}", serde_json::to_string(&results)?);
+    } else {
+        for (file, contracts) in results.iter() {
+            println!("{}", file);
+            for (contract, tests) in contracts.iter() {
+                println!("  {}", contract);
+                println!("    {}\n", tests.join("\n    "));
+            }
+        }
+    }
+    Ok(TestOutcome::new(BTreeMap::new(), false))
 }
 
 /// Runs all the tests
