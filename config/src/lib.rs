@@ -230,6 +230,8 @@ pub struct Config {
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
+    /// Optional seed for the fuzzing RNG algorithm
+    pub fuzz_seed: Option<u32>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -1226,6 +1228,7 @@ impl Default for Config {
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
+            fuzz_seed: None,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
