@@ -199,11 +199,11 @@ impl MultiContractRunner {
     }
 
     pub fn list(
-        &mut self,
+        &self,
         filter: &(impl TestFilter + Send + Sync),
-    ) -> BTreeMap<String, (String, Vec<String>)> {
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.contracts
-            .par_iter()
+            .iter()
             .filter(|(id, _)| {
                 filter.matches_path(id.source.to_string_lossy())
                     && filter.matches_contract(&id.name)
@@ -218,9 +218,12 @@ impl MultiContractRunner {
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
 
-                (source, (name, tests))
+                (source, name, tests)
             })
-            .collect::<BTreeMap<_, _>>()
+            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
+                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
+                acc
+            })
     }
 
     pub fn test(

@@ -513,6 +513,8 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         \n
                         Use --match-contract and --match-path to further limit the search."))
             }
+    } else if args.list {
+        list(runner, filter, args.json)
     } else {
         test(
             config,
@@ -520,12 +522,29 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             verbosity,
             filter,
             args.json,
-            args.list,
             args.allow_failure,
             include_fuzz_tests,
             args.gas_report,
         )
     }
+}
+
+/// Lists all matching tests
+fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+    let results = runner.list(&filter);
+
+    if json {
+        println!("{}", serde_json::to_string(&results)?);
+    } else {
+        for (file, contracts) in results.iter() {
+            println!("{}", file);
+            for (contract, tests) in contracts.iter() {
+                println!("\t{}", contract);
+                println!("\t{}\n", tests.join("\n\t\t"));
+            }
+        }
+    }
+    Ok(TestOutcome::new(BTreeMap::new(), false))
 }
 
 /// Runs all the tests
@@ -536,7 +555,6 @@ fn test(
     verbosity: u8,
     filter: Filter,
     json: bool,
-    list: bool,
     allow_failure: bool,
     include_fuzz_tests: bool,
     gas_reporting: bool,
@@ -565,10 +583,6 @@ fn test(
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
-    } else if list {
-        let l = runner.list(&filter);
-        println!("{:?}", serde_json::to_string(&l)?);
-        Ok(TestOutcome::new(BTreeMap::new(), allow_failure))
     } else {
         // Set up identifiers
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
