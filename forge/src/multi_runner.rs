@@ -215,6 +215,7 @@ impl MultiContractRunner {
                 let tests = abi
                     .functions()
                     .filter(|func| func.name.starts_with("test"))
+                    .filter(|func| filter.matches_test(func.signature()))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
 

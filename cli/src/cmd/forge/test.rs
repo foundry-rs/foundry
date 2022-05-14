@@ -539,8 +539,8 @@ fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result
         for (file, contracts) in results.iter() {
             println!("{}", file);
             for (contract, tests) in contracts.iter() {
-                println!("\t{}", contract);
-                println!("\t{}\n", tests.join("\n\t\t"));
+                println!("  {}", contract);
+                println!("    {}\n", tests.join("\n    "));
             }
         }
     }
