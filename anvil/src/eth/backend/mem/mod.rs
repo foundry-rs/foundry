@@ -197,6 +197,7 @@ impl Backend {
             // reset storage
             *self.blockchain.storage.write() =
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+            self.states.write().clear();
 
             self.apply_genesis();
             Ok(())

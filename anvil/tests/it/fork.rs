@@ -121,7 +121,7 @@ async fn test_fork_reset() {
     assert_eq!(nonce, initial_nonce + 1);
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
-
+    dbg!(block_number);
     api.anvil_reset(Some(Forking {
         json_rpc_url: None,
         block_number: Some(block_number.as_u64()),
