@@ -8,7 +8,6 @@ use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
-use strum::VariantNames;
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
@@ -40,11 +39,35 @@ impl FromStr for ChainOrAll {
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
+        arg_enum,
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = Chain::VARIANTS
-    )]
+        possible_values = [
+            "mainnet",
+            "ropsten",
+            "rinkeby",
+            "goerli",
+            "kovan",
+            "xdai",
+            "polygon",
+            "polygon-mumbai",
+            "avalanche",
+            "avalanche-fuji",
+            "sepolia",
+            "moonbeam",
+            "moonbeam-dev",
+            "moonriver",
+            "optimism",
+            "optimism-kovan",
+            "fantom",
+            "fantom-testnet",
+            "arbitrum",
+            "arbitrum-testnet",
+            "bsc",
+            "bsc-testnet",
+            "cronos"
+        ])]
     chains: Vec<ChainOrAll>,
 
     #[clap(
@@ -64,8 +87,31 @@ pub struct LsArgs {
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = Chain::VARIANTS
-    )]
+        possible_values = [
+            "mainnet",
+            "ropsten",
+            "rinkeby",
+            "goerli",
+            "kovan",
+            "xdai",
+            "polygon",
+            "polygon-mumbai",
+            "avalanche",
+            "avalanche-fuji",
+            "sepolia",
+            "moonbeam",
+            "moonbeam-dev",
+            "moonriver",
+            "optimism",
+            "optimism-kovan",
+            "fantom",
+            "fantom-testnet",
+            "arbitrum",
+            "arbitrum-testnet",
+            "bsc",
+            "bsc-testnet",
+            "cronos"
+        ])]
     chains: Vec<ChainOrAll>,
 }
 
