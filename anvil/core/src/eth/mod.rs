@@ -522,14 +522,91 @@ mod tests {
 
     #[test]
     fn test_custom_reset() {
-        let s = r#"{"method": "anvil_reset", "params": [ {
-            "forking" : {
+        let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
                 "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>",
                 "blockNumber": 11095000
-            }
-        }]}"#;
+        }}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some(
+                            "https://eth-mainnet.alchemyapi.io/v2/<key>".to_string()
+                        ),
+                        block_number: Some(11095000)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
+                "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>"
+        }}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some(
+                            "https://eth-mainnet.alchemyapi.io/v2/<key>".to_string()
+                        ),
+                        block_number: None
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{"jsonRpcUrl": "http://localhost:8545", "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("http://localhost:8545".to_string()),
+                        block_number: Some(14000000)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking { json_rpc_url: None, block_number: Some(14000000) })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{"jsonRpcUrl": "http://localhost:8545"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("http://localhost:8545".to_string()),
+                        block_number: None
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]

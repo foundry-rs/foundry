@@ -25,12 +25,48 @@ pub struct GethDebugTracingOptions {
     pub timeout: Option<String>,
 }
 
-/// Represents the params to set forking
-#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+/// Represents the params to set forking which can take various forms
+///  - untagged
+///  - tagged `forking`
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Forking {
     pub json_rpc_url: Option<String>,
     pub block_number: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for Forking {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ForkOpts {
+            pub json_rpc_url: Option<String>,
+            pub block_number: Option<u64>,
+        }
+
+        #[derive(Deserialize)]
+        struct Tagged {
+            forking: ForkOpts,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ForkingVariants {
+            Tagged(Tagged),
+            Fork(ForkOpts),
+        }
+        let f = match ForkingVariants::deserialize(deserializer)? {
+            ForkingVariants::Fork(ForkOpts { json_rpc_url, block_number }) => {
+                Forking { json_rpc_url, block_number }
+            }
+            ForkingVariants::Tagged(f) => Forking {
+                json_rpc_url: f.forking.json_rpc_url,
+                block_number: f.forking.block_number,
+            },
+        };
+        Ok(f)
+    }
 }
 
 /// Additional `evm_mine` options
