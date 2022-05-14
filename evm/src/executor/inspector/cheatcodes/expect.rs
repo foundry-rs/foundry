@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
@@ -168,6 +170,26 @@ pub struct ExpectedCallData {
     pub value: Option<U256>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MockCallDataContext {
+    /// The partial calldata to match for mock
+    pub calldata: Bytes,
+    /// The value to match for mock
+    pub value: Option<U256>,
+}
+
+impl Ord for MockCallDataContext {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.calldata.cmp(&other.calldata).reverse().then(self.value.cmp(&other.value).reverse())
+    }
+}
+
+impl PartialOrd for MockCallDataContext {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -214,12 +236,18 @@ pub fn apply<DB: Database>(
                 .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
             Ok(Bytes::new())
         }
-        HEVMCalls::MockCall(inner) => {
-            state
-                .mocked_calls
-                .entry(inner.0)
-                .or_default()
-                .insert(inner.1.to_vec().into(), inner.2.to_vec().into());
+        HEVMCalls::MockCall0(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
+                inner.2.to_vec().into(),
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCall1(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+                inner.3.to_vec().into(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::ClearMockedCalls(_) => {

@@ -21,9 +21,6 @@ contract Contract {
       return a;
     }
 
-    function silentPay() public payable returns (uint256) {
-      return 3;
-    }
 }
 
 contract NestedContract {
@@ -120,7 +117,7 @@ contract ExpectCallTest is DSTest {
             1,
             abi.encodeWithSelector(target.pay.selector, 2)
         );
-        target.pay{ value: 1 }(2);
+        target.pay{value: 1}(2);
     }
 
     function testFailExpectCallValue() public {
@@ -137,8 +134,8 @@ contract ExpectCallTest is DSTest {
         cheats.expectCall(
             address(target),
             3,
-            abi.encodeWithSelector(target.silentPay.selector)
+            abi.encodeWithSelector(target.pay.selector)
         );
-        target.silentPay{ value: 3 }();
+        target.pay{value: 3}(100);
     }
 }

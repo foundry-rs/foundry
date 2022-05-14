@@ -38,6 +38,7 @@ ethers::contract::abigen!(
             expectEmit(bool,bool,bool,bool)
             expectEmit(bool,bool,bool,bool,address)
             mockCall(address,bytes,bytes)
+            mockCall(address,uint256,bytes,bytes)
             clearMockedCalls()
             expectCall(address,bytes)
             expectCall(address,uint256,bytes)
