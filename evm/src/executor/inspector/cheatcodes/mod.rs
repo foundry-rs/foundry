@@ -288,10 +288,7 @@ where
                         "Expected a call to {:?} with data {}{}, but got none",
                         address,
                         ethers::types::Bytes::from(expecteds[0].calldata.clone()),
-                        expecteds[0]
-                            .value
-                            .map(|v| format!(" and value {}", v))
-                            .unwrap_or_else(|| "".to_string())
+                        expecteds[0].value.map(|v| format!(" and value {}", v)).unwrap_or_default()
                     )
                     .encode()
                     .into(),
