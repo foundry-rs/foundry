@@ -89,7 +89,7 @@ impl ScriptArgs {
                 Ok((tx, signer)) => {
                     let mut legacy_or_1559 =
                         if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx)?) };
-                    set_chain_id(&mut legacy_or_1559, chain)?;
+                    legacy_or_1559.set_chain_id(chain);
 
                     let from = *legacy_or_1559.from().expect("no sender");
                     match foundry_utils::next_nonce(from, &fork_url, None) {
