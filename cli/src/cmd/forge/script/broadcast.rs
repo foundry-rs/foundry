@@ -109,9 +109,6 @@ impl ScriptArgs {
                             };
 
                             if nonce != tx_nonce + offset {
-                                deployment_sequence
-                                    .save()
-                                    .expect("not able to save deployment sequence");
                                 eyre::bail!(
                                     "EOA nonce changed unexpectedly while sending transactions."
                                 );
@@ -120,9 +117,6 @@ impl ScriptArgs {
                             }
                         }
                         Err(_) => {
-                            deployment_sequence
-                                .save()
-                                .expect("not able to save deployment sequence");
                             eyre::bail!("Not able to query the EOA nonce.");
                         }
                     }
@@ -151,15 +145,9 @@ impl ScriptArgs {
 
                         Ok(None) => {
                             // todo what if it has been actually sent
-                            deployment_sequence
-                                .save()
-                                .expect("not able to save deployment sequence");
                             eyre::bail!("Failed to get transaction receipt?")
                         }
                         Err(e) => {
-                            deployment_sequence
-                                .save()
-                                .expect("not able to save deployment sequence");
                             eyre::bail!("Aborting! A transaction failed to send: {:#?}", e)
                         }
                     };
@@ -168,13 +156,10 @@ impl ScriptArgs {
                     deployment_sequence.index += 1;
                 }
                 Err(e) => {
-                    deployment_sequence.save().expect("not able to save deployment sequence");
                     eyre::bail!("{e}");
                 }
             }
         }
-
-        deployment_sequence.save()?;
 
         println!("\n\n==========================");
         println!(
@@ -203,7 +188,6 @@ impl ScriptArgs {
                     let txs = gas_filled_txs;
                     let mut deployment_sequence =
                         ScriptSequence::new(txs, &self.sig, target, &script_config.config.out)?;
-                    deployment_sequence.save()?;
 
                     if self.broadcast {
                         self.send_transactions(&mut deployment_sequence).await?;
@@ -219,15 +203,6 @@ impl ScriptArgs {
         }
         Ok(())
     }
-}
-
-pub fn set_chain_id(tx: &mut TypedTransaction, chain_id: u64) -> eyre::Result<()> {
-    match tx {
-        TypedTransaction::Legacy(tx) => tx.chain_id = Some(chain_id.into()),
-        TypedTransaction::Eip1559(tx) => tx.chain_id = Some(chain_id.into()),
-        _ => eyre::bail!("Wrong transaction type for expected output"),
-    }
-    Ok(())
 }
 
 pub fn into_legacy(tx: TypedTransaction) -> eyre::Result<TransactionRequest> {

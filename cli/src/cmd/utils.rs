@@ -209,3 +209,9 @@ impl ScriptSequence {
         Ok(out)
     }
 }
+
+impl Drop for ScriptSequence {
+    fn drop(&mut self) {
+        self.save().expect("not able to save deployment sequence");
+    }
+}
