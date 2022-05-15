@@ -3,7 +3,7 @@ use ethers::{
     abi::Abi,
     prelude::{
         artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
-        ArtifactId, Bytes, TransactionReceipt,
+        ArtifactId, TransactionReceipt,
     },
     solc::{
         artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
@@ -117,11 +117,7 @@ fn get_artifact_from_path(
     ))
 }
 
-pub fn needs_setup(contract: CompactContractBytecode) -> (bool, Abi, Bytes) {
-    let CompactContractBytecode { abi, bytecode, .. } = contract;
-
-    let abi = abi.expect("no ABI for contract");
-    let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
+pub fn needs_setup(abi: &Abi) -> bool {
     let setup_fns: Vec<_> =
         abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
 
@@ -135,7 +131,7 @@ pub fn needs_setup(contract: CompactContractBytecode) -> (bool, Abi, Bytes) {
         }
     }
 
-    (setup_fns.len() == 1 && setup_fns[0].name == "setUp", abi, bytecode)
+    setup_fns.len() == 1 && setup_fns[0].name == "setUp"
 }
 
 pub fn unwrap_contracts(

@@ -23,7 +23,10 @@ impl ScriptArgs {
         sender: Option<Address>,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
-        let (needs_setup, abi, bytecode) = needs_setup(contract);
+        let CompactContractBytecode { abi, bytecode, .. } = contract;
+
+        let abi = abi.expect("no ABI for contract");
+        let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
 
         let mut runner = self
             .prepare_runner(script_config, sender.unwrap_or(script_config.evm_opts.sender))
@@ -31,7 +34,7 @@ impl ScriptArgs {
         let (address, mut result) = runner.setup(
             predeploy_libraries,
             bytecode,
-            needs_setup,
+            needs_setup(&abi),
             self.broadcast,
             script_config.sender_nonce,
         )?;
