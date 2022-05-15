@@ -5,9 +5,10 @@ use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
     middleware::SignerMiddleware,
-    prelude::Middleware,
+    prelude::{Middleware, Ws},
+    providers::{JsonRpcClient, PubsubClient},
     signers::Signer,
-    types::{Filter, ValueOrArray},
+    types::{Block, Filter, TxHash, ValueOrArray, U256},
 };
 use futures::StreamExt;
 use std::sync::Arc;
@@ -185,4 +186,29 @@ async fn test_filters() {
             new_value: "Next Message".to_string(),
         },
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_subscriptions() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_port(next_port())
+            .with_blocktime(Some(std::time::Duration::from_secs(1))),
+    )
+    .await;
+    let ws = Ws::connect(handle.ws_endpoint()).await.unwrap();
+
+    // Subscribing requires sending the sub request and then subscribing to
+    // the returned sub_id
+    let sub_id: U256 = ws.request("eth_subscribe", ["newHeads"]).await.unwrap();
+    let mut stream = ws.subscribe(sub_id).unwrap();
+
+    let mut blocks = Vec::new();
+    for _ in 0..3 {
+        let item = stream.next().await.unwrap();
+        let block: Block<TxHash> = serde_json::from_str(item.get()).unwrap();
+        blocks.push(block.number.unwrap_or_default().as_u64());
+    }
+
+    assert_eq!(blocks, vec![1, 2, 3])
 }

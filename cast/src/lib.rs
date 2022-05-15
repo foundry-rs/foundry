@@ -630,7 +630,7 @@ pub struct InterfaceSource {
 }
 
 pub enum InterfacePath {
-    Local(String),
+    Local { path: String, name: Option<String> },
     Etherscan { address: Address, chain: Chain, api_key: String },
 }
 
@@ -655,7 +655,10 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     /// use cast::InterfacePath;
     /// # async fn foo() -> eyre::Result<()> {
-    /// let path = InterfacePath::Local("utils/testdata/interfaceTestABI.json".to_owned());
+    /// let path = InterfacePath::Local {
+    ///     path: "utils/testdata/interfaceTestABI.json".to_owned(),
+    ///     name: None,
+    /// };
     /// let interfaces= Cast::generate_interface(path).await?;
     /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
     /// # Ok(())
@@ -665,7 +668,7 @@ impl SimpleCast {
         address_or_path: InterfacePath,
     ) -> Result<Vec<InterfaceSource>> {
         let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
-            InterfacePath::Local(path) => {
+            InterfacePath::Local { path, name } => {
                 let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
 
                 let mut json: serde_json::Value = serde_json::from_str(&file)?;
@@ -674,7 +677,7 @@ impl SimpleCast {
                 let abi: Abi =
                     serde_json::from_value(json).wrap_err("unable to parse json ABI from file")?;
 
-                (vec![abi], vec!["Interface".to_owned()])
+                (vec![abi], vec![name.unwrap_or_else(|| "Interface".to_owned())])
             }
             InterfacePath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;

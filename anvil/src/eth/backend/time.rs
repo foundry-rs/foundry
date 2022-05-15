@@ -49,8 +49,8 @@ impl TimeManager {
         self.next_exact_timestamp.write().replace(timestamp);
     }
 
-    /// Returns the current timestamp
-    pub fn current_timestamp(&self) -> u64 {
+    /// Returns the current timestamp and updates the underlying offset accordingly
+    pub fn next_timestamp(&self) -> u64 {
         let current = duration_since_unix_epoch().as_secs() as i128;
 
         if let Some(next) = self.next_exact_timestamp.write().take() {
@@ -63,6 +63,20 @@ impl TimeManager {
         }
 
         current.saturating_add(self.offset()) as u64
+    }
+
+    /// Returns the current timestamp for a call that does not update the value
+    pub fn current_call_timestamp(&self) -> u64 {
+        let mut current = duration_since_unix_epoch().as_secs() as i128;
+
+        if let Some(next) = *self.next_exact_timestamp.read() {
+            // return the custom block timestamp and adjust the offset accordingly
+            // the offset will be negative if the `next` timestamp is in the past
+            let offset = (next as i128) - current;
+            current = current.saturating_add(offset)
+        }
+
+        current as u64
     }
 }
 

@@ -47,6 +47,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
             ..Default::default()
         }),
+        model_checker: None,
         extra_output: Default::default(),
         extra_output_files: Default::default(),
         names: true,
