@@ -250,7 +250,9 @@ impl ScriptArgs {
         Ok(new_sender)
     }
 
-    fn create_transactions_from_data(
+    /// Helper for building the transactions for any libraries that need to be deployed ahead of
+    /// linking
+    fn create_deploy_transactions(
         &self,
         from: Option<Address>,
         nonce: U256,

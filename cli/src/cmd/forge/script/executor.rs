@@ -82,7 +82,7 @@ impl ScriptArgs {
             })
             .map(|(from, to, data, value)| {
                 runner
-                    .sim(
+                    .simulate(
                         from.expect("Transaction doesn't have a `from` address at execution time"),
                         to,
                         data,

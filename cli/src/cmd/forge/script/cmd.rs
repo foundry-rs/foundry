@@ -82,7 +82,7 @@ impl ScriptArgs {
                     decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
                 } else {
                     // prepend predeploy libraries
-                    let mut lib_deploy = self.create_transactions_from_data(
+                    let mut lib_deploy = self.create_deploy_transactions(
                         self.deployer,
                         script_config.sender_nonce,
                         &predeploy_libraries,
@@ -138,7 +138,7 @@ impl ScriptArgs {
             self.link(project, default_known_contracts, new_sender, nonce)?;
 
         first_run_result.transactions =
-            Some(self.create_transactions_from_data(Some(new_sender), nonce, &predeploy_libraries));
+            Some(self.create_deploy_transactions(Some(new_sender), nonce, &predeploy_libraries));
 
         let result =
             self.execute(script_config, contract, Some(new_sender), &predeploy_libraries).await?;

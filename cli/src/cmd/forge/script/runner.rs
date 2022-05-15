@@ -123,7 +123,7 @@ impl<DB: DatabaseRef> Runner<DB> {
     }
 
     /// Runs a broadcastable transaction locally and persists its state.
-    pub fn sim(
+    pub fn simulate(
         &mut self,
         from: Address,
         to: Option<NameOrAddress>,

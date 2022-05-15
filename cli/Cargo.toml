@@ -23,7 +23,6 @@ foundry-config = { path = "../config" }
 foundry-common = { path = "../common" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
-anvil = { path = "../anvil" }
 
 # eth
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -75,6 +74,7 @@ bytes = "1.1.0"
 
 
 [dev-dependencies]
+anvil = { path = "../anvil" }
 foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"

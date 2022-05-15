@@ -168,7 +168,7 @@ pub struct ScriptSequence {
 impl ScriptSequence {
     pub fn new(
         transactions: VecDeque<TypedTransaction>,
-        sig: &String,
+        sig: &str,
         target: &ArtifactId,
         out: &Path,
     ) -> eyre::Result<Self> {
@@ -180,7 +180,7 @@ impl ScriptSequence {
         })
     }
 
-    pub fn load(sig: &String, target: &ArtifactId, out: &Path) -> eyre::Result<Self> {
+    pub fn load(sig: &str, target: &ArtifactId, out: &Path) -> eyre::Result<Self> {
         let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, out)?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
@@ -202,7 +202,8 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    pub fn get_path(sig: &String, target: &ArtifactId, out: &Path) -> eyre::Result<PathBuf> {
+    /// Saves to ./out/_CONTRACT_FILE_NAME_/scripted_transactions/_SIG_().json
+    pub fn get_path(sig: &str, target: &ArtifactId, out: &Path) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);

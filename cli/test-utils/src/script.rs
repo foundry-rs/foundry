@@ -99,7 +99,7 @@ impl ScriptTester {
         self
     }
 
-    pub fn sim(&mut self, expected: &str) -> &mut Self {
+    pub fn simulate(&mut self, expected: &str) -> &mut Self {
         self.run(expected)
     }
 
@@ -130,7 +130,7 @@ impl ScriptTester {
                 .unwrap();
             let prev_nonce = self.nonces.get(&index).unwrap();
 
-            assert!(nonce == prev_nonce + U256::from(increment));
+            assert_eq!(nonce, prev_nonce + U256::from(increment));
         }
         self
     }
