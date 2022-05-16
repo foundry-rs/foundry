@@ -12,6 +12,7 @@ use tracing::log::trace;
 
 use crate::{
     config::{Hardfork, DEFAULT_MNEMONIC},
+    eth::pool::transactions::TransactionOrder,
     AccountGenerator, NodeConfig, CHAIN_ID,
 };
 use forge::executor::opts::EvmOpts;
@@ -54,11 +55,31 @@ pub struct NodeArgs {
     #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
     pub hardfork: Hardfork,
 
-    #[clap(short, long, alias = "blockTime", help = "Block time in seconds for interval mining.")]
+    #[clap(
+        short,
+        long,
+        alias = "blockTime",
+        help = "Block time in seconds for interval mining.",
+        name = "block-time"
+    )]
     pub block_time: Option<u64>,
+
+    #[clap(
+        long,
+        alias = "no-mine",
+        help = "Disable auto and interval mining, and mine on demand instead.",
+        conflicts_with = "block-time"
+    )]
+    pub no_mining: bool,
 
     #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
     pub host: Option<IpAddr>,
+
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, help = "How transactions are sorted in the mempool", default_value = "fees")
+    )]
+    pub order: TransactionOrder,
 }
 
 impl NodeArgs {
@@ -75,6 +96,7 @@ impl NodeArgs {
             .with_gas_price(self.evm_opts.env.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
+            .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
@@ -86,6 +108,7 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
+            .with_transaction_order(self.order)
     }
 
     fn account_generator(&self) -> AccountGenerator {

@@ -186,6 +186,6 @@ fn list_chain_cache(chain: Chain) -> Result<ChainCache> {
     if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
         Config::list_foundry_chain_cache(foundry_chain)
     } else {
-        eyre::bail!("failed to map chain");
+        eyre::bail!("failed to recognise chain: {}", chain);
     }
 }

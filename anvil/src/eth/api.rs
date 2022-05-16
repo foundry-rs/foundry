@@ -9,7 +9,9 @@ use crate::{
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
-            transactions::{to_marker, PoolTransaction, TxMarker},
+            transactions::{
+                to_marker, PoolTransaction, TransactionOrder, TransactionPriority, TxMarker,
+            },
             Pool,
         },
         sign,
@@ -39,8 +41,8 @@ use ethers::{
     providers::ProviderError,
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -49,6 +51,7 @@ use foundry_evm::{
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::Receiver;
+use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
@@ -82,6 +85,8 @@ pub struct EthApi {
     logger: LoggingManager,
     /// Tracks all active filters
     filters: Filters,
+    /// How transactions are ordered in the pool
+    transaction_order: Arc<RwLock<TransactionOrder>>,
 }
 
 // === impl Eth RPC API ===
@@ -98,6 +103,7 @@ impl EthApi {
         miner: Miner,
         logger: LoggingManager,
         filters: Filters,
+        transactions_order: TransactionOrder,
     ) -> Self {
         Self {
             pool,
@@ -109,6 +115,7 @@ impl EthApi {
             miner,
             logger,
             filters,
+            transaction_order: Arc::new(RwLock::new(transactions_order)),
         }
     }
 
@@ -169,9 +176,9 @@ impl EthApi {
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
-            EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
+            EthRequest::EthCall(call, block) => self.call(call, block).await.to_rpc_result(),
             EthRequest::EthCreateAccessList(call, block) => {
-                self.create_access_list(call, block).to_rpc_result()
+                self.create_access_list(call, block).await.to_rpc_result()
             }
             EthRequest::EthEstimateGas(call, block) => {
                 self.estimate_gas(call, block).await.to_rpc_result()
@@ -392,9 +399,10 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+    pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
         node_info!("eth_getBalance");
-        self.backend.get_balance(address, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_balance(address, Some(number.into())).await
     }
 
     /// Returns content of the storage at given address.
@@ -404,10 +412,11 @@ impl EthApi {
         &self,
         address: Address,
         index: U256,
-        number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
-        self.backend.storage_at(address, index, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.storage_at(address, index, Some(number.into())).await
     }
 
     /// Returns block with given hash.
@@ -458,10 +467,11 @@ impl EthApi {
     pub async fn transaction_count(
         &self,
         address: Address,
-        number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
-        self.backend.get_nonce(address, number).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_nonce(address, Some(number.into())).await
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -499,9 +509,10 @@ impl EthApi {
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub async fn get_code(&self, address: Address, block: Option<BlockNumber>) -> Result<Bytes> {
+    pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_getCode");
-        self.backend.get_code(address, block).await
+        let number = self.backend.ensure_block_number(block_number)?;
+        self.backend.get_code(address, Some(number.into())).await
     }
 
     /// The sign method calculates an Ethereum specific signature
@@ -593,10 +604,12 @@ impl EthApi {
             vec![]
         };
 
+        let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
             requires,
             provides: vec![to_marker(nonce.as_u64(), *pending_transaction.sender())],
             pending_transaction,
+            priority,
         };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
@@ -607,8 +620,17 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub fn call(&self, request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
+    pub async fn call(&self, request: CallRequest, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_call");
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+                return Ok(fork.call(&request, block_number).await?)
+            }
+        }
+
         let fees = FeeDetails::new(
             request.gas_price,
             request.max_fee_per_gas,
@@ -616,7 +638,7 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees);
+        let (exit, out, gas, _) = self.backend.call(request, fees, block_number)?;
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
@@ -638,14 +660,24 @@ impl EthApi {
     /// sender account and the precompiles.
     ///
     /// Handler for ETH RPC call: `eth_createAccessList`
-    pub fn create_access_list(
+    pub async fn create_access_list(
         &self,
         request: CallRequest,
-        _number: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<AccessList> {
         node_info!("eth_createAccessList");
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+                return Ok(fork.create_access_list(&request, block_number).await?)
+            }
+        }
+
         let from = request.from;
-        let mut state = self.backend.call(request, FeeDetails::zero()).3;
+        let (_, _, _gas, mut state) =
+            self.backend.call(request, FeeDetails::zero(), block_number)?;
 
         // cleanup state map
         if let Some(from) = from {
@@ -670,9 +702,17 @@ impl EthApi {
     pub async fn estimate_gas(
         &self,
         mut request: CallRequest,
-        block: Option<BlockNumber>,
+        block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+                return Ok(fork.estimate_gas(&request, block_number).await?)
+            }
+        }
 
         // call takes at least this amount
         const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
@@ -682,7 +722,7 @@ impl EthApi {
             request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
         if likely_transfer {
             if let Some(to) = request.to {
-                if let Ok(target_code) = self.backend.get_code(to, block).await {
+                if let Ok(target_code) = self.backend.get_code(to, block_number).await {
                     if target_code.as_ref().is_empty() {
                         return Ok(MIN_GAS)
                     }
@@ -705,7 +745,7 @@ impl EthApi {
         if let Some(from) = request.from {
             let gas_price = fees.gas_price.unwrap_or_default();
             if gas_price > U256::zero() {
-                let mut available_funds = self.backend.get_balance(from, block).await?;
+                let mut available_funds = self.backend.get_balance(from, block_number).await?;
                 if let Some(value) = request.value {
                     if value > available_funds {
                         return Err(InvalidTransactionError::Payment.into())
@@ -728,7 +768,7 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone());
+        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number)?;
         match exit {
             Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                 // succeeded
@@ -742,7 +782,8 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) = self.backend.call(request.clone(), fees);
+                    let (exit, _, _gas, _) =
+                        self.backend.call(request.clone(), fees, block_number)?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
@@ -776,7 +817,8 @@ impl EthApi {
 
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) = self.backend.call(request.clone(), fees.clone());
+            let (exit, _, _gas, _) =
+                self.backend.call(request.clone(), fees.clone(), block_number)?;
             match exit {
                 return_ok!() => {
                     highest_gas_limit = mid_gas_limit;
@@ -1187,13 +1229,13 @@ impl EthApi {
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
         if let Some(forking) = forking {
-            self.backend.reset_fork(forking)
+            self.backend.reset_fork(forking).await
         } else {
             Err(BlockchainError::RpcUnimplemented)
         }
     }
 
-    ///Modifies the balance of an account.
+    /// Modifies the balance of an account.
     ///
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
@@ -1411,6 +1453,16 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Updates the `TransactionOrder`
+    pub fn set_transaction_order(&self, order: TransactionOrder) {
+        *self.transaction_order.write() = order;
+    }
+
+    /// Returns the priority of the transaction based on the current `TransactionOrder`
+    fn transaction_priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+        self.transaction_order.read().priority(tx)
+    }
+
     /// Returns the chain ID used for transaction
     pub fn chain_id(&self) -> u64 {
         self.backend.chain_id().as_u64()
@@ -1562,7 +1614,9 @@ impl EthApi {
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
         let from = *pending_transaction.sender();
-        let pool_transaction = PoolTransaction { requires, provides, pending_transaction };
+        let priority = self.transaction_priority(&pending_transaction.transaction);
+        let pool_transaction =
+            PoolTransaction { requires, provides, pending_transaction, priority };
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())

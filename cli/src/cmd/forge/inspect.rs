@@ -110,7 +110,7 @@ impl Cmd for InspectArgs {
         let InspectArgs { contract, field, build, pretty } = self;
 
         // Map field to ContractOutputSelection
-        let mut cos = build.compiler.extra_output.unwrap_or_default();
+        let mut cos = build.compiler.extra_output;
         if !cos.iter().any(|&i| i.to_string() == field.to_string()) {
             match field {
                 ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
@@ -150,11 +150,7 @@ impl Cmd for InspectArgs {
 
         // Build modified Args
         let modified_build_args = CoreBuildArgs {
-            compiler: CompilerArgs {
-                extra_output: Some(cos),
-                optimize: optimized,
-                ..build.compiler
-            },
+            compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
             ..build
         };
 

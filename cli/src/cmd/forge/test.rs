@@ -25,6 +25,7 @@ use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
+    fmt,
     path::{Path, PathBuf},
     sync::mpsc::channel,
     thread,
@@ -157,6 +158,34 @@ impl TestFilter for Filter {
     }
 }
 
+impl fmt::Display for Filter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut patterns = Vec::new();
+        if let Some(ref p) = self.pattern {
+            patterns.push(format!("\tmatch: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.test_pattern {
+            patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.test_pattern_inverse {
+            patterns.push(format!("\tno-match-test: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.contract_pattern {
+            patterns.push(format!("\tmatch-contract: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.contract_pattern_inverse {
+            patterns.push(format!("\tno-match-contract: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.path_pattern {
+            patterns.push(format!("\tmatch-path: `{}`", p.glob()));
+        }
+        if let Some(ref p) = self.path_pattern_inverse {
+            patterns.push(format!("\tno-match-path: `{}`", p.glob()));
+        }
+        write!(f, "{}", patterns.join("\n"))
+    }
+}
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
 
@@ -211,6 +240,10 @@ pub struct TestArgs {
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     pub watch: WatchArgs,
+
+    /// List tests instead of running them
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    list: bool,
 }
 
 impl TestArgs {
@@ -480,6 +513,8 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         \n
                         Use --match-contract and --match-path to further limit the search."))
             }
+    } else if args.list {
+        list(runner, filter, args.json)
     } else {
         test(
             config,
@@ -492,6 +527,24 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             args.gas_report,
         )
     }
+}
+
+/// Lists all matching tests
+fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+    let results = runner.list(&filter);
+
+    if json {
+        println!("{}", serde_json::to_string(&results)?);
+    } else {
+        for (file, contracts) in results.iter() {
+            println!("{}", file);
+            for (contract, tests) in contracts.iter() {
+                println!("  {}", contract);
+                println!("    {}\n", tests.join("\n    "));
+            }
+        }
+    }
+    Ok(TestOutcome::new(BTreeMap::new(), false))
 }
 
 /// Runs all the tests
@@ -507,16 +560,23 @@ fn test(
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     if runner.count_filtered_tests(&filter) == 0 {
-        let mut err = String::from("No matching tests!");
-        // Try to suggest a test when there's no match
-        if let Some(ref test_pattern) = filter.test_pattern {
-            let test_name = test_pattern.as_str();
-            let candidates = runner.get_tests(&filter);
-            if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
-                err = format!("{}\n\nDid you mean \"{}\"?", err, suggestion);
+        let filter_str = filter.to_string();
+        if filter_str.is_empty() {
+            println!(
+                "\nNo tests found in project! Forge looks for functions that starts with `test`."
+            );
+        } else {
+            println!("\nNo tests match the provided pattern:");
+            println!("{}", filter_str);
+            // Try to suggest a test when there's no match
+            if let Some(ref test_pattern) = filter.test_pattern {
+                let test_name = test_pattern.as_str();
+                let candidates = runner.get_tests(&filter);
+                if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
+                    println!("\nDid you mean `{}`?", suggestion);
+                }
             }
         }
-        eyre::bail!(err)
     }
 
     if json {

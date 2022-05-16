@@ -1,6 +1,3 @@
-use colored::Colorize;
-use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
-
 use crate::{
     eth::{
         backend::{
@@ -10,12 +7,14 @@ use crate::{
             mem::fork_db::ForkedDatabase,
         },
         fees::INITIAL_BASE_FEE,
+        pool::transactions::TransactionOrder,
     },
     mem,
     mem::in_memory_db::MemDb,
     FeeManager,
 };
 use anvil_server::ServerConfig;
+use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
@@ -33,6 +32,7 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -81,6 +81,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
+    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -101,6 +103,8 @@ pub struct NodeConfig {
     pub server_config: ServerConfig,
     /// The host the server will listen on
     pub host: Option<IpAddr>,
+    /// How transactions are sorted in the mempool
+    pub transaction_order: TransactionOrder,
 }
 
 // === impl NodeConfig ===
@@ -127,6 +131,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
             block_time: None,
+            no_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -139,6 +144,7 @@ impl Default for NodeConfig {
             no_storage_caching: false,
             server_config: Default::default(),
             host: None,
+            transaction_order: Default::default(),
         }
     }
 }
@@ -239,6 +245,13 @@ impl NodeConfig {
         self
     }
 
+    /// If set to `true` auto mining will be disabled
+    #[must_use]
+    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+        self.no_mining = no_mining;
+        self
+    }
+
     /// Sets the port to use
     #[must_use]
     pub fn with_port(mut self, port: u16) -> Self {
@@ -301,6 +314,12 @@ impl NodeConfig {
     #[must_use]
     pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
         self.host = host;
+        self
+    }
+
+    #[must_use]
+    pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
+        self.transaction_order = transaction_order;
         self
     }
 
@@ -467,20 +486,17 @@ Chain ID:       {}
             )
             .await;
 
-            let db = ForkedDatabase::new(backend, block_chain_db);
-            let fork = ClientFork {
-                storage: Default::default(),
-                config: Arc::new(RwLock::new(ClientForkConfig {
+            let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
+            let fork = ClientFork::new(
+                ClientForkConfig {
                     eth_rpc_url,
                     block_number: fork_block_number,
                     block_hash,
                     provider,
                     chain_id,
-                })),
-                database: Arc::new(RwLock::new(db.clone())),
-            };
-
-            let db = Arc::new(RwLock::new(db));
+                },
+                Arc::clone(&db),
+            );
 
             (db, Some(fork))
         } else {

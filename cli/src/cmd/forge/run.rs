@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, RawLog},
+    abi::{Abi, Function, RawLog},
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
@@ -24,7 +24,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
+use foundry_utils::{encode_args, format_token, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
@@ -129,6 +129,26 @@ impl Cmd for RunArgs {
             builder = builder.with_tracing().with_debugger();
         }
 
+        let (func, call): (&Function, Bytes) = match self.sig.strip_prefix("0x") {
+            Some(calldata) => (
+                abi.functions()
+                    .find(|&func| {
+                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
+                    })
+                    .expect("Function selector not found in the ABI"),
+                hex::decode(calldata).unwrap().into(),
+            ),
+            _ => {
+                let func = IntoFunction::into(self.sig);
+                (
+                    abi.functions()
+                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                        .expect("Function signature not found in the ABI"),
+                    encode_args(&func, &self.args)?.into(),
+                )
+            }
+        };
+
         let mut result = {
             let mut runner =
                 Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
@@ -136,19 +156,20 @@ impl Cmd for RunArgs {
                 runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
 
             let RunResult {
-                success, gas, logs, traces, debug: run_debug, labeled_addresses, ..
-            } = runner.run(
-                address,
-                if let Some(calldata) = self.sig.strip_prefix("0x") {
-                    hex::decode(calldata)?.into()
-                } else {
-                    encode_args(&IntoFunction::into(self.sig), &self.args)?.into()
-                },
-            )?;
+                success,
+                gas,
+                returned,
+                logs,
+                traces,
+                debug: run_debug,
+                labeled_addresses,
+                ..
+            } = runner.run(address, call)?;
 
             result.success &= success;
 
             result.gas = gas;
+            result.returned = returned;
             result.logs.extend(logs);
             result.traces.extend(traces);
             result.debug = run_debug;
@@ -236,6 +257,26 @@ impl Cmd for RunArgs {
             }
 
             println!("Gas used: {}", result.gas);
+
+            println!("== Return ==");
+            match func.decode_output(&result.returned) {
+                Ok(decoded) => {
+                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                        let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+
+                        let label = if !output.name.is_empty() {
+                            output.name.to_string()
+                        } else {
+                            index.to_string()
+                        };
+                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                    }
+                }
+                Err(_) => {
+                    println!("{:x?}", (&result.returned));
+                }
+            }
+
             println!("== Logs ==");
             let console_logs = decode_console_logs(&result.logs);
             if !console_logs.is_empty() {
@@ -353,6 +394,7 @@ impl RunArgs {
 
 struct RunResult {
     pub success: bool,
+    pub returned: bytes::Bytes,
     pub logs: Vec<RawLog>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
@@ -437,6 +479,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     (
                         address,
                         RunResult {
+                            returned: bytes::Bytes::new(),
                             logs,
                             traces,
                             labeled_addresses: labels,
@@ -452,6 +495,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             (
                 address,
                 RunResult {
+                    returned: bytes::Bytes::new(),
                     logs,
                     traces,
                     success: true,
@@ -464,10 +508,11 @@ impl<DB: DatabaseRef> Runner<DB> {
     }
 
     pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RunResult> {
-        let RawCallResult { reverted, gas, stipend, logs, traces, labels, debug, .. } =
+        let RawCallResult { reverted, gas, stipend, result, logs, traces, labels, debug, .. } =
             self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
         Ok(RunResult {
             success: !reverted,
+            returned: result,
             gas: gas.overflowing_sub(stipend).0,
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),

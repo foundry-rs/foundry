@@ -646,7 +646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9213f7cd7c27e95c2b57c49f0e69b1ea65b27138da84a170133fd21b07659c00"
 dependencies = [
  "num 0.1.42",
- "time",
+ "time 0.1.43",
 ]
 
 [[package]]
@@ -658,7 +658,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
- "time",
+ "time 0.1.43",
  "winapi",
 ]
 
@@ -1879,6 +1879,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "atty",
+ "bytes",
  "cast",
  "clap",
  "clap_complete",
@@ -3207,6 +3208,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "num_threads"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2819ce041d2ee131036f4fc9d6ae7ae125a3a40e97ba64d04fe799ad9dabbb44"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -4806,6 +4816,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "time"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2702e08a7a860f005826c6815dcac101b19b5eb330c27fe4a5928fec1d20ddd"
+dependencies = [
+ "itoa",
+ "libc",
+ "num_threads",
+]
+
+[[package]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5278,19 +5299,19 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vergen"
-version = "6.0.2"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3893329bee75c101278e0234b646fa72221547d63f97fb66ac112a0569acd110"
+checksum = "4db743914c971db162f35bf46601c5a63ec4452e61461937b4c1ab817a60c12e"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
- "chrono 0.4.19",
  "enum-iterator",
  "getset",
  "git2",
  "rustc_version",
  "rustversion",
  "thiserror",
+ "time 0.3.9",
 ]
 
 [[package]]

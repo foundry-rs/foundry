@@ -305,11 +305,16 @@ interface Hevm {
     // pass a Solidity selector to the expected calldata, then the entire Solidity
     // function will be mocked.
     function mockCall(address,bytes calldata,bytes calldata) external;
+    // Mocks a call to an address with a specific msg.value, returning specified data.
+    // Calldata match takes precedence over msg.value in case of ambiguity.
+    function mockCall(address,uint256,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
+    // Expect a call to an address with the specified msg.value and calldata
+    function expectCall(address,uint256,bytes calldata) external;
     // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
     // Label an address in test traces

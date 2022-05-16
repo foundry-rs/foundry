@@ -18,7 +18,10 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
     },
-    mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
+    mem::{
+        in_memory_db::MemDb,
+        storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
+    },
     revm::AccountInfo,
 };
 use anvil_core::{
@@ -69,6 +72,8 @@ pub struct Backend {
     db: Arc<RwLock<dyn Db>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
+    /// Historic states of previous blocks
+    states: Arc<RwLock<InMemoryBlockStates>>,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// this is set if this is currently forked off another client
@@ -93,6 +98,7 @@ impl Backend {
         Self {
             db,
             blockchain: Blockchain::default(),
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
             time: Default::default(),
@@ -130,6 +136,7 @@ impl Backend {
         let backend = Self {
             db,
             blockchain,
+            states: Arc::new(RwLock::new(Default::default())),
             env,
             fork,
             time: Default::default(),
@@ -145,11 +152,23 @@ impl Backend {
     }
 
     /// Applies the configured genesis settings
+    ///
+    /// This will fund, create the genesis accounts
     fn apply_genesis(&self) {
         trace!(target: "backend", "setting genesis balances");
         let mut db = self.db.write();
-        for (account, info) in self.genesis.account_infos() {
-            db.insert_account(account, info);
+
+        if self.fork.is_some() {
+            // in fork mode we only set the balance, this way the accountinfo is fetched from the
+            // remote client, preserving code and nonce. The reason for that is private keys for dev
+            // accounts are commonly known and are used on testnets
+            for address in self.genesis.accounts.iter().copied() {
+                db.set_balance(address, self.genesis.balance)
+            }
+        } else {
+            for (account, info) in self.genesis.account_infos() {
+                db.insert_account(account, info);
+            }
         }
     }
 
@@ -164,10 +183,22 @@ impl Backend {
     }
 
     /// Resets the fork to a fresh state
-    pub fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+    pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if let Some(fork) = self.get_fork() {
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), forking.block_number)?;
+            fork.reset(forking.json_rpc_url.clone(), forking.block_number).await?;
+            // update env settings
+            {
+                let mut env = self.env.write();
+                env.cfg.chain_id = fork.chain_id().into();
+                env.block.number = fork.block_number().into();
+            }
+
+            // reset storage
+            *self.blockchain.storage.write() =
+                BlockchainStorage::forked(fork.block_number(), fork.block_hash());
+            self.states.write().clear();
+
             self.apply_genesis();
             Ok(())
         } else {
@@ -198,6 +229,11 @@ impl Backend {
     /// Returns the current best hash of the chain
     pub fn best_hash(&self) -> H256 {
         self.blockchain.storage.read().best_hash
+    }
+
+    fn hash_for_block_number(&self, num: u64) -> Option<H256> {
+        let num: U64 = num.into();
+        self.blockchain.storage.read().hashes.get(&num).copied()
     }
 
     /// Returns the current best number of the chain
@@ -339,10 +375,11 @@ impl Backend {
         let mut cache_db = CacheDB::new(&*db);
 
         let storage = self.blockchain.storage.read();
-        //
+
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
         env.block.basefee = current_base_fee;
+        env.block.timestamp = self.time.current_call_timestamp().into();
 
         let executor = TransactionExecutor {
             db: &mut cache_db,
@@ -355,7 +392,7 @@ impl Backend {
         };
 
         // create a new pending block
-        let executed = executor.execute(self.time.current_timestamp());
+        let executed = executor.execute();
         executed.block
     }
 
@@ -372,9 +409,13 @@ impl Backend {
         let mut db = self.db.write();
         let mut storage = self.blockchain.storage.write();
 
+        // store current state
+        self.states.write().insert(storage.best_hash, db.current_state());
+
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
         env.block.basefee = current_base_fee;
+        env.block.timestamp = self.time.next_timestamp().into();
 
         let executor = TransactionExecutor {
             db: &mut *db,
@@ -387,8 +428,7 @@ impl Backend {
         };
 
         // create the new block with the current timestamp
-        let ExecutedTransactions { block, included, invalid } =
-            executor.execute(self.time.current_timestamp());
+        let ExecutedTransactions { block, included, invalid } = executor.execute();
         let BlockInfo { block, transactions, receipts } = block;
 
         let header = block.header.clone();
@@ -440,11 +480,16 @@ impl Backend {
     }
 
     /// Executes the `CallRequest` without writing to the DB
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `block_number` is greater than the current height
     pub fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
-    ) -> (Return, TransactOut, u64, State) {
+        block_number: Option<BlockNumber>,
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
@@ -452,6 +497,7 @@ impl Backend {
 
         let gas_limit = gas.unwrap_or_else(|| self.gas_limit());
         let mut env = self.env.read().clone();
+        env.block.timestamp = self.time.current_call_timestamp().into();
 
         if let Some(base) = max_fee_per_gas {
             env.block.basefee = base;
@@ -477,6 +523,35 @@ impl Backend {
 
         trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);
 
+        let block_number =
+            U256::from(self.convert_block_number(block_number)).min(env.block.number);
+
+        if block_number < env.block.number {
+            // requested historic state
+            let states = self.states.read();
+
+            return if let Some(state) =
+                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            {
+                let mut evm = revm::EVM::new();
+                env.block.number = block_number;
+                evm.env = env;
+                evm.database(state);
+
+                let (exit, out, gas, state, _) = evm.transact_ref();
+
+                trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
+
+                Ok((exit, out, gas, state))
+            } else {
+                warn!(target: "backend", "Not historic state found for block={}", block_number);
+                Err(BlockchainError::BlockOutOfRange(
+                    env.block.number.as_u64(),
+                    block_number.as_u64(),
+                ))
+            }
+        }
+
         let db = self.db.read();
         let mut evm = revm::EVM::new();
         evm.env = env;
@@ -485,7 +560,7 @@ impl Backend {
         let (exit, out, gas, state, _) = evm.transact_ref();
         trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
 
-        (exit, out, gas, state)
+        Ok((exit, out, gas, state))
     }
 
     /// returns all receipts for the given transactions
@@ -806,6 +881,43 @@ impl Backend {
         };
 
         block
+    }
+
+    /// Converts the `BlockNumber` into a numeric value
+    ///
+    /// # Errors
+    ///
+    /// returns an error if the requested number is larger than the current height
+    pub fn ensure_block_number<T: Into<BlockId>>(
+        &self,
+        block_id: Option<T>,
+    ) -> Result<u64, BlockchainError> {
+        let current = self.best_number().as_u64();
+
+        let requested =
+            match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
+                BlockId::Hash(hash) => self
+                    .blockchain
+                    .storage
+                    .read()
+                    .blocks
+                    .get(&hash)
+                    .ok_or(BlockchainError::BlockNotFound)?
+                    .header
+                    .number
+                    .as_u64(),
+                BlockId::Number(num) => match num {
+                    BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
+                    BlockNumber::Earliest => 0,
+                    BlockNumber::Number(num) => num.as_u64(),
+                },
+            };
+
+        if requested > current {
+            Err(BlockchainError::BlockOutOfRange(current, requested))
+        } else {
+            Ok(requested)
+        }
     }
 
     pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
