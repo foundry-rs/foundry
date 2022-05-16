@@ -171,8 +171,12 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
+
+            let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+
             let mut builder =
-                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+                TxBuilder::new(&provider, config.sender, address, chain, false).await?;
             builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
@@ -266,6 +270,7 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
             let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
             let sig = sig.unwrap_or_default();
 
             if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
@@ -290,7 +295,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -309,7 +314,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -328,7 +333,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -355,7 +360,7 @@ async fn main() -> eyre::Result<()> {
                     gas_price,
                     value,
                     nonce,
-                    eth.chain,
+                    chain,
                     config.etherscan_api_key,
                     cast_async,
                     legacy,
@@ -390,9 +395,12 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
+            let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+
             let from = eth.sender().await;
 
-            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
+            let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
             builder
                 .etherscan_api_key(config.etherscan_api_key)
                 .value(value)
@@ -824,13 +832,13 @@ where
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
     let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
     builder
+        .etherscan_api_key(etherscan_api_key)
         .args(params)
         .await?
         .gas(gas)
         .gas_price(gas_price)
         .value(value)
-        .nonce(nonce)
-        .etherscan_api_key(etherscan_api_key);
+        .nonce(nonce);
     let builder_output = builder.build();
 
     let cast = Cast::new(provider);
