@@ -271,6 +271,47 @@ async fn can_deploy_greeter_http() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_and_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    // can mine in auto-mine mode
+    api.evm_mine(None).await.unwrap();
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // can mine in manual mode
+    api.evm_mine(None).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap();
+
+    // mine block with tx manually
+    api.evm_mine(None).await.unwrap();
+
+    let receipt = tx.await.unwrap().unwrap();
+
+    let address = receipt.contract_address.unwrap();
+    let greeter_contract = Greeter::new(address, Arc::clone(&client));
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let set_greeting = greeter_contract.set_greeting("Another Message".to_string());
+    let tx = set_greeting.send().await.unwrap();
+
+    // mine block manually
+    api.evm_mine(None).await.unwrap();
+
+    let _tx = tx.await.unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
