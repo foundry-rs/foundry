@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_cli_test_utils::{
-    forgetest,
+    forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
@@ -218,4 +218,17 @@ contract MyTest is DSTest {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
     );
+});
+
+// checks that forge test repeatedly produces the same output
+forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("test");
+    cmd.assert_non_empty_stdout();
+
+    for _ in 0..10 {
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_test_repeatedly.stdout"),
+        );
+    }
 });
