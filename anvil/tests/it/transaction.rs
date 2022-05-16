@@ -565,3 +565,58 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
     assert_eq!(successful_tx, 1);
     assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let nonce = client.get_transaction_count(from, None).await.unwrap();
+    // explicitly set the nonce
+    let mut tasks = Vec::new();
+    let mut deploy_tx =
+        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    deploy_tx.set_nonce(nonce);
+    deploy_tx.set_gas(300_000u64);
+
+    let mut set_greeting_tx = greeter_contract.set_greeting("Hello".to_string()).tx;
+    set_greeting_tx.set_nonce(nonce);
+    set_greeting_tx.set_gas(300_000u64);
+
+    for idx in 0..10 {
+        let client = Arc::clone(&client);
+        let task = if idx % 2 == 0 {
+            let tx = deploy_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        } else {
+            let tx = set_greeting_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        };
+
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), nonce + 1);
+}
