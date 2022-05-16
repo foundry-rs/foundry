@@ -870,8 +870,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b103d85ca6e209388771bfb7aa6b68a7aeec4afbf6f0a0264bfbf50360e5212e"
 dependencies = [
  "crossterm 0.23.2",
- "strum",
- "strum_macros",
+ "strum 0.23.0",
+ "strum_macros 0.23.1",
  "unicode-width",
 ]
 
@@ -1437,8 +1437,8 @@ dependencies = [
 
 [[package]]
 name = "ethers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1453,7 +1453,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1463,8 +1463,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1481,8 +1481,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-abigen"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1503,8 +1503,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-derive"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1517,12 +1517,13 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
  "cargo_metadata",
+ "chrono 0.4.19",
  "convert_case",
  "elliptic-curve",
  "ethabi",
@@ -1536,19 +1537,22 @@ dependencies = [
  "rlp-derive",
  "serde",
  "serde_json",
+ "strum 0.24.0",
  "syn",
  "thiserror",
  "tiny-keccak",
+ "unicode-xid",
 ]
 
 [[package]]
 name = "ethers-etherscan"
-version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.2.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "ethers-core",
  "ethers-solc",
  "reqwest",
+ "semver",
  "serde",
  "serde-aux",
  "serde_json",
@@ -1558,8 +1562,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-middleware"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1582,8 +1586,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-providers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1617,8 +1621,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-signers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1641,8 +1645,9 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+source = "git+https://github.com/gakonst/ethers-rs#ceafcb250be081dd77a224575f771a66668a9f22"
 dependencies = [
+ "cfg-if 1.0.0",
  "colored",
  "dunce",
  "ethers-core",
@@ -3683,9 +3688,9 @@ checksum = "dbf0c48bc1d91375ae5c3cd81e3722dff1abcf81a30960240640d223f59fe0e5"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.37"
+version = "1.0.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec757218438d5fda206afc041538b2f6d889286160d649a86a24d37e1235afd1"
+checksum = "9027b48e9d4c9175fa2218adf3557f91c1137021739951d4932f5f8268ac48aa"
 dependencies = [
  "unicode-xid",
 ]
@@ -3864,9 +3869,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd249e82c21598a9a426a4e00dd7adc1d640b22445ec8545feef801d1a74c221"
+checksum = "bd99e5772ead8baa5215278c9b15bf92087709e9c1b2d1f97cdb5a183c933a7d"
 dependencies = [
  "autocfg",
  "crossbeam-deque",
@@ -4506,15 +4511,13 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b2ad9c159bd02219a59368133301e6195fdaa2b5d55c628ccdcd611d49235f"
+checksum = "395b6e1ec5af117bd08f963c7cd80f8efd4eed51c5a332aed42b13e3f9bc860b"
 dependencies = [
+ "itertools",
  "lalrpop",
  "lalrpop-util",
- "num-bigint",
- "num-rational",
- "num-traits",
  "phf 0.10.1",
  "unicode-xid",
 ]
@@ -4567,12 +4570,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cae14b91c7d11c9a851d3fbc80a963198998c2a64eec840477fa92d8ce9b70bb"
 
 [[package]]
+name = "strum"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96acfc1b70604b8b2f1ffa4c57e59176c7dbb05d556c71ecd2f5498a1dee7f8"
+dependencies = [
+ "strum_macros 0.24.0",
+]
+
+[[package]]
 name = "strum_macros"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5bb0dc7ee9c15cea6199cde9a127fa16a4c5819af85395457ad72d68edc85a38"
 dependencies = [
  "heck 0.3.3",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6878079b17446e4d3eba6192bb0a2950d5b14f0ed8424b852310e5a94345d0ef"
+dependencies = [
+ "heck 0.4.0",
  "proc-macro2",
  "quote",
  "rustversion",
@@ -4641,9 +4666,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.92"
+version = "1.0.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ff7c592601f11445996a06f8ad0c27f094a58857c2f89e97974ab9235b92c52"
+checksum = "a07e33e919ebcd69113d5be0e4d70c5707004ff45188910106854f38b960df4a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5201,9 +5226,9 @@ checksum = "3ed742d4ea2bd1176e236172c8429aaf54486e7ac098db29ffe6529e0ce50973"
 
 [[package]]
 name = "unicode-xid"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+checksum = "957e51f3646910546462e67d5f7599b9e4fb8acdd304b087a6494730f9eebf04"
 
 [[package]]
 name = "untrusted"
