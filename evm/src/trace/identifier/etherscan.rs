@@ -2,7 +2,10 @@ use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
     abi::{Abi, Address},
     etherscan,
-    prelude::{contract::ContractMetadata, errors::EtherscanError},
+    prelude::{
+        artifacts::ContractBytecodeSome, contract::ContractMetadata, errors::EtherscanError,
+        ArtifactId,
+    },
     types::Chain,
 };
 use futures::{
@@ -10,7 +13,7 @@ use futures::{
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, path::PathBuf, pin::Pin};
+use std::{borrow::Cow, collections::BTreeMap, path::PathBuf, pin::Pin};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
@@ -18,6 +21,10 @@ use tracing::{trace, warn};
 pub struct EtherscanIdentifier {
     /// The Etherscan client
     client: Option<etherscan::Client>,
+    // cache_path: Option<PathBuf>,
+    pub contracts: BTreeMap<String, (String, bool, u32, String)>,
+    pub sources: BTreeMap<u32, String>,
+    compiles: bool,
 }
 
 impl EtherscanIdentifier {
@@ -29,6 +36,7 @@ impl EtherscanIdentifier {
         etherscan_api_key: Option<String>,
         cache_path: Option<PathBuf>,
         ttl: Duration,
+        compiles: bool,
     ) -> Self {
         if let Some(cache_path) = &cache_path {
             if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
@@ -39,16 +47,57 @@ impl EtherscanIdentifier {
         Self {
             client: chain.and_then(|chain| {
                 etherscan_api_key.and_then(|key| {
-                    etherscan::Client::new_cached(chain.into(), key, cache_path, ttl).ok()
+                    etherscan::Client::new_cached(chain.into(), key, cache_path.clone(), ttl).ok()
                 })
             }),
+            contracts: BTreeMap::new(),
+            // cache_path,
+            compiles,
+            sources: BTreeMap::new(),
+        }
+    }
+
+    pub async fn get_compiled_contracts_with_sources(
+        &self,
+    ) -> eyre::Result<(BTreeMap<ArtifactId, String>, BTreeMap<ArtifactId, ContractBytecodeSome>)>
+    {
+        if self.compiles {
+            let mut compiled_contracts = BTreeMap::new();
+            let mut sources = BTreeMap::new();
+
+            for (label, (source_code, optimization, runs, version)) in &self.contracts {
+                // todo skip multi-file, v0.4 and vyper for now
+                if source_code.starts_with("{{") ||
+                    version.starts_with("v0.4") ||
+                    version.starts_with("vyper")
+                {
+                    continue
+                }
+
+                println!("Compiling {label}");
+                let compiled = foundry_utils::compile_contract_source(
+                    label.to_string(),
+                    source_code.clone(),
+                    *optimization,
+                    *runs,
+                    version.to_string(),
+                )
+                .await?;
+
+                compiled_contracts.insert(compiled.0.clone(), compiled.1.to_owned());
+                sources.insert(compiled.0.to_owned(), source_code.to_owned());
+            }
+
+            Ok((sources, compiled_contracts))
+        } else {
+            Ok((BTreeMap::new(), BTreeMap::new()))
         }
     }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
-        &self,
+        &mut self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
         self.client.as_ref().map_or(Default::default(), |client| {
@@ -57,13 +106,17 @@ impl TraceIdentifier for EtherscanIdentifier {
             for (addr, _) in addresses {
                 fetcher.push(*addr);
             }
-
             let fut = fetcher
-                .map(|(address, label, abi)| AddressIdentity {
-                    address,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi: Some(Cow::Owned(abi)),
+                .map(|(address, label, abi, source_code, optimization, runs, version)| {
+                    self.contracts
+                        .insert(label.clone(), (source_code, optimization, runs, version));
+
+                    AddressIdentity {
+                        address,
+                        label: Some(label.clone()),
+                        contract: Some(label),
+                        abi: Some(Cow::Owned(abi)),
+                    }
                 })
                 .collect();
 
@@ -126,7 +179,7 @@ impl EtherscanFetcher {
 }
 
 impl Stream for EtherscanFetcher {
-    type Item = (Address, String, Abi);
+    type Item = (Address, String, Abi, String, bool, u32, String);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -151,7 +204,15 @@ impl Stream for EtherscanFetcher {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
                                 if let Ok(abi) = serde_json::from_str(&item.abi) {
-                                    return Poll::Ready(Some((addr, item.contract_name, abi)))
+                                    return Poll::Ready(Some((
+                                        addr,
+                                        item.contract_name,
+                                        abi,
+                                        item.source_code,
+                                        item.optimization_used.eq("1"),
+                                        item.runs.parse::<u32>().expect("runs parse error"),
+                                        item.compiler_version,
+                                    )))
                                 }
                             }
                         }

@@ -56,7 +56,7 @@ pub struct Tui {
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
-    source_code: BTreeMap<u32, String>,
+    known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
 }
 
 impl Tui {
@@ -67,7 +67,7 @@ impl Tui {
         current_step: usize,
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
-        source_code: BTreeMap<u32, String>,
+        known_contracts_sources: HashMap<String, BTreeMap<u32, String>>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -82,7 +82,7 @@ impl Tui {
             current_step,
             identified_contracts,
             known_contracts,
-            source_code,
+            known_contracts_sources,
         })
     }
 
@@ -106,7 +106,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -122,7 +122,7 @@ impl Tui {
                 address,
                 identified_contracts,
                 known_contracts,
-                source_code,
+                known_contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -137,7 +137,7 @@ impl Tui {
                 address,
                 identified_contracts,
                 known_contracts,
-                source_code,
+                known_contracts_sources,
                 debug_steps,
                 opcode_list,
                 current_step,
@@ -155,7 +155,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -189,7 +189,7 @@ impl Tui {
                     address,
                     identified_contracts,
                     known_contracts,
-                    source_code,
+                    known_contracts_sources,
                     debug_steps[current_step].ic,
                     call_kind,
                     src_pane,
@@ -226,7 +226,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -266,7 +266,7 @@ impl Tui {
                             address,
                             identified_contracts,
                             known_contracts,
-                            source_code,
+                            known_contracts_sources,
                             debug_steps[current_step].ic,
                             call_kind,
                             src_pane,
@@ -328,7 +328,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        known_contracts_sources: &HashMap<String, BTreeMap<u32, String>>,
         ic: usize,
         call_kind: CallKind,
         area: Rect,
@@ -346,7 +346,10 @@ impl Tui {
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(known) = known_contracts.get(contract_name) {
+            // todo check
+            if let (Some(known), Some(source_code)) =
+                (known_contracts.get(contract_name), known_contracts_sources.get(contract_name))
+            {
                 // grab either the creation source map or runtime sourcemap
                 if let Some(sourcemap) = if matches!(call_kind, CallKind::Create) {
                     known.bytecode.source_map()
@@ -410,7 +413,8 @@ impl Tui {
                                     };
 
                                     let max_line_num = num_lines.to_string().len();
-                                    // We check if there is other text on the same line before the
+                                    // We check if there is other text on the same line before
+                                    // the
                                     // highlight starts
                                     if let Some(last) = before.pop() {
                                         if !last.ends_with('\n') {
@@ -1178,7 +1182,7 @@ impl Ui for Tui {
                     debug_call[draw_memory.inner_call_index].0,
                     &self.identified_contracts,
                     &self.known_contracts,
-                    &self.source_code,
+                    &self.known_contracts_sources,
                     &debug_call[draw_memory.inner_call_index].1[..],
                     &opcode_list,
                     current_step,

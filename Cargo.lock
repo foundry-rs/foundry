@@ -2004,6 +2004,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
+ "dunce",
  "ethers",
  "ethers-addressbook",
  "ethers-core",
@@ -2011,12 +2012,15 @@ dependencies = [
  "ethers-providers",
  "ethers-solc",
  "eyre",
+ "foundry-config",
  "hex",
  "reqwest",
  "rlp",
  "rustc-hex",
+ "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing-subscriber",
 ]
