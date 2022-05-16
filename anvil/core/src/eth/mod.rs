@@ -489,14 +489,35 @@ mod tests {
     fn test_custom_mine() {
         let s = r#"{"method": "anvil_mine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_none());
+                assert!(time.is_none());
+            }
+            _ => unreachable!(),
+        }
         let s =
             r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_some());
+                assert!(time.is_none());
+            }
+            _ => unreachable!(),
+        }
         let s = r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_some());
+                assert!(time.is_some());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -707,11 +728,27 @@ mod tests {
             "blocks": 100
         }]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params,
+                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                )
+            }
+            _ => unreachable!(),
+        }
 
         let s = r#"{"method": "evm_mine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert!(params.is_none())
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
