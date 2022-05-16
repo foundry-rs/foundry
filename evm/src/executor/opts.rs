@@ -1,5 +1,6 @@
 use ethers::{
     providers::{Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::{Address, Chain, U256},
 };
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
@@ -107,7 +108,7 @@ impl EvmOpts {
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
+            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
                 return Chain::try_from(id.as_u64()).ok()
             }
         }

@@ -24,37 +24,6 @@ use std::{
     time::Duration,
 };
 
-use tokio::runtime::{Handle, Runtime};
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum RuntimeOrHandle {
-    Runtime(Runtime),
-    Handle(Handle),
-}
-
-impl Default for RuntimeOrHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RuntimeOrHandle {
-    pub fn new() -> RuntimeOrHandle {
-        match Handle::try_current() {
-            Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
-        }
-    }
-
-    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
-        match &self {
-            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
-            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
-        }
-    }
-}
-
 pub enum SelectorOrSig {
     Selector(String),
     Sig(Vec<String>),

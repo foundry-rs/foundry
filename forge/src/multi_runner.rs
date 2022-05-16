@@ -2,14 +2,14 @@ use crate::{ContractRunner, SuiteResult, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{Artifact, ProjectCompileOutput},
+    solc::{utils::RuntimeOrHandle, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_evm::executor::{
     builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
-use foundry_utils::{PostLinkInput, RuntimeOrHandle};
+use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};

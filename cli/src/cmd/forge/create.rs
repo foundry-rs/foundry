@@ -10,11 +10,12 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 use eyre::{Context, Result};
 use foundry_config::Config;
-use foundry_utils::{parse_tokens, RuntimeOrHandle};
+use foundry_utils::parse_tokens;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 

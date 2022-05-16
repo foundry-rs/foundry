@@ -70,7 +70,9 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
         add_verify_target(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
+        println!("before create {:?}", contract_path);
         cmd.arg("create").args(info.create_args()).arg(contract_path);
+        println!("after create");
 
         let out = cmd.stdout_lossy();
         let address = utils::parse_deployed_address(out.as_str())
