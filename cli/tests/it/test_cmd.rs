@@ -233,7 +233,7 @@ forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
     }
 });
 
-// tests that `forge test` will run a test only once after changing the verion
+// tests that `forge test` will run a test only once after changing the version
 forgetest!(
     runs_tests_exactly_once_with_changed_versions,
     |prj: TestProject, mut cmd: TestCommand| {
