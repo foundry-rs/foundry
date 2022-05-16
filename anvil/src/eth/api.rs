@@ -1235,7 +1235,7 @@ impl EthApi {
         }
     }
 
-    ///Modifies the balance of an account.
+    /// Modifies the balance of an account.
     ///
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {

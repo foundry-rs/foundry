@@ -1,7 +1,7 @@
 //! various fork related test
 
 use crate::{next_port, utils};
-use anvil::{spawn, NodeConfig};
+use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
     contract::abigen,
@@ -20,6 +20,37 @@ const RINKEBY_RPC_URL: &str =
     "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W";
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
+
+/// Represents an anvil fork of an anvil node
+#[allow(clippy::unused)]
+pub struct LocalFork {
+    origin_api: EthApi,
+    origin_handle: NodeHandle,
+    fork_api: EthApi,
+    fork_handle: NodeHandle,
+}
+
+// === impl LocalFork ===
+
+impl LocalFork {
+    /// Spawns two nodes with the test config
+    pub async fn new() -> Self {
+        Self::setup(
+            NodeConfig::test().with_port(next_port()),
+            NodeConfig::test().with_port(next_port()),
+        )
+        .await
+    }
+
+    /// Spawns two nodes where one is a fork of the other
+    pub async fn setup(origin: NodeConfig, fork: NodeConfig) -> Self {
+        let (origin_api, origin_handle) = spawn(origin).await;
+
+        let (fork_api, fork_handle) =
+            spawn(fork.with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        Self { origin_api, origin_handle, fork_api, fork_handle }
+    }
+}
 
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
@@ -254,4 +285,45 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reset_properly() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let account = origin_handle.dev_accounts().next().unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let origin_nonce = 1u64.into();
+    origin_api.anvil_set_nonce(account, origin_nonce).await.unwrap();
+
+    assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_port(next_port())
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
+    )
+    .await;
+
+    let fork_provider = fork_handle.http_provider();
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+
+    let to = Address::random();
+    let to_balance = fork_provider.get_balance(to, None).await.unwrap();
+    let tx = TransactionRequest::new().from(account).to(to).value(1337u64);
+    let tx = fork_provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    // nonce incremented by 1
+    assert_eq!(origin_nonce + 1, fork_provider.get_transaction_count(account, None).await.unwrap());
+
+    // resetting to origin state
+    fork_api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+    // nonce reset to origin
+    assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
+
+    // balance is reset
+    assert_eq!(to_balance, fork_provider.get_balance(to, None).await.unwrap());
+
+    // tx does not exist anymore
+    assert!(fork_provider.get_transaction(tx.transaction_hash).await.unwrap().is_none())
 }
