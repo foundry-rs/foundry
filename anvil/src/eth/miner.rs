@@ -191,9 +191,11 @@ impl Default for FixedBlockTimeMiner {
 pub struct ReadyTransactionMiner {
     /// how many transactions to mine per block
     max_transactions: usize,
-    /// transactions received
+    /// transactions that are ready to be included in a block
+    ///
+    /// This is used as a trigger to take transactions from the pool
     ready: HashSet<TxHash>,
-    /// receives hashes of transactions that are ready
+    /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
 }
 
@@ -201,6 +203,7 @@ pub struct ReadyTransactionMiner {
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
+        // drain the notification stream
         while let Poll::Ready(Some(hash)) = Pin::new(&mut self.rx).poll_next(cx) {
             self.ready.insert(hash);
         }
@@ -212,8 +215,9 @@ impl ReadyTransactionMiner {
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
 
-        for tx in transactions.iter() {
-            self.ready.remove(tx.hash());
+        if transactions.len() < self.max_transactions {
+            // save to clear the buffer since we completely emptied the pool
+            self.ready.clear();
         }
 
         Poll::Ready(transactions)

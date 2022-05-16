@@ -138,6 +138,42 @@ stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
 
+##### Additional Model Checker settings
+
+[Solidity's built-in model checker](https://docs.soliditylang.org/en/latest/smtchecker.html#tutorial)
+is an opt-in module that can be enabled via the `ModelChecker` object.
+
+See [Compiler Input Description `settings.modelChecker`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
+and [the model checker's options](https://docs.soliditylang.org/en/latest/smtchecker.html#smtchecker-options-and-tuning).
+
+The module is available in `solc` release binaries for OSX and Linux.
+The latter requires the z3 library version [4.8.8, 4.8.14] to be installed
+in the system (SO version 4.8).
+
+Similarly to the optimizer settings above, the `model_checker` settings must be
+prefixed with the profile they correspond to: `[default.model_checker]` belongs
+to the `[default]` profile.
+
+```toml
+[default.model_checker]
+contracts = { '/path/to/project/src/Contract.sol' = [ 'Contract' ] }
+engine = 'chc'
+timeout = 10000
+targets = [ 'assert' ]
+```
+
+The fields above are recommended when using the model checker.
+Setting which contract should be verified is extremely important, otherwise all
+available contracts will be verified which can consume a lot of time.
+The recommended engine is `chc`, but `bmc` and `all` (runs both) are also
+accepted.
+It is also important to set a proper timeout (given in milliseconds), since the
+default time given to the underlying solvers may not be enough.
+If no verification targets are given, only assertions will be checked.
+
+The model checker will run when `forge build` is invoked, and will show
+findings as warnings if any.
+
 ## Environment Variables
 
 Foundry's tools read all environment variable names prefixed with `FOUNDRY_` using the string after the `_` as the name

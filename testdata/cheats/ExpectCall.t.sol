@@ -16,6 +16,10 @@ contract Contract {
     function add(uint256 a, uint256 b) public pure returns (uint256) {
         return a + b;
     }
+
+    function pay(uint256 a) public payable returns (uint256) {
+      return a;
+    }
 }
 
 contract NestedContract {
@@ -103,5 +107,34 @@ contract ExpectCallTest is DSTest {
             abi.encodeWithSelector(target.add.selector, 3, 3, 3)
         );
         target.add(3, 3);
+    }
+
+    function testExpectCallWithValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(
+            address(target),
+            1,
+            abi.encodeWithSelector(target.pay.selector, 2)
+        );
+        target.pay{value: 1}(2);
+    }
+
+    function testFailExpectCallValue() public {
+        Contract target = new Contract();
+        cheats.expectCall(
+            address(target),
+            1,
+            abi.encodeWithSelector(target.pay.selector, 2)
+        );
+    }
+
+    function testExpectCallWithValueWithoutParameters() public {
+        Contract target = new Contract();
+        cheats.expectCall(
+            address(target),
+            3,
+            abi.encodeWithSelector(target.pay.selector)
+        );
+        target.pay{value: 3}(100);
     }
 }

@@ -659,6 +659,8 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
 If an address is specified, then the ABI is fetched from Etherscan."#
         )]
         path_or_address: String,
+        #[clap(long, short, help = "The name to use for the generated interface")]
+        name: Option<String>,
         #[clap(long, short, default_value = "^0.8.10", help = "Solidity pragma version.")]
         pragma: String,
         #[clap(

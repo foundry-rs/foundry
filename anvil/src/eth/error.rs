@@ -54,6 +54,8 @@ pub enum BlockchainError {
     Internal(String),
     #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
     BlockOutOfRange(u64, u64),
+    #[error("Resource not found")]
+    BlockNotFound,
 }
 
 impl From<RpcError> for BlockchainError {
@@ -199,6 +201,12 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::BlockOutOfRange(_, _) => {
                     RpcError::invalid_params(err.to_string())
                 }
+                err @ BlockchainError::BlockNotFound => RpcError {
+                    // <https://eips.ethereum.org/EIPS/eip-1898>
+                    code: ErrorCode::ServerError(-32001),
+                    message: err.to_string().into(),
+                    data: None,
+                },
             }
             .into(),
         }

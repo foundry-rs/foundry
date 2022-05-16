@@ -198,6 +198,35 @@ impl MultiContractRunner {
             .collect()
     }
 
+    pub fn list(
+        &self,
+        filter: &(impl TestFilter + Send + Sync),
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map(|(id, (abi, _, _))| {
+                let source = id.source.as_path().display().to_string();
+                let name = id.name.clone();
+                let tests = abi
+                    .functions()
+                    .filter(|func| func.name.starts_with("test"))
+                    .filter(|func| filter.matches_test(func.signature()))
+                    .map(|func| func.name.clone())
+                    .collect::<Vec<_>>();
+
+                (source, name, tests)
+            })
+            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
+                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
+                acc
+            })
+    }
+
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),

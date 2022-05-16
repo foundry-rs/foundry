@@ -40,3 +40,17 @@ async fn can_impersonate() {
 
     assert_eq!(tx.from, impersonated);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let start_num = provider.get_block_number().await.unwrap();
+
+    for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+        api.evm_mine(None).await.unwrap();
+        let num = provider.get_block_number().await.unwrap();
+        assert_eq!(num, start_num + idx + 1);
+    }
+}
