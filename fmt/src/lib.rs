@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(test)]
+mod ast_eq;
 mod formatter;
 mod helpers;
 mod loc;

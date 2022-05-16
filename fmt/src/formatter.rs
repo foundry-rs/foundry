@@ -1160,6 +1160,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ast_eq::AstEq;
     use itertools::Itertools;
     use std::{fs, path::PathBuf};
 
@@ -1240,12 +1241,23 @@ mod tests {
             }
         }
 
-        let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
-        println!("{:#?}", source_unit);
+        let (mut source_pt, _source_comments) = solang_parser::parse(source, 1).unwrap();
+
+        let (expected_pt, _expected_comments) = solang_parser::parse(expected, 1).unwrap();
+        if !source_pt.ast_eq(&expected_pt) {
+            pretty_assertions::assert_eq!(
+                source_pt,
+                expected_pt,
+                "(formatted Parse Tree == expected Parse Tree) in {}",
+                filename
+            );
+            // panic!("(formatted Parse Tree == expected Parse Tree) in {}", filename)
+        }
+
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, source, config);
 
-        source_unit.visit(&mut f).unwrap();
+        source_pt.visit(&mut f).unwrap();
 
         let formatted = PrettyString(result);
         let expected = PrettyString(expected.trim_start().to_string());
