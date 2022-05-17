@@ -14,44 +14,15 @@ use ethers_solc::{
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
+use futures::future::BoxFuture;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt::{self, Write},
     str::FromStr,
+    time::Duration,
 };
-
-use tokio::runtime::{Handle, Runtime};
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum RuntimeOrHandle {
-    Runtime(Runtime),
-    Handle(Handle),
-}
-
-impl Default for RuntimeOrHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RuntimeOrHandle {
-    pub fn new() -> RuntimeOrHandle {
-        match Handle::try_current() {
-            Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
-        }
-    }
-
-    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
-        match &self {
-            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
-            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
-        }
-    }
-}
 
 pub enum SelectorOrSig {
     Selector(String),
@@ -1009,6 +980,56 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
             ),
         }
     })
+}
+
+/// A type that keeps track of attempts
+#[derive(Debug, Clone)]
+pub struct Retry {
+    retries: u32,
+    delay: Option<u32>,
+}
+
+/// Sample retry logic implementation
+impl Retry {
+    pub fn new(retries: u32, delay: Option<u32>) -> Self {
+        Self { retries, delay }
+    }
+
+    fn handle_err(&mut self, err: eyre::Report) {
+        self.retries -= 1;
+        tracing::warn!(
+            "erroneous attempt ({} tries remaining): {}",
+            self.retries,
+            err.root_cause()
+        );
+        if let Some(delay) = self.delay {
+            std::thread::sleep(Duration::from_secs(delay.into()));
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        loop {
+            match callback() {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            }
+        }
+    }
+
+    pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
+    {
+        loop {
+            match callback().await {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            };
+        }
+    }
 }
 
 /// Enables tracing

@@ -8,6 +8,7 @@ use ethers::{
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        utils::RuntimeOrHandle,
         Project,
     },
     types::{Address, Bytes, U256},
@@ -24,7 +25,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::{encode_args, format_token, IntoFunction, PostLinkInput, RuntimeOrHandle};
+use foundry_utils::{encode_args, format_token, IntoFunction, PostLinkInput};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;

@@ -2014,6 +2014,7 @@ dependencies = [
  "ethers-providers",
  "ethers-solc",
  "eyre",
+ "futures",
  "hex",
  "reqwest",
  "rlp",
@@ -2021,6 +2022,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
