@@ -1,4 +1,4 @@
-use ethers::prelude::Provider;
+use ethers::{abi::Address, prelude::Provider};
 use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
@@ -132,9 +132,13 @@ impl ExecutorBuilder {
 
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
+    pub fn with_cheatcodes(mut self, ffi: bool, broadcast_address: Option<Address>) -> Self {
+        self.inspector_config.cheatcodes = Some(Cheatcodes::new(
+            ffi,
+            self.env.block.clone(),
+            self.env.tx.gas_price,
+            broadcast_address,
+        ));
         self
     }
 

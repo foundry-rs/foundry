@@ -109,6 +109,16 @@ contract BroadcastTest is DSTest {
         cheats.broadcast(address(0x1338));
         test.t(0);     
     }
+
+    function deployNoArgs() public {
+        cheats.broadcast();
+        Test test1 = new Test();
+    
+        cheats.startBroadcast();
+        Test test2 = new Test();
+        cheats.stopBroadcast();
+
+    }
 }
 
 

@@ -292,6 +292,9 @@ impl Config {
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
+    /// Default address for tx.origin
+    pub const DEFAULT_SENDER: &'static str = "00a329c0648769a73afac7f9381e08fb43dbea72";
+
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
@@ -1227,8 +1230,8 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             ffi: false,
-            sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
-            tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
+            sender: Config::DEFAULT_SENDER.parse().unwrap(),
+            tx_origin: Config::DEFAULT_SENDER.parse().unwrap(),
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,

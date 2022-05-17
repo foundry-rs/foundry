@@ -74,7 +74,9 @@ interface Cheats {
     function broadcast() external;
     // Has the next call (at this call depth only) create a transaction with the address provided as the sender, that can later be signed and sent onchain
     function broadcast(address) external;
-    // Has the all subsequent calls (at tis call depth only) create transactions, that can later be signed and sent onchain
+    // Using the address that deploys the test contract, has the all subsequent calls (at this call depth only) create transactions, that can later be signed and sent onchain
+    function startBroadcast() external;
+    // Has the all subsequent calls (at this call depth only) create transactions, that can later be signed and sent onchain
     function startBroadcast(address) external;
     // Stops generating onchain transactions
     function stopBroadcast() external;

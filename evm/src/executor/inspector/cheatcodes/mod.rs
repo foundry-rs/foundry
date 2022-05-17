@@ -78,13 +78,27 @@ pub struct Cheatcodes {
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
 
+    /// Broadcast address when overloading
+    pub broadcast_address: Option<Address>,
+
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
-        Self { ffi, block: Some(block), gas_price: Some(gas_price), ..Default::default() }
+    pub fn new(
+        ffi: bool,
+        block: BlockEnv,
+        gas_price: U256,
+        broadcast_address: Option<Address>,
+    ) -> Self {
+        Self {
+            ffi,
+            broadcast_address,
+            block: Some(block),
+            gas_price: Some(gas_price),
+            ..Default::default()
+        }
     }
 
     fn apply_cheatcode<DB: Database>(

@@ -1,5 +1,7 @@
 use crate::cmd::ScriptSequence;
 
+use std::str::FromStr;
+
 use ethers::{
     prelude::{Provider, SignerMiddleware},
     providers::Middleware,
@@ -68,14 +70,21 @@ impl ScriptArgs {
                     let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
                     Ok((tx.clone(), signer))
                 } else {
-                    Err(eyre::eyre!(format!(
+                    let mut err_msg = format!(
                         "No associated wallet for address: {:?}. Unlocked wallets: {:?}",
                         from,
                         local_wallets
                             .iter()
                             .map(|wallet| wallet.address())
                             .collect::<Vec<Address>>()
-                    )))
+                    );
+
+                    // This is an actual used address
+                    if from == Address::from_str(Config::DEFAULT_SENDER).unwrap() {
+                        err_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender."
+                    }
+
+                    eyre::bail!(err_msg)
                 }
             });
 

@@ -836,3 +836,21 @@ forgetest_async!(
             .simulate("You have more than one deployer who could deploy libraries");
     })
 );
+
+forgetest_async!(
+    can_deploy_no_arg_broadcast,
+    (|prj: TestProject, cmd: TestCommand| async move {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTest", "deployNoArgs()")
+            .simulate("SIMULATION COMPLETE. To broadcast these")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 3)])
+            .await;
+    })
+);

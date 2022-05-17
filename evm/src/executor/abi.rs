@@ -48,6 +48,7 @@ ethers::contract::abigen!(
             chainId(uint256)
             broadcast()
             broadcast(address)
+            startBroadcast()
             startBroadcast(address)
             stopBroadcast()
     ]"#,

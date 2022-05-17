@@ -133,7 +133,7 @@ impl ScriptArgs {
         .await;
 
         let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(script_config.evm_opts.ffi)
+            .with_cheatcodes(script_config.evm_opts.ffi, Some(sender))
             .with_config(env)
             .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit());

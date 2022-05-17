@@ -225,13 +225,24 @@ pub fn apply<DB: Database>(
             data.env.cfg.chain_id = inner.0;
             Ok(Bytes::new())
         }
-        HEVMCalls::Broadcast0(_) => {
-            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), true)
-        }
+        HEVMCalls::Broadcast0(_) => broadcast(
+            state,
+            state.broadcast_address.expect("No broadcast address specified."),
+            caller,
+            data.subroutine.depth(),
+            true,
+        ),
         HEVMCalls::Broadcast1(inner) => {
             broadcast(state, inner.0, caller, data.subroutine.depth(), true)
         }
-        HEVMCalls::StartBroadcast(inner) => {
+        HEVMCalls::StartBroadcast0(_) => broadcast(
+            state,
+            state.broadcast_address.expect("No broadcast address specified."),
+            caller,
+            data.subroutine.depth(),
+            false,
+        ),
+        HEVMCalls::StartBroadcast1(inner) => {
             broadcast(state, inner.0, caller, data.subroutine.depth(), false)
         }
         HEVMCalls::StopBroadcast(_) => {
