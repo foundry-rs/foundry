@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    env,
     ffi::OsString,
     fmt, io,
     ops::Deref,
@@ -72,10 +73,38 @@ pub trait Processor: 'static + fmt::Debug + Send + Sync {
         dirs_next::home_dir()
     }
     fn current_dir(&self) -> io::Result<PathBuf> {
-        std::env::current_dir()
+        env::current_dir()
+    }
+
+    /// Returns an iterator over all env args
+    fn args(&self) -> Box<dyn Iterator<Item = String>> {
+        Box::new(env::args())
+    }
+
+    /// Returns an iterator over all arguments that this program was started with
+    fn args_os(&self) -> Box<dyn Iterator<Item = OsString>> {
+        Box::new(env::args_os())
+    }
+
+    fn var(&self, key: &str) -> Result<String, env::VarError> {
+        env::var(key)
     }
     fn var_os(&self, key: &str) -> Option<OsString> {
-        std::env::var_os(key)
+        env::var_os(key)
+    }
+
+    /// Returns the file name of file this process was started with
+    fn name(&self) -> Option<String> {
+        let arg0 = match self.var("FOUNDRYUP_FORCE_ARG0") {
+            Ok(v) => Some(v),
+            Err(_) => self.args().next(),
+        }
+        .map(PathBuf::from);
+
+        arg0.as_ref()
+            .and_then(|a| a.file_stem())
+            .and_then(std::ffi::OsStr::to_str)
+            .map(String::from)
     }
 
     /// If `self` is the same type as the provided `TypeId`, returns an untyped
@@ -146,6 +175,11 @@ pub fn with<T>(process: &Process, f: impl FnOnce() -> T) -> T {
     // prior processor
     let _guard = set_current(process);
     f()
+}
+
+/// Returns a clone of the current `Process`
+pub fn get_process() -> Process {
+    with_default(|p| p.clone())
 }
 
 /// Executes a closure with a reference to this thread's current Processor.

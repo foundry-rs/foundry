@@ -11,6 +11,26 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// The version message for the current program, like
+/// `foundryup 0.1.0 (f01b232bc 2022-01-22T23:28:39.493201+00:00)`
+pub(crate) const VERSION_MESSAGE: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("VERGEN_GIT_SHA_SHORT"),
+    " ",
+    env!("VERGEN_BUILD_TIMESTAMP"),
+    ")"
+);
+
+/// New type for a process exit code
+pub struct ExitCode(pub i32);
+
+impl From<i32> for ExitCode {
+    fn from(code: i32) -> Self {
+        ExitCode(code)
+    }
+}
+
 /// Returns the storage directory used by foundryup
 ///
 /// It returns one of the following values, in this order of

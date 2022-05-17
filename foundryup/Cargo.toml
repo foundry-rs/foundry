@@ -9,6 +9,13 @@ description = """
 Manage foundry toolchain installations with ease
 """
 
+[build-dependencies]
+vergen = { version = "7.0", default-features = false, features = [
+    "build",
+    "rustc",
+    "git",
+] }
+
 [dependencies]
 
 # async

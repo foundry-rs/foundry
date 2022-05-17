@@ -16,4 +16,6 @@ pub enum FoundryupError {
     RemovingFile { name: String, path: PathBuf },
     #[error("could not write {name} file: '{}'", .path.display())]
     WritingFile { name: String, path: PathBuf },
+    #[error("couldn't determine self executable name")]
+    NoExeName,
 }
