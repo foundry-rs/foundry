@@ -91,17 +91,6 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub resume: bool,
 
-    /// Resumes submitting transactions that failed or timed-out previously. SHOULD NOT be used
-    /// when deploying CREATE contracts.
-    ///
-    /// It DOES NOT simulate the script again and IT DOES NOT expect nonces to have remained the
-    /// same.
-    ///
-    /// Example: If transaction N has a nonce of 22 and the account has a nonce of 23, then
-    /// all transactions from this account will have a nonce of TX_NONCE + 1.
-    #[clap(long)]
-    pub force_resume: bool,
-
     #[clap(long, help = "Address which will deploy all library dependencies.")]
     pub deployer: Option<Address>,
 
@@ -215,7 +204,10 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// Gets a sender if there are predeployed libraries but no deployer has been set by the user
+    /// If the user *has not* set a deployer, it finds the deployer from the running script
+    /// and uses it to predeploy libraries.
+    ///
+    /// If there are multiple candidate addresses, an error is thrown asking to specify which
     fn maybe_new_sender(
         &self,
         evm_opts: &EvmOpts,

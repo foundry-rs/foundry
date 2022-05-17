@@ -6,11 +6,9 @@ use ethers::{
     signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, Chain, Eip1559TransactionRequest,
-        TransactionReceipt, TransactionRequest, U256,
+        TransactionReceipt, TransactionRequest,
     },
 };
-
-use std::collections::BTreeMap;
 
 use super::*;
 
@@ -58,9 +56,6 @@ impl ScriptArgs {
         local_wallets =
             local_wallets.into_iter().map(|wallet| wallet.with_chain_id(chain)).collect();
 
-        // in case of --force-resume, we forgive the first nonce disparity of each from
-        let mut nonce_offset: BTreeMap<Address, U256> = BTreeMap::new();
-
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
         let sequence = deployment_sequence.clone();
@@ -95,25 +90,11 @@ impl ScriptArgs {
                     match foundry_utils::next_nonce(from, &fork_url, None) {
                         Ok(nonce) => {
                             let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
-                            let offset = if self.force_resume {
-                                match nonce_offset.get(&from) {
-                                    Some(offset) => *offset,
-                                    None => {
-                                        let offset = nonce - tx_nonce;
-                                        nonce_offset.insert(from, offset);
-                                        offset
-                                    }
-                                }
-                            } else {
-                                U256::from(0u32)
-                            };
 
-                            if nonce != tx_nonce + offset {
+                            if nonce != tx_nonce {
                                 eyre::bail!(
                                     "EOA nonce changed unexpectedly while sending transactions."
                                 );
-                            } else if !offset.is_zero() {
-                                legacy_or_1559.set_nonce(tx_nonce + offset);
                             }
                         }
                         Err(_) => {

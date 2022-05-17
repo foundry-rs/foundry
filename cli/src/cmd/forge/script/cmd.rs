@@ -47,7 +47,7 @@ impl ScriptArgs {
             sources,
         } = self.build(&script_config, self.deployer)?;
 
-        if self.force_resume || self.resume {
+        if self.resume {
             let mut deployment_sequence =
                 ScriptSequence::load(&self.sig, &target, &script_config.config.out)?;
             self.send_transactions(&mut deployment_sequence).await?;

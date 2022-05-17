@@ -75,7 +75,6 @@ impl Cmd for DebugArgs {
             },
             evm_opts: self.evm_opts,
             resume: false,
-            force_resume: false,
             deployer: None,
             debug: true,
         };

@@ -113,11 +113,6 @@ impl ScriptTester {
         self.run(expected)
     }
 
-    pub fn force_resume(&mut self, expected: &str) -> &mut Self {
-        self.cmd.arg("--force-resume");
-        self.run(expected)
-    }
-
     pub async fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
         for (index, increment) in keys_indexes {
             let nonce = self
