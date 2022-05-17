@@ -172,7 +172,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         let RawCallResult {
             result,
             reverted,
-            gas,
+            gas: tx_gas,
             stipend,
             logs,
             traces,
@@ -186,10 +186,12 @@ impl<DB: DatabaseRef> Runner<DB> {
             self.executor.call_raw_committing(from, to, calldata.0, value)?
         };
 
+        let gas = if commit { tx_gas } else { tx_gas.overflowing_sub(stipend).0 };
+
         Ok(ScriptResult {
             returned: result,
             success: !reverted,
-            gas: gas.overflowing_sub(stipend).0,
+            gas,
             logs,
             traces: traces
                 .map(|mut traces| {
