@@ -500,6 +500,7 @@ pub async fn get_func_etherscan(
 }
 
 /// Parses string input as Token against the expected ParamType
+#[allow(clippy::no_effect)]
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
@@ -514,15 +515,30 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
             };
 
             if token.is_err() && value.starts_with("0x") {
-                if let ParamType::Uint(_) = param {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &value)
-                        };
+                match param {
+                    ParamType::FixedBytes(32) => {
+                        if value.len() < 66 {
+                            let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+                            token = if lenient {
+                                LenientTokenizer::tokenize(param, &padded_value)
+                            } else {
+                                StrictTokenizer::tokenize(param, &padded_value)
+                            };
+                        }
                     }
+                    ParamType::Uint(_) => {
+                        // try again if value is hex
+                        if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                            token = if lenient {
+                                LenientTokenizer::tokenize(param, &value)
+                            } else {
+                                StrictTokenizer::tokenize(param, &value)
+                            };
+                        }
+                    }
+                    // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+                    // ideal. We could attempt massage for every value type?
+                    _ => {}
                 }
             }
             token

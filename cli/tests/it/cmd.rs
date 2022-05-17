@@ -369,6 +369,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -401,6 +402,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -436,6 +438,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 3957
+== Return ==
 == Logs ==
   script ran
   1
@@ -443,6 +446,40 @@ Gas used: 3957
 ",
         Paint::green("Script ran successfully.")
     ),));
+});
+
+// Tests that the run command can run functions with return values
+forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external returns (uint256 result, uint8) {
+        emit log_string("script ran");
+        return (255, 3);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("run").arg(script);
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 1836
+== Return ==
+result: uint256 255
+1: uint8 3
+== Logs ==
+  script ran
+",
+        Paint::green("Script ran successfully.")
+    )));
 });
 
 // tests that the `inspect` command works correctly

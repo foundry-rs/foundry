@@ -12,6 +12,7 @@ use tracing::log::trace;
 
 use crate::{
     config::{Hardfork, DEFAULT_MNEMONIC},
+    eth::pool::transactions::TransactionOrder,
     AccountGenerator, NodeConfig, CHAIN_ID,
 };
 use forge::executor::opts::EvmOpts;
@@ -73,6 +74,12 @@ pub struct NodeArgs {
 
     #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
     pub host: Option<IpAddr>,
+
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, help = "How transactions are sorted in the mempool", default_value = "fees")
+    )]
+    pub order: TransactionOrder,
 }
 
 impl NodeArgs {
@@ -101,6 +108,7 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(self.silent)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
+            .with_transaction_order(self.order)
     }
 
     fn account_generator(&self) -> AccountGenerator {

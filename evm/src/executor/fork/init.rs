@@ -31,7 +31,7 @@ pub async fn environment<M: Middleware>(
         block: BlockEnv {
             number: block.number.expect("block number not found").as_u64().into(),
             timestamp: block.timestamp,
-            coinbase: block.author,
+            coinbase: block.author.unwrap_or_default(),
             difficulty: block.difficulty,
             basefee: block.base_fee_per_gas.unwrap_or_default(),
             gas_limit: block.gas_limit,
