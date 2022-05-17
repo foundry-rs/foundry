@@ -198,6 +198,10 @@ impl ScriptArgs {
             }
         }
 
+        if !result.success {
+            eyre::bail!("{}", Paint::red("Script failed."));
+        }
+
         Ok(())
     }
 

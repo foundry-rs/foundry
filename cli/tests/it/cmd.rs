@@ -1,9 +1,12 @@
 //! Contains various tests for checking forge's commands
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::solc::{
-    artifacts::{BytecodeHash, Metadata},
-    ConfigurableContractArtifact,
+use ethers::{
+    abi::Address,
+    solc::{
+        artifacts::{BytecodeHash, Metadata},
+        ConfigurableContractArtifact,
+    },
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
@@ -12,7 +15,7 @@ use foundry_cli_test_utils::{
     ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs};
+use std::{env, fs, str::FromStr};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -854,5 +857,32 @@ forgetest_async!(
             .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
             .assert_nonce_increment(vec![(0, 3)])
             .await;
+    })
+);
+
+forgetest_async!(
+    can_deploy_with_create2,
+    (|prj: TestProject, cmd: TestCommand| async move {
+        let port = next_port();
+        let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        // Prepare CREATE2 Deployer
+        let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+        let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+        api.anvil_set_code(addr, code).await.unwrap();
+
+        tester
+            .add_deployer(0)
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+            .simulate("SIMULATION COMPLETE. To broadcast these")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 2)])
+            .await
+            // Running again results in error, since we're repeating the salt passed to CREATE2
+            .expect_err()
+            .run("Script failed.");
     })
 );

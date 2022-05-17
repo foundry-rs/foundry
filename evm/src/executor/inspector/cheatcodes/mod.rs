@@ -14,6 +14,7 @@ mod util;
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
+    util::process_create,
 };
 use crate::{
     abi::HEVMCalls,
@@ -401,22 +402,21 @@ where
             if data.subroutine.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                call.caller = broadcast.origin;
-
                 data.subroutine.load_account(broadcast.origin, data.db);
+
+                let (bytecode, to, nonce) =
+                    process_create(broadcast.origin, call.init_code.clone(), data, call);
 
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
                         from: Some(broadcast.origin),
-                        to: None,
+                        to,
                         value: Some(call.value),
-                        data: Some(call.init_code.clone().into()),
-                        nonce: Some(data.subroutine.account(broadcast.origin).info.nonce.into()),
+                        data: Some(bytecode.into()),
+                        nonce: Some(nonce.into()),
                         ..Default::default()
                     },
                 ));
-
-                // no need to increase nonce, since create_inner does it by itself
             }
         }
 

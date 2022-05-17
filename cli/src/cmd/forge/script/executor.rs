@@ -33,8 +33,9 @@ impl ScriptArgs {
             predeploy_libraries,
             bytecode,
             needs_setup(&abi),
-            self.broadcast,
             script_config.sender_nonce,
+            self.broadcast,
+            script_config.evm_opts.fork_url.is_none(),
         )?;
 
         let (func, calldata) = self.get_method_and_calldata(&abi)?;

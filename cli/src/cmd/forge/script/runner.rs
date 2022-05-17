@@ -4,6 +4,7 @@ use forge::{
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
+use std::str::FromStr;
 
 use super::*;
 pub struct Runner<DB: DatabaseRef> {
@@ -23,12 +24,17 @@ impl<DB: DatabaseRef> Runner<DB> {
         libraries: &[Bytes],
         code: Bytes,
         setup: bool,
-        is_broadcast: bool,
         sender_nonce: U256,
+        is_broadcast: bool,
+        need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
         if !is_broadcast {
             // We max out their balance so that they can deploy and make calls.
             self.executor.set_balance(self.sender, U256::MAX);
+
+            if need_create2_deployer {
+                self.deploy_create2_deployer()?;
+            }
         }
 
         self.executor.set_nonce(self.sender, sender_nonce.as_u64());
@@ -204,5 +210,28 @@ impl<DB: DatabaseRef> Runner<DB> {
             labeled_addresses: labels,
             transactions,
         })
+    }
+
+    fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        let creator = Address::from_str("0x3fAB184622Dc19b6109349B94811493BF2a45362").unwrap();
+        let create2_contract =
+            Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+
+        let create2_deployer_account = self.executor.db.basic(create2_contract);
+
+        if create2_deployer_account.code.is_none() ||
+            create2_deployer_account.code.as_ref().unwrap().is_empty()
+        {
+            println!("Creating CREATE2 Deployer.");
+
+            self.executor.set_balance(creator, U256::MAX);
+            self.executor.deploy(
+                creator,
+                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
+                U256::zero(),
+                None
+            )?;
+        }
+        Ok(())
     }
 }

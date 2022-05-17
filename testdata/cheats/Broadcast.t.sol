@@ -131,6 +131,9 @@ contract NoLink is DSTest {
         emit log_string("here");
         return b;
     }
+    function view_me() public pure returns (uint256) {
+        return 1337;
+    }
 }
 
 contract BroadcastTestNoLinking is DSTest {
@@ -151,5 +154,15 @@ contract BroadcastTestNoLinking is DSTest {
 
         cheats.broadcast(address(ACCOUNT_B));
         test.t(0);     
+    }
+
+
+    function deployCreate2() public {
+        cheats.startBroadcast();
+        NoLink test_c2 = new NoLink{salt: bytes32(uint256(1337))}();
+        assert(test_c2.view_me() == 1337); 
+        NoLink test2 = new NoLink();
+        cheats.stopBroadcast();
+    
     }
 }
