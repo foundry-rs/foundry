@@ -855,11 +855,27 @@ impl EthApi {
 
     /// Get transaction by its hash.
     ///
+    /// This will check the storage for a matching transaction, if no transaction exists in storage
+    /// this will also scan the mempool for a matching pending transaction
+    ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
         node_info!("eth_getTransactionByHash");
-        // TODO also check pending tx
-        self.backend.transaction_by_hash(hash).await
+        let mut tx = self.backend.transaction_by_hash(hash).await?;
+        if tx.is_none() {
+            // no transaction found, check the mempool for a pending transaction
+            tx = self.pool.get_transaction(hash).map(|pending| {
+                transaction_build(
+                    pending.transaction,
+                    None,
+                    None,
+                    true,
+                    Some(self.backend.base_fee()),
+                )
+            });
+        }
+
+        Ok(tx)
     }
 
     /// Returns transaction at given block hash and index.

@@ -36,6 +36,7 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
+use anvil_core::eth::transaction::PendingTransaction;
 use ethers::types::{TxHash, U64};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
@@ -59,6 +60,11 @@ impl Pool {
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator {
         self.inner.read().ready_transactions()
+    }
+
+    /// Returns the _pending_ transaction for that `hash` if it exists in the mempool
+    pub fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        self.inner.read().get_transaction(hash)
     }
 
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
@@ -183,8 +189,20 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
+    /// checks both pools for the matching transaction
+    ///
+    /// Returns `None` if the transaction does not exist in the pool
+    fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        if let Some(pending) = self.pending_transactions.get(&hash) {
+            return Some(pending.transaction.pending_transaction.clone())
+        }
+        Some(
+            self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
+        )
+    }
+
     /// Returns true if this pool already contains the transaction
-    pub fn contains(&self, tx_hash: &TxHash) -> bool {
+    fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 

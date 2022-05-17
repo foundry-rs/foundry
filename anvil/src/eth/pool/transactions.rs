@@ -171,6 +171,11 @@ impl PendingTransactions {
         self.waiting_queue.contains_key(hash)
     }
 
+    /// Returns the transaction for the hash if it's pending
+    pub fn get(&self, hash: &TxHash) -> Option<&PendingPoolTransaction> {
+        self.waiting_queue.get(hash)
+    }
+
     /// This will check off the markers of pending transactions.
     ///
     /// Returns the those transactions that become unlocked (all markers checked) and can be moved
@@ -367,6 +372,11 @@ impl ReadyTransactions {
     /// Returns true if the transaction is part of the queue.
     pub fn contains(&self, hash: &TxHash) -> bool {
         self.ready_tx.read().contains_key(hash)
+    }
+
+    /// Returns the transaction for the hash if it's in the ready pool but not yet mined
+    pub fn get(&self, hash: &TxHash) -> Option<ReadyTransaction> {
+        self.ready_tx.read().get(hash).cloned()
     }
 
     pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
@@ -645,7 +655,7 @@ impl Ord for PoolTransactionRef {
 }
 
 #[derive(Debug, Clone)]
-struct ReadyTransaction {
+pub struct ReadyTransaction {
     /// ref to the actual transaction
     pub transaction: PoolTransactionRef,
     /// tracks the transactions that get unlocked by this transaction

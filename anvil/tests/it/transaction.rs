@@ -661,3 +661,25 @@ async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
     assert_eq!(successful_tx, 1);
     assert_eq!(client.get_transaction_count(from, None).await.unwrap(), nonce + 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_transaction() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    // disable auto mining so we can check if we can return pending tx from the mempool
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+    let tx = provider.send_transaction(tx, None).await.unwrap();
+
+    let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
+    assert!(pending.is_some());
+
+    api.mine_one();
+    let mined = provider.get_transaction(tx.tx_hash()).await.unwrap().unwrap();
+
+    assert_eq!(mined.hash, pending.unwrap().hash);
+}
