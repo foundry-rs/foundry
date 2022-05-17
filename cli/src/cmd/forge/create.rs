@@ -19,6 +19,8 @@ use foundry_utils::parse_tokens;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 
+pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
+
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
     #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
@@ -276,7 +278,7 @@ impl CreateArgs {
             flatten: false,
             force: false,
             watch: true,
-            retry: RetryArgs { retries: 15, delay: Some(3) },
+            retry: RETRY_VERIFY_ON_CREATE,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
