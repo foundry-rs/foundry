@@ -222,8 +222,6 @@ impl<DB: DatabaseRef> Runner<DB> {
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
         {
-            println!("Creating CREATE2 Deployer.");
-
             self.executor.set_balance(creator, U256::MAX);
             self.executor.deploy(
                 creator,
