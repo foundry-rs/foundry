@@ -22,7 +22,7 @@ const RINKEBY_RPC_URL: &str =
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
 /// Represents an anvil fork of an anvil node
-#[allow(clippy::unused)]
+#[allow(unused)]
 pub struct LocalFork {
     origin_api: EthApi,
     origin_handle: NodeHandle,
@@ -31,7 +31,7 @@ pub struct LocalFork {
 }
 
 // === impl LocalFork ===
-
+#[allow(dead_code)]
 impl LocalFork {
     /// Spawns two nodes with the test config
     pub async fn new() -> Self {
