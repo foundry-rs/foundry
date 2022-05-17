@@ -116,16 +116,15 @@ impl CreateArgs {
     pub async fn run_create(self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = if self.json {
+        if self.json {
             // Suppress compile stdout messages when printing json output
-            compile::suppress_compile(&project)?
+            compile::suppress_compile(&project)?;
         } else {
-            compile::compile(&project, false, false)?
-        };
+            compile::compile(&project, false, false)?;
+        }
 
         // Get ABI and BIN
-        let (abi, bin, _) =
-            crate::cmd::utils::read_artifact(&project, compiled, self.contract.clone())?;
+        let (abi, bin, _) = crate::cmd::utils::read_artifact(&project, self.contract.clone())?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,

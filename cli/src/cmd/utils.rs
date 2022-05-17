@@ -6,7 +6,7 @@ use ethers::{
     solc::{
         artifacts::{CompactBytecode, CompactContractBytecode, CompactDeployedBytecode},
         cache::SolFilesCache,
-        Project, ProjectCompileOutput,
+        Project,
     },
 };
 use foundry_utils::Retry;
@@ -23,7 +23,6 @@ pub trait Cmd: clap::Parser + Sized {
 #[track_caller]
 pub fn read_artifact(
     project: &Project,
-    compiled: ProjectCompileOutput,
     contract: ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let cache = SolFilesCache::read_joined(&project.paths)?;
@@ -78,7 +77,7 @@ pub fn get_cached_entry_by_name(
     }
 
     let mut err = format!("could not find artifact: `{}`", name);
-    if let Some(suggestion) = suggestions::did_you_mean(&name, &alternatives).pop() {
+    if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
         err = format!(
             r#"{}
 
