@@ -116,6 +116,8 @@ bytecode_hash = "ipfs"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false
+# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+etherscan_api_key="YOURETHERSCANAPIKEY"
 ```
 
 ##### Additional Optimizer settings
