@@ -232,3 +232,48 @@ forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
         );
     }
 });
+
+// tests that `forge test` will run a test only once after changing the version
+forgetest!(
+    runs_tests_exactly_once_with_changed_versions,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.insert_ds_test();
+
+        prj.inner()
+            .add_source(
+                "Contract.t.sol",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+import "./test.sol";
+contract ContractTest is DSTest {
+    function setUp() public {}
+
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+        // pin version
+        let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.arg("test");
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.10.stdout",
+            ));
+
+        // pin version
+        let config = Config { solc: Some("0.8.13".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.13.stdout",
+            ));
+    }
+);
