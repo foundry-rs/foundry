@@ -12,8 +12,7 @@ use ethers::{
     },
     solc::{
         artifacts::{BytecodeHash, Source},
-        cache::{SolFilesCache, SOLIDITY_FILES_CACHE_FILENAME},
-        utils::canonicalized,
+        cache::CacheEntry,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
@@ -24,7 +23,10 @@ use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
-use std::{collections::BTreeMap, fs, io::BufReader, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 use tracing::{trace, warn};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
@@ -86,11 +88,7 @@ pub struct VerifyArgs {
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(self) -> eyre::Result<()> {
-        if self.contract.path.is_none() {
-            eyre::bail!("Contract info must be provided in the format <path>:<name>")
-        }
-
+    pub async fn run(mut self) -> eyre::Result<()> {
         let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
@@ -155,7 +153,7 @@ impl VerifyArgs {
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
-    async fn create_verify_request(&self) -> eyre::Result<VerifyContract> {
+    async fn create_verify_request(&mut self) -> eyre::Result<VerifyContract> {
         let build_args = CoreBuildArgs {
             project_paths: self.project_paths.clone(),
             out_path: Default::default(),
@@ -171,20 +169,38 @@ impl VerifyArgs {
         };
 
         let project = build_args.project()?;
+        let config = Config::load();
+
+        if self.contract.path.is_none() && !config.cache {
+            eyre::bail!(
+                "If cache is disabled, contract info must be provided in the format <path>:<name>"
+            );
+        }
+
+        let should_read_cache = self.contract.path.is_none() ||
+            (self.compiler_version.is_none() && config.solc.is_none());
+        let cached_entry = if config.cache && should_read_cache {
+            let cache = project.read_cache_file()?;
+            Some(crate::cmd::get_cached_entry_by_name(&cache, &self.contract.name)?)
+        } else {
+            None
+        };
+
+        let contract_path = if let Some(ref path) = self.contract.path {
+            project.root().join(path)
+        } else {
+            cached_entry.as_ref().unwrap().0.to_owned()
+        };
 
         // check that the provided contract is part of the source dir
-        let contract_path =
-            project.root().join(self.contract.path.as_ref().expect("Is present; qed"));
-
         if !contract_path.exists() {
             eyre::bail!("Contract {:?} does not exist.", contract_path);
         }
 
-        let config = Config::load();
-        let compiler_version = self.compiler_version(&config)?;
+        let compiler_version = self.compiler_version(&config, &cached_entry)?;
 
         let (source, contract_name, code_format) = if self.flatten {
-            self.flattened_source(&project, &contract_path, &compiler_version)?
+            self.flattened_source(&project, &contract_path, &compiler_version, &contract_path)?
         } else {
             self.standard_json_source(&project, &contract_path, &compiler_version)?
         };
@@ -213,7 +229,13 @@ impl VerifyArgs {
     /// The priority desc:
     ///     1. Through CLI arg `--compiler-version`
     ///     2. `solc` defined in foundry.toml  
-    fn compiler_version(&self, config: &Config) -> eyre::Result<Version> {
+    fn compiler_version(
+        &self,
+        config: &Config,
+        // cache: &SolFilesCache,
+        // contract_path: &Path,
+        entry: &Option<(PathBuf, CacheEntry)>,
+    ) -> eyre::Result<Version> {
         if let Some(ref version) = self.compiler_version {
             return Ok(version.trim_start_matches('v').parse()?)
         }
@@ -229,35 +251,28 @@ impl VerifyArgs {
             }
         }
 
-        if config.cache {
-            let path = canonicalized(config.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME));
-            let reader = BufReader::new(fs::File::open(path.as_path())?);
-            let cache: SolFilesCache = serde_json::from_reader(reader)?;
-            let root = config.project_paths().root;
-            let file_path = root.join(self.contract.path.as_ref().expect("Is present; qed"));
-            if let Some(entry) = cache.entry(file_path) {
-                let artifacts = entry.artifacts_versions().collect::<Vec<_>>();
-                if artifacts.len() == 1 {
-                    let mut version = artifacts[0].0.to_owned();
-                    version.build = match RE_BUILD_COMMIT.captures(version.build.as_str()) {
-                        Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
-                        _ => BuildMetadata::EMPTY,
-                    };
-                    return Ok(version)
-                }
+        if let Some((_, entry)) = entry {
+            let artifacts = entry.artifacts_versions().collect::<Vec<_>>();
+            if artifacts.len() == 1 {
+                let mut version = artifacts[0].0.to_owned();
+                version.build = match RE_BUILD_COMMIT.captures(version.build.as_str()) {
+                    Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
+                    _ => BuildMetadata::EMPTY,
+                };
+                return Ok(version)
+            }
 
-                if artifacts.is_empty() {
-                    warn!("no artiacts detected")
-                } else {
-                    warn!(
-                        "ambiguous compiler versions found in cache: {}",
-                        artifacts.iter().map(|a| a.0.to_string()).collect::<Vec<_>>().join(", ")
-                    );
-                }
+            if artifacts.is_empty() {
+                warn!("no artifacts detected")
+            } else {
+                warn!(
+                    "ambiguous compiler versions found in cache: {}",
+                    artifacts.iter().map(|a| a.0.to_string()).collect::<Vec<_>>().join(", ")
+                );
             }
         }
 
-        eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project were not deployed with foundry, specify the version through `--compiler-version` flag.")
+        eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
     }
 
     /// Attempts to compile the flattened content locally with the compiler version.
@@ -274,7 +289,12 @@ impl VerifyArgs {
     /// If the solc compiler output contains errors, this could either be due to a bug in the
     /// flattening code or could to conflict in the flattened code, for example if there are
     /// multiple interfaces with the same name.
-    fn check_flattened(&self, content: impl Into<String>, version: &Version) -> eyre::Result<()> {
+    fn check_flattened(
+        &self,
+        content: impl Into<String>,
+        version: &Version,
+        contract_path: &Path,
+    ) -> eyre::Result<()> {
         let version = strip_build_meta(version.clone());
         let solc = if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
             solc
@@ -298,7 +318,7 @@ impl VerifyArgs {
 This could be a bug, please inspect the outout of `forge flatten {}` and report an issue.
 To skip this solc dry, pass `--force`.
 "#,
-                self.contract.path.as_ref().expect("Path is some;")
+                contract_path.display()
             );
             std::process::exit(1)
         }
@@ -311,6 +331,7 @@ To skip this solc dry, pass `--force`.
         project: &Project,
         target: &Path,
         version: &Version,
+        contract_path: &Path,
     ) -> eyre::Result<(String, String, CodeFormat)> {
         let bch = project
             .solc_config
@@ -330,7 +351,7 @@ To skip this solc dry, pass `--force`.
 
         if !self.force {
             // solc dry run of flattened code
-            self.check_flattened(source.clone(), version).map_err(|err| {
+            self.check_flattened(source.clone(), version, contract_path).map_err(|err| {
                 eyre::eyre!(
                     "Failed to compile the flattened code locally: `{}`\
     To skip this solc dry, have a look at the  `--force` flag of this command.",
