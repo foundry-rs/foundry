@@ -31,10 +31,9 @@ impl ScriptArgs {
             called_function: None,
         };
 
-        if let (Some(deployer), Some(fork_url)) =
-            (self.deployer, script_config.evm_opts.fork_url.as_ref())
-        {
-            script_config.sender_nonce = foundry_utils::next_nonce(deployer, fork_url, None)?
+        if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
+            script_config.sender_nonce =
+                foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None)?
         }
 
         let BuildOutput {
@@ -45,7 +44,7 @@ impl ScriptArgs {
             predeploy_libraries,
             known_contracts: default_known_contracts,
             sources,
-        } = self.build(&script_config, self.deployer)?;
+        } = self.build(&script_config)?;
 
         if self.resume {
             let mut deployment_sequence =
@@ -55,9 +54,9 @@ impl ScriptArgs {
             let mut known_contracts = unwrap_contracts(&highlevel_known_contracts);
 
             // execute once with default sender
-            let mut result = self
-                .execute(&mut script_config, contract, self.deployer, &predeploy_libraries)
-                .await?;
+            let sender = script_config.evm_opts.sender;
+            let mut result =
+                self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
             let mut decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
 
@@ -83,7 +82,7 @@ impl ScriptArgs {
                 } else {
                     // prepend predeploy libraries
                     let mut lib_deploy = self.create_deploy_transactions(
-                        self.deployer,
+                        script_config.evm_opts.sender,
                         script_config.sender_nonce,
                         &predeploy_libraries,
                     );
@@ -138,10 +137,10 @@ impl ScriptArgs {
             self.link(project, default_known_contracts, new_sender, nonce)?;
 
         first_run_result.transactions =
-            Some(self.create_deploy_transactions(Some(new_sender), nonce, &predeploy_libraries));
+            Some(self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries));
 
         let result =
-            self.execute(script_config, contract, Some(new_sender), &predeploy_libraries).await?;
+            self.execute(script_config, contract, new_sender, &predeploy_libraries).await?;
 
         first_run_result.success &= result.success;
         first_run_result.gas = result.gas;

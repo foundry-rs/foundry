@@ -832,8 +832,9 @@ forgetest_async!(
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deployOther()")
+            .simulate("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")
             .expect_err()
-            .simulate("You have more than one deployer who could deploy libraries");
+            .broadcast("You seem to be using Foundry's default sender. Be sure to set your own --sender");
     })
 );
 
@@ -845,6 +846,7 @@ forgetest_async!(
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
+            .add_deployer(0)
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deployNoArgs()")

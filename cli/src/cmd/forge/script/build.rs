@@ -13,11 +13,7 @@ use super::*;
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(
-        &self,
-        script_config: &ScriptConfig,
-        sender: Option<Address>,
-    ) -> eyre::Result<BuildOutput> {
+    pub fn build(&self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = script_config.config.ephemeral_no_artifacts_project()?;
         let output = compile::compile_files(&project, vec![target_contract])?;
@@ -29,7 +25,7 @@ impl ScriptArgs {
         let mut output = self.link(
             project,
             contracts,
-            sender.unwrap_or(script_config.evm_opts.sender),
+            script_config.evm_opts.sender,
             script_config.sender_nonce,
         )?;
         output.sources = sources.into_ids().collect();

@@ -75,7 +75,6 @@ impl Cmd for DebugArgs {
             },
             evm_opts: self.evm_opts,
             resume: false,
-            deployer: None,
             debug: true,
         };
         RuntimeOrHandle::new().block_on(script.run_script())

@@ -91,9 +91,6 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub resume: bool,
 
-    #[clap(long, help = "Address which will deploy all library dependencies.")]
-    pub deployer: Option<Address>,
-
     #[clap(long, help = "Takes precedence over broadcast")]
     pub debug: bool,
 }
@@ -204,10 +201,10 @@ impl ScriptArgs {
         Ok(())
     }
 
-    /// If the user *has not* set a deployer, it finds the deployer from the running script
-    /// and uses it to predeploy libraries.
+    /// It finds the deployer from the running script and uses it to predeploy libraries.
     ///
-    /// If there are multiple candidate addresses, an error is thrown asking to specify which
+    /// If there are multiple candidate addresses, it skips everything and lets `--sender` deploy
+    /// them instead.
     fn maybe_new_sender(
         &self,
         evm_opts: &EvmOpts,
@@ -216,25 +213,24 @@ impl ScriptArgs {
     ) -> eyre::Result<Option<Address>> {
         let mut new_sender = None;
 
-        if self.deployer.is_none() {
-            if let Some(txs) = transactions {
-                if !predeploy_libraries.is_empty() {
-                    for tx in txs.iter() {
-                        match tx {
-                            TypedTransaction::Legacy(tx) => {
-                                if tx.to.is_none() {
-                                    let sender = tx.from.expect("no sender");
-                                    if let Some(ns) = new_sender {
-                                        if sender != ns {
-                                            eyre::bail!("You have more than one deployer who could deploy libraries. Set `--deployer` to define the only one.")
-                                        }
-                                    } else if sender != evm_opts.sender {
-                                        new_sender = Some(sender);
+        if let Some(txs) = transactions {
+            if !predeploy_libraries.is_empty() {
+                for tx in txs.iter() {
+                    match tx {
+                        TypedTransaction::Legacy(tx) => {
+                            if tx.to.is_none() {
+                                let sender = tx.from.expect("no sender");
+                                if let Some(ns) = new_sender {
+                                    if sender != ns {
+                                        println!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.");
+                                        return Ok(None)
                                     }
+                                } else if sender != evm_opts.sender {
+                                    new_sender = Some(sender);
                                 }
                             }
-                            _ => unreachable!(),
                         }
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -246,7 +242,7 @@ impl ScriptArgs {
     /// linking
     fn create_deploy_transactions(
         &self,
-        from: Option<Address>,
+        from: Address,
         nonce: U256,
         data: &[Bytes],
     ) -> VecDeque<TypedTransaction> {
@@ -254,7 +250,7 @@ impl ScriptArgs {
             .enumerate()
             .map(|(i, bytes)| {
                 TypedTransaction::Legacy(TransactionRequest {
-                    from,
+                    from: Some(from),
                     data: Some(bytes.clone()),
                     nonce: Some(nonce + i),
                     ..Default::default()

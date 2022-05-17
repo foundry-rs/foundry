@@ -34,7 +34,7 @@ impl ScriptTester {
             current_dir.to_str().unwrap(),
             "--fork-url",
             url.as_str(),
-            "-vvv",
+            "-vvvvv",
         ]);
 
         ScriptTester {
@@ -90,7 +90,7 @@ impl ScriptTester {
     }
 
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
-        self.cmd.args(["--deployer", &self.accounts_pub[index as usize]]);
+        self.cmd.args(["--sender", &self.accounts_pub[index as usize]]);
         self
     }
 
