@@ -8,7 +8,7 @@ sensible set of defaults.
 Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
-in `FOUNDRY_PROFILE`.
+in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
 

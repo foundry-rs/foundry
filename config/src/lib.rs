@@ -1048,6 +1048,20 @@ impl From<Config> for Figment {
             )))
         }
 
+        if profile != Config::DEFAULT_PROFILE {
+            // a different profile was set: inherit from the `default` profile by merging the
+            // default profile of the toml file
+            let inherit = InheritProvider {
+                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
+                    "FOUNDRY_CONFIG",
+                    c.__root.0.join(Config::FILE_NAME),
+                ))),
+                parent: Config::DEFAULT_PROFILE,
+                profile: profile.clone(),
+            };
+            figment = figment.merge(inherit);
+        }
+
         figment = figment
             .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
                 "FOUNDRY_CONFIG",
@@ -1465,6 +1479,27 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
+    }
+}
+
+/// A Provider that extracts the data for a `parent` profile and emits that as `profile`.
+struct InheritProvider<P> {
+    provider: P,
+    parent: Profile,
+    profile: Profile,
+}
+
+impl<P: Provider> Provider for InheritProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        if let Some(data) = data.remove(&self.parent) {
+            return Ok(Map::from([(self.profile.clone(), data)]))
+        }
+        Ok(Default::default())
     }
 }
 
@@ -1904,6 +1939,37 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_from_default_test_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                test = "defaulttest"
+                src  = "defaultsrc"
+                libs = ['lib', 'node_modules']
+                
+                [custom]
+                src = "customsrc"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.src, PathBuf::from("defaultsrc"));
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
+            jail.set_env("FOUNDRY_PROFILE", "custom");
+            let config = Config::load();
+
+            assert_eq!(config.src, PathBuf::from("customsrc"));
+            assert_eq!(config.test, PathBuf::from("defaulttest"));
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
             Ok(())
         });
     }
@@ -2431,7 +2497,7 @@ mod tests {
                 BasicConfig {
                     profile: Config::DEFAULT_PROFILE,
                     src: "other-src".into(),
-                    out: "out".into(),
+                    out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
                 }
@@ -2738,19 +2804,19 @@ mod tests {
     fn list_cached_blocks() -> eyre::Result<()> {
         fn fake_block_cache(chain_path: &Path, block_number: &str, size_bytes: usize) {
             let block_path = chain_path.join(block_number);
-            fs::create_dir(block_path.as_path());
+            fs::create_dir(block_path.as_path()).unwrap();
             let file_path = block_path.join("storage.json");
             let mut file = File::create(file_path).unwrap();
-            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>());
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
         }
 
         let chain_dir = tempdir()?;
 
-        fake_block_cache(chain_dir.path(), &"1", 100);
-        fake_block_cache(chain_dir.path(), &"2", 500);
+        fake_block_cache(chain_dir.path(), "1", 100);
+        fake_block_cache(chain_dir.path(), "2", 500);
         // Pollution file that should not show up in the cached block
         let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
-        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>());
+        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>()).unwrap();
 
         let result = Config::get_cached_blocks(chain_dir.path())?;
 
