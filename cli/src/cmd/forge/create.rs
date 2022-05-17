@@ -130,7 +130,17 @@ impl CreateArgs {
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
-            _ => eyre::bail!("Dynamic linking not supported in `create` command - deploy the library contract first, then provide the address to link at compile time")
+            _ => {
+                let link_refs = bin
+                    .link_references
+                    .iter()
+                    .flat_map(|(path, names)| {
+                        names.keys().map(move |name| format!("\t{}: {}", name, path))
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                eyre::bail!("Dynamic linking not supported in `create` command - deploy the following library contracts first, then provide the address to link at compile time\n{}", link_refs)
+            }
         };
 
         // Add arguments to constructor
