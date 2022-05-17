@@ -53,12 +53,12 @@ impl LineOfCode for ContractPart {
 impl LineOfCode for YulStatement {
     fn loc(&self) -> Loc {
         match self {
-            YulStatement::Assign(loc, _, _)
-            | YulStatement::If(loc, _, _)
-            | YulStatement::Leave(loc)
-            | YulStatement::Break(loc)
-            | YulStatement::VariableDeclaration(loc, _, _)
-            | YulStatement::Continue(loc) => *loc,
+            YulStatement::Assign(loc, _, _) |
+            YulStatement::If(loc, _, _) |
+            YulStatement::Leave(loc) |
+            YulStatement::Break(loc) |
+            YulStatement::VariableDeclaration(loc, _, _) |
+            YulStatement::Continue(loc) => *loc,
             YulStatement::For(f) => f.loc,
             YulStatement::Block(b) => b.loc,
             YulStatement::Switch(s) => s.loc,
@@ -71,10 +71,10 @@ impl LineOfCode for YulStatement {
 impl LineOfCode for YulExpression {
     fn loc(&self) -> Loc {
         match self {
-            YulExpression::BoolLiteral(loc, _, _)
-            | YulExpression::NumberLiteral(loc, _, _, _)
-            | YulExpression::HexNumberLiteral(loc, _, _)
-            | YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::BoolLiteral(loc, _, _) |
+            YulExpression::NumberLiteral(loc, _, _, _) |
+            YulExpression::HexNumberLiteral(loc, _, _) |
+            YulExpression::Member(loc, _, _) => *loc,
             YulExpression::StringLiteral(literal, _) => literal.loc,
             YulExpression::Variable(ident) => ident.loc,
             YulExpression::FunctionCall(f) => f.loc,
@@ -98,10 +98,10 @@ impl OptionalLineOfCode for FunctionAttribute {
         match self {
             FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
             FunctionAttribute::Visibility(visibility) => visibility.loc(),
-            FunctionAttribute::Virtual(loc)
-            | FunctionAttribute::Immutable(loc)
-            | FunctionAttribute::Override(loc, _)
-            | FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+            FunctionAttribute::Virtual(loc) |
+            FunctionAttribute::Immutable(loc) |
+            FunctionAttribute::Override(loc, _) |
+            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
         }
     }
 }
