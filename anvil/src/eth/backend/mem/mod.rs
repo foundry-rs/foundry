@@ -854,7 +854,7 @@ impl Backend {
             hash: Some(hash),
             parent_hash,
             uncles_hash: ommers_hash,
-            author: beneficiary,
+            author: Some(beneficiary),
             state_root,
             transactions_root,
             receipts_root,
