@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use std::str::FromStr;
+use strum::VariantNames;
 
 use crate::cmd::Cmd;
 use cache::{Cache, ChainCache};
@@ -41,25 +42,9 @@ pub struct CleanArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = [
-            "all",
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon_mumbai",
-            "avalanche",
-            "avalanche_fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam_dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan"
-    ])]
+        possible_value = "all",
+        possible_values = Chain::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
 
     #[clap(
@@ -78,25 +63,9 @@ pub struct LsArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = [
-            "all",
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon_mumbai",
-            "avalanche",
-            "avalanche_fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam_dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan"
-    ])]
+        possible_value = "all",
+        possible_values = Chain::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
 }
 
