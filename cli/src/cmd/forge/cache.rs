@@ -1,13 +1,14 @@
 //! cache command
 
-use clap::{ArgEnum, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
-use crate::{cmd::Cmd, opts::ClapChain};
+use crate::cmd::Cmd;
 use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
+use strum::VariantNames;
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
@@ -15,17 +16,10 @@ pub struct CacheArgs {
     pub sub: CacheSubcommands,
 }
 
-#[derive(Debug, Clone, ArgEnum)]
+#[derive(Debug)]
 pub enum ChainOrAll {
     Chain(Chain),
     All,
-}
-
-#[derive(Debug, Clone, ArgEnum)]
-pub enum ChainOptions {
-    All,
-    Mainnet,
-    Goerli,
 }
 
 impl FromStr for ChainOrAll {
@@ -49,31 +43,8 @@ pub struct CleanArgs {
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = [
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon-mumbai",
-            "avalanche",
-            "avalanche-fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam-dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan",
-            "fantom",
-            "fantom-testnet",
-            "arbitrum",
-            "arbitrum-testnet",
-            "bsc",
-            "bsc-testnet",
-            "cronos"
-        ])]
+        possible_values = Chain::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
 
     #[clap(
@@ -93,35 +64,9 @@ pub struct LsArgs {
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = [
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon-mumbai",
-            "avalanche",
-            "avalanche-fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam-dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan",
-            "fantom",
-            "fantom-testnet",
-            "arbitrum",
-            "arbitrum-testnet",
-            "bsc",
-            "bsc-testnet",
-            "cronos"
-        ])]
+        possible_values = Chain::VARIANTS
+    )]
     chains: Vec<ChainOrAll>,
-
-    #[clap(long, arg_enum, default_value = "all", help = "Name of chain")]
-    chains2: ChainOptions,
 }
 
 #[derive(Debug, Subcommand)]
@@ -153,7 +98,7 @@ impl Cmd for LsArgs {
     type Output = ();
 
     fn run(self) -> Result<Self::Output> {
-        let LsArgs { chains, .. } = self;
+        let LsArgs { chains } = self;
         let mut cache = Cache { chains: vec![] };
         for chain_or_all in chains {
             match chain_or_all {

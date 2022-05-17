@@ -32,7 +32,6 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 #[derive(Debug, Clone, Parser)]
 pub struct ClapChain {
     #[clap(
-        arg_enum,
         short = 'c',
         long = "chain",
         env = "CHAIN",
