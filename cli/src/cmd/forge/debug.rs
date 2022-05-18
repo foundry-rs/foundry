@@ -6,7 +6,7 @@ use clap::{Parser, ValueHint};
 
 use foundry_common::evm::EvmArgs;
 
-use foundry_utils::RuntimeOrHandle;
+use ethers::solc::utils::RuntimeOrHandle;
 use std::path::PathBuf;
 
 use super::{build::BuildArgs, script::ScriptArgs};

@@ -2,14 +2,12 @@ use crate::{opts::forge::ContractInfo, suggestions};
 use clap::Parser;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
-        cache::CacheEntry,
-        ArtifactId, TransactionReceipt,
-    },
+    prelude::{ArtifactId, TransactionReceipt},
     solc::{
-        artifacts::{CompactBytecode, CompactContractBytecode, CompactDeployedBytecode},
-        cache::SolFilesCache,
+        artifacts::{
+            CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
+        },
+        cache::{CacheEntry, SolFilesCache},
         Project,
     },
     types::transaction::eip2718::TypedTransaction,

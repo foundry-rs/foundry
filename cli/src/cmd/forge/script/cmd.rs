@@ -3,12 +3,12 @@ use crate::cmd::{unwrap_contracts, Cmd, ScriptSequence};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId},
+    solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, U256},
 };
 use forge::executor::opts::EvmOpts;
 
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::RuntimeOrHandle;
 
 use super::*;
 
