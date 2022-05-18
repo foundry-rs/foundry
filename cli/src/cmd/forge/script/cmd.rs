@@ -2,7 +2,7 @@ use crate::cmd::{unwrap_contracts, Cmd, ScriptSequence};
 
 use ethers::{
     abi::Abi,
-    prelude::{artifacts::CompactContractBytecode, ArtifactId},
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, Signer},
     solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, U256},
 };
@@ -20,7 +20,7 @@ impl Cmd for ScriptArgs {
 }
 
 impl ScriptArgs {
-    pub async fn run_script(self) -> eyre::Result<()> {
+    pub async fn run_script(mut self) -> eyre::Result<()> {
         let figment: Figment = From::from(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut script_config = ScriptConfig {
@@ -30,6 +30,8 @@ impl ScriptArgs {
             evm_opts,
             called_function: None,
         };
+
+        self.maybe_load_private_key(&mut script_config)?;
 
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
             script_config.sender_nonce =
@@ -161,5 +163,19 @@ impl ScriptArgs {
         }
 
         Ok(unwrap_contracts(&highlevel_known_contracts))
+    }
+
+    /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
+    /// `--sender`
+    fn maybe_load_private_key(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<()> {
+        if let Some(ref private_key) = self.wallets.private_key {
+            self.wallets.private_keys = Some(vec![private_key.clone()]);
+        }
+        if let Some(wallets) = self.wallets.private_keys()? {
+            if wallets.len() == 1 {
+                script_config.evm_opts.sender = wallets.get(0).unwrap().address()
+            }
+        }
+        Ok(())
     }
 }

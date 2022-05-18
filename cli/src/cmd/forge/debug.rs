@@ -72,6 +72,7 @@ impl Cmd for DebugArgs {
                 trezor: false,
                 hd_path: None,
                 froms: None,
+                private_key: None,
             },
             evm_opts: self.evm_opts,
             resume: false,

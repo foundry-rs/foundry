@@ -38,6 +38,14 @@ pub struct MultiWallet {
     pub private_keys: Option<Vec<String>>,
 
     #[clap(
+        long = "private-key",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use the provided private key.",
+        conflicts_with = "private-keys"
+    )]
+    pub private_key: Option<String>,
+
+    #[clap(
         long = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the mnemonic file at the specified path."
