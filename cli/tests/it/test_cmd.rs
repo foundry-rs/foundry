@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_cli_test_utils::{
-    forgetest,
+    forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
@@ -219,3 +219,61 @@ contract MyTest is DSTest {
             .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
     );
 });
+
+// checks that forge test repeatedly produces the same output
+forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("test");
+    cmd.assert_non_empty_stdout();
+
+    for _ in 0..10 {
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_test_repeatedly.stdout"),
+        );
+    }
+});
+
+// tests that `forge test` will run a test only once after changing the version
+forgetest!(
+    runs_tests_exactly_once_with_changed_versions,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.insert_ds_test();
+
+        prj.inner()
+            .add_source(
+                "Contract.t.sol",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+import "./test.sol";
+contract ContractTest is DSTest {
+    function setUp() public {}
+
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+        // pin version
+        let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.arg("test");
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.10.stdout",
+            ));
+
+        // pin version
+        let config = Config { solc: Some("0.8.13".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.13.stdout",
+            ));
+    }
+);

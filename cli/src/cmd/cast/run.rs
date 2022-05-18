@@ -4,6 +4,7 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::H256,
 };
 use forge::{
@@ -12,7 +13,6 @@ use forge::{
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
 use foundry_config::Config;
-use foundry_utils::RuntimeOrHandle;
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,

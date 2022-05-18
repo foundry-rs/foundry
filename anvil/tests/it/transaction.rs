@@ -271,6 +271,47 @@ async fn can_deploy_greeter_http() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_and_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    // can mine in auto-mine mode
+    api.evm_mine(None).await.unwrap();
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // can mine in manual mode
+    api.evm_mine(None).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap();
+
+    // mine block with tx manually
+    api.evm_mine(None).await.unwrap();
+
+    let receipt = tx.await.unwrap().unwrap();
+
+    let address = receipt.contract_address.unwrap();
+    let greeter_contract = Greeter::new(address, Arc::clone(&client));
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let set_greeting = greeter_contract.set_greeting("Another Message".to_string());
+    let tx = set_greeting.send().await.unwrap();
+
+    // mine block manually
+    api.evm_mine(None).await.unwrap();
+
+    let _tx = tx.await.unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
@@ -564,4 +605,81 @@ async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
         join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
     assert_eq!(successful_tx, 1);
     assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let nonce = client.get_transaction_count(from, None).await.unwrap();
+    // explicitly set the nonce
+    let mut tasks = Vec::new();
+    let mut deploy_tx =
+        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    deploy_tx.set_nonce(nonce);
+    deploy_tx.set_gas(300_000u64);
+
+    let mut set_greeting_tx = greeter_contract.set_greeting("Hello".to_string()).tx;
+    set_greeting_tx.set_nonce(nonce);
+    set_greeting_tx.set_gas(300_000u64);
+
+    for idx in 0..10 {
+        let client = Arc::clone(&client);
+        let task = if idx % 2 == 0 {
+            let tx = deploy_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        } else {
+            let tx = set_greeting_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        };
+
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), nonce + 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_transaction() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    // disable auto mining so we can check if we can return pending tx from the mempool
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+    let tx = provider.send_transaction(tx, None).await.unwrap();
+
+    let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
+    assert!(pending.is_some());
+
+    api.mine_one();
+    let mined = provider.get_transaction(tx.tx_hash()).await.unwrap().unwrap();
+
+    assert_eq!(mined.hash, pending.unwrap().hash);
 }

@@ -171,6 +171,11 @@ impl PendingTransactions {
         self.waiting_queue.contains_key(hash)
     }
 
+    /// Returns the transaction for the hash if it's pending
+    pub fn get(&self, hash: &TxHash) -> Option<&PendingPoolTransaction> {
+        self.waiting_queue.get(hash)
+    }
+
     /// This will check off the markers of pending transactions.
     ///
     /// Returns the those transactions that become unlocked (all markers checked) and can be moved
@@ -369,6 +374,11 @@ impl ReadyTransactions {
         self.ready_tx.read().contains_key(hash)
     }
 
+    /// Returns the transaction for the hash if it's in the ready pool but not yet mined
+    pub fn get(&self, hash: &TxHash) -> Option<ReadyTransaction> {
+        self.ready_tx.read().get(hash).cloned()
+    }
+
     pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
         &self.provided_markers
     }
@@ -460,7 +470,7 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() < to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {
@@ -645,7 +655,7 @@ impl Ord for PoolTransactionRef {
 }
 
 #[derive(Debug, Clone)]
-struct ReadyTransaction {
+pub struct ReadyTransaction {
     /// ref to the actual transaction
     pub transaction: PoolTransactionRef,
     /// tracks the transactions that get unlocked by this transaction

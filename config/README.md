@@ -8,7 +8,7 @@ sensible set of defaults.
 Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
-in `FOUNDRY_PROFILE`.
+in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
 
@@ -116,6 +116,8 @@ bytecode_hash = "ipfs"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false
+# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+etherscan_api_key="YOURETHERSCANAPIKEY"
 ```
 
 ##### Additional Optimizer settings
