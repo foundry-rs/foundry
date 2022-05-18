@@ -1,16 +1,17 @@
-use crate::cmd::ScriptSequence;
+use crate::{
+    cmd::ScriptSequence,
+    utils::{get_http_provider, print_receipt},
+};
 
 use std::str::FromStr;
 
 use ethers::{
-    prelude::{Provider, SignerMiddleware},
+    prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, Wallet},
     providers::Middleware,
     signers::Signer,
-    types::{
-        transaction::eip2718::TypedTransaction, Address, Chain, Eip1559TransactionRequest,
-        TransactionReceipt, TransactionRequest,
-    },
+    types::{transaction::eip2718::TypedTransaction, Address, Chain, TransactionReceipt},
 };
+use futures::future::join_all;
 
 use super::*;
 
@@ -50,7 +51,8 @@ impl ScriptArgs {
             .as_ref()
             .expect("You must provide an RPC URL (see --fork-url).")
             .clone();
-        let provider = Provider::try_from(&fork_url).expect("Bad fork provider.");
+
+        let provider = get_http_provider(&fork_url);
 
         let chain = provider.get_chainid().await?.as_u64();
         let is_legacy =
@@ -60,15 +62,15 @@ impl ScriptArgs {
 
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
-        let sequence = deployment_sequence.clone();
+        let transactions = deployment_sequence.transactions.clone();
         let sequence =
-            sequence.transactions.range((deployment_sequence.index as usize)..).map(|tx| {
-                let from = into_legacy_ref(tx)?.from.expect("No sender for onchain transaction!");
+            transactions.into_iter().skip(deployment_sequence.receipts.len() as usize).map(|tx| {
+                let from = *tx.from().expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
                 {
                     let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
-                    Ok((tx.clone(), signer))
+                    Ok((tx, signer))
                 } else {
                     let mut err_msg = format!(
                         "No associated wallet for address: {:?}. Unlocked wallets: {:?}",
@@ -88,62 +90,24 @@ impl ScriptArgs {
                 }
             });
 
+        let mut receipts = vec![];
+
+        // We only wait for a transaction receipt before sending the next transaction, if there is
+        // more than one signer. There would be no way of assuring their order otherwise.
+        let wait = local_wallets.len() > 1;
+
         for payload in sequence {
             match payload {
                 Ok((tx, signer)) => {
-                    let mut legacy_or_1559 =
-                        if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx)?) };
-                    legacy_or_1559.set_chain_id(chain);
-
-                    let from = *legacy_or_1559.from().expect("no sender");
-                    match foundry_utils::next_nonce(from, &fork_url, None) {
-                        Ok(nonce) => {
-                            let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
-
-                            if nonce != tx_nonce {
-                                eyre::bail!(
-                                    "EOA nonce changed unexpectedly while sending transactions."
-                                );
-                            }
-                        }
-                        Err(_) => {
-                            eyre::bail!("Not able to query the EOA nonce.");
-                        }
+                    let receipt =
+                        self.send_transaction(tx, signer, wait, chain, is_legacy, &fork_url);
+                    if !wait {
+                        receipts.push(receipt);
+                    } else {
+                        let (receipt, nonce) = receipt.await?;
+                        print_receipt(&receipt, nonce)?;
+                        deployment_sequence.add_receipt(receipt);
                     }
-
-                    async fn send<T, U>(
-                        signer: SignerMiddleware<T, U>,
-                        legacy_or_1559: TypedTransaction,
-                    ) -> eyre::Result<Option<TransactionReceipt>>
-                    where
-                        SignerMiddleware<T, U>: Middleware,
-                    {
-                        tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-                        match signer.send_transaction(legacy_or_1559, None).await {
-                            Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
-                            Err(e) => Err(eyre::eyre!(e.to_string())),
-                        }
-                    }
-
-                    let receipt = match send(signer, legacy_or_1559).await {
-                        Ok(Some(res)) => {
-                            let tx_str =
-                                serde_json::to_string_pretty(&res).expect("Bad serialization");
-                            println!("{}", tx_str);
-                            res
-                        }
-
-                        Ok(None) => {
-                            // todo what if it has been actually sent
-                            eyre::bail!("Failed to get transaction receipt?")
-                        }
-                        Err(e) => {
-                            eyre::bail!("Aborting! A transaction failed to send: {:#?}", e)
-                        }
-                    };
-
-                    deployment_sequence.add_receipt(receipt);
-                    deployment_sequence.index += 1;
                 }
                 Err(e) => {
                     eyre::bail!("{e}");
@@ -151,12 +115,77 @@ impl ScriptArgs {
             }
         }
 
+        self.wait_for_receipts(receipts, deployment_sequence).await?;
+
         println!("\n\n==========================");
         println!(
             "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
             deployment_sequence.path
         );
         Ok(())
+    }
+
+    pub async fn send_transaction(
+        &self,
+        tx: TypedTransaction,
+        signer: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
+        wait: bool,
+        chain: u64,
+        is_legacy: bool,
+        fork_url: &str,
+    ) -> eyre::Result<(TransactionReceipt, U256)> {
+        let mut legacy_or_1559 = if is_legacy {
+            TypedTransaction::Legacy(tx.into())
+        } else {
+            TypedTransaction::Eip1559(tx.into())
+        };
+        legacy_or_1559.set_chain_id(chain);
+
+        let from = *legacy_or_1559.from().expect("no sender");
+
+        if wait {
+            match foundry_utils::next_nonce(from, fork_url, None) {
+                Ok(nonce) => {
+                    let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+
+                    if nonce != tx_nonce {
+                        eyre::bail!("EOA nonce changed unexpectedly while sending transactions.");
+                    }
+                }
+                Err(_) => {
+                    eyre::bail!("Not able to query the EOA nonce.");
+                }
+            }
+        }
+
+        async fn broadcast<T, U>(
+            signer: SignerMiddleware<T, U>,
+            legacy_or_1559: TypedTransaction,
+        ) -> eyre::Result<Option<TransactionReceipt>>
+        where
+            SignerMiddleware<T, U>: Middleware,
+        {
+            tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+            match signer.send_transaction(legacy_or_1559, None).await {
+                Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
+                Err(e) => Err(eyre::eyre!(e.to_string())),
+            }
+        }
+
+        let nonce = *legacy_or_1559.nonce().expect("no nonce");
+        let receipt = match broadcast(signer, legacy_or_1559).await {
+            Ok(Some(res)) => (res, nonce),
+
+            Ok(None) => {
+                // todo what if it has been actually sent
+                eyre::bail!("Failed to get transaction receipt?")
+            }
+            Err(e) => {
+                eyre::bail!("Aborting! A transaction failed to send: {:#?}", e)
+            }
+        };
+
+        Ok(receipt)
     }
 
     pub async fn handle_broadcastable_transactions(
@@ -168,12 +197,9 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                println!("==========================");
-                println!("Simulated On-chain Traces:\n");
                 if let Ok(gas_filled_txs) =
                     self.execute_transactions(txs, script_config, decoder).await
                 {
-                    println!("\n\n==========================");
                     if !result.success {
                         eyre::bail!("\nSIMULATION FAILED");
                     } else {
@@ -198,33 +224,39 @@ impl ScriptArgs {
         }
         Ok(())
     }
-}
 
-pub fn into_legacy(tx: TypedTransaction) -> eyre::Result<TransactionRequest> {
-    Ok(match tx {
-        TypedTransaction::Legacy(tx) => tx,
-        _ => eyre::bail!("Wrong transaction type for expected output"),
-    })
-}
+    async fn wait_for_receipts(
+        &self,
+        tasks: Vec<impl futures::Future<Output = eyre::Result<(TransactionReceipt, U256)>>>,
 
-pub fn into_legacy_ref(tx: &TypedTransaction) -> eyre::Result<&TransactionRequest> {
-    Ok(match tx {
-        TypedTransaction::Legacy(ref tx) => tx,
-        _ => eyre::bail!("Wrong transaction type for expected output"),
-    })
-}
+        deployment_sequence: &mut ScriptSequence,
+    ) -> eyre::Result<()> {
+        let res = join_all(tasks).await;
 
-pub fn into_1559(tx: TypedTransaction) -> eyre::Result<Eip1559TransactionRequest> {
-    Ok(match tx {
-        TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
-            from: tx.from,
-            to: tx.to,
-            value: tx.value,
-            data: tx.data,
-            nonce: tx.nonce,
-            ..Default::default()
-        },
-        TypedTransaction::Eip1559(tx) => tx,
-        _ => eyre::bail!("Wrong transaction type for expected output"),
-    })
+        let mut err = None;
+        let mut receipts = vec![];
+
+        for receipt in res {
+            match receipt {
+                Ok(v) => receipts.push(v),
+                Err(e) => {
+                    err = Some(e);
+                    break
+                }
+            };
+        }
+
+        // Receipts may have arrived out of order
+        receipts.sort_by(|a, b| a.1.cmp(&b.1));
+        for (receipt, nonce) in receipts {
+            print_receipt(&receipt, nonce)?;
+            deployment_sequence.add_receipt(receipt);
+        }
+
+        if let Some(err) = err {
+            Err(err)
+        } else {
+            Ok(())
+        }
+    }
 }

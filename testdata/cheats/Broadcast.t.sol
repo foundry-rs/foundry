@@ -156,6 +156,15 @@ contract BroadcastTestNoLinking is DSTest {
         test.t(0);     
     }
 
+    function deployMany() public {
+        cheats.startBroadcast();
+
+        for(uint i; i< 100; i++) {
+            NoLink test9 = new NoLink();
+        }
+
+        cheats.stopBroadcast();
+    }
 
     function deployCreate2() public {
         cheats.startBroadcast();

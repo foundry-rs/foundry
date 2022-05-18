@@ -5,7 +5,6 @@ mod runner;
 use runner::Runner;
 
 mod broadcast;
-use broadcast::into_legacy;
 use ui::{TUIExitReason, Tui, Ui};
 
 mod cmd;

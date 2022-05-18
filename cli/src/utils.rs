@@ -1,12 +1,15 @@
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
+    prelude::{Http, Provider, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
+    utils::format_units,
 };
 use forge::executor::{opts::EvmOpts, Fork, SpecId};
 use foundry_config::{cache::StorageCachingConfig, Config};
 use std::{
     future::Future,
+    ops::Mul,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -258,6 +261,40 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
+}
+
+pub fn get_http_provider(url: &str) -> Provider<Http> {
+    let provider = Provider::try_from(url).expect("Bad fork provider.");
+
+    if url.contains("127.0.0.1") || url.contains("localhost") {
+        provider.interval(Duration::from_millis(100))
+    } else {
+        provider
+    }
+}
+
+pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<()> {
+    let mut contract_address = "".to_string();
+    if let Some(addr) = receipt.contract_address {
+        contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
+    }
+
+    println!(
+        "\n#####\nHash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {}",
+        hex::encode(receipt.transaction_hash.as_bytes()),
+        contract_address,
+        receipt.block_number.expect("no block_number"),
+        nonce,
+        format_units(
+            receipt
+                .gas_used
+                .unwrap_or_default()
+                .mul(receipt.effective_gas_price.expect("no gas price")),
+            18
+        )?
+        .trim_end_matches("0"),
+    );
+    Ok(())
 }
 
 #[cfg(test)]

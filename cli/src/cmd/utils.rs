@@ -171,7 +171,6 @@ pub fn unwrap_contracts(
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
-    pub index: u32,
     pub transactions: VecDeque<TypedTransaction>,
     pub receipts: Vec<TransactionReceipt>,
     pub path: PathBuf,
@@ -185,7 +184,6 @@ impl ScriptSequence {
         out: &Path,
     ) -> eyre::Result<Self> {
         Ok(ScriptSequence {
-            index: 0,
             transactions,
             receipts: vec![],
             path: ScriptSequence::get_path(sig, target, out)?,

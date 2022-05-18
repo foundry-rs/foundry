@@ -76,6 +76,12 @@ impl ScriptArgs {
         let mut failed = false;
         let mut sum_gas = 0;
         let mut final_txs = transactions.clone();
+
+        if script_config.evm_opts.verbosity > 3 {
+            println!("==========================");
+            println!("Simulated On-chain Traces:\n");
+        }
+
         transactions
             .into_iter()
             .map(|tx| match tx {
@@ -103,16 +109,21 @@ impl ScriptArgs {
                 if !result.success {
                     failed = true;
                 }
-                for (_kind, trace) in &mut result.traces {
-                    decoder.decode(trace);
-                    println!("{}", trace);
+
+                if script_config.evm_opts.verbosity > 3 {
+                    for (_kind, trace) in &mut result.traces {
+                        decoder.decode(trace);
+                        println!("{}", trace);
+                    }
                 }
             });
 
-        println!("Estimated total gas used for script: {}", sum_gas);
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))
         } else {
+            println!("\n==========================\n");
+            println!("Estimated total gas used for script: {}", sum_gas);
+            println!("==========================");
             Ok(final_txs)
         }
     }

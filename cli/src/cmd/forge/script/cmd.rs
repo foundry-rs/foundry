@@ -89,8 +89,7 @@ impl ScriptArgs {
 
                     if let Some(txs) = &mut result.transactions {
                         for tx in txs.iter() {
-                            lib_deploy
-                                .push_back(TypedTransaction::Legacy(into_legacy(tx.clone())?));
+                            lib_deploy.push_back(TypedTransaction::Legacy(tx.clone().into()));
                         }
                         *txs = lib_deploy;
                     }
@@ -152,7 +151,7 @@ impl ScriptArgs {
         match (&mut first_run_result.transactions, result.transactions) {
             (Some(txs), Some(new_txs)) => {
                 for tx in new_txs.iter() {
-                    txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())?));
+                    txs.push_back(TypedTransaction::Legacy(tx.clone().into()));
                 }
             }
             (None, Some(new_txs)) => {
