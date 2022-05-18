@@ -75,6 +75,12 @@ impl AstEq for Base {
     }
 }
 
+impl AstEq for DocComment {
+    fn ast_eq(&self, other: &Self) -> bool {
+        self.ty == other.ty
+    }
+}
+
 impl<T> AstEq for Vec<T>
 where
     T: AstEq,
@@ -148,12 +154,11 @@ macro_rules! derive_ast_eq {
     (struct $name:ident { $($field:ident),* $(,)? }) => {
         impl AstEq for $name {
             fn ast_eq(&self, other: &Self) -> bool {
-                $(
-                if !self.$field.ast_eq(&other.$field) {
-                    return false;
-                }
-                )*
-                true
+                let $name { $($field),* } = self;
+                let left = ($($field),*);
+                let $name { $($field),* } = other;
+                let right = ($($field),*);
+                left.ast_eq(&right)
             }
         }
     };
@@ -173,9 +178,9 @@ macro_rules! derive_ast_eq {
                     }
                     )*
                     $(
-                    $name::$tuple_variant(.., $($tuple_field),*) =>  {
+                    $name::$tuple_variant($($tuple_field),*) =>  {
                         let left = ($($tuple_field),*);
-                        if let $name::$tuple_variant(.., $($tuple_field),*) = other {
+                        if let $name::$tuple_variant($($tuple_field),*) = other {
                             let right = ($($tuple_field),*);
                             left.ast_eq(&right)
                         } else {
@@ -184,9 +189,9 @@ macro_rules! derive_ast_eq {
                     }
                     )*
                     $(
-                    $name::$struct_variant { $($struct_field),* , .. } => {
+                    $name::$struct_variant { $($struct_field),* } => {
                         let left = ($($struct_field),*);
-                        if let $name::$struct_variant { $($struct_field),* , .. } = other {
+                        if let $name::$struct_variant { $($struct_field),* } = other {
                             let right = ($($struct_field),*);
                             left.ast_eq(&right)
                         } else {
@@ -209,33 +214,33 @@ derive_ast_eq! { String }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
-derive_ast_eq! { struct Identifier { name } }
-derive_ast_eq! { struct HexLiteral { hex } }
-derive_ast_eq! { struct StringLiteral { string } }
-derive_ast_eq! { struct Parameter { ty, storage, name } }
-derive_ast_eq! { struct NamedArgument { name, expr } }
-derive_ast_eq! { struct YulBlock { statements } }
-derive_ast_eq! { struct DocComment { ty } }
-derive_ast_eq! { struct YulFunctionCall { id, arguments } }
-derive_ast_eq! { struct YulFunctionDefinition { id, params, returns, body } }
-derive_ast_eq! { struct YulSwitch { condition, cases, default } }
+derive_ast_eq! { struct Identifier { loc, name } }
+derive_ast_eq! { struct HexLiteral { loc, hex } }
+derive_ast_eq! { struct StringLiteral { loc, string } }
+derive_ast_eq! { struct Parameter { loc, ty, storage, name } }
+derive_ast_eq! { struct NamedArgument { loc, name, expr } }
+derive_ast_eq! { struct YulBlock { loc, statements } }
+derive_ast_eq! { struct YulFunctionCall { loc, id, arguments } }
+derive_ast_eq! { struct YulFunctionDefinition { loc, id, params, returns, body } }
+derive_ast_eq! { struct YulSwitch { loc, condition, cases, default } }
 derive_ast_eq! { struct YulFor {
+    loc,
     init_block,
     condition,
     post_block,
     execution_block,
 }}
-derive_ast_eq! { struct YulTypedIdentifier { id, ty } }
-derive_ast_eq! { struct VariableDeclaration { ty, storage, name } }
-derive_ast_eq! { struct Using { list, ty, global } }
-derive_ast_eq! { struct TypeDefinition { name, ty } }
-derive_ast_eq! { struct ContractDefinition { ty, name, base, parts } }
-derive_ast_eq! { struct EventParameter { ty, indexed, name } }
-derive_ast_eq! { struct ErrorParameter { ty, name } }
-derive_ast_eq! { struct EventDefinition { name, fields, anonymous } }
-derive_ast_eq! { struct ErrorDefinition { name, fields } }
-derive_ast_eq! { struct StructDefinition { name, fields } }
-derive_ast_eq! { struct EnumDefinition { name, values } }
+derive_ast_eq! { struct YulTypedIdentifier { loc, id, ty } }
+derive_ast_eq! { struct VariableDeclaration { loc, ty, storage, name } }
+derive_ast_eq! { struct Using { loc, list, ty, global } }
+derive_ast_eq! { struct TypeDefinition { loc, name, ty } }
+derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, parts } }
+derive_ast_eq! { struct EventParameter { loc, ty, indexed, name } }
+derive_ast_eq! { struct ErrorParameter { loc, ty, name } }
+derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
+derive_ast_eq! { struct ErrorDefinition { loc, name, fields } }
+derive_ast_eq! { struct StructDefinition { loc, name, fields } }
+derive_ast_eq! { struct EnumDefinition { loc, name, values } }
 derive_ast_eq! { enum CommentType {
     Line,
     Block,
@@ -250,47 +255,47 @@ derive_ast_eq! { enum UsingList {
 }}
 derive_ast_eq! { enum Visibility {
     _
-    External(),
-    Public(),
-    Internal(),
-    Private(),
+    External(loc),
+    Public(loc),
+    Internal(loc),
+    Private(loc),
     _
 }}
 derive_ast_eq! { enum Mutability {
     _
-    Pure(),
-    View(),
-    Constant(),
-    Payable(),
+    Pure(loc),
+    View(loc),
+    Constant(loc),
+    Payable(loc),
     _
 }}
 derive_ast_eq! { enum Unit {
     _
-    Seconds(),
-    Minutes(),
-    Hours(),
-    Days(),
-    Weeks(),
-    Wei(),
-    Gwei(),
-    Ether(),
+    Seconds(loc),
+    Minutes(loc),
+    Hours(loc),
+    Days(loc),
+    Weeks(loc),
+    Wei(loc),
+    Gwei(loc),
+    Ether(loc),
     _
 }}
 derive_ast_eq! { enum FunctionAttribute {
     _
     Mutability(muta),
     Visibility(visi),
-    Virtual(),
-    Immutable(),
-    Override(idents),
-    BaseOrModifier(base),
+    Virtual(loc),
+    Immutable(loc),
+    Override(loc, idents),
+    BaseOrModifier(loc, base),
     _
 }}
 derive_ast_eq! { enum StorageLocation {
     _
-    Memory(),
-    Storage(),
-    Calldata(),
+    Memory(loc),
+    Storage(loc),
+    Calldata(loc),
     _
 }}
 derive_ast_eq! { enum Type {
@@ -305,121 +310,124 @@ derive_ast_eq! { enum Type {
     Int(int),
     Uint(int),
     Bytes(int),
-    Mapping(expr1, expr2),
+    Mapping(loc, expr1, expr2),
     _
     Function { params, attributes, returns },
 }}
 derive_ast_eq! { enum Statement {
     _
-    Args(args),
-    If(expr, stmt1, stmt2),
-    While(expr, stmt1),
-    Expression(expr),
-    VariableDefinition(decl, expr),
-    For(stmt1, expr, stmt2, stmt3),
-    DoWhile(stmt1, expr),
-    Continue(),
-    Break(),
-    Return(expr),
-    Revert(expr, expr2),
-    RevertNamedArgs(expr, args),
-    Emit(expr),
-    Try(expr, params, claus),
+    Args(loc, args),
+    If(loc, expr, stmt1, stmt2),
+    While(loc, expr, stmt1),
+    Expression(loc, expr),
+    VariableDefinition(loc, decl, expr),
+    For(loc, stmt1, expr, stmt2, stmt3),
+    DoWhile(loc, stmt1, expr),
+    Continue(loc, ),
+    Break(loc, ),
+    Return(loc, expr),
+    Revert(loc, expr, expr2),
+    RevertNamedArgs(loc, expr, args),
+    Emit(loc, expr),
+    Try(loc, expr, params, claus),
     DocComment(comment),
     _
     Block {
+        loc,
         unchecked,
         statements,
     },
     Assembly {
+        loc,
         dialect,
         block,
     },
 }}
 derive_ast_eq! { enum Expression {
     _
-    PostIncrement(expr1),
-    PostDecrement(expr1),
-    New(expr1),
-    ArraySubscript(expr1, expr2),
+    PostIncrement(loc, expr1),
+    PostDecrement(loc, expr1),
+    New(loc, expr1),
+    ArraySubscript(loc, expr1, expr2),
     ArraySlice(
+        loc,
         expr1,
         expr2,
         expr3,
     ),
-    MemberAccess(expr1, ident1),
-    FunctionCall(expr1, exprs1),
-    FunctionCallBlock(expr1, stmt),
-    NamedFunctionCall(expr1, args),
-    Not(expr1),
-    Complement(expr1),
-    Delete(expr1),
-    PreIncrement(expr1),
-    PreDecrement(expr1),
-    UnaryPlus(expr1),
-    UnaryMinus(expr1),
-    Power(expr1, expr2),
-    Multiply(expr1, expr2),
-    Divide(expr1, expr2),
-    Modulo(expr1, expr2),
-    Add(expr1, expr2),
-    Subtract(expr1, expr2),
-    ShiftLeft(expr1, expr2),
-    ShiftRight(expr1, expr2),
-    BitwiseAnd(expr1, expr2),
-    BitwiseXor(expr1, expr2),
-    BitwiseOr(expr1, expr2),
-    Less(expr1, expr2),
-    More(expr1, expr2),
-    LessEqual(expr1, expr2),
-    MoreEqual(expr1, expr2),
-    Equal(expr1, expr2),
-    NotEqual(expr1, expr2),
-    And(expr1, expr2),
-    Or(expr1, expr2),
-    Ternary(expr1, expr2, expr3),
-    Assign(expr1, expr2),
-    AssignOr(expr1, expr2),
-    AssignAnd(expr1, expr2),
-    AssignXor(expr1, expr2),
-    AssignShiftLeft(expr1, expr2),
-    AssignShiftRight(expr1, expr2),
-    AssignAdd(expr1, expr2),
-    AssignSubtract(expr1, expr2),
-    AssignMultiply(expr1, expr2),
-    AssignDivide(expr1, expr2),
-    AssignModulo(expr1, expr2),
-    BoolLiteral(bool1),
-    NumberLiteral(str1, str2),
-    RationalNumberLiteral(str1, str2, str3),
-    HexNumberLiteral(str1),
+    MemberAccess(loc, expr1, ident1),
+    FunctionCall(loc, expr1, exprs1),
+    FunctionCallBlock(loc, expr1, stmt),
+    NamedFunctionCall(loc, expr1, args),
+    Not(loc, expr1),
+    Complement(loc, expr1),
+    Delete(loc, expr1),
+    PreIncrement(loc, expr1),
+    PreDecrement(loc, expr1),
+    UnaryPlus(loc, expr1),
+    UnaryMinus(loc, expr1),
+    Power(loc, expr1, expr2),
+    Multiply(loc, expr1, expr2),
+    Divide(loc, expr1, expr2),
+    Modulo(loc, expr1, expr2),
+    Add(loc, expr1, expr2),
+    Subtract(loc, expr1, expr2),
+    ShiftLeft(loc, expr1, expr2),
+    ShiftRight(loc, expr1, expr2),
+    BitwiseAnd(loc, expr1, expr2),
+    BitwiseXor(loc, expr1, expr2),
+    BitwiseOr(loc, expr1, expr2),
+    Less(loc, expr1, expr2),
+    More(loc, expr1, expr2),
+    LessEqual(loc, expr1, expr2),
+    MoreEqual(loc, expr1, expr2),
+    Equal(loc, expr1, expr2),
+    NotEqual(loc, expr1, expr2),
+    And(loc, expr1, expr2),
+    Or(loc, expr1, expr2),
+    Ternary(loc, expr1, expr2, expr3),
+    Assign(loc, expr1, expr2),
+    AssignOr(loc, expr1, expr2),
+    AssignAnd(loc, expr1, expr2),
+    AssignXor(loc, expr1, expr2),
+    AssignShiftLeft(loc, expr1, expr2),
+    AssignShiftRight(loc, expr1, expr2),
+    AssignAdd(loc, expr1, expr2),
+    AssignSubtract(loc, expr1, expr2),
+    AssignMultiply(loc, expr1, expr2),
+    AssignDivide(loc, expr1, expr2),
+    AssignModulo(loc, expr1, expr2),
+    BoolLiteral(loc, bool1),
+    NumberLiteral(loc, str1, str2),
+    RationalNumberLiteral(loc, str1, str2, str3),
+    HexNumberLiteral(loc, str1),
     StringLiteral(strs1),
-    Type(ty1),
+    Type(loc, ty1),
     HexLiteral(hexs1),
-    AddressLiteral(str1),
+    AddressLiteral(loc, str1),
     Variable(ident1),
-    List(params1),
-    ArrayLiteral(exprs1),
-    Unit(expr1, unit1),
-    This()
+    List(loc, params1),
+    ArrayLiteral(loc, exprs1),
+    Unit(loc, expr1, unit1),
+    This(loc)
     _
 }}
 derive_ast_eq! { enum CatchClause {
     _
     Simple(param, ident, stmt),
-    Named(ident, param, stmt),
+    Named(loc, ident, param, stmt),
     _
 }}
 derive_ast_eq! { enum YulStatement {
     _
-    Assign(exprs, expr),
-    VariableDeclaration(idents, expr),
-    If(expr, block),
+    Assign(loc, exprs, expr),
+    VariableDeclaration(loc, idents, expr),
+    If(loc, expr, block),
     For(yul_for),
     Switch(switch),
-    Leave(),
-    Break(),
-    Continue(),
+    Leave(loc),
+    Break(loc),
+    Continue(loc),
     Block(block),
     FunctionDefinition(def),
     FunctionCall(func),
@@ -427,26 +435,26 @@ derive_ast_eq! { enum YulStatement {
 }}
 derive_ast_eq! { enum YulExpression {
     _
-    BoolLiteral(boo, ident),
-    NumberLiteral(string1, string2, ident),
-    HexNumberLiteral(string, ident),
+    BoolLiteral(loc, boo, ident),
+    NumberLiteral(loc, string1, string2, ident),
+    HexNumberLiteral(loc, string, ident),
     HexStringLiteral(hex, ident),
     StringLiteral(string, ident),
     Variable(ident),
     FunctionCall(func),
-    Member(expr, ident),
+    Member(loc, expr, ident),
     _
 }}
 derive_ast_eq! { enum YulSwitchOptions {
     _
-    Case(expr, block),
-    Default(block),
+    Case(loc, expr, block),
+    Default(loc, block),
     _
 }}
 derive_ast_eq! { enum SourceUnitPart {
     _
     ContractDefinition(def),
-    PragmaDirective(ident, string),
+    PragmaDirective(loc, ident, string),
     ImportDirective(import),
     EnumDefinition(def),
     StructDefinition(def),
@@ -457,7 +465,7 @@ derive_ast_eq! { enum SourceUnitPart {
     TypeDefinition(def),
     DocComment(comment),
     Using(using),
-    StraySemicolon(),
+    StraySemicolon(loc),
     _
 }}
 derive_ast_eq! { enum Import {
@@ -485,24 +493,24 @@ derive_ast_eq! { enum ContractPart {
     VariableDefinition(def),
     FunctionDefinition(def),
     TypeDefinition(def),
-    StraySemicolon(),
+    StraySemicolon(loc),
     Using(using),
     DocComment(comment),
     _
 }}
 derive_ast_eq! { enum ContractTy {
     _
-    Abstract(),
-    Contract(),
-    Interface(),
-    Library(),
+    Abstract(loc),
+    Contract(loc),
+    Interface(loc),
+    Library(loc),
     _
 }}
 derive_ast_eq! { enum VariableAttribute {
     _
     Visibility(visi),
-    Constant(),
-    Immutable(),
-    Override(),
+    Constant(loc),
+    Immutable(loc),
+    Override(loc),
     _
 }}

@@ -1,6 +1,6 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
-use crate::loc::*;
+use crate::solang_ext::*;
 use solang_parser::pt::*;
 
 /// The error type a [Visitor] may return
@@ -131,6 +131,18 @@ pub trait Visitor {
         loc: Loc,
         _error: &mut Option<Expression>,
         _args: &mut Vec<Expression>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
+    fn visit_revert_named_args(
+        &mut self,
+        loc: Loc,
+        _error: &mut Option<Expression>,
+        _args: &mut Vec<NamedArgument>,
     ) -> VResult {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -315,10 +327,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             SourceUnitPart::DocComment(doc) => v.visit_doc_comment(doc),
-            SourceUnitPart::Using(_using) => {
-                // TODO implement me
-                Ok(())
-            }
+            SourceUnitPart::Using(using) => v.visit_using(using),
         }
     }
 }
@@ -377,9 +386,8 @@ impl Visitable for Statement {
             Statement::Break(_) => v.visit_break(),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
-            Statement::RevertNamedArgs(_loc, _error, _args) => {
-                // TODO implement me
-                Ok(())
+            Statement::RevertNamedArgs(loc, error, args) => {
+                v.visit_revert_named_args(*loc, error, args)
             }
             Statement::Emit(loc, event) => v.visit_emit(*loc, event),
             Statement::Try(loc, expr, returns, clauses) => {
