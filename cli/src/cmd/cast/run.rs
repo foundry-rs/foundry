@@ -1,4 +1,4 @@
-use crate::{cmd::Cmd, utils};
+use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
 use cast::trace::CallTraceDecoder;
 use clap::Parser;
 use ethers::{
@@ -20,7 +20,6 @@ use std::{
 };
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
-use crate::utils::consume_config_rpc_url;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
