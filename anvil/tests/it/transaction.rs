@@ -683,3 +683,33 @@ async fn can_get_pending_transaction() {
 
     assert_eq!(mined.hash, pending.unwrap().hash);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn includes_pending_tx_for_transaction_count() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let tx_count = 10u64;
+
+    // send a bunch of tx to the mempool and check nonce is returned correctly
+    for idx in 1..=tx_count {
+        let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+        let _tx = provider.send_transaction(tx, None).await.unwrap();
+        let nonce = provider
+            .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce, idx.into());
+    }
+
+    api.mine_one();
+    let nonce = provider
+        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+    assert_eq!(nonce, tx_count.into());
+}
