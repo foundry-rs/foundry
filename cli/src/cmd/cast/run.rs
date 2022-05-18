@@ -20,13 +20,14 @@ use std::{
 };
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
+use crate::utils::consume_config_rpc_url;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
     #[clap(help = "The transaction hash.")]
     tx: String,
     #[clap(short, long, env = "ETH_RPC_URL")]
-    rpc_url: String,
+    rpc_url: Option<String>,
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
     debug: bool,
     #[clap(
@@ -55,15 +56,16 @@ impl RunArgs {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
+        let rpc_url = consume_config_rpc_url(self.rpc_url);
         let provider =
-            Provider::try_from(self.rpc_url.as_str()).expect("could not instantiate provider");
+            Provider::try_from(rpc_url.as_str()).expect("could not instantiate provider");
 
         if let Some(tx) =
             provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")).await?
         {
             let tx_block_number = tx.block_number.expect("no block number").as_u64();
             let tx_hash = tx.hash();
-            evm_opts.fork_url = Some(self.rpc_url);
+            evm_opts.fork_url = Some(rpc_url);
             evm_opts.fork_block_number = Some(tx_block_number - 1);
 
             // Set up the execution environment
