@@ -1,3 +1,4 @@
+use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
     prelude::{Http, Provider, TransactionReceipt},
@@ -279,20 +280,26 @@ pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<
         contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
     }
 
+    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_price = receipt.effective_gas_price.expect("no gas price");
+    let paid = format_units(gas_used.mul(gas_price), 18)?;
+
+    let check = if receipt.status.unwrap().is_zero() {
+        Emoji("❌ ", " [Failed] ")
+    } else {
+        Emoji("✅ ", " [Success] ")
+    };
+
     println!(
-        "\n#####\nHash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {}",
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {} ETH ({} gas * {} gwei)",
+        check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
         receipt.block_number.expect("no block_number"),
         nonce,
-        format_units(
-            receipt
-                .gas_used
-                .unwrap_or_default()
-                .mul(receipt.effective_gas_price.expect("no gas price")),
-            18
-        )?
-        .trim_end_matches("0"),
+        paid.trim_end_matches("0"),
+        gas_used,
+        format_units(gas_price, 9)?.trim_end_matches("0").trim_end_matches(".")
     );
     Ok(())
 }

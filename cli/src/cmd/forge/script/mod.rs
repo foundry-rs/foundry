@@ -189,9 +189,9 @@ impl ScriptArgs {
             }
         }
 
-        println!("== Logs ==");
         let console_logs = decode_console_logs(&result.logs);
         if !console_logs.is_empty() {
+            println!("== Logs ==");
             for log in console_logs {
                 println!("  {}", log);
             }
