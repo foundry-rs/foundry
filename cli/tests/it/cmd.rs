@@ -785,21 +785,16 @@ forgetest_async!(
         let mut tester = ScriptTester::new(cmd, port, prj.root());
 
         tester
-            .add_deployer(0)
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deploy()")
             .simulate("SIMULATION COMPLETE. To broadcast these")
             .expect_err()
             .resume("No associated wallet")
-            // it failed after making 2 txes
-            .assert_nonce_increment(vec![(0, 2)])
-            .await
             // load missing wallet
             .load_private_keys(vec![1])
             .await
             .run("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
-            // it skips the first 2 txes
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
     })
