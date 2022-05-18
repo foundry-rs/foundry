@@ -464,6 +464,9 @@ impl EthApi {
 
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
+    /// Also checks the pending transactions if `block_number` is
+    /// `BlockId::Number(BlockNumber::Pending)`
+    ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
     pub async fn transaction_count(
         &self,
@@ -471,8 +474,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
-        let number = self.backend.ensure_block_number(block_number)?;
-        self.backend.get_nonce(address, Some(number.into())).await
+        self.get_transaction_count(address, block_number).await
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -1625,16 +1627,49 @@ impl EthApi {
         Some(acc)
     }
 
+    /// Returns the nonce of the `address` depending on the `block_number`
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<U256> {
+        let number = self.backend.ensure_block_number(block_number)?;
+        let mut current_nonce = self.backend.get_nonce(address, Some(number.into())).await?;
+
+        // if pending, also check the transaction pool for pending tx from the `address`
+        if let Some(BlockId::Number(BlockNumber::Pending)) = block_number {
+            let mut current_marker = to_marker(current_nonce.as_u64(), address);
+
+            // check the tx pool for pending tx of the sender
+            for tx in self.pool.ready_transactions() {
+                // tx are already ordered by nonce here
+                if tx.provides.get(0) == Some(&current_marker) {
+                    current_nonce = current_nonce.saturating_add(1.into());
+                    current_marker = to_marker(current_nonce.as_u64(), address);
+                }
+            }
+        }
+
+        Ok(current_nonce)
+    }
+
     /// Returns the nonce for this request
+    ///
+    /// This returns a tuple of `(request nonce, highest nonce)`
+    /// If the nonce field of the `request` is `None` then the tuple will be `(highest nonce,
+    /// highest nonce)`.
+    ///
+    /// This will also check the tx pool for pending transactions from the sender.
     async fn request_nonce(
         &self,
         request: &EthTransactionRequest,
         from: Address,
     ) -> Result<(U256, U256)> {
-        let on_chain_nonce = self.transaction_count(from, None).await?;
-        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+        let highest_nonce =
+            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
+        let nonce = request.nonce.unwrap_or(highest_nonce);
 
-        Ok((nonce, on_chain_nonce))
+        Ok((nonce, highest_nonce))
     }
 
     /// Adds the given transaction to the pool
