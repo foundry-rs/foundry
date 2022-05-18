@@ -12,12 +12,14 @@ use ethers::{
     },
     types::transaction::eip2718::TypedTransaction,
 };
+use foundry_config::Config;
 use foundry_utils::Retry;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use yansi::Paint;
 
@@ -174,6 +176,7 @@ pub struct ScriptSequence {
     pub transactions: VecDeque<TypedTransaction>,
     pub receipts: Vec<TransactionReceipt>,
     pub path: PathBuf,
+    pub timestamp: u64,
 }
 
 impl ScriptSequence {
@@ -181,21 +184,39 @@ impl ScriptSequence {
         transactions: VecDeque<TypedTransaction>,
         sig: &str,
         target: &ArtifactId,
-        out: &Path,
+        _config: &Config,
     ) -> eyre::Result<Self> {
+        let path = ScriptSequence::get_path(sig, target, None)?;
+        if path.exists() {
+            ScriptSequence::backup(sig, target)?;
+        }
+
         Ok(ScriptSequence {
             transactions,
             receipts: vec![],
-            path: ScriptSequence::get_path(sig, target, out)?,
+            path,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Wrong system time.")
+                .as_secs(),
         })
     }
 
-    pub fn load(sig: &str, target: &ArtifactId, out: &Path) -> eyre::Result<Self> {
-        let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, out)?)?;
+    fn backup(sig: &str, target: &ArtifactId) -> eyre::Result<()> {
+        let prev_sequence = ScriptSequence::load(sig, target)?;
+        let backup = ScriptSequence::get_path(sig, target, Some(prev_sequence.timestamp))?;
+        std::fs::copy(prev_sequence.path.clone(), backup)?;
+        Ok(())
+    }
+
+    pub fn load(sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
+        let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, None)?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
 
-    pub fn save(&self) -> eyre::Result<()> {
+    pub fn save(&mut self) -> eyre::Result<()> {
+        self.timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("Wrong system time.").as_secs();
         serde_json::to_writer(BufWriter::new(std::fs::File::create(&self.path)?), &self)?;
 
         println!(
@@ -212,14 +233,21 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    /// Saves to ./out/_CONTRACT_FILE_NAME_/scripted_transactions/_SIG_().json
-    pub fn get_path(sig: &str, target: &ArtifactId, out: &Path) -> eyre::Result<PathBuf> {
-        let mut out = out.to_path_buf();
+    /// Saves to ./broadcast/contract_filename/[timestamp-]sig.json
+    pub fn get_path(
+        sig: &str,
+        target: &ArtifactId,
+        timestamp: Option<u64>,
+    ) -> eyre::Result<PathBuf> {
+        let mut out = PathBuf::from("broadcast");
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);
-        out.push("scripted_transactions");
         std::fs::create_dir_all(out.clone())?;
-        out.push(sig.to_owned() + ".json");
+        let mut filename = sig.split_once("(").expect("Sig is invalid").0.to_owned();
+        if let Some(ts) = timestamp {
+            filename = format!("{}-{}", ts.to_string(), filename);
+        }
+        out.push(filename + ".json");
         Ok(out)
     }
 }

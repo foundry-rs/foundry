@@ -205,7 +205,7 @@ impl ScriptArgs {
                     } else {
                         let txs = gas_filled_txs;
                         let mut deployment_sequence =
-                            ScriptSequence::new(txs, &self.sig, target, &script_config.config.out)?;
+                            ScriptSequence::new(txs, &self.sig, target, &script_config.config)?;
 
                         if self.broadcast {
                             self.send_transactions(&mut deployment_sequence).await?;
