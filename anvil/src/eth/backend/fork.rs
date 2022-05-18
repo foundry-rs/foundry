@@ -6,8 +6,8 @@ use ethers::{
     prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError},
     types::{
-        transaction::eip2930::AccessList, Address, Block, BlockId, Bytes, Filter, Log, Trace,
-        Transaction, TransactionReceipt, TxHash, H256, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, Filter, Log,
+        Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -141,7 +141,7 @@ impl ClientFork {
         &self,
         request: &CallRequest,
         block: Option<BlockNumber>,
-    ) -> Result<AccessList, ProviderError> {
+    ) -> Result<AccessListWithGasUsed, ProviderError> {
         let tx = ethers::utils::serialize(request);
         let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
         self.provider().request("eth_createAccessList", [tx, block]).await

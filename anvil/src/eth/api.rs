@@ -16,6 +16,7 @@ use crate::{
         },
         sign,
         sign::Signer,
+        util::PRECOMPILES,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -40,7 +41,7 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        transaction::eip2930::{AccessList, AccessListItem},
+        transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
         TxHash, H256, U256, U64,
     },
@@ -642,29 +643,27 @@ impl EthApi {
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
-        let out = match out {
-            TransactOut::None => Default::default(),
-            TransactOut::Call(out) => out.to_vec().into(),
-            TransactOut::Create(out, _) => out.to_vec().into(),
-        };
-
-        match exit {
-            return_ok!() => Ok(out),
-            return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
-            reason => Err(BlockchainError::EvmError(reason)),
-        }
+        ensure_return_ok(exit, &out)
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
     /// contains all storage slots and addresses read and written by the transaction, except for the
     /// sender account and the precompiles.
     ///
+    /// It returns list of addresses and storage keys used by the transaction, plus the gas
+    /// consumed when the access list is added. That is, it gives you the list of addresses and
+    /// storage keys that will be used by that transaction, plus the gas consumed if the access
+    /// list is included. Like eth_estimateGas, this is an estimation; the list could change
+    /// when the transaction is actually mined. Adding an accessList to your transaction does
+    /// not necessary result in lower gas usage compared to a transaction without an access
+    /// list.
+    ///
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: CallRequest,
+        mut request: CallRequest,
         block_number: Option<BlockId>,
-    ) -> Result<AccessList> {
+    ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
         let number = self.backend.ensure_block_number(block_number)?;
         let block_number = Some(number.into());
@@ -676,14 +675,21 @@ impl EthApi {
         }
 
         let from = request.from;
-        let (_, _, _gas, mut state) =
-            self.backend.call(request, FeeDetails::zero(), block_number)?;
+        let (exit, out, _, mut state) =
+            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
+
+        ensure_return_ok(exit, &out)?;
 
         // cleanup state map
         if let Some(from) = from {
+            // remove the sender
             let _ = state.remove(&from);
         }
-        let _ = state.remove(&Address::zero());
+
+        // remove all precompiles
+        for precompile in PRECOMPILES.iter() {
+            let _ = state.remove(precompile);
+        }
 
         let items = state
             .into_iter()
@@ -693,7 +699,16 @@ impl EthApi {
             })
             .collect();
 
-        Ok(AccessList(items))
+        let access_list = AccessList(items);
+
+        // execute again but with access list set
+        request.access_list = Some(access_list.clone());
+        let (exit, out, gas_used, _) =
+            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
+
+        ensure_return_ok(exit, &out)?;
+
+        Ok(AccessListWithGasUsed { access_list, gas_used: gas_used.into() })
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -1648,5 +1663,19 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
         vec![to_marker(prev_nonce.as_u64(), from)]
     } else {
         Vec::new()
+    }
+}
+
+/// Returns an error if the `exit` code is _not_ ok
+fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+    let out = match out {
+        TransactOut::None => Default::default(),
+        TransactOut::Call(out) => out.to_vec().into(),
+        TransactOut::Create(out, _) => out.to_vec().into(),
+    };
+    match exit {
+        return_ok!() => Ok(out),
+        return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
+        reason => Err(BlockchainError::EvmError(reason)),
     }
 }
