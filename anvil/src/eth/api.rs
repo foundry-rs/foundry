@@ -16,6 +16,7 @@ use crate::{
         },
         sign,
         sign::Signer,
+        util::PRECOMPILES,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -40,7 +41,7 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        transaction::eip2930::{AccessList, AccessListItem},
+        transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
         TxHash, H256, U256, U64,
     },
@@ -463,6 +464,9 @@ impl EthApi {
 
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
+    /// Also checks the pending transactions if `block_number` is
+    /// `BlockId::Number(BlockNumber::Pending)`
+    ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
     pub async fn transaction_count(
         &self,
@@ -470,8 +474,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_getTransactionCount");
-        let number = self.backend.ensure_block_number(block_number)?;
-        self.backend.get_nonce(address, Some(number.into())).await
+        self.get_transaction_count(address, block_number).await
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -642,29 +645,27 @@ impl EthApi {
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
-        let out = match out {
-            TransactOut::None => Default::default(),
-            TransactOut::Call(out) => out.to_vec().into(),
-            TransactOut::Create(out, _) => out.to_vec().into(),
-        };
-
-        match exit {
-            return_ok!() => Ok(out),
-            return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
-            reason => Err(BlockchainError::EvmError(reason)),
-        }
+        ensure_return_ok(exit, &out)
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
     /// contains all storage slots and addresses read and written by the transaction, except for the
     /// sender account and the precompiles.
     ///
+    /// It returns list of addresses and storage keys used by the transaction, plus the gas
+    /// consumed when the access list is added. That is, it gives you the list of addresses and
+    /// storage keys that will be used by that transaction, plus the gas consumed if the access
+    /// list is included. Like eth_estimateGas, this is an estimation; the list could change
+    /// when the transaction is actually mined. Adding an accessList to your transaction does
+    /// not necessary result in lower gas usage compared to a transaction without an access
+    /// list.
+    ///
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        request: CallRequest,
+        mut request: CallRequest,
         block_number: Option<BlockId>,
-    ) -> Result<AccessList> {
+    ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
         let number = self.backend.ensure_block_number(block_number)?;
         let block_number = Some(number.into());
@@ -676,14 +677,21 @@ impl EthApi {
         }
 
         let from = request.from;
-        let (_, _, _gas, mut state) =
-            self.backend.call(request, FeeDetails::zero(), block_number)?;
+        let (exit, out, _, mut state) =
+            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
+
+        ensure_return_ok(exit, &out)?;
 
         // cleanup state map
         if let Some(from) = from {
+            // remove the sender
             let _ = state.remove(&from);
         }
-        let _ = state.remove(&Address::zero());
+
+        // remove all precompiles
+        for precompile in PRECOMPILES.iter() {
+            let _ = state.remove(precompile);
+        }
 
         let items = state
             .into_iter()
@@ -693,7 +701,16 @@ impl EthApi {
             })
             .collect();
 
-        Ok(AccessList(items))
+        let access_list = AccessList(items);
+
+        // execute again but with access list set
+        request.access_list = Some(access_list.clone());
+        let (exit, out, gas_used, _) =
+            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
+
+        ensure_return_ok(exit, &out)?;
+
+        Ok(AccessListWithGasUsed { access_list, gas_used: gas_used.into() })
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -1610,16 +1627,49 @@ impl EthApi {
         Some(acc)
     }
 
+    /// Returns the nonce of the `address` depending on the `block_number`
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<U256> {
+        let number = self.backend.ensure_block_number(block_number)?;
+        let mut current_nonce = self.backend.get_nonce(address, Some(number.into())).await?;
+
+        // if pending, also check the transaction pool for pending tx from the `address`
+        if let Some(BlockId::Number(BlockNumber::Pending)) = block_number {
+            let mut current_marker = to_marker(current_nonce.as_u64(), address);
+
+            // check the tx pool for pending tx of the sender
+            for tx in self.pool.ready_transactions() {
+                // tx are already ordered by nonce here
+                if tx.provides.get(0) == Some(&current_marker) {
+                    current_nonce = current_nonce.saturating_add(1.into());
+                    current_marker = to_marker(current_nonce.as_u64(), address);
+                }
+            }
+        }
+
+        Ok(current_nonce)
+    }
+
     /// Returns the nonce for this request
+    ///
+    /// This returns a tuple of `(request nonce, highest nonce)`
+    /// If the nonce field of the `request` is `None` then the tuple will be `(highest nonce,
+    /// highest nonce)`.
+    ///
+    /// This will also check the tx pool for pending transactions from the sender.
     async fn request_nonce(
         &self,
         request: &EthTransactionRequest,
         from: Address,
     ) -> Result<(U256, U256)> {
-        let on_chain_nonce = self.transaction_count(from, None).await?;
-        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+        let highest_nonce =
+            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await?;
+        let nonce = request.nonce.unwrap_or(highest_nonce);
 
-        Ok((nonce, on_chain_nonce))
+        Ok((nonce, highest_nonce))
     }
 
     /// Adds the given transaction to the pool
@@ -1648,5 +1698,19 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
         vec![to_marker(prev_nonce.as_u64(), from)]
     } else {
         Vec::new()
+    }
+}
+
+/// Returns an error if the `exit` code is _not_ ok
+fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+    let out = match out {
+        TransactOut::None => Default::default(),
+        TransactOut::Call(out) => out.to_vec().into(),
+        TransactOut::Create(out, _) => out.to_vec().into(),
+    };
+    match exit {
+        return_ok!() => Ok(out),
+        return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
+        reason => Err(BlockchainError::EvmError(reason)),
     }
 }

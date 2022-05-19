@@ -159,7 +159,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
                 self.to,
                 &args,
                 self.chain,
-                self.etherscan_api_key.as_ref().expect("Must set ETHERSCAN_API_KEY"),
+                self.etherscan_api_key.as_ref().unwrap_or_else(|| panic!(r#"Unable to determine the function signature from `{}`. To find the function signature from the deployed contract via its name instead, a valid ETHERSCAN_API_KEY must be set."#, sig)),
             )
             .await?
         };
@@ -286,7 +286,7 @@ mod tests {
         match tx {
             TypedTransaction::Eip1559(_) => {}
             _ => {
-                assert!(false, "Wrong tx type");
+                panic!("Wrong tx type");
             }
         }
         Ok(())
@@ -301,7 +301,7 @@ mod tests {
         match tx {
             TypedTransaction::Legacy(_) => {}
             _ => {
-                assert!(false, "Wrong tx type");
+                panic!("Wrong tx type");
             }
         }
         Ok(())
