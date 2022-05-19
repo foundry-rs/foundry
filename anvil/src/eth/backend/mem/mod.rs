@@ -187,11 +187,12 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             // reset the fork entirely and reapply the genesis config
             fork.reset(forking.json_rpc_url.clone(), forking.block_number).await?;
-            // update env settings
+            // update all settings related to the forked block
             {
                 let mut env = self.env.write();
                 env.cfg.chain_id = fork.chain_id().into();
                 env.block.number = fork.block_number().into();
+                self.time.set_start_timestamp(fork.timestamp());
             }
 
             // reset storage
