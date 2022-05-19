@@ -60,13 +60,12 @@ impl ClientFork {
 
         let block = if let Some(block_number) = block_number {
             let provider = self.provider();
-            let block_hash = provider
-                .get_block(block_number)
-                .await?
-                .ok_or(BlockchainError::BlockNotFound)?
-                .hash
-                .ok_or(BlockchainError::BlockNotFound)?;
-            Some((block_number, block_hash))
+            let block =
+                provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+            let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+            let timestamp = block.timestamp.as_u64();
+
+            Some((block_number, block_hash, timestamp))
         } else {
             None
         };
@@ -84,6 +83,10 @@ impl ClientFork {
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
         block < self.block_number()
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.config.read().timestamp
     }
 
     pub fn block_number(&self) -> u64 {
@@ -373,6 +376,8 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<Http>>,
     pub chain_id: u64,
+    /// The timestamp fo the forked block
+    pub timestamp: u64,
 }
 
 // === impl ClientForkConfig ===
@@ -391,11 +396,12 @@ impl ClientForkConfig {
         self.eth_rpc_url = url;
         Ok(())
     }
-    /// Updates the block forked off
-    pub fn update_block(&mut self, block: Option<(u64, H256)>) {
-        if let Some((block_number, block_hash)) = block {
+    /// Updates the block forked off `(block number, block hash, timestamp)`
+    pub fn update_block(&mut self, block: Option<(u64, H256, u64)>) {
+        if let Some((block_number, block_hash, timestamp)) = block {
             self.block_number = block_number;
             self.block_hash = block_hash;
+            self.timestamp = timestamp;
             trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
         }
     }

@@ -36,6 +36,12 @@ impl TimeManager {
         *current = next;
     }
 
+    /// Sets the timestamp we should base further timestamps on
+    pub fn set_start_timestamp(&self, seconds: u64) {
+        let current = duration_since_unix_epoch().as_secs() as i128;
+        *self.offset.write() = (seconds as i128) - current;
+    }
+
     /// Jumps forward in time by the given seconds
     ///
     /// This will apply a permanent offset to the natural UNIX Epoch timestamp

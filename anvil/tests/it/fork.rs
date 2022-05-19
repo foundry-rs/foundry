@@ -21,6 +21,8 @@ const RINKEBY_RPC_URL: &str =
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
+const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
+
 /// Represents an anvil fork of an anvil node
 #[allow(unused)]
 pub struct LocalFork {
@@ -326,4 +328,44 @@ async fn can_reset_properly() {
 
     // tx does not exist anymore
     assert!(fork_provider.get_transaction(tx.transaction_hash).await.unwrap().is_none())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_timestamp() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
+    assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    // ensure the diff between the new mined block and the original block is within a small window
+    // to account for network delays, timestamp rounding: 3 secs and the http provider's
+    // interval, just to be safe
+    let expected_timestamp_offset = provider.get_interval().as_secs() + 3;
+    let diff = block.timestamp - BLOCK_TIMESTAMP;
+    assert!(diff <= expected_timestamp_offset.into());
+
+    // reset to check timestamp works after resetting
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
+        .await
+        .unwrap();
+    let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
+    assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    // ensure the diff between the new mined block and the original block is within 2secs, just to
+    // be safe
+    let diff = block.timestamp - BLOCK_TIMESTAMP;
+    assert!(diff <= expected_timestamp_offset.into());
 }
