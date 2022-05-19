@@ -51,7 +51,8 @@ impl ScriptArgs {
         } = self.build(&script_config)?;
 
         if self.resume {
-            let mut deployment_sequence = ScriptSequence::load(&self.sig, &target)?;
+            let mut deployment_sequence =
+                ScriptSequence::load(&script_config.config, &self.sig, &target)?;
             self.send_transactions(&mut deployment_sequence).await?;
         } else {
             let mut known_contracts = unwrap_contracts(&highlevel_known_contracts);

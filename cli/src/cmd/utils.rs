@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
     io::BufWriter,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use yansi::Paint;
@@ -184,11 +184,11 @@ impl ScriptSequence {
         transactions: VecDeque<TypedTransaction>,
         sig: &str,
         target: &ArtifactId,
-        _config: &Config,
+        config: &Config,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(sig, target, None)?;
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, None)?;
         if path.exists() {
-            ScriptSequence::backup(sig, target)?;
+            ScriptSequence::backup(config, sig, target)?;
         }
 
         Ok(ScriptSequence {
@@ -202,15 +202,25 @@ impl ScriptSequence {
         })
     }
 
-    fn backup(sig: &str, target: &ArtifactId) -> eyre::Result<()> {
-        let prev_sequence = ScriptSequence::load(sig, target)?;
-        let backup = ScriptSequence::get_path(sig, target, Some(prev_sequence.timestamp))?;
+    fn backup(config: &Config, sig: &str, target: &ArtifactId) -> eyre::Result<()> {
+        let prev_sequence = ScriptSequence::load(config, sig, target)?;
+        let backup = ScriptSequence::get_path(
+            &config.broadcast,
+            sig,
+            target,
+            Some(prev_sequence.timestamp),
+        )?;
         std::fs::copy(prev_sequence.path.clone(), backup)?;
         Ok(())
     }
 
-    pub fn load(sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
-        let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, None)?)?;
+    pub fn load(config: &Config, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
+        let file = std::fs::read_to_string(ScriptSequence::get_path(
+            &config.broadcast,
+            sig,
+            target,
+            None,
+        )?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
 
@@ -233,13 +243,14 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    /// Saves to ./broadcast/contract_filename/[timestamp-]sig.json
+    /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
     pub fn get_path(
+        out: &Path,
         sig: &str,
         target: &ArtifactId,
         timestamp: Option<u64>,
     ) -> eyre::Result<PathBuf> {
-        let mut out = PathBuf::from("broadcast");
+        let mut out = out.to_path_buf();
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);
         std::fs::create_dir_all(out.clone())?;

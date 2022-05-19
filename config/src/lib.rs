@@ -104,6 +104,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the broadcast logs are stored
+    pub broadcast: PathBuf,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -1220,6 +1222,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             cache_path: "cache".into(),
+            broadcast: "broadcast".into(),
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
