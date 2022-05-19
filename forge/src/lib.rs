@@ -91,10 +91,7 @@ pub mod test_helpers {
 
     pub fn test_executor() -> Executor<Backend> {
         let env = RuntimeOrHandle::new().block_on((*EVM_OPTS).evm_env());
-        ExecutorBuilder::new()
-            .with_cheatcodes(false, None)
-            .with_config(env)
-            .build(Backend::simple())
+        ExecutorBuilder::new().with_cheatcodes(false).with_config(env).build(Backend::simple())
     }
 
     pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {

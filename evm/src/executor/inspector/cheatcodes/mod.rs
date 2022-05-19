@@ -79,23 +79,18 @@ pub struct Cheatcodes {
     /// Current broadcasting information
     pub broadcast: Option<Broadcast>,
 
-    /// Broadcast address when overloading
-    pub broadcast_address: Option<Address>,
+    /// Used to correct the nonce of --sender after the initiating call
+    pub corrected_nonce: bool,
 
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 }
 
 impl Cheatcodes {
-    pub fn new(
-        ffi: bool,
-        block: BlockEnv,
-        gas_price: U256,
-        broadcast_address: Option<Address>,
-    ) -> Self {
+    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
         Self {
             ffi,
-            broadcast_address,
+            corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
             ..Default::default()

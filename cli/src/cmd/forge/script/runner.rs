@@ -125,7 +125,7 @@ impl<DB: DatabaseRef> Runner<DB> {
 
     /// Executes the method that will collect all broadcastable transactions.
     pub fn script(&mut self, address: Address, calldata: Bytes) -> eyre::Result<ScriptResult> {
-        self.call(*CALLER, address, calldata, U256::zero(), false)
+        self.call(self.sender, address, calldata, U256::zero(), false)
     }
 
     /// Runs a broadcastable transaction locally and persists its state.
