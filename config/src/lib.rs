@@ -183,7 +183,10 @@ pub struct Config {
     /// Block gas limit
     pub gas_limit: GasLimit,
     /// `tx.gasprice` value during EVM execution"
-    pub gas_price: u64,
+    ///
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
+    /// (if set by user) or the remote client's gas price
+    pub gas_price: Option<u64>,
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,
     /// the `block.coinbase` value during EVM execution
@@ -1248,7 +1251,7 @@ impl Default for Config {
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
-            gas_price: 0,
+            gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
             block_timestamp: 1,

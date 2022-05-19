@@ -49,6 +49,7 @@ impl EvmOpts {
             environment(
                 &provider,
                 self.memory_limit,
+                self.env.gas_price,
                 self.env.chain_id,
                 self.fork_block_number,
                 self.sender,
@@ -72,7 +73,7 @@ impl EvmOpts {
                     memory_limit: self.memory_limit,
                 },
                 tx: TxEnv {
-                    gas_price: self.env.gas_price.into(),
+                    gas_price: self.env.gas_price.unwrap_or_default().into(),
                     gas_limit: self.gas_limit().as_u64(),
                     caller: self.sender,
                     ..Default::default()
@@ -127,7 +128,11 @@ pub struct Env {
     pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution
-    pub gas_price: u64,
+    ///
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
+    /// (if set by user) or the remote client's gas price.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_price: Option<u64>,
 
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,
