@@ -184,7 +184,7 @@ pub struct Config {
     pub gas_limit: GasLimit,
     /// `tx.gasprice` value during EVM execution"
     ///
-    /// this is optional, so we can determine in fork mode whether to use the config's gas price
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
     /// (if set by user) or the remote client's gas price
     pub gas_price: Option<u64>,
     /// the base fee in a block
