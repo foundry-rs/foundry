@@ -881,3 +881,21 @@ forgetest_async!(
             .run("Script failed.");
     })
 );
+
+forgetest_async!(
+    can_deploy_100_txes_concurrently,
+    (|prj: TestProject, cmd: TestCommand| async move {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTestNoLinking", "deployMany()")
+            .simulate("SIMULATION COMPLETE. To broadcast these")
+            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .assert_nonce_increment(vec![(0, 100)])
+            .await;
+    })
+);
