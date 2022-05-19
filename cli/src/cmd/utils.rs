@@ -245,7 +245,7 @@ impl ScriptSequence {
         std::fs::create_dir_all(out.clone())?;
         let mut filename = sig.split_once('(').expect("Sig is invalid").0.to_owned();
         if let Some(ts) = timestamp {
-            filename = format!("{}-{}", ts, filename);
+            filename = format!("{}-{}", filename, ts);
         }
         out.push(filename + ".json");
         Ok(out)
