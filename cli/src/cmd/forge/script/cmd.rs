@@ -36,6 +36,8 @@ impl ScriptArgs {
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
             script_config.sender_nonce =
                 foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None)?
+        } else {
+            script_config.config.libraries = Default::default();
         }
 
         let BuildOutput {
