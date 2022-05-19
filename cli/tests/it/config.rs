@@ -69,7 +69,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
         gas_limit: 99_000_000.into(),
-        gas_price: 999,
+        gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
         block_timestamp: 10,
@@ -356,14 +356,14 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
 
     // explicitly set gas_price
-    let config = Config { gas_price: 1337, ..Default::default() };
+    let config = Config { gas_price: Some(1337), ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-    assert_eq!(config.gas_price, 1337);
+    assert_eq!(config.gas_price, Some(1337));
 
     let config = prj.config_from_output(["--gas-price", "300"]);
-    assert_eq!(config.gas_price, 300);
+    assert_eq!(config.gas_price, Some(300));
 });
 
 // test that optimizer runs works
