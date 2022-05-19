@@ -45,12 +45,12 @@ foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 pub struct ScriptArgs {
-    /// The path of the contract to run.
+    /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
     #[clap(value_hint = ValueHint::FilePath)]
-    pub path: PathBuf,
+    pub path: String,
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,

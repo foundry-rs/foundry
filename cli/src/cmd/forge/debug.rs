@@ -16,7 +16,7 @@ foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 pub struct DebugArgs {
-    /// The path of the contract to run.
+    /// The contract you want to run. Either the file path or contract name.
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
@@ -27,7 +27,7 @@ pub struct DebugArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, short, value_name = "CONTRACT_NAME")]
+    #[clap(long, alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
@@ -49,7 +49,7 @@ impl Cmd for DebugArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
         let script = ScriptArgs {
-            path: self.path,
+            path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
             target_contract: self.target_contract,
             sig: self.sig,

@@ -1,22 +1,20 @@
-use crate::compile;
+use crate::{cmd::get_cached_entry_by_name, compile, opts::forge::ContractInfo};
 
 use ethers::{
-    prelude::{ArtifactId, Project},
+    prelude::{cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput},
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
 };
 
 use foundry_utils::PostLinkInput;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
 use super::*;
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
-        let target_contract = dunce::canonicalize(&self.path)?;
-        let project = script_config.config.ephemeral_no_artifacts_project()?;
-        let output = compile::compile_files(&project, vec![target_contract])?;
+    pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+        let (project, output) = self.get_project_and_output(script_config)?;
 
         let (contracts, sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
@@ -119,6 +117,39 @@ impl ScriptArgs {
             sources: BTreeMap::new(),
             project,
         })
+    }
+
+    pub fn get_project_and_output(
+        &mut self,
+        script_config: &ScriptConfig,
+    ) -> eyre::Result<(Project, ProjectCompileOutput)> {
+
+        let project = script_config.config.ephemeral_no_artifacts_project()?;
+
+        let path = match dunce::canonicalize(&self.path) {
+            Ok(target_contract) => target_contract,
+            Err(_) => {
+                let contract = ContractInfo::from_str(&self.path)?;
+                let path = if let Some(path) = contract.path {
+                    path
+                } else {
+                    let project = script_config.config.project()?;
+                    compile::compile(&project, false, false)?;
+                    let cache = SolFilesCache::read_joined(&project.paths)?;
+
+                    let res = get_cached_entry_by_name(&cache, &contract.name)?;
+                    res.0.to_str().expect("Invalid path string.").to_string()
+                };
+
+                self.path = path;
+                self.target_contract = Some(contract.name);
+                dunce::canonicalize(&self.path)?
+            }
+        };
+
+        // We always compile our contract path, since it's not possible to get srcmaps from cached artifacts
+        let output = compile::compile_files(&project, vec![path])?;
+        Ok((project, output))
     }
 }
 
