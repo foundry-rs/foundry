@@ -249,8 +249,9 @@ pub fn apply<DB: Database>(
     })
 }
 
-/// Broadcast is called with --sender which increments the nonce. This makes sure that broadcasting
-/// uses the correct nonce.
+/// When using `forge script`, the script method is called using the address from `--sender`.
+/// That leads to the its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
+/// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 fn correct_sender_nonce(
     sender: &Address,
     subroutine: &mut revm::SubRoutine,
