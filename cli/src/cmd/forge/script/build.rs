@@ -1,7 +1,9 @@
 use crate::{cmd::get_cached_entry_by_name, compile, opts::forge::ContractInfo};
 
 use ethers::{
-    prelude::{cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput},
+    prelude::{
+        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
+    },
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
 };
@@ -23,6 +25,7 @@ impl ScriptArgs {
         let mut output = self.link(
             project,
             contracts,
+            script_config.config.parsed_libraries()?,
             script_config.evm_opts.sender,
             script_config.sender_nonce,
         )?;
@@ -34,6 +37,7 @@ impl ScriptArgs {
         &self,
         project: Project,
         contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+        libraries_addresses: Libraries,
         sender: Address,
         nonce: U256,
     ) -> eyre::Result<BuildOutput> {
@@ -63,9 +67,21 @@ impl ScriptArgs {
             matched: false,
             target_id: None,
         };
-        foundry_utils::link_with_nonce(
+
+        // link_with_nonce_or_address expects absolute paths
+        let mut libs = libraries_addresses.clone();
+        for (file, libraries) in libraries_addresses.libs.iter() {
+            if file.is_relative() {
+                let mut absolute_path = project.root().clone();
+                absolute_path.push(file);
+                libs.libs.insert(absolute_path, libraries.clone());
+            }
+        }
+
+        foundry_utils::link_with_nonce_or_address(
             contracts.clone(),
             &mut highlevel_known_contracts,
+            libs,
             sender,
             nonce,
             &mut extra_info,
@@ -123,7 +139,6 @@ impl ScriptArgs {
         &mut self,
         script_config: &ScriptConfig,
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
-
         let project = script_config.config.ephemeral_no_artifacts_project()?;
 
         let path = match dunce::canonicalize(&self.path) {
@@ -147,7 +162,8 @@ impl ScriptArgs {
             }
         };
 
-        // We always compile our contract path, since it's not possible to get srcmaps from cached artifacts
+        // We always compile our contract path, since it's not possible to get srcmaps from cached
+        // artifacts
         let output = compile::compile_files(&project, vec![path])?;
         Ok((project, output))
     }

@@ -133,8 +133,14 @@ impl ScriptArgs {
         )?;
         script_config.sender_nonce = nonce;
 
-        let BuildOutput { contract, highlevel_known_contracts, predeploy_libraries, .. } =
-            self.link(project, default_known_contracts, new_sender, nonce)?;
+        let BuildOutput { contract, highlevel_known_contracts, predeploy_libraries, .. } = self
+            .link(
+                project,
+                default_known_contracts,
+                script_config.config.parsed_libraries()?,
+                new_sender,
+                nonce,
+            )?;
 
         first_run_result.transactions =
             Some(self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries));

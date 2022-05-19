@@ -11,7 +11,7 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     utils::RuntimeOrHandle,
     ArtifactId,
 };
@@ -22,6 +22,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt::{self, Write},
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
@@ -102,9 +103,11 @@ pub struct PostLinkInput<'a, T, U> {
     pub dependencies: Vec<ethers_core::types::Bytes>,
 }
 
-pub fn link_with_nonce<T, U>(
+#[allow(clippy::too_many_arguments)]
+pub fn link_with_nonce_or_address<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
+    deployed_library_addresses: Libraries,
     sender: Address,
     nonce: U256,
     extra: &mut U,
@@ -162,6 +165,7 @@ pub fn link_with_nonce<T, U>(
                         &contracts_by_slug,
                         &link_tree,
                         &mut dependencies,
+                        &deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -193,6 +197,7 @@ pub fn link_with_nonce<T, U>(
 /// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
 /// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
 /// will be filled with the predeploy libraries, initial nonce, and the sender.
+#[allow(clippy::too_many_arguments)]
 pub fn recurse_link<'a>(
     // target name
     target: String,
@@ -204,6 +209,8 @@ pub fn recurse_link<'a>(
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
     // library deployment vector
     deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // deployed library addresses fname => adddress
+    deployed_library_addresses: &'a Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -232,28 +239,39 @@ pub fn recurse_link<'a>(
                         contracts,
                         dependency_tree,
                         deployment,
+                        deployed_library_addresses,
                         init_nonce,
                         sender,
                     );
                 }
             }
 
-            // calculate the address for linking this dependency
-            //
-            // NOTE: We add 1 to the nonce, because if we reached this codepath, this contract has a
-            // dependency. At the very least, that one contract will be deployed *prior*
-            // to this one, but wont appear in our deployment vector. It probably should
-            // here, but it doesn't.
-            let addr =
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+            let mut deployed_address = None;
+
+            if let Some(library_file) = deployed_library_addresses
+                .libs
+                .get(&PathBuf::from_str(file).expect("Invalid library path."))
+            {
+                if let Some(address) = library_file.get(key) {
+                    deployed_address =
+                        Some(Address::from_str(address).expect("Invalid library address passed."));
+                }
+            }
+
+            let address = deployed_address.unwrap_or_else(|| {
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
+            });
 
             // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), addr);
-            target_bytecode.1.link(file, key, addr);
+            target_bytecode.0.link(file.clone(), key.clone(), address);
+            target_bytecode.1.link(file, key, address);
 
-            // push the dependency into the library deployment vector
-            deployment
-                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+            if deployed_address.is_none() {
+                // push the dependency into the library deployment vector
+                deployment.push(
+                    next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
+                );
+            }
         });
     }
 }
@@ -1157,9 +1175,10 @@ mod tests {
             .expect("could not get bytecode as str")
             .to_string();
 
-        link_with_nonce(
+        link_with_nonce_or_address(
             contracts,
             &mut known_contracts,
+            Default::default(),
             Address::default(),
             U256::one(),
             &mut deployable_contracts,

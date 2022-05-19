@@ -297,9 +297,9 @@ pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<
         contract_address,
         receipt.block_number.expect("no block_number"),
         nonce,
-        paid.trim_end_matches("0"),
+        paid.trim_end_matches('0'),
         gas_used,
-        format_units(gas_price, 9)?.trim_end_matches("0").trim_end_matches(".")
+        format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
     );
     Ok(())
 }
