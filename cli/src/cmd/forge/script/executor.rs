@@ -101,7 +101,7 @@ impl ScriptArgs {
             .enumerate()
             .for_each(|(i, mut result)| {
                 match &mut final_txs[i] {
-                    TypedTransaction::Legacy(tx) => tx.gas = Some(U256::from(result.gas * 12 / 10)),
+                    TypedTransaction::Legacy(tx) => tx.gas = Some(U256::from(result.gas * 13 / 10)),
                     _ => unreachable!(),
                 }
 
