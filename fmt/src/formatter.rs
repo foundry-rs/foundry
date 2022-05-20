@@ -271,15 +271,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write!(self, "///{}", doc_comment.comment)?;
             }
             CommentType::Block => {
-                let mut lines = doc_comment
+                let lines = doc_comment
                     .comment
+                    .trim_end()
                     .lines()
                     .map(|line| line.trim_start())
                     .peekable()
                     .collect::<Vec<_>>();
-                if lines.last() == Some(&"") {
-                    lines.pop();
-                }
                 if lines.iter().skip(1).all(|line| line.starts_with('*')) {
                     writeln!(self, "/**")?;
                     let mut lines = lines.into_iter();

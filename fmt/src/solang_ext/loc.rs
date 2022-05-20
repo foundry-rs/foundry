@@ -13,7 +13,7 @@ where
     T: LineOfCode,
 {
     fn loc(&self) -> Loc {
-        T::loc(&self)
+        T::loc(self)
     }
 }
 
@@ -40,7 +40,7 @@ where
     T: OptionalLineOfCode,
 {
     fn loc(&self) -> Option<Loc> {
-        T::loc(&self)
+        T::loc(self)
     }
 }
 
@@ -190,7 +190,7 @@ impl LineOfCode for Expression {
                 loc.file_no(),
                 LineOfCode::loc(&left).start(),
                 LineOfCode::loc(&right).end(),
-            ), // TODO let sean know
+            ),
             NamedFunctionCall(loc, _, _) => *loc,
             Not(loc, expr) => Loc::File(loc.file_no(), loc.start(), expr.loc().end()),
             Complement(loc, expr) => Loc::File(loc.file_no(), loc.start(), expr.loc().end()),
