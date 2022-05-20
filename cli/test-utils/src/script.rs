@@ -1,6 +1,7 @@
 use ethers::{
     abi::Address,
-    prelude::{Http, Middleware, Provider, U256},
+    prelude::{Http, Middleware, NameOrAddress, Provider, U256},
+    utils::hex,
 };
 
 use std::{collections::BTreeMap, path::Path, str::FromStr};
@@ -9,7 +10,7 @@ use crate::TestCommand;
 
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
-    pub accounts_pub: Vec<String>,
+    pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
     pub provider: Provider<Http>,
     pub nonces: BTreeMap<u32, U256>,
@@ -39,9 +40,9 @@ impl ScriptTester {
 
         ScriptTester {
             accounts_pub: vec![
-                "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".to_string(),
-                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string(),
-                "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC".to_string(),
+                Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
+                Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
+                Address::from_str("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC").unwrap(),
             ],
             accounts_priv: vec![
                 "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
@@ -79,7 +80,7 @@ impl ScriptTester {
             let nonce = self
                 .provider
                 .get_transaction_count(
-                    Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
+                    NameOrAddress::Address(self.accounts_pub[index as usize]),
                     None,
                 )
                 .await
@@ -90,7 +91,10 @@ impl ScriptTester {
     }
 
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
-        self.cmd.args(["--sender", &self.accounts_pub[index as usize]]);
+        self.cmd.args([
+            "--sender",
+            &format!("0x{}", hex::encode(&self.accounts_pub[index as usize].as_bytes())),
+        ]);
         self
     }
 
@@ -113,19 +117,20 @@ impl ScriptTester {
         self.run(expected)
     }
 
+    /// In Vec<(private_key_slot, expected increment)>
     pub async fn assert_nonce_increment(&mut self, keys_indexes: Vec<(u32, u32)>) -> &mut Self {
-        for (index, increment) in keys_indexes {
+        for (private_key_slot, expected_increment) in keys_indexes {
             let nonce = self
                 .provider
                 .get_transaction_count(
-                    Address::from_str(&self.accounts_pub[index as usize]).unwrap(),
+                    NameOrAddress::Address(self.accounts_pub[private_key_slot as usize]),
                     None,
                 )
                 .await
                 .unwrap();
-            let prev_nonce = self.nonces.get(&index).unwrap();
+            let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
 
-            assert_eq!(nonce, prev_nonce + U256::from(increment));
+            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
         }
         self
     }
