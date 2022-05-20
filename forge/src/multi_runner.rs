@@ -1038,9 +1038,7 @@ mod tests {
                 let logs = decode_console_logs(&result.logs);
 
                 match test_name.as_ref() {
-                    "testPositive(uint256)" |
-                    "testSuccessfulFuzz(uint128,uint128)" |
-                    "testMulWadDown()" => assert!(
+                    "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
                         result.success,
                         "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                         test_name,
