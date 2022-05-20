@@ -185,11 +185,9 @@ impl ScriptSequence {
         sig: &str,
         target: &ArtifactId,
         config: &Config,
+        chain_id: u64,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, None)?;
-        if path.exists() {
-            ScriptSequence::backup(config, sig, target)?;
-        }
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
 
         Ok(ScriptSequence {
             transactions,
@@ -202,39 +200,45 @@ impl ScriptSequence {
         })
     }
 
-    fn backup(config: &Config, sig: &str, target: &ArtifactId) -> eyre::Result<()> {
-        let prev_sequence = ScriptSequence::load(config, sig, target)?;
-        let backup = ScriptSequence::get_path(
-            &config.broadcast,
-            sig,
-            target,
-            Some(prev_sequence.timestamp),
-        )?;
-        std::fs::copy(prev_sequence.path.clone(), backup)?;
-        Ok(())
-    }
-
-    pub fn load(config: &Config, sig: &str, target: &ArtifactId) -> eyre::Result<Self> {
+    pub fn load(
+        config: &Config,
+        sig: &str,
+        target: &ArtifactId,
+        chain_id: u64,
+    ) -> eyre::Result<Self> {
         let file = std::fs::read_to_string(ScriptSequence::get_path(
             &config.broadcast,
             sig,
             target,
-            None,
+            chain_id,
         )?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
 
     pub fn save(&mut self) -> eyre::Result<()> {
-        self.timestamp =
-            SystemTime::now().duration_since(UNIX_EPOCH).expect("Wrong system time.").as_secs();
-        serde_json::to_writer(BufWriter::new(std::fs::File::create(&self.path)?), &self)?;
+        if !self.transactions.is_empty() {
+            self.timestamp =
+                SystemTime::now().duration_since(UNIX_EPOCH).expect("Wrong system time.").as_secs();
 
-        println!(
-            "\nTransactions saved to: {}\n",
-            self.path.to_str().expect(
-                "Couldn't convert path to string. Transactions were written to file though."
-            )
-        );
+            let path = self.path.to_str().expect("Invalid path.");
+
+            //../run-latest.json
+            serde_json::to_writer(BufWriter::new(std::fs::File::create(path)?), &self)?;
+            //../run-timestamp.json
+            serde_json::to_writer(
+                BufWriter::new(std::fs::File::create(
+                    &path.replace("latest.json", &format!("{}.json", self.timestamp)),
+                )?),
+                &self,
+            )?;
+
+            println!(
+                "\nTransactions saved to: {}\n",
+                self.path.to_str().expect(
+                    "Couldn't convert path to string. Transactions were written to file though."
+                )
+            );
+        }
 
         Ok(())
     }
@@ -248,17 +252,18 @@ impl ScriptSequence {
         out: &Path,
         sig: &str,
         target: &ArtifactId,
-        timestamp: Option<u64>,
+        chain_id: u64,
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
+
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);
+        out.push(format!("{chain_id}"));
+
         std::fs::create_dir_all(out.clone())?;
-        let mut filename = sig.split_once('(').expect("Sig is invalid").0.to_owned();
-        if let Some(ts) = timestamp {
-            filename = format!("{}-{}", filename, ts);
-        }
-        out.push(filename + ".json");
+
+        let filename = sig.split_once('(').expect("Sig is invalid").0.to_owned();
+        out.push(format!("{filename}-latest.json"));
         Ok(out)
     }
 }

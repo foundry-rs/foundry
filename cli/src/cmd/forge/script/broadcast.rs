@@ -19,6 +19,7 @@ impl ScriptArgs {
     pub async fn send_transactions(
         &self,
         deployment_sequence: &mut ScriptSequence,
+        fork_url: &str,
     ) -> eyre::Result<()> {
         // The user wants to actually send the transactions
         let mut local_wallets = vec![];
@@ -45,16 +46,9 @@ impl ScriptArgs {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
 
-        let fork_url = self
-            .evm_opts
-            .fork_url
-            .as_ref()
-            .expect("You must provide an RPC URL (see --fork-url).")
-            .clone();
-
-        let provider = get_http_provider(&fork_url);
-
+        let provider = get_http_provider(fork_url);
         let chain = provider.get_chainid().await?.as_u64();
+
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         local_wallets =
@@ -100,7 +94,7 @@ impl ScriptArgs {
             match payload {
                 Ok((tx, signer)) => {
                     let receipt =
-                        self.send_transaction(tx, signer, wait, chain, is_legacy, &fork_url);
+                        self.send_transaction(tx, signer, wait, chain, is_legacy, fork_url);
                     if !wait {
                         receipts.push(receipt);
                     } else {
@@ -204,11 +198,21 @@ impl ScriptArgs {
                         eyre::bail!("\nSIMULATION FAILED");
                     } else {
                         let txs = gas_filled_txs;
-                        let mut deployment_sequence =
-                            ScriptSequence::new(txs, &self.sig, target, &script_config.config)?;
+                        let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
+
+                        let provider = get_http_provider(&fork_url);
+                        let chain = provider.get_chainid().await?.as_u64();
+
+                        let mut deployment_sequence = ScriptSequence::new(
+                            txs,
+                            &self.sig,
+                            target,
+                            &script_config.config,
+                            chain,
+                        )?;
 
                         if self.broadcast {
-                            self.send_transactions(&mut deployment_sequence).await?;
+                            self.send_transactions(&mut deployment_sequence, &fork_url).await?;
                         } else {
                             println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                         }

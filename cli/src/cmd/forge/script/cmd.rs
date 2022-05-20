@@ -1,8 +1,11 @@
-use crate::cmd::{unwrap_contracts, Cmd, ScriptSequence};
+use crate::{
+    cmd::{unwrap_contracts, Cmd, ScriptSequence},
+    utils::get_http_provider,
+};
 
 use ethers::{
     abi::Abi,
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, Signer},
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, U256},
 };
@@ -51,9 +54,19 @@ impl ScriptArgs {
         } = self.build(&script_config)?;
 
         if self.resume {
+            let fork_url = self
+                .evm_opts
+                .fork_url
+                .as_ref()
+                .expect("You must provide an RPC URL (see --fork-url).")
+                .clone();
+
+            let provider = get_http_provider(&fork_url);
+            let chain = provider.get_chainid().await?.as_u64();
+
             let mut deployment_sequence =
-                ScriptSequence::load(&script_config.config, &self.sig, &target)?;
-            self.send_transactions(&mut deployment_sequence).await?;
+                ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
+            self.send_transactions(&mut deployment_sequence, &fork_url).await?;
         } else {
             let mut known_contracts = unwrap_contracts(&highlevel_known_contracts);
 
