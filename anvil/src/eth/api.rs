@@ -39,11 +39,13 @@ use anvil_core::{
 use anvil_rpc::response::ResponseResult;
 use ethers::{
     abi::ethereum_types::H64,
+    prelude::TxpoolInspect,
     providers::ProviderError,
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, H256, U256, U64,
+        TransactionRequest as EthersTransactionRequest, TransactionRequest, TxHash, TxpoolContent,
+        TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -279,6 +281,9 @@ impl EthApi {
             }
             EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await,
             EthRequest::EthUninstallFilter(id) => self.uninstall_filter(&id).await.to_rpc_result(),
+            EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
+            EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
+            EthRequest::TxPoolContent(_) => self.txpool_content().await.to_rpc_result(),
         }
     }
 
@@ -1474,6 +1479,100 @@ impl EthApi {
         let provides = vec![to_marker(nonce.as_u64(), from)];
 
         self.add_pending_transaction(pending_transaction, requires, provides)
+    }
+
+    /// Returns the number of transactions currently pending for inclusion in the next block(s), as
+    /// well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    ///
+    /// Handler for ETH RPC call: `txpool_status`
+    pub async fn txpool_status(&self) -> Result<TxpoolStatus> {
+        node_info!("txpool_status");
+        Ok(self.pool.txpool_status())
+    }
+
+    /// Returns a summary of all the transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    ///
+    /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect) for more details
+    ///
+    /// Handler for ETH RPC call: `txpool_inspect`
+    pub async fn txpool_inspect(&self) -> Result<TxpoolInspect> {
+        node_info!("txpool_inspect");
+        let mut inspect = TxpoolInspect::default();
+        let gas_price = self.backend.gas_price();
+
+        fn convert(tx: Arc<PoolTransaction>, gas_price: U256) -> TxpoolInspectSummary {
+            let tx = &tx.pending_transaction.transaction;
+            let to = tx.to().copied();
+            let value = tx.value();
+            let gas = tx.gas_limit();
+            TxpoolInspectSummary { to, value, gas, gas_price }
+        }
+
+        // Note: naming differs geth vs anvil:
+        //
+        // _Pending transactions_ are transactions that are ready to be processed and included in
+        // the block. _Queued transactions_ are transactions where the transaction nonce is
+        // not in sequence. The transaction nonce is an incrementing number for each transaction
+        // with the same From address.
+        for pending in self.pool.ready_transactions() {
+            let entry = inspect.pending.entry(*pending.pending_transaction.sender()).or_default();
+            let key = pending.pending_transaction.nonce().to_string();
+            entry.insert(key, convert(pending, gas_price));
+        }
+        for queued in self.pool.pending_transactions() {
+            let entry = inspect.pending.entry(*queued.pending_transaction.sender()).or_default();
+            let key = queued.pending_transaction.nonce().to_string();
+            entry.insert(key, convert(queued, gas_price));
+        }
+        Ok(inspect)
+    }
+
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    ///
+    /// See [here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content) for more details
+    ///
+    /// Handler for ETH RPC call: `txpool_inspect`
+    pub async fn txpool_content(&self) -> Result<TxpoolContent> {
+        node_info!("txpool_content");
+        let mut content = TxpoolContent::default();
+        let gas_price = self.backend.gas_price();
+        fn convert(tx: Arc<PoolTransaction>, gas_price: U256) -> EthersTransactionRequest {
+            let from = *tx.pending_transaction.sender();
+            let tx = &tx.pending_transaction.transaction;
+            let to = tx.to().copied();
+            let gas = tx.gas_limit();
+            let value = tx.value();
+            let data = tx.data().clone();
+            let nonce = *tx.nonce();
+            let chain_id = tx.chain_id();
+
+            TransactionRequest {
+                from: Some(from),
+                to: to.map(Into::into),
+                gas: Some(gas),
+                gas_price: Some(gas_price),
+                value: Some(value),
+                data: Some(data),
+                nonce: Some(nonce),
+                chain_id: chain_id.map(Into::into),
+            }
+        }
+
+        for pending in self.pool.ready_transactions() {
+            let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
+            let key = pending.pending_transaction.nonce().to_string();
+            entry.insert(key, convert(pending, gas_price));
+        }
+        for queued in self.pool.pending_transactions() {
+            let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
+            let key = queued.pending_transaction.nonce().to_string();
+            entry.insert(key, convert(queued, gas_price));
+        }
+
+        Ok(content)
     }
 }
 

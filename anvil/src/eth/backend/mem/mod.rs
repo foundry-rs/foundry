@@ -364,23 +364,41 @@ impl Backend {
         self.db.write().revert(id)
     }
 
+    /// Returns the environment for the next block
+    fn next_env(&self) -> Env {
+        let mut env = self.env.read().clone();
+        // increase block number for this block
+        env.block.number = env.block.number.saturating_add(U256::one());
+        env.block.basefee = self.base_fee();
+        env.block.timestamp = self.time.current_call_timestamp().into();
+        env
+    }
+
+    /// executes the transactions without writing to the underlying database
+    pub fn inspect_tx(
+        &self,
+        tx: Arc<PoolTransaction>,
+    ) -> (Return, TransactOut, u64, State, Vec<revm::Log>) {
+        let mut env = self.next_env();
+        env.tx = tx.pending_transaction.to_revm_tx_env();
+        let db = self.db.read();
+
+        let mut evm = revm::EVM::new();
+        evm.env = env;
+        evm.database(&*db);
+        evm.transact_ref()
+    }
+
     /// Creates the pending block
     ///
     /// This will execute all transaction in the order they come but will not mine the block
     pub fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
-        let current_base_fee = self.base_fee();
-        // acquire all locks
-        let mut env = self.env.read().clone();
         let db = self.db.read();
+        let env = self.next_env();
 
         let mut cache_db = CacheDB::new(&*db);
 
         let storage = self.blockchain.storage.read();
-
-        // increase block number for this block
-        env.block.number = env.block.number.saturating_add(U256::one());
-        env.block.basefee = current_base_fee;
-        env.block.timestamp = self.time.current_call_timestamp().into();
 
         let executor = TransactionExecutor {
             db: &mut cache_db,
