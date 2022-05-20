@@ -344,8 +344,8 @@ async fn main() -> eyre::Result<()> {
                     }
                 } // Checking if signer isn't the default value
                   // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-            } else if config.sender
-                != Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            } else if config.sender !=
+                Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
             {
                 if resend {
                     nonce = Some(provider.get_transaction_count(config.sender, None).await?);
@@ -430,11 +430,11 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::fourbyte(&selector).await?;
+            let sigs = foundry_utils::decode_function_selector(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
         Subcommands::FourByteDecode { calldata } => {
-            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata).await?;
+            let sigs = foundry_utils::decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -456,7 +456,7 @@ async fn main() -> eyre::Result<()> {
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::fourbyte_event(&topic).await?;
+            let sigs = foundry_utils::decode_event_topic(&topic).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
 

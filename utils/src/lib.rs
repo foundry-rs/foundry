@@ -24,6 +24,8 @@ use std::{
     time::Duration,
 };
 
+static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
+
 pub enum SelectorOrSig {
     Selector(String),
     Sig(Vec<String>),
@@ -141,7 +143,7 @@ pub fn link<T, U>(
                 BytecodeObject::Bytecode(ref bytes) => {
                     if bytes.as_ref().is_empty() {
                         // abstract, skip
-                        continue;
+                        continue
                     }
                 }
             }
@@ -357,10 +359,10 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                         let actual_err = &err_data[64..64 + len];
                         if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
                             // check if its a builtin
-                            return Ok(decoded);
+                            return Ok(decoded)
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
                             // check if its a true string
-                            return Ok(as_str);
+                            return Ok(as_str)
                         }
                     }
                 }
@@ -373,7 +375,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                     let actual_err = &err_data[..4];
                     if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
                         // it's a known selector
-                        return Ok(decoded);
+                        return Ok(decoded)
                     }
                 }
                 Err(eyre::Error::msg("Unknown error selector"))
@@ -392,7 +394,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                                         .map(format_token)
                                         .collect::<Vec<String>>()
                                         .join(", ");
-                                    return Ok(format!("{}({})", abi_error.name, inputs));
+                                    return Ok(format!("{}({})", abi_error.name, inputs))
                                 }
                             }
                         }
@@ -463,7 +465,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_args(func, args);
         if res.is_ok() {
-            return Ok(func.clone());
+            return Ok(func.clone())
         }
     }
 
@@ -557,10 +559,9 @@ async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<
 
     // using samczsun signature database over 4byte
     // see https://github.com/foundry-rs/foundry/issues/1672
-    let base_url = "https://sig.eth.samczsun.com/api/v1/signatures";
     let url = match selector_type {
-        SelectorType::Function => format!("{base_url}?function={selector}"),
-        SelectorType::Event => format!("{base_url}?event={selector}"),
+        SelectorType::Function => format!("{SELECTOR_DATABASE_URL}?function={selector}"),
+        SelectorType::Event => format!("{SELECTOR_DATABASE_URL}?event={selector}"),
     };
 
     let res = reqwest::get(url).await?.text().await?;
@@ -589,18 +590,18 @@ async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<
 }
 
 /// Fetches a function signature given the selector using sig.eth.samczsun.com
-pub async fn fourbyte(selector: &str) -> Result<Vec<String>> {
+pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
     let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
     if prefixed_selector.len() < 10 {
-        return Err(eyre::eyre!("Invalid selector"));
+        return Err(eyre::eyre!("Invalid selector"))
     }
 
     decode_selector(&prefixed_selector[..10], SelectorType::Function).await
 }
 
 /// Fetches all possible signatures and attempts to abi decode the calldata
-pub async fn fourbyte_possible_sigs(calldata: &str) -> Result<Vec<String>> {
-    let sigs = fourbyte(calldata).await?;
+pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
+    let sigs = decode_function_selector(calldata).await?;
 
     // filter for signatures that can be decoded
     Ok(sigs
@@ -614,10 +615,10 @@ pub async fn fourbyte_possible_sigs(calldata: &str) -> Result<Vec<String>> {
 }
 
 /// Fetches a event signature given the 32 byte topic using sig.eth.samczsun.com
-pub async fn fourbyte_event(topic: &str) -> Result<Vec<String>> {
+pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
     let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
     if prefixed_topic.len() < 66 {
-        return Err(eyre::eyre!("Invalid topic"));
+        return Err(eyre::eyre!("Invalid topic"))
     }
     decode_selector(&prefixed_topic[..66], SelectorType::Event).await
 }
@@ -625,7 +626,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<String>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-///
+/// 
 /// use foundry_utils::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
@@ -645,7 +646,7 @@ pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result
     let sigs = if offline {
         vec![]
     } else {
-        fourbyte(selector).await.unwrap_or_default().into_iter().collect()
+        decode_function_selector(selector).await.unwrap_or_default().into_iter().collect()
     };
     let (_, data) = calldata.split_at(8);
 
@@ -775,11 +776,11 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
     // add `memory` if required (not needed for events, only for functions)
     let is_memory = matches!(
         param.kind,
-        ParamType::Array(_)
-            | ParamType::Bytes
-            | ParamType::String
-            | ParamType::FixedArray(_, _)
-            | ParamType::Tuple(_),
+        ParamType::Array(_) |
+            ParamType::Bytes |
+            ParamType::String |
+            ParamType::FixedArray(_, _) |
+            ParamType::Tuple(_),
     );
     let kind = if is_memory { format!("{kind} memory") } else { kind };
 
@@ -1183,9 +1184,9 @@ mod tests {
         );
     }
 
-    /// Executes the _fourbyte_ request and if the site is not down (502 Bad Gateway) executes the
-    /// test
-    async fn test_if_fourbyte_not_down<Req, Out, Test>(r: Req, test: Test)
+    /// Executes the _decode selector_ request and if the site is not down (502 Bad Gateway)
+    /// executes the test
+    async fn test_if_sig_database_not_down<Req, Out, Test>(r: Req, test: Test)
     where
         Req: Future<Output = Result<Out>>,
         Test: FnOnce(Out),
@@ -1194,7 +1195,7 @@ mod tests {
             Ok(out) => test(out),
             Err(err) => {
                 let msg = err.to_string();
-                eprintln!("fourbyte request failed:\n{}", msg);
+                eprintln!("selector decode request failed:\n{}", msg);
                 if !msg.contains("502 Bad Gateway") {
                     panic!("{}", msg)
                 }
@@ -1203,19 +1204,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fourbyte() {
-        test_if_fourbyte_not_down(fourbyte("0xa9059cbb"), |sigs| {
+    async fn test_decode_selector() {
+        test_if_sig_database_not_down(decode_function_selector("0xa9059cbb"), |sigs| {
             assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
         })
         .await;
 
-        test_if_fourbyte_not_down(fourbyte("a9059cbb"), |sigs| {
+        test_if_sig_database_not_down(decode_function_selector("a9059cbb"), |sigs| {
             assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
         })
         .await;
 
         // invalid signature
-        fourbyte("0xa9059c")
+        decode_function_selector("0xa9059c")
             .await
             .map_err(|e| assert_eq!(e.to_string(), "Invalid selector"))
             .map(|_| panic!("Expected fourbyte error"))
@@ -1223,44 +1224,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fourbyte_possible_sigs() {
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
+    async fn test_decode_calldata() {
+        test_if_sig_database_not_down(decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
             assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
         }).await;
 
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
+        test_if_sig_database_not_down(decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
             assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
         }).await;
     }
 
     #[tokio::test]
-    async fn test_fourbyte_event() {
-        test_if_fourbyte_not_down(
-            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
+    async fn test_decode_event_topic() {
+        test_if_sig_database_not_down(
+            decode_event_topic("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
             |sigs| {
                 assert_eq!(sigs[0], "updateAuthority(address,uint8)".to_string());
             },
         )
         .await;
 
-        test_if_fourbyte_not_down(
-            fourbyte_event("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
+        test_if_sig_database_not_down(
+            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
             |sigs| {
                 assert_eq!(sigs[0], "updateAuthority(address,uint8)".to_string());
             },
         )
         .await;
 
-        test_if_fourbyte_not_down(
-            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
+        test_if_sig_database_not_down(
+            decode_event_topic("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
             |sigs| {
                 assert_eq!(sigs[0], "canCall(address,address,bytes4)".to_string());
             },
         )
         .await;
 
-        test_if_fourbyte_not_down(
-            fourbyte_event("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
+        test_if_sig_database_not_down(
+            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
             |sigs| {
                 assert_eq!(sigs[0], "canCall(address,address,bytes4)".to_string());
             },
