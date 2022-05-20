@@ -23,6 +23,7 @@ use ethers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
+    types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
 use foundry_config::Config;
@@ -448,6 +449,7 @@ Chain ID:       {}
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
         let fees = FeeManager::new(self.base_fee, self.gas_price);
+        let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
             self.eth_rpc_url.clone()
@@ -462,11 +464,17 @@ Chain ID:       {}
             } else {
                 provider.get_block_number().await.expect("Failed to get fork block number").as_u64()
             };
+
+            let block = provider
+                .get_block(BlockNumber::Number(fork_block_number.into()))
+                .await
+                .expect("Failed to get fork block")
+                .unwrap();
+
             env.block.number = fork_block_number.into();
+            fork_timestamp = Some(block.timestamp);
 
-            let block_hash =
-                provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
-
+            let block_hash = block.hash.unwrap();
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
             // need to update the dev signers and env with the chain id
             self.set_chain_id(chain_id);
@@ -494,6 +502,7 @@ Chain ID:       {}
                     block_hash,
                     provider,
                     chain_id,
+                    timestamp: block.timestamp.as_u64(),
                 },
                 Arc::clone(&db),
             );
@@ -509,7 +518,13 @@ Chain ID:       {}
         };
         // only memory based backend for now
 
-        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork)
+        let backend =
+            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork);
+
+        if let Some(timestamp) = fork_timestamp {
+            backend.time().set_start_timestamp(timestamp.as_u64());
+        }
+        backend
     }
 }
 

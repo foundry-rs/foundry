@@ -597,15 +597,9 @@ impl EthApi {
         self.backend.validate_pool_transaction(&pending_transaction)?;
 
         let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender());
-        let nonce = *pending_transaction.transaction.nonce();
-        let prev_nonce = nonce.saturating_sub(U256::one());
-
         let from = *pending_transaction.sender();
-        let requires = if on_chain_nonce < prev_nonce {
-            vec![to_marker(prev_nonce.as_u64(), from)]
-        } else {
-            vec![]
-        };
+        let nonce = *pending_transaction.transaction.nonce();
+        let requires = required_marker(nonce, on_chain_nonce, from);
 
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction = PoolTransaction {
