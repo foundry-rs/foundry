@@ -170,28 +170,30 @@ impl ScriptArgs {
 
         println!("Gas used: {}", result.gas);
 
-        println!("== Return ==");
-        match func.decode_output(&result.returned) {
-            Ok(decoded) => {
-                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+        if !result.returned.is_empty() {
+            println!("\n== Return ==");
+            match func.decode_output(&result.returned) {
+                Ok(decoded) => {
+                    for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                        let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
 
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
-                        index.to_string()
-                    };
-                    println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                        let label = if !output.name.is_empty() {
+                            output.name.to_string()
+                        } else {
+                            index.to_string()
+                        };
+                        println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                    }
                 }
-            }
-            Err(_) => {
-                println!("{:x?}", (&result.returned));
+                Err(_) => {
+                    println!("{:x?}", (&result.returned));
+                }
             }
         }
 
         let console_logs = decode_console_logs(&result.logs);
         if !console_logs.is_empty() {
-            println!("== Logs ==");
+            println!("\n== Logs ==");
             for log in console_logs {
                 println!("  {}", log);
             }
