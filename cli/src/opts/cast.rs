@@ -435,16 +435,6 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
-        #[clap(
-            long,
-            help = "The index of the resolved signature to use.",
-            long_help = r#"The index of the resolved signature to use.
-
-4byte.directory can have multiple possible signatures for a given selector.
-
-The index can also be earliest or latest."#
-        )]
-        id: Option<String>,
     },
     #[clap(name = "4byte-event")]
     #[clap(aliases = &["4e", "4be"])]
