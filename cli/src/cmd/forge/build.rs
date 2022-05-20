@@ -212,6 +212,24 @@ impl Provider for CoreBuildArgs {
     }
 }
 
+impl Default for CoreBuildArgs {
+    fn default() -> CoreBuildArgs {
+        CoreBuildArgs {
+            project_paths: Default::default(),
+            out_path: Default::default(),
+            compiler: Default::default(),
+            ignored_error_codes: vec![],
+            no_auto_detect: false,
+            use_solc: None,
+            offline: false,
+            force: false,
+            libraries: vec![],
+            via_ir: false,
+            revert_strings: None,
+        }
+    }
+}
+
 // All `forge build` related arguments
 //
 // CLI arguments take the highest precedence in the Config/Figment hierarchy.
@@ -310,7 +328,7 @@ impl Provider for BuildArgs {
 
 impl_figment_convert!(BuildArgs, args);
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct ProjectPathsArgs {
     #[clap(
         help = "The project's root path.",

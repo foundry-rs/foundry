@@ -146,7 +146,10 @@ pub enum Subcommands {
     #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
 
-    #[clap(alias = "up", about = "Uploads abi to sig.eth.samczsun.com function selector database")]
+    #[clap(
+        alias = "up",
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database"
+    )]
     UploadSelectors(UploadSelectorsArgs),
 
     #[clap(
