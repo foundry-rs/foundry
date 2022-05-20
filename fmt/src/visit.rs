@@ -406,7 +406,7 @@ impl Visitable for Loc {
 
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_expr(self.loc(), self)
+        v.visit_expr(LineOfCode::loc(self), self)
     }
 }
 

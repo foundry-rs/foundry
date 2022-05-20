@@ -2,8 +2,8 @@
 
 mod formatter;
 mod helpers;
-mod solang_ext;
+pub mod solang_ext;
 mod visit;
 
 pub use formatter::{Formatter, FormatterConfig};
-pub use visit::Visitable;
+pub use visit::{Visitable, Visitor};
