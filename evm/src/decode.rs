@@ -1,6 +1,6 @@
 //! Various utilities to decode test results
 use crate::abi::ConsoleEvents::{self, *};
-use ethers::{contract::EthLogDecode, types::Log, abi::RawLog};
+use ethers::{abi::RawLog, contract::EthLogDecode, types::Log};
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
@@ -12,10 +12,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    let rawlog = RawLog {
-        topics: log.topics.clone(),
-        data: log.data.to_vec(),
-    };
+    let rawlog = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
     let decoded = match ConsoleEvents::decode_log(&rawlog).ok()? {
         LogsFilter(inner) => format!("{}", inner.0),
         LogBytesFilter(inner) => format!("{}", inner.0),
