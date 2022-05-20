@@ -1904,6 +1904,7 @@ dependencies = [
  "proptest",
  "rayon",
  "regex",
+ "reqwest",
  "rpassword",
  "rustc-hex",
  "semver",
