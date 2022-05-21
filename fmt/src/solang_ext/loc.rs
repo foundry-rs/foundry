@@ -377,6 +377,15 @@ impl LineOfCode for Expression {
     }
 }
 
+impl LineOfCode for Comment {
+    fn loc(&self) -> Loc {
+        match self {
+            Comment::Line(loc, _) => *loc,
+            Comment::Block(loc, _) => *loc,
+        }
+    }
+}
+
 impl OptionalLineOfCode for FunctionAttribute {
     fn loc(&self) -> Option<Loc> {
         match self {
