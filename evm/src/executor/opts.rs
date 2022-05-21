@@ -34,7 +34,7 @@ pub struct EvmOpts {
     /// enables the FFI cheatcode
     pub ffi: bool,
 
-    /// Verbosity mode of EVM output as number of occurences
+    /// Verbosity mode of EVM output as number of occurrences
     pub verbosity: u8,
 
     /// The memory limit of the EVM in bytes.
