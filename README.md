@@ -52,10 +52,13 @@ For people that want to install from source, you can do so like below:
 ```sh
 git clone https://github.com/foundry-rs/foundry
 cd foundry
+# install cast + forge
 cargo install --path ./cli --bins --locked --force
+# install anvil
+cargo install --path ./anvil --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --locked`
+Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`
 
 ### Installing via Docker
 
