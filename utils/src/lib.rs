@@ -584,7 +584,7 @@ async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<
     Ok(decoded
         .get(selector)
         .ok_or(eyre::eyre!("No signature found"))?
-        .into_iter()
+        .iter()
         .map(|d| d.name.clone())
         .collect::<Vec<String>>())
 }
@@ -606,7 +606,7 @@ pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
     // filter for signatures that can be decoded
     Ok(sigs
         .iter()
-        .map(|sig| sig.clone())
+        .cloned()
         .filter(|sig| {
             let res = abi_decode(sig, calldata, true);
             res.is_ok()
@@ -1028,7 +1028,6 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
-    use std::future::Future;
 
     #[test]
     fn parse_hex_uint_tokens() {
@@ -1184,36 +1183,13 @@ mod tests {
         );
     }
 
-    /// Executes the _decode selector_ request and if the site is not down (502 Bad Gateway)
-    /// executes the test
-    async fn test_if_sig_database_not_down<Req, Out, Test>(r: Req, test: Test)
-    where
-        Req: Future<Output = Result<Out>>,
-        Test: FnOnce(Out),
-    {
-        match r.await {
-            Ok(out) => test(out),
-            Err(err) => {
-                let msg = err.to_string();
-                eprintln!("selector decode request failed:\n{}", msg);
-                if !msg.contains("502 Bad Gateway") {
-                    panic!("{}", msg)
-                }
-            }
-        }
-    }
-
     #[tokio::test]
     async fn test_decode_selector() {
-        test_if_sig_database_not_down(decode_function_selector("0xa9059cbb"), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        })
-        .await;
+        let sigs = decode_function_selector("0xa9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
 
-        test_if_sig_database_not_down(decode_function_selector("a9059cbb"), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        })
-        .await;
+        let sigs = decode_function_selector("a9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
 
         // invalid signature
         decode_function_selector("0xa9059c")
@@ -1225,48 +1201,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_calldata() {
-        test_if_sig_database_not_down(decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
+        let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
 
-        test_if_sig_database_not_down(decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79"), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
+        let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
     }
 
     #[tokio::test]
     async fn test_decode_event_topic() {
-        test_if_sig_database_not_down(
-            decode_event_topic("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
-            |sigs| {
-                assert_eq!(sigs[0], "updateAuthority(address,uint8)".to_string());
-            },
+        let decoded = decode_event_topic(
+            "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
         )
         .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
 
-        test_if_sig_database_not_down(
-            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
-            |sigs| {
-                assert_eq!(sigs[0], "updateAuthority(address,uint8)".to_string());
-            },
-        )
-        .await;
+        let decoded =
+            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
 
-        test_if_sig_database_not_down(
-            decode_event_topic("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
-            |sigs| {
-                assert_eq!(sigs[0], "canCall(address,address,bytes4)".to_string());
-            },
+        let decoded = decode_event_topic(
+            "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
         )
         .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
 
-        test_if_sig_database_not_down(
-            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
-            |sigs| {
-                assert_eq!(sigs[0], "canCall(address,address,bytes4)".to_string());
-            },
-        )
-        .await;
+        let decoded =
+            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
     }
 
     #[test]
