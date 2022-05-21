@@ -375,3 +375,18 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         })
     }
 }
+
+/// A type that flushes a `JsonBlockCacheDB` on drop
+///
+/// This type intentionally does not implement `Clone` since it's intendent that there's only once
+/// instance that will flush the cache.
+#[derive(Debug)]
+pub struct FlushJsonBlockCacheDB(pub Arc<JsonBlockCacheDB>);
+
+impl Drop for FlushJsonBlockCacheDB {
+    fn drop(&mut self) {
+        trace!(target: "fork::cache", "flushing cache");
+        self.0.flush();
+        trace!(target: "fork::cache", "flushed cache");
+    }
+}
