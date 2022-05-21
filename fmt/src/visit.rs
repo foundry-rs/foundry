@@ -4,7 +4,9 @@ use crate::solang_ext::*;
 use solang_parser::pt::*;
 
 /// The error type a [Visitor] may return
-pub type VResult = Result<(), Box<dyn std::error::Error>>;
+pub type VError = Box<dyn std::error::Error>;
+/// The result type a [Visitor] may return
+pub type VResult = Result<(), VError>;
 
 pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
 
@@ -86,6 +88,10 @@ pub trait Visitor {
     /// Don't write semicolon at the end because expressions can appear as both
     /// part of other node and a statement in the function body
     fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> VResult {
+        self.visit_source(loc)
+    }
+
+    fn visit_ident(&mut self, loc: Loc, _ident: &mut Identifier) -> VResult {
         self.visit_source(loc)
     }
 
@@ -417,6 +423,12 @@ impl Visitable for Loc {
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_expr(LineOfCode::loc(self), self)
+    }
+}
+
+impl Visitable for Identifier {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_ident(self.loc, self)
     }
 }
 
