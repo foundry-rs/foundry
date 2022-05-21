@@ -39,7 +39,7 @@ pub struct InstallArgs {
     /// - A tag: v1.2.3
     /// - A commit: 8e8128
     ///
-    /// Target installation directory can be addded via `<alias>=` suffix.
+    /// Target installation directory can be added via `<alias>=` suffix.
     /// The dependency will installed to `lib/<alias>`.
     dependencies: Vec<Dependency>,
     #[clap(flatten)]

@@ -376,7 +376,7 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<Http>>,
     pub chain_id: u64,
-    /// The timestamp fo the forked block
+    /// The timestamp for the forked block
     pub timestamp: u64,
 }
 
