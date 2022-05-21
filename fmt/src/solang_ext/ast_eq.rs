@@ -1,4 +1,4 @@
-use itertools::Itertools;
+use super::AttrSortKeyIteratorExt;
 use solang_parser::pt::*;
 
 pub trait AstEq {
@@ -19,18 +19,8 @@ impl AstEq for SourceUnit {
 
 impl AstEq for VariableDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
-        let sort_attrs = |def: &Self| {
-            def.attrs
-                .iter()
-                .sorted_by_key(|attribute| match attribute {
-                    VariableAttribute::Visibility(_) => 0,
-                    VariableAttribute::Constant(_) => 1,
-                    VariableAttribute::Immutable(_) => 2,
-                    VariableAttribute::Override(_) => 3,
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let sort_attrs =
+            |def: &Self| def.attrs.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
         self.ty.ast_eq(&other.ty) &&
@@ -42,20 +32,8 @@ impl AstEq for VariableDefinition {
 
 impl AstEq for FunctionDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
-        let sort_attrs = |def: &Self| {
-            def.attributes
-                .iter()
-                .sorted_by_key(|attribute| match attribute {
-                    FunctionAttribute::Visibility(_) => 0,
-                    FunctionAttribute::Mutability(_) => 1,
-                    FunctionAttribute::Virtual(_) => 2,
-                    FunctionAttribute::Immutable(_) => 3,
-                    FunctionAttribute::Override(_, _) => 4,
-                    FunctionAttribute::BaseOrModifier(_, _) => 5,
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let sort_attrs =
+            |def: &Self| def.attributes.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
         self.ty.ast_eq(&other.ty) &&
