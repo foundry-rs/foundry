@@ -61,7 +61,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
     }
 }
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct CoreBuildArgs {
     #[clap(
         help_heading = "CACHE OPTIONS",
@@ -209,24 +209,6 @@ impl Provider for CoreBuildArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
-}
-
-impl Default for CoreBuildArgs {
-    fn default() -> CoreBuildArgs {
-        CoreBuildArgs {
-            project_paths: Default::default(),
-            out_path: Default::default(),
-            compiler: Default::default(),
-            ignored_error_codes: vec![],
-            no_auto_detect: false,
-            use_solc: None,
-            offline: false,
-            force: false,
-            libraries: vec![],
-            via_ir: false,
-            revert_strings: None,
-        }
     }
 }
 
