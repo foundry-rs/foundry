@@ -60,6 +60,10 @@ cargo install --path ./anvil --locked --force
 
 Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`
 
+### Installing for CI in Github Action
+
+See [https://github.com/foundry-rs/foundry-toolchain](https://github.com/foundry-rs/foundry-toolchain) github action.
+
 ### Installing via Docker
 
 Foundry maintains a [Docker image repository](https://github.com/foundry-rs/foundry/pkgs/container/foundry).
