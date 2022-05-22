@@ -141,6 +141,23 @@ fn install_as_submodule(
     target_dir: &str,
     no_commit: bool,
 ) -> eyre::Result<()> {
+    if !no_commit {
+        // check that there are no modification in git working/staging area
+        let output = Command::new("git")
+            .args(&["status", "--short"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.trim().is_empty() {
+            eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
+        }
+    }
+
     // install the dep
     git_submodule(dep, libs, target_dir)?;
 
