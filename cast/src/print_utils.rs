@@ -566,7 +566,7 @@ value                   0");
         );
         assert_eq!(
             Some("163591".to_string()),
-            get_pretty_block_attr(_block.clone(), "totalDifficulty".to_string())
+            get_pretty_block_attr(_block, "totalDifficulty".to_string())
         );
     }
 }

@@ -130,7 +130,8 @@ where
                 if let Some(mock_retdata) = mocks.get(&ctx) {
                     return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
-                    *mock.calldata == call.input[..mock.calldata.len()] &&
+                    mock.calldata.len() <= call.input.len() &&
+                        *mock.calldata == call.input[..mock.calldata.len()] &&
                         mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
                     return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())

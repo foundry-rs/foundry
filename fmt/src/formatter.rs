@@ -7,7 +7,8 @@ use itertools::Itertools;
 use solang_parser::pt::*;
 
 use crate::{
-    loc::LineOfCode,
+    helpers,
+    solang_ext::*,
     visit::{ParameterList, VResult, Visitable, Visitor},
 };
 
@@ -232,14 +233,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
         while let Some(unit) = source_unit_parts_iter.next() {
             let is_pragma =
-                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _, _));
-            let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_, _));
+                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _));
+            let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_));
             let is_error = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ErrorDefinition(_));
             let is_declaration =
                 |u: &SourceUnitPart| !(is_pragma(u) || is_import(u) || is_error(u));
+            let is_comment = |u: &SourceUnitPart| matches!(u, SourceUnitPart::DocComment(_));
 
             unit.visit(self)?;
-            writeln!(self)?;
+
+            if !is_comment(unit) {
+                writeln!(self)?;
+            }
 
             if let Some(next_unit) = source_unit_parts_iter.peek() {
                 // If source has zero blank lines between imports or errors, leave it as is. If one
@@ -261,30 +266,36 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
-        match doc_comment {
-            DocComment::Line { comment } => {
-                write!(self, "/// @{}", comment.tag)?;
-                if !comment.value.is_empty() {
-                    let mut lines = comment.value.split('\n');
-                    write!(self, " {}", lines.next().unwrap())?;
-
+        match doc_comment.ty {
+            CommentType::Line => {
+                write!(self, "///{}", doc_comment.comment)?;
+            }
+            CommentType::Block => {
+                let lines = doc_comment
+                    .comment
+                    .trim_end()
+                    .lines()
+                    .map(|line| line.trim_start())
+                    .peekable()
+                    .collect::<Vec<_>>();
+                if lines.iter().skip(1).all(|line| line.starts_with('*')) {
+                    writeln!(self, "/**")?;
+                    let mut lines = lines.into_iter();
+                    if let Some(first_line) = lines.next() {
+                        if !first_line.is_empty() {
+                            // write the original first line
+                            writeln!(self, " *{}", doc_comment.comment.lines().next().unwrap())?;
+                        }
+                    }
                     for line in lines {
-                        writeln!(self)?; // Write newline separately to trigger an indentation
-                        write!(self, "/// {}", line)?;
+                        writeln!(self, " *{}", &line[1..])?;
                     }
+                    write!(self, " */")?;
+                } else {
+                    write!(self, "/**{}*/", doc_comment.comment)?;
                 }
             }
-            DocComment::Block { comments } => {
-                writeln!(self, "/**")?;
-                for comment in comments {
-                    write!(self, "@{} ", comment.tag)?;
-                    for line in comment.value.split('\n') {
-                        writeln!(self, "{}", line)?;
-                    }
-                }
-                write!(self, "*/")?;
-            }
-        };
+        }
 
         Ok(())
     }
@@ -304,11 +315,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         self.context.contract = Some(contract.clone());
-
-        if !contract.doc.is_empty() {
-            contract.doc.visit(self)?;
-            writeln!(self)?;
-        }
 
         write!(self, "{} {} ", contract.ty, contract.name.name)?;
 
@@ -462,11 +468,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
-        if !enumeration.doc.is_empty() {
-            enumeration.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         write!(self, "enum {} ", &enumeration.name.name)?;
 
         if enumeration.values.is_empty() {
@@ -514,6 +515,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Function { .. } => self.visit_source(loc)?,
             },
+            Expression::ArraySubscript(_, ty_exp, size_exp) => {
+                ty_exp.visit(self)?;
+                write!(self, "[")?;
+                if let Some(size_exp) = size_exp {
+                    size_exp.visit(self)?;
+                }
+                write!(self, "]")?;
+            }
             _ => self.visit_source(loc)?,
         };
 
@@ -554,11 +563,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
-
-        if !func.doc.is_empty() {
-            func.doc.visit(self)?;
-            writeln!(self)?;
-        }
 
         write!(self, "{}", func.ty)?;
 
@@ -659,8 +663,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 FunctionAttribute::Visibility(_) => 0,
                 FunctionAttribute::Mutability(_) => 1,
                 FunctionAttribute::Virtual(_) => 2,
-                FunctionAttribute::Override(_, _) => 3,
-                FunctionAttribute::BaseOrModifier(_, _) => 4,
+                FunctionAttribute::Immutable(_) => 3,
+                FunctionAttribute::Override(_, _) => 4,
+                FunctionAttribute::BaseOrModifier(_, _) => 5,
             })
             .peekable();
 
@@ -679,6 +684,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Mutability(mutability) => write!(self, "{mutability}")?,
             FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
             FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
+            FunctionAttribute::Immutable(_) => write!(self, "immutable")?,
             FunctionAttribute::Override(_, args) => {
                 write!(self, "override")?;
                 if !args.is_empty() {
@@ -705,10 +711,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             FunctionAttribute::BaseOrModifier(_, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
-                    contract
-                        .base
-                        .iter()
-                        .any(|contract_base| contract_base.name.name == base.name.name)
+                    contract.base.iter().any(|contract_base| {
+                        helpers::namespace_matches(&contract_base.name, &base.name)
+                    })
                 });
 
                 if is_contract_base {
@@ -730,7 +735,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_base(&mut self, base: &mut Base) -> VResult {
         let need_parents = self.context.function.is_some() || base.args.is_some();
 
-        write!(self, "{}", base.name.name)?;
+        self.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
 
         if need_parents {
             self.visit_opening_paren()?;
@@ -807,11 +812,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        if !structure.doc.is_empty() {
-            structure.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         write!(self, "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
@@ -833,11 +833,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        if !def.doc.is_empty() {
-            def.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         write!(self, "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
         write!(self, ";")?;
@@ -885,7 +880,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // If source has zero blank lines between statements, leave it as is. If one
             //  or more, separate statements with one blank line.
             if let Some(next_stmt) = statements_iter.peek() {
-                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                if self.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
                     writeln!(self)?;
                 }
             }
@@ -920,11 +915,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        if !event.doc.is_empty() {
-            event.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         write!(self, "event {}(", event.name.name)?;
 
         let params = event
@@ -976,11 +966,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        if !error.doc.is_empty() {
-            error.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         write!(self, "error {}(", error.name.name)?;
 
         let params = error
@@ -1019,12 +1004,34 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
-        write!(self, "using {} for ", using.library.name)?;
+        write!(self, "using ")?;
+
+        match &mut using.list {
+            UsingList::Library(library) => {
+                self.visit_expr(LineOfCode::loc(library), library)?;
+            }
+            UsingList::Functions(funcs) => {
+                let func_strs = funcs
+                    .iter_mut()
+                    .map(|func| self.visit_to_string(func))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let multiline = self.is_separated_multiline(func_strs.iter(), ", ");
+                self.write_opening_bracket()?;
+                self.write_items_separated(func_strs, ", ", multiline)?;
+                self.write_closing_bracket()?;
+            }
+        }
+
+        write!(self, " for ")?;
 
         if let Some(ty) = &mut using.ty {
             ty.visit(self)?;
         } else {
             write!(self, "*")?;
+        }
+
+        if let Some(global) = &mut using.global {
+            write!(self, " {}", global.name)?;
         }
 
         write!(self, ";")?;
@@ -1033,11 +1040,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
-        if !var.doc.is_empty() {
-            var.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
         var.ty.visit(self)?;
 
         let attributes = var
@@ -1195,11 +1197,22 @@ mod tests {
             }
         }
 
-        let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
+        let (mut source_pt, _source_comments) = solang_parser::parse(source, 1).unwrap();
+
+        let (expected_pt, _expected_comments) = solang_parser::parse(expected, 1).unwrap();
+        if !source_pt.ast_eq(&expected_pt) {
+            pretty_assertions::assert_eq!(
+                source_pt,
+                expected_pt,
+                "(formatted Parse Tree == expected Parse Tree) in {}",
+                filename
+            );
+        }
+
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, source, config);
 
-        source_unit.visit(&mut f).unwrap();
+        source_pt.visit(&mut f).unwrap();
 
         let formatted = PrettyString(result);
         let expected = PrettyString(expected.trim_start().to_string());
@@ -1212,68 +1225,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn constructor_definition() {
-        test_directory("ConstructorDefinition");
+    macro_rules! test_directory {
+        ($dir:ident) => {
+            #[allow(non_snake_case)]
+            #[test]
+            fn $dir() {
+                test_directory(stringify!($dir));
+            }
+        };
     }
 
-    #[test]
-    fn contract_definition() {
-        test_directory("ContractDefinition");
-    }
-
-    #[test]
-    fn error_definition() {
-        test_directory("ErrorDefinition");
-    }
-
-    #[test]
-    fn enum_definition() {
-        test_directory("EnumDefinition");
-    }
-
-    #[test]
-    fn event_definition() {
-        test_directory("EventDefinition");
-    }
-
-    #[test]
-    fn function_definition() {
-        test_directory("FunctionDefinition");
-    }
-
-    #[test]
-    fn import_directive() {
-        test_directory("ImportDirective");
-    }
-
-    #[test]
-    fn modifier_definition() {
-        test_directory("ModifierDefinition");
-    }
-
-    #[test]
-    fn statement_block() {
-        test_directory("StatementBlock");
-    }
-
-    #[test]
-    fn struct_definition() {
-        test_directory("StructDefinition");
-    }
-
-    #[test]
-    fn type_definition() {
-        test_directory("TypeDefinition");
-    }
-
-    #[test]
-    fn using_directive() {
-        test_directory("UsingDirective");
-    }
-
-    #[test]
-    fn variable_definition() {
-        test_directory("VariableDefinition");
-    }
+    test_directory! { ConstructorDefinition }
+    test_directory! { ContractDefinition }
+    test_directory! { DocComments }
+    test_directory! { EnumDefinition }
+    test_directory! { ErrorDefinition }
+    test_directory! { EventDefinition }
+    test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
+    test_directory! { ImportDirective }
+    test_directory! { ModifierDefinition }
+    test_directory! { StatementBlock }
+    test_directory! { StructDefinition }
+    test_directory! { TypeDefinition }
+    test_directory! { UsingDirective }
+    test_directory! { VariableDefinition }
 }

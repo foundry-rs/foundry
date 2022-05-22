@@ -75,7 +75,7 @@ impl ValueTree for UintValueTree {
 /// 3. Generate a value from a predefined fixtures set
 #[derive(Debug)]
 pub struct UintStrategy {
-    /// Bit sise of uint (e.g. 256)
+    /// Bit size of uint (e.g. 256)
     bits: usize,
     /// A set of fixtures to be generated
     fixtures: Vec<U256>,

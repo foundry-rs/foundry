@@ -10,6 +10,7 @@ use crate::cmd::forge::{
     config,
     create::CreateArgs,
     flatten,
+    fmt::FmtArgs,
     init::InitArgs,
     inspect,
     install::InstallArgs,
@@ -138,8 +139,9 @@ pub enum Subcommands {
     #[clap(alias = "f", about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
 
-    // #[clap(about = "formats Solidity source files")]
-    // Fmt(FmtArgs),
+    #[clap(about = "formats Solidity source files")]
+    Fmt(FmtArgs),
+
     #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
 

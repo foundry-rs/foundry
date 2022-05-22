@@ -496,9 +496,9 @@ mod tests {
     };
     use ethers::{
         providers::{Http, Provider},
+        solc::utils::RuntimeOrHandle,
         types::Address,
     };
-    use foundry_utils::RuntimeOrHandle;
 
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 

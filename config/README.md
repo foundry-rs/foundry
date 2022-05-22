@@ -8,7 +8,7 @@ sensible set of defaults.
 Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
-in `FOUNDRY_PROFILE`.
+in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
 
@@ -104,7 +104,7 @@ block_difficulty = 0
 # "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
 revert_strings = "default"
 # caches storage retrieved locally for certain chains and endpoints
-# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
 # to disable storage caching entirely set `no_storage_caching = true`
 rpc_storage_caching = { chains = "all", endpoints = "all" }
