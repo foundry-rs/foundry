@@ -242,7 +242,7 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "REGEX")]
+    #[clap(long, value_name = "REGEX", help = "Run a test in the debugger")]
     debug: Option<Regex>,
 
     /// Print a gas report.
