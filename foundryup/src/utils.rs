@@ -32,6 +32,11 @@ impl From<i32> for ExitCode {
 }
 
 /// Returns the storage directory used by foundryup
+pub fn foundryup_dir() -> io::Result<PathBuf> {
+    Ok(foundry_home()?.join("foundryup"))
+}
+
+/// Returns the home directory used by foundry
 ///
 /// It returns one of the following values, in this order of
 /// preference:

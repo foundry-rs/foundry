@@ -10,10 +10,9 @@ thread_local! {
 ///
 /// The main reasons for this abstraction is that this becomes customisable for tests.
 ///
-/// A `Process` can be installed globally exactly once via `init`, or set for the current scope with
-/// `set_current()`, which register the process in a `thread_local!` variable, so when making new
-/// threads, e sure to clone the process into the new thread before using any functions from
-/// `Process`. Otherwise, it would fallback to the global `Process`
+/// A `Process` can be installed manually  for the current scope via `set_current`, which register
+/// the process in a `thread_local!` variable, so when making new threads, be sure to clone the
+/// process into the new thread before using any functions from `Process`.
 pub trait Processor: 'static + fmt::Debug + Send + Sync {
     fn home_dir(&self) -> Option<PathBuf> {
         dirs_next::home_dir()
@@ -156,7 +155,9 @@ impl Drop for ScopeGuard {
     }
 }
 
-/// The standard `Process` impl
+/// The default `Process` impl
+///
+/// The `CURRENT_STATE` will hold a new instance of this on every thread.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DefaultProcess(());
 
