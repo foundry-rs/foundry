@@ -8,7 +8,7 @@ use std::fmt;
 /// Bindings for additional `debug_traceTransaction` options
 ///
 /// See <https://geth.ethereum.org/docs/rpc/ns-debug#debug_tracetransaction>
-#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GethDebugTracingOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,7 +28,7 @@ pub struct GethDebugTracingOptions {
 /// Represents the params to set forking which can take various forms
 ///  - untagged
 ///  - tagged `forking`
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Forking {
     pub json_rpc_url: Option<String>,
     pub block_number: Option<u64>,
@@ -70,7 +70,7 @@ impl<'de> Deserialize<'de> for Forking {
 }
 
 /// Additional `evm_mine` options
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum EvmMineOptions {
     Options {

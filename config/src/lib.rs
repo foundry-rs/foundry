@@ -1811,7 +1811,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
 /// ```
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BasicConfig {
     /// the profile tag: `[default]`
     #[serde(skip)]
