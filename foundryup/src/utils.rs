@@ -128,8 +128,43 @@ pub async fn download_file(url: &Url, path: &Path) -> eyre::Result<()> {
     })
 }
 
-async fn download_file_(url: &Url, path: &Path) -> eyre::Result<()> {
-    let process = get_process();
+async fn download_file_(_url: &Url, _path: &Path) -> eyre::Result<()> {
+    let _process = get_process();
 
     Ok(())
+}
+
+pub(crate) fn make_executable(path: &Path) -> eyre::Result<()> {
+    #[allow(clippy::unnecessary_wraps)]
+    #[cfg(windows)]
+    fn inner(_: &Path) -> Result<()> {
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    fn inner(path: &Path) -> eyre::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let metadata = fs::metadata(path)
+            .map_err(|e| FoundryupError::SettingPermissions { p: PathBuf::from(path), source: e })?;
+        let mut perms = metadata.permissions();
+        let mode = perms.mode();
+        let new_mode = (mode & !0o777) | 0o755;
+
+        // Check if permissions are ok already - #1638
+        if mode == new_mode {
+            return Ok(())
+        }
+
+        perms.set_mode(new_mode);
+        set_permissions(path, perms)
+    }
+
+    inner(path)
+}
+
+#[cfg(not(windows))]
+fn set_permissions(path: &Path, perms: fs::Permissions) -> eyre::Result<()> {
+    fs::set_permissions(path, perms).map_err(|e| {
+        FoundryupError::SettingPermissions { p: PathBuf::from(path), source: e }.into()
+    })
 }

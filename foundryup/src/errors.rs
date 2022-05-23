@@ -25,4 +25,6 @@ pub enum FoundryupError {
     DownloadingFile { url: Url, path: PathBuf },
     #[error("current platform is not supported by foundry: os='{os}' arch='{arch}'")]
     UnsupportedPlatform { os: &'static str, arch: &'static str },
+    #[error("failed to set permissions for '{}'", .p.display())]
+    SettingPermissions { p: PathBuf, source: std::io::Error },
 }

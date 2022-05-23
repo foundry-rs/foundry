@@ -1,11 +1,11 @@
 //! Provides locations where to find foundry files
 use crate::{
     platform::Platform,
-    process::{get_process, Process},
+    process::{get_process},
     utils,
 };
-use serde::{Deserialize, Serialize};
-use std::env;
+use serde::Deserialize;
+
 use url::Url;
 
 const FOUNDRY_REPO: &str = "foundry-rs/foundry";
@@ -24,6 +24,38 @@ pub fn release_tarball_url(tag: impl AsRef<str>, version: impl AsRef<str>) -> ey
     )
 }
 
+/// Returns the newest available foundryup version
+pub async fn get_available_foundryup_version() -> eyre::Result<Release> {
+    // TODO switch to proper release cycle to detect new versions
+    let release = fetch_latest_github_release_nightly().await?;
+    dbg!(release.assets);
+    Ok(Release { version: release.name, tarball_url: utils::parse_url(&release.tarball_url)? })
+}
+
+/// Fetches the latest github release
+async fn fetch_latest_github_release() -> eyre::Result<GithubRelease> {
+    let process = get_process();
+    Ok(process
+        .client()
+        .get(format!("https://api.github.com/repos/{FOUNDRY_REPO}/releases/latest"))
+        .send()
+        .await?
+        .json()
+        .await?)
+}
+
+/// Fetches the latest github release
+async fn fetch_latest_github_release_nightly() -> eyre::Result<GithubRelease> {
+    let process = get_process();
+    Ok(process
+        .client()
+        .get(format!("https://api.github.com/repos/{FOUNDRY_REPO}/releases/tags/nightly"))
+        .send()
+        .await?
+        .json()
+        .await?)
+}
+
 /// Returns the github tag for `nightly`
 pub async fn fetch_nightly_tag() -> eyre::Result<GithubTag> {
     let process = get_process();
@@ -37,21 +69,63 @@ pub async fn fetch_nightly_tag() -> eyre::Result<GithubTag> {
 }
 
 /// Bindings for a github tag
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct GithubTag {
     #[serde(rename = "ref")]
-    tag_ref: String,
-    node_id: String,
-    url: String,
-    object: Object,
+    pub tag_ref: String,
+    pub node_id: String,
+    pub url: String,
+    pub object: Object,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Object {
-    sha: String,
+    pub sha: String,
     #[serde(rename = "type")]
-    object_type: String,
+    pub object_type: String,
+    pub url: String,
+}
+
+/// Bindings for a github release (excerpt) <https://docs.github.com/en/rest/releases/releases#get-the-latest-release>
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubRelease {
+    pub url: String,
+    pub html_url: String,
+    pub assets_url: String,
+    pub upload_url: String,
+    pub tarball_url: String,
+    pub zipball_url: String,
+    pub id: i64,
+    pub node_id: String,
+    pub tag_name: String,
+    pub target_commitish: String,
+    pub name: String,
+    pub body: String,
+    pub created_at: String,
+    pub assets: Vec<Asset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Asset {
     url: String,
+    browser_download_url: String,
+    id: i64,
+    node_id: String,
+    name: String,
+    label: String,
+    state: String,
+    content_type: String,
+    size: i64,
+    download_count: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Represents a release with version and where to find the tarball
+#[derive(Debug, Clone)]
+pub struct Release {
+    pub version: String,
+    pub tarball_url: Url,
 }
 
 #[cfg(test)]
@@ -64,5 +138,10 @@ mod tests {
     #[tokio::test]
     async fn can_fetch_nightly_tag() {
         let _tag = fetch_nightly_tag().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn can_fetch_latest_release() {
+        let _release = get_available_foundryup_version().await.unwrap();
     }
 }

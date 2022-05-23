@@ -1,5 +1,5 @@
 use reqwest::{
-    header::{HeaderMap, HeaderValue, USER_AGENT},
+    header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT},
     Client,
 };
 use std::{cell::RefCell, env, ffi::OsString, fmt, io, ops::Deref, path::PathBuf, sync::Arc};
@@ -175,10 +175,13 @@ impl Default for DefaultProcess {
         Self {
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
-                .default_headers(HeaderMap::from_iter([(
-                    USER_AGENT,
-                    HeaderValue::from_static(concat!("foundryup/", env!("CARGO_PKG_VERSION"))),
-                )]))
+                .default_headers(HeaderMap::from_iter([
+                    (
+                        USER_AGENT,
+                        HeaderValue::from_static(concat!("foundryup/", env!("CARGO_PKG_VERSION"))),
+                    ),
+                    (ACCEPT, HeaderValue::from_static("application/vnd.github.v3+json")),
+                ]))
                 .build()
                 .expect("Failed to create reqwest::Client"),
         }
