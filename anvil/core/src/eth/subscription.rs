@@ -31,7 +31,7 @@ pub struct SyncStatus {
 }
 
 /// Params for a subscription request
-#[derive(Debug, PartialEq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum SubscriptionParams {
     /// no `params`
     None,

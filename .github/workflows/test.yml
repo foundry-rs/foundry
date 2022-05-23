@@ -25,6 +25,11 @@ jobs:
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+      - name: Forge RPC cache
+        uses: actions/cache@v3
+        with:
+          path: "$HOME/.foundry/cache"
+          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
 
       - name: cargo test
         run: cargo test --locked --workspace --all-features --lib --bins
@@ -65,6 +70,11 @@ jobs:
         uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+      - name: Forge RPC cache
+        uses: actions/cache@v3
+        with:
+          path: "$HOME/.foundry/cache"
+          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
 
       - name: cargo test
         run: cargo test --locked --workspace --test '*'
@@ -90,7 +100,7 @@ jobs:
       - name: Forge RPC cache
         uses: actions/cache@v3
         with:
-          path: ~/.foundry/cache
+          path: "$HOME/.foundry/cache"
           key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
 
       - name: Force use of HTTPS for submodules
@@ -126,6 +136,6 @@ jobs:
   cross-platform:
     name: Cross-platform tests
     if: github.event_name != 'pull_request'
-    needs: [integration, lint, doc, unit]
+    needs: [ integration, lint, doc, unit ]
     uses: ./.github/workflows/cross-platform.yml
 

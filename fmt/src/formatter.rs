@@ -1155,7 +1155,7 @@ mod tests {
                             break
                         }
 
-                        if let Some((key, value)) = entry.unwrap().split_once("=") {
+                        if let Some((key, value)) = entry.unwrap().split_once('=') {
                             match key {
                                 "line-length" => config.line_length = value.parse().unwrap(),
                                 "tab-width" => config.tab_width = value.parse().unwrap(),

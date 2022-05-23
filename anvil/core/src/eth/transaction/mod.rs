@@ -387,6 +387,14 @@ impl TypedTransaction {
         }
     }
 
+    pub fn data(&self) -> &Bytes {
+        match self {
+            TypedTransaction::Legacy(tx) => &tx.input,
+            TypedTransaction::EIP2930(tx) => &tx.input,
+            TypedTransaction::EIP1559(tx) => &tx.input,
+        }
+    }
+
     /// Max cost of the transaction
     pub fn max_cost(&self) -> U256 {
         self.gas_limit().saturating_mul(self.gas_price())
@@ -439,6 +447,14 @@ impl TypedTransaction {
             TypedTransaction::Legacy(t) => t.nonce(),
             TypedTransaction::EIP2930(t) => t.nonce(),
             TypedTransaction::EIP1559(t) => t.nonce(),
+        }
+    }
+
+    pub fn chain_id(&self) -> Option<u64> {
+        match self {
+            TypedTransaction::Legacy(t) => t.chain_id(),
+            TypedTransaction::EIP2930(t) => Some(t.chain_id),
+            TypedTransaction::EIP1559(t) => Some(t.chain_id),
         }
     }
 

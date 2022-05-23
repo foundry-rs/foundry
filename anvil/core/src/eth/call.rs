@@ -2,7 +2,7 @@ use ethers_core::types::{transaction::eip2930::AccessList, Address, Bytes, U256}
 use serde::{Deserialize, Serialize};
 
 /// Call request
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 pub struct CallRequest {

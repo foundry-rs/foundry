@@ -77,7 +77,7 @@ impl Default for TransactionOrder {
 pub struct TransactionPriority(pub U256);
 
 /// Internal Transaction type
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PoolTransaction {
     /// the pending eth transaction
     pub pending_transaction: PendingTransaction,
@@ -131,6 +131,20 @@ pub struct PendingTransactions {
 // == impl PendingTransactions ==
 
 impl PendingTransactions {
+    /// Returns the number of transactions that are currently waiting
+    pub fn len(&self) -> usize {
+        self.waiting_queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.waiting_queue.is_empty()
+    }
+
+    /// Returns an iterator over all transactions in the waiting pool
+    pub fn transactions(&self) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        self.waiting_queue.values().map(|tx| tx.transaction.clone())
+    }
+
     /// Adds a transaction to Pending queue of transactions
     pub fn add_transaction(&mut self, tx: PendingPoolTransaction) -> Result<(), PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");

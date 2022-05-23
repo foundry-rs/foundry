@@ -267,7 +267,9 @@ impl CreateArgs {
                 .constructor()
                 .ok_or(eyre::eyre!("could not find constructor"))?
                 .encode_input(bin.to_vec(), &args)?;
-            Some(String::from_utf8(encoded_args)?)
+            Some(String::from_utf8(encoded_args).wrap_err(format!(
+                "ABI encoded constructor arguments contain invalid UTF-8 and can't be submitted for verification."
+            ))?)
         } else {
             None
         };
