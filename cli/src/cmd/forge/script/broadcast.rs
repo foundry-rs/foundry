@@ -60,20 +60,20 @@ impl ScriptArgs {
 
         // We only wait for a transaction receipt before sending the next transaction, if there is
         // more than one signer. There would be no way of assuring their order otherwise.
-        let wait = local_wallets.len() > 1;
+        let sequential_broadcast = local_wallets.len() != 1;
         for payload in sequence {
             let (tx, signer) = payload?;
-            let receipt = self.send_transaction(tx.clone(), signer, wait, fork_url);
-            if !wait {
-                future_receipts.push(receipt);
-            } else {
+            let receipt = self.send_transaction(tx.clone(), signer, sequential_broadcast, fork_url);
+            if sequential_broadcast {
                 let (receipt, nonce) = receipt.await?;
                 print_receipt(&receipt, nonce)?;
                 receipts.push(receipt);
+            } else {
+                future_receipts.push(receipt);
             }
         }
 
-        if !wait {
+        if sequential_broadcast {
             deployment_sequence.set_receipts(receipts)
         } else {
             deployment_sequence.set_receipts(self.wait_for_receipts(future_receipts).await?)
@@ -91,12 +91,12 @@ impl ScriptArgs {
         &self,
         tx: TypedTransaction,
         signer: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
-        wait: bool,
+        sequential_broadcast: bool,
         fork_url: &str,
     ) -> eyre::Result<(TransactionReceipt, U256)> {
         let from = tx.from().expect("no sender");
 
-        if wait {
+        if sequential_broadcast {
             let nonce = foundry_utils::next_nonce(*from, fork_url, None)
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 

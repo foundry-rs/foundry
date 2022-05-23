@@ -278,7 +278,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             tracing::trace!("setting up");
             let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
                 .executor
-                .setup(address)
+                .setup(None, address)
             {
                 Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
                 Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {

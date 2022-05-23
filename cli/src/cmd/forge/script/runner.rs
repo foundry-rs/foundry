@@ -71,7 +71,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         let (success, gas, labeled_addresses, transactions, debug) = if !setup {
             (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
-            match self.executor.setup(address) {
+            match self.executor.setup(Some(self.sender), address) {
                 Ok(CallResult {
                     reverted,
                     traces: setup_traces,

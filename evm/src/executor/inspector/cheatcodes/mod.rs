@@ -311,7 +311,6 @@ where
 
         // Clean up broadcast
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_caller;
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
@@ -448,7 +447,6 @@ where
 
         // Clean up broadcasts
         if let Some(broadcast) = &self.broadcast {
-            data.env.tx.caller = broadcast.original_caller;
             if broadcast.single_call {
                 std::mem::take(&mut self.broadcast);
             }
