@@ -264,6 +264,8 @@ pub fn enable_paint() {
     }
 }
 
+/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
+/// node) and with the default, `7s` if otherwise.
 pub fn get_http_provider(url: &str) -> Provider<Http> {
     let provider = Provider::try_from(url).expect("Bad fork provider.");
 

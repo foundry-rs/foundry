@@ -101,6 +101,8 @@ impl ScriptArgs {
             .enumerate()
             .for_each(|(i, mut result)| {
                 match &mut final_txs[i] {
+                    // We inflate the gas used by the transaction by x1.3 since the estimation might
+                    // be off
                     TypedTransaction::Legacy(tx) => tx.gas = Some(U256::from(result.gas * 13 / 10)),
                     _ => unreachable!(),
                 }
