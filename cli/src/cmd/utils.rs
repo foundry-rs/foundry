@@ -247,6 +247,10 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
+    pub fn set_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
+        self.receipts = receipts;
+    }
+
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
     pub fn get_path(
         out: &Path,

@@ -34,9 +34,8 @@ impl ScriptArgs {
 
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
-        let transactions = deployment_sequence.transactions.clone();
         let sequence =
-            transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
+        deployment_sequence.transactions.iter().skip(deployment_sequence.receipts.len()).map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
@@ -62,25 +61,30 @@ impl ScriptArgs {
                 }
             });
 
+        let mut future_receipts = vec![];
         let mut receipts = vec![];
 
         // We only wait for a transaction receipt before sending the next transaction, if there is
         // more than one signer. There would be no way of assuring their order otherwise.
         let wait = local_wallets.len() > 1;
-
         for payload in sequence {
             let (tx, signer) = payload?;
-            let receipt = self.send_transaction(tx, signer, wait, chain, is_legacy, fork_url);
+            let receipt =
+                self.send_transaction(tx.clone(), signer, wait, chain, is_legacy, fork_url);
             if !wait {
-                receipts.push(receipt);
+                future_receipts.push(receipt);
             } else {
                 let (receipt, nonce) = receipt.await?;
                 print_receipt(&receipt, nonce)?;
-                deployment_sequence.add_receipt(receipt);
+                receipts.push(receipt);
             }
         }
 
-        self.wait_for_receipts(receipts, deployment_sequence).await?;
+        if !wait {
+            deployment_sequence.set_receipts(receipts)
+        } else {
+            deployment_sequence.set_receipts(self.wait_for_receipts(future_receipts).await?)
+        }
 
         println!("\n\n==========================");
         println!(
@@ -194,9 +198,7 @@ impl ScriptArgs {
     async fn wait_for_receipts(
         &self,
         tasks: Vec<impl futures::Future<Output = eyre::Result<(TransactionReceipt, U256)>>>,
-
-        deployment_sequence: &mut ScriptSequence,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<Vec<TransactionReceipt>> {
         let res = join_all(tasks).await;
 
         let mut err = None;
@@ -214,15 +216,14 @@ impl ScriptArgs {
 
         // Receipts may have arrived out of order
         receipts.sort_by(|a, b| a.1.cmp(&b.1));
-        for (receipt, nonce) in receipts {
-            print_receipt(&receipt, nonce)?;
-            deployment_sequence.add_receipt(receipt);
+        for (receipt, nonce) in &receipts {
+            print_receipt(receipt, *nonce)?;
         }
 
         if let Some(err) = err {
             Err(err)
         } else {
-            Ok(())
+            Ok(receipts.into_iter().map(|(receipt, _)| receipt).collect())
         }
     }
 }
