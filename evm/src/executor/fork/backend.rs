@@ -15,10 +15,14 @@ use futures::{
     Future, FutureExt,
 };
 
+use crate::executor::fork::cache::FlushJsonBlockCacheDB;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
-    sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+    sync::{
+        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+        Arc,
+    },
 };
 use tracing::{trace, warn};
 
@@ -342,14 +346,6 @@ where
     }
 }
 
-impl<M: Middleware> Drop for BackendHandler<M> {
-    fn drop(&mut self) {
-        trace!(target: "backendhandler", "flushing cache");
-        self.db.cache().flush();
-        trace!(target: "backendhandler", "flushing cache finished");
-    }
-}
-
 /// A cloneable backend type that shares access to the backend data with all its clones.
 ///
 /// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
@@ -382,6 +378,11 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
+    /// Ensures that the underlying cache gets flushed once the last `SharedBackend` is dropped.
+    ///
+    /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
+    /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
+    _cache: Arc<FlushJsonBlockCacheDB>,
 }
 
 impl SharedBackend {
@@ -413,8 +414,9 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
+        let _cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend }, handler)
+        (Self { backend, _cache }, handler)
     }
 
     /// Updates the pinned block to fetch data from
