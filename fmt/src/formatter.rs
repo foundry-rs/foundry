@@ -33,15 +33,26 @@ impl Default for FormatterConfig {
 struct FormatBuffer<W: Sized> {
     level: usize,
     tab_width: usize,
-    current_line: usize,
-    pending_indent: bool,
+    is_beggining_of_line: bool,
+    is_beggining_of_group: bool,
+    last_indent: String,
     last_char: Option<char>,
+    current_line_len: usize,
     w: W,
 }
 
 impl<W: Sized> FormatBuffer<W> {
     fn new(w: W, tab_width: usize) -> Self {
-        Self { w, tab_width, level: 0, current_line: 0, pending_indent: true, last_char: None }
+        Self {
+            w,
+            tab_width,
+            level: 0,
+            current_line_len: 0,
+            is_beggining_of_line: true,
+            is_beggining_of_group: true,
+            last_indent: String::new(),
+            last_char: None,
+        }
     }
 
     fn indent(&mut self, delta: usize) {
@@ -52,17 +63,24 @@ impl<W: Sized> FormatBuffer<W> {
         self.level -= delta;
     }
 
-    fn current_indent_len(&self) -> usize {
-        self.tab_width * self.level
-    }
-
     fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        self.current_indent_len().saturating_add(self.current_line).saturating_add(s.as_ref().len())
+        self.last_indent
+            .len()
+            .saturating_add(self.current_line_len)
+            .saturating_add(s.as_ref().len())
     }
 
     fn is_beginning_of_line(&self) -> bool {
-        self.pending_indent
+        self.is_beggining_of_line
     }
+
+    // fn is_beginning_of_group(&self) -> bool {
+    //     self.is_beggining_of_group
+    // }
+
+    // fn start_group(&mut self) {
+    //     self.is_beggining_of_group = true
+    // }
 
     fn last_char_is_whitespace(&self) -> bool {
         self.last_char.map(|ch| ch.is_whitespace()).unwrap_or(true)
@@ -77,29 +95,35 @@ impl<W: Write> FormatBuffer<W> {
 
 impl<W: Write> Write for FormatBuffer<W> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        println!("{}", self.current_indent_len());
-        let indent = " ".repeat(self.current_indent_len());
-
-        if self.pending_indent {
-            IndentWriter::new(&indent, &mut self.w).write_str(s)?;
-        } else {
-            IndentWriter::new_skip_initial(&indent, &mut self.w).write_str(s)?;
+        if s.is_empty() {
+            return Ok(())
         }
+
+        if self.is_beggining_of_line && !s.trim_start().is_empty() {
+            let level = if self.is_beggining_of_group { self.level } else { self.level + 1 };
+            let indent = " ".repeat(self.tab_width * level);
+            self.write_raw(&indent)?;
+            self.last_indent = indent;
+        }
+
+        let indent = " ".repeat(self.tab_width * (self.level + 1));
+        IndentWriter::new_skip_initial(&indent, &mut self.w).write_str(s)?;
 
         if let Some(last_char) = s.chars().next_back() {
             self.last_char = Some(last_char);
         }
 
         if s.contains('\n') {
-            self.pending_indent = s.ends_with('\n');
-            if self.pending_indent {
-                self.current_line = 0;
+            self.last_indent = indent;
+            self.is_beggining_of_line = s.ends_with('\n');
+            if self.is_beggining_of_line {
+                self.current_line_len = 0;
             } else {
-                self.current_line = s.lines().last().unwrap().len();
+                self.current_line_len = s.lines().last().unwrap().len();
             }
         } else {
-            self.pending_indent = false;
-            self.current_line += s.len();
+            self.is_beggining_of_line = false;
+            self.current_line_len += s.len();
         }
 
         Ok(())
@@ -215,7 +239,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         if text.as_ref().contains('\n') {
-            return false;
+            return false
         }
         self.len_indented_with_current(text) <= self.config.line_length
     }
@@ -223,12 +247,12 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn will_chunk_fit(&self, byte_end: usize, chunk: impl std::fmt::Display) -> bool {
         let mut string = chunk.to_string();
         if string.contains('\n') {
-            return false;
+            return false
         }
         // we don't care about order we just care about string length
         for comment in self.comments.get_comments_before(byte_end) {
             if comment.needs_newline() {
-                return false;
+                return false
             } else {
                 string.push_str(&format!(" {} ", comment.comment))
             }
@@ -267,7 +291,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             });
             let item = item.to_string();
             if item.contains('\n') {
-                return true;
+                return true
             }
             // create separated string
             string.push_str(&item);
@@ -441,13 +465,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
                 // If source has zero blank lines between imports or errors, leave it as is. If one
                 // or more, separate with one blank line.
-                let separate = (is_import(unit) || is_error(unit))
-                    && (is_import(next_unit) || is_error(next_unit))
-                    && self.blank_lines(unit.loc(), next_unit.loc()) > 1;
+                let separate = (is_import(unit) || is_error(unit)) &&
+                    (is_import(next_unit) || is_error(next_unit)) &&
+                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
 
-                if (is_declaration(unit) || is_declaration(next_unit))
-                    || (is_pragma(unit) || is_pragma(next_unit))
-                    || separate
+                if (is_declaration(unit) || is_declaration(next_unit)) ||
+                    (is_pragma(unit) || is_pragma(next_unit)) ||
+                    separate
                 {
                     writeln!(self.buf())?;
                 }
@@ -581,9 +605,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             matches!(
                                 **function_definition,
                                 FunctionDefinition {
-                                    ty: FunctionTy::Function
-                                        | FunctionTy::Receive
-                                        | FunctionTy::Fallback,
+                                    ty: FunctionTy::Function |
+                                        FunctionTy::Receive |
+                                        FunctionTy::Fallback,
                                     ..
                                 }
                             )
@@ -822,8 +846,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         };
 
         let attributes_returns_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_returns}{body_first_line}"))
-            && !returns_multiline;
+            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
+            !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
         if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
@@ -855,8 +879,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         match body {
             Some(body) => {
-                if self.will_it_fit(format!(" {}", body_first_line))
-                    && attributes_returns_fits_one_line
+                if self.will_it_fit(format!(" {}", body_first_line)) &&
+                    attributes_returns_fits_one_line
                 {
                     write!(self.buf(), " ")?;
                 } else {
@@ -1069,7 +1093,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if statements.is_empty() {
             self.write_empty_brackets()?;
-            return Ok(());
+            return Ok(())
         }
 
         let multiline = self.source[loc.start()..loc.end()].contains('\n');
@@ -1366,7 +1390,7 @@ mod tests {
                             .and_then(|line| line.trim().strip_prefix("config:"))
                             .map(str::trim);
                         if entry.is_none() {
-                            break;
+                            break
                         }
 
                         if let Some((key, value)) = entry.unwrap().split_once('=') {
@@ -1383,7 +1407,7 @@ mod tests {
                         lines.next();
                     }
 
-                    return Some((filename.to_string(), config, lines.join("\n")));
+                    return Some((filename.to_string(), config, lines.join("\n")))
                 }
             }
 
