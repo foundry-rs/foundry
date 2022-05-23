@@ -716,7 +716,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_block_by_hash(hash)) {
             return Ok(tx)
         }
 
@@ -732,7 +732,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = self.get_full_block(hash) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.get_full_block(hash)) {
             return Ok(tx)
         }
 
@@ -768,7 +768,7 @@ impl Backend {
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
-        if let tx @ Some(_) = self.mined_block_by_number(number) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_block_by_number(number)) {
             return Ok(tx)
         }
 
@@ -784,7 +784,7 @@ impl Backend {
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
-        if let tx @ Some(_) = self.get_full_block(number) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.get_full_block(number)) {
             return Ok(tx)
         }
 
@@ -985,7 +985,9 @@ impl Backend {
 
     /// Returns the traces for the given transaction
     pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, BlockchainError> {
-        if let Some(traces) = self.mined_parity_trace_transaction(hash) {
+        if let Some(traces) =
+            tokio::task::block_in_place(|| self.mined_parity_trace_transaction(hash))
+        {
             return Ok(traces)
         }
 
@@ -1015,7 +1017,8 @@ impl Backend {
     /// Returns the traces for the given block
     pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>, BlockchainError> {
         let number = self.convert_block_number(Some(block));
-        if let Some(traces) = self.mined_parity_trace_block(number) {
+        if let Some(traces) = tokio::task::block_in_place(|| self.mined_parity_trace_block(number))
+        {
             return Ok(traces)
         }
 
@@ -1032,7 +1035,7 @@ impl Backend {
         &self,
         hash: H256,
     ) -> Result<Option<TransactionReceipt>, BlockchainError> {
-        if let tx @ Some(_) = self.mined_transaction_receipt(hash) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_transaction_receipt(hash)) {
             return Ok(tx)
         }
 
@@ -1139,7 +1142,9 @@ impl Backend {
         number: BlockNumber,
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
-        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.hash) {
+        if let Some(hash) =
+            tokio::task::block_in_place(|| self.mined_block_by_number(number).and_then(|b| b.hash))
+        {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
@@ -1158,7 +1163,9 @@ impl Backend {
         hash: H256,
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
-        if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| {
+            self.mined_transaction_by_block_hash_and_index(hash, index)
+        }) {
             return Ok(tx)
         }
 
@@ -1174,10 +1181,15 @@ impl Backend {
         block_hash: H256,
         index: Index,
     ) -> Option<Transaction> {
-        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
-        let index: usize = index.into();
-        let tx = block.transactions.get(index)?.clone();
-        let info = self.blockchain.storage.read().transactions.get(&tx.hash())?.info.clone();
+        let (info, block, tx) = {
+            let storage = self.blockchain.storage.read();
+            let block = storage.blocks.get(&block_hash).cloned()?;
+            let index: usize = index.into();
+            let tx = block.transactions.get(index)?.clone();
+            let info = storage.transactions.get(&tx.hash())?.info.clone();
+            (info, block, tx)
+        };
+
         Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
     }
 
@@ -1186,7 +1198,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<Transaction>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
-        if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
+        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_transaction_by_hash(hash)) {
             return Ok(tx)
         }
 
@@ -1198,10 +1210,13 @@ impl Backend {
     }
 
     pub fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
-        let MinedTransaction { info, block_hash, .. } =
-            self.blockchain.storage.read().transactions.get(&hash)?.clone();
-
-        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+        let (info, block) = {
+            let storage = self.blockchain.storage.read_recursive();
+            let MinedTransaction { info, block_hash, .. } =
+                storage.transactions.get(&hash)?.clone();
+            let block = storage.blocks.get(&block_hash).cloned()?;
+            (info, block)
+        };
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
