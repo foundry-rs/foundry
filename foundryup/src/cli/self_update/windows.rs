@@ -291,7 +291,7 @@ pub(crate) fn do_add_to_programs() -> Result<()> {
     };
 
     key.set_raw_value("UninstallString", &reg_value).context("Failed to set uninstall string")?;
-    key.set_value("DisplayName", &"Foundryup: the Rust toolchain installer")
+    key.set_value("DisplayName", &"Foundryup: the Foundry toolchain installer")
         .context("Failed to set display name")?;
 
     Ok(())
@@ -388,7 +388,7 @@ pub(crate) fn delete_foundry_home() -> Result<()> {
     // FOUNDRY_HOME, hopefully empty except for bin/foundryup.exe
     let foundry_home = utils::foundry_home()?;
     // The foundryup.exe bin
-    let rustup_path = foundry_home.join(&format!("bin/foundryup{}", EXE_SUFFIX));
+    let foundryup_path = foundry_home.join(&format!("bin/foundryup{}", EXE_SUFFIX));
 
     // The directory containing FOUNDRY_HOME
     let work_path = foundry_home.parent().expect("FOUNDRY_HOME doesn't have a parent?");
@@ -398,7 +398,7 @@ pub(crate) fn delete_foundry_home() -> Result<()> {
     let numbah: u32 = rand::random();
     let gc_exe = work_path.join(&format!("foundryup-gc-{:x}.exe", numbah));
     // Copy foundryup (probably this process's exe) to the gc exe
-    utils::copy_file(&rustup_path, &gc_exe)?;
+    utils::copy_file(&foundryup_path, &gc_exe)?;
     let gc_exe_win: Vec<_> = gc_exe.as_os_str().encode_wide().chain(Some(0)).collect();
 
     // Make the sub-process opened by gc exe inherit its attribute.
@@ -500,7 +500,6 @@ mod tests {
                 environment.delete_value("PATH").unwrap();
 
                 {
-                    // Can't compare the Results as Eq isn't derived; thanks error-chain.
                     assert_eq!((), super::_apply_new_path(Some(wide("foo"))).unwrap());
                 }
                 let root = RegKey::predef(HKEY_CURRENT_USER);
@@ -535,7 +534,6 @@ mod tests {
                     .unwrap();
 
                 {
-                    // Can't compare the Results as Eq isn't derived; thanks error-chain.
                     assert_eq!((), super::_apply_new_path(Some(Vec::new())).unwrap());
                 }
                 let reg_value = environment.get_raw_value("PATH");
