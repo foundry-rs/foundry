@@ -1,9 +1,5 @@
 //! Provides locations where to find foundry files
-use crate::{
-    platform::Platform,
-    process::{get_process},
-    utils,
-};
+use crate::{platform::Platform, process::get_process, utils};
 use serde::Deserialize;
 
 use url::Url;
@@ -28,7 +24,6 @@ pub fn release_tarball_url(tag: impl AsRef<str>, version: impl AsRef<str>) -> ey
 pub async fn get_available_foundryup_version() -> eyre::Result<Release> {
     // TODO switch to proper release cycle to detect new versions
     let release = fetch_latest_github_release_nightly().await?;
-    dbg!(release.assets);
     Ok(Release { version: release.name, tarball_url: utils::parse_url(&release.tarball_url)? })
 }
 
@@ -107,18 +102,18 @@ pub struct GithubRelease {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Asset {
-    url: String,
-    browser_download_url: String,
-    id: i64,
-    node_id: String,
-    name: String,
-    label: String,
-    state: String,
-    content_type: String,
-    size: i64,
-    download_count: i64,
-    created_at: String,
-    updated_at: String,
+    pub url: String,
+    pub browser_download_url: String,
+    pub id: i64,
+    pub node_id: String,
+    pub name: String,
+    pub label: String,
+    pub state: String,
+    pub content_type: String,
+    pub size: i64,
+    pub download_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// Represents a release with version and where to find the tarball

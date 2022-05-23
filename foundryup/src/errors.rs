@@ -13,6 +13,8 @@ pub enum FoundryupError {
     ReadingFile { name: String, path: PathBuf },
     #[error("could not remove '{}' directory: '{}'", .name, .path.display())]
     RemovingDirectory { name: String, path: PathBuf },
+    #[error("could not create {name} directory: '{}'", .path.display())]
+    CreatingDirectory { name: String, path: PathBuf },
     #[error("could not remove '{name}' file: '{}'", .path.display())]
     RemovingFile { name: String, path: PathBuf },
     #[error("could not write {name} file: '{}'", .path.display())]
@@ -27,4 +29,8 @@ pub enum FoundryupError {
     UnsupportedPlatform { os: &'static str, arch: &'static str },
     #[error("failed to set permissions for '{}'", .p.display())]
     SettingPermissions { p: PathBuf, source: std::io::Error },
+    #[error("could not create link from '{}' to '{}'", .src.display(), .dest.display())]
+    LinkingFile { src: PathBuf, dest: PathBuf },
+    #[error("failure during windows uninstall")]
+    WindowsUninstallMadness,
 }

@@ -46,6 +46,9 @@ serde_json = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing = "0.1"
 
+[target."cfg(windows)".dependencies]
+cc = "1"
+winreg = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

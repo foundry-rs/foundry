@@ -2064,6 +2064,7 @@ dependencies = [
 name = "foundryup"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "clap",
  "clap_complete",
  "dirs-next",
@@ -2082,6 +2083,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "vergen",
+ "winreg 0.8.0",
 ]
 
 [[package]]
@@ -4070,7 +4072,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webpki-roots",
- "winreg",
+ "winreg 0.10.1",
 ]
 
 [[package]]
@@ -5704,6 +5706,15 @@ name = "windows_x86_64_msvc"
 version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d19538ccc21819d01deaf88d6a17eae6596a12e9aafdbb97916fb49896d89de9"
+
+[[package]]
+name = "winreg"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d107f8c6e916235c4c01cabb3e8acf7bea8ef6a63ca2e7fa0527c049badfc48c"
+dependencies = [
+ "winapi",
+]
 
 [[package]]
 name = "winreg"

@@ -4,8 +4,9 @@ use crate::{cli::self_update, config::Config, utils::ExitCode};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[clap(name = "forge", version = crate::utils::VERSION_MESSAGE,
-after_help = "Find more information in the book: http://book.getfoundry.sh"
+#[clap(
+    name = "forge", version = crate::utils::VERSION_MESSAGE,
+    after_help = "Find more information in the book: http://book.getfoundry.sh"
 )]
 pub struct Foundryup {
     #[clap(
@@ -35,7 +36,7 @@ pub async fn run() -> eyre::Result<ExitCode> {
     let config = Config::new()?;
     if let Some(ref self_cmd) = cmd.self_cmd {
         return match self_cmd {
-            FoundryupSelf::Update => self_update::update(&config),
+            FoundryupSelf::Update => self_update::update(&config).await,
             FoundryupSelf::Uninstall => self_update::uninstall(),
         }
     }

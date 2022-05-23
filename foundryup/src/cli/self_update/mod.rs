@@ -9,6 +9,15 @@ use std::{
     path::{PathBuf, MAIN_SEPARATOR},
 };
 use tracing::info;
+#[cfg(unix)]
+mod shell;
+#[cfg(unix)]
+mod unix;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub(crate) use windows::*;
 
 /// Self update downloads foundryup to `FOUNDRY_HOME`/bin/foundryup-init
 /// and runs it.
@@ -25,7 +34,13 @@ use tracing::info;
 /// (and on windows this process will not be running to do it),
 /// foundryup-init is stored in `FOUNDRY_HOME`/bin, and then deleted next
 /// time foundryup runs.
-pub(crate) fn update(_config: &Config) -> eyre::Result<ExitCode> {
+pub(crate) async fn update(_config: &Config) -> eyre::Result<ExitCode> {
+    if let Some(_setup_path) = prepare_update().await? {
+
+        // install update
+    } else {
+        // unchanged
+    }
     Ok(0.into())
 }
 
@@ -64,4 +79,21 @@ pub(crate) async fn prepare_update() -> eyre::Result<Option<PathBuf>> {
     utils::make_executable(&setup_path)?;
 
     Ok(Some(setup_path))
+}
+
+fn install_bins() -> eyre::Result<()> {
+    let bin_path = utils::foundry_home()?.join("bin");
+    let this_exe_path = utils::current_exe()?;
+    let foundryup_path = bin_path.join(&format!("foundryup{}", EXE_SUFFIX));
+
+    utils::ensure_dir_exists("bin", &bin_path)?;
+    // NB: Even on Linux we can't just copy the new binary over the (running)
+    // old binary; we must unlink it first.
+    if foundryup_path.exists() {
+        utils::remove_file("foundryup-bin", &foundryup_path)?;
+    }
+    utils::copy_file(&this_exe_path, &foundryup_path)?;
+    utils::make_executable(&foundryup_path)?;
+
+    todo!("install all components")
 }
