@@ -12,7 +12,7 @@ use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_async, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
-    ScriptTester,
+    ScriptOutcome, ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, str::FromStr};
@@ -752,8 +752,8 @@ forgetest_async!(
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 1), (1, 2)])
             .await;
     })
@@ -770,8 +770,8 @@ forgetest_async!(
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deploy()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
     })
@@ -788,13 +788,12 @@ forgetest_async!(
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deploy()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .expect_err()
-            .resume("No associated wallet")
+            .simulate(ScriptOutcome::OkSimulation)
+            .resume(ScriptOutcome::MissingWallet)
             // load missing wallet
             .load_private_keys(vec![1])
             .await
-            .run("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .run(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 2), (1, 1)])
             .await;
     })
@@ -812,8 +811,8 @@ forgetest_async!(
             .load_private_keys(vec![0, 1, 2])
             .await
             .add_sig("BroadcastTest", "deployOther()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
             .await;
     })
@@ -830,9 +829,8 @@ forgetest_async!(
             .load_private_keys(vec![0, 1])
             .await
             .add_sig("BroadcastTest", "deployOther()")
-            .simulate("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")
-            .expect_err()
-            .broadcast("You seem to be using Foundry's default sender. Be sure to set your own --sender");
+            .simulate(ScriptOutcome::WarnSpecifyDeployer)
+            .broadcast(ScriptOutcome::MissingSender);
     })
 );
 
@@ -848,8 +846,8 @@ forgetest_async!(
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTest", "deployNoArgs()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 3)])
             .await;
     })
@@ -872,13 +870,12 @@ forgetest_async!(
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTestNoLinking", "deployCreate2()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 2)])
             .await
             // Running again results in error, since we're repeating the salt passed to CREATE2
-            .expect_err()
-            .run("Script failed.");
+            .run(ScriptOutcome::FailedScript);
     })
 );
 
@@ -893,8 +890,8 @@ forgetest_async!(
             .load_private_keys(vec![0])
             .await
             .add_sig("BroadcastTestNoLinking", "deployMany()")
-            .simulate("SIMULATION COMPLETE. To broadcast these")
-            .broadcast("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 100)])
             .await;
     })

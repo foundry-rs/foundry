@@ -8,6 +8,6 @@ pub mod util;
 pub use util::{TestCommand, TestProject};
 
 pub mod script;
-pub use script::ScriptTester;
+pub use script::{ScriptOutcome, ScriptTester};
 
 pub use ethers_solc;

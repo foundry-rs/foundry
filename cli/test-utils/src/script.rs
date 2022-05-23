@@ -8,6 +8,41 @@ use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use crate::TestCommand;
 
+pub const BROADCAST_TEST_PATH: &'static str = "src/Broadcast.t.sol";
+
+pub enum ScriptOutcome {
+    OkSimulation,
+    OkBroadcast,
+    WarnSpecifyDeployer,
+    MissingSender,
+    MissingWallet,
+    FailedScript,
+}
+
+impl ScriptOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
+            ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
+            ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
+            ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
+            ScriptOutcome::MissingWallet => "No associated wallet",
+            ScriptOutcome::FailedScript => "Script failed.",
+        }
+    }
+
+    pub fn is_err(&self) -> bool {
+        match self {
+            ScriptOutcome::OkSimulation => false,
+            ScriptOutcome::OkBroadcast => false,
+            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender => true,
+            ScriptOutcome::MissingWallet => true,
+            ScriptOutcome::FailedScript => true,
+        }
+    }
+}
+
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
@@ -15,7 +50,6 @@ pub struct ScriptTester {
     pub provider: Provider<Http>,
     pub nonces: BTreeMap<u32, U256>,
     pub cmd: TestCommand,
-    pub err: bool,
 }
 
 impl ScriptTester {
@@ -23,7 +57,7 @@ impl ScriptTester {
         ScriptTester::link_testdata(current_dir).unwrap();
         cmd.set_current_dir(current_dir);
 
-        let target_contract = current_dir.join("src/Broadcast.t.sol").to_string_lossy().to_string();
+        let target_contract = current_dir.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
         let url = format!("http://127.0.0.1:{port}");
 
         cmd.args([
@@ -51,7 +85,6 @@ impl ScriptTester {
             ],
             provider: Provider::<Http>::try_from(url).unwrap(),
             nonces: BTreeMap::default(),
-            err: false,
             cmd,
         }
     }
@@ -64,7 +97,7 @@ impl ScriptTester {
         )?;
         std::fs::hard_link(
             testdata.clone() + "/cheats/Broadcast.t.sol",
-            current_dir.join("src/Broadcast.t.sol"),
+            current_dir.join(BROADCAST_TEST_PATH),
         )?;
         std::fs::hard_link(
             testdata + "/lib/ds-test/src/test.sol",
@@ -103,16 +136,16 @@ impl ScriptTester {
         self
     }
 
-    pub fn simulate(&mut self, expected: &str) -> &mut Self {
+    pub fn simulate(&mut self, expected: ScriptOutcome) -> &mut Self {
         self.run(expected)
     }
 
-    pub fn broadcast(&mut self, expected: &str) -> &mut Self {
+    pub fn broadcast(&mut self, expected: ScriptOutcome) -> &mut Self {
         self.cmd.arg("--broadcast");
         self.run(expected)
     }
 
-    pub fn resume(&mut self, expected: &str) -> &mut Self {
+    pub fn resume(&mut self, expected: ScriptOutcome) -> &mut Self {
         self.cmd.arg("--resume");
         self.run(expected)
     }
@@ -135,19 +168,13 @@ impl ScriptTester {
         self
     }
 
-    pub fn run(&mut self, expected: &str) -> &mut Self {
-        let output = if self.err {
-            self.err = false;
-            self.cmd.stderr_lossy()
-        } else {
-            self.cmd.stdout_lossy()
-        };
-        assert!(output.contains(expected));
-        self
-    }
+    pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {
+        let output =
+            if expected.is_err() { self.cmd.stderr_lossy() } else { self.cmd.stdout_lossy() };
 
-    pub fn expect_err(&mut self) -> &mut Self {
-        self.err = true;
+        if !output.contains(expected.as_str()) {
+            panic!("OUTPUT: {}\n\nEXPECTED: {}", output, expected.as_str());
+        }
         self
     }
 }
