@@ -1,4 +1,4 @@
-use crate::TestFilter;
+use crate::{deploy_create2_deployer, TestFilter};
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, Log, U256},
@@ -272,6 +272,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // the initial balance we want
         self.executor.set_balance(address, self.initial_balance);
         self.executor.set_balance(self.sender, self.initial_balance);
+
+        deploy_create2_deployer(&mut self.executor)?;
 
         // Optionally call the `setUp` function
         Ok(if setup {

@@ -136,6 +136,10 @@ contract NoLink is DSTest {
     }
 }
 
+interface INoLink {
+    function t(uint256 a) external returns (uint256);
+}
+
 contract BroadcastTestNoLinking is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
@@ -173,5 +177,52 @@ contract BroadcastTestNoLinking is DSTest {
         NoLink test2 = new NoLink();
         cheats.stopBroadcast();
     
+    }
+    function more() internal {
+        cheats.broadcast();
+        NoLink test11 = new NoLink();
+    }
+
+    function deployMix() public {
+        address user = msg.sender;
+        assert(user == address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266));
+
+        NoLink no = new NoLink();
+
+        cheats.startBroadcast();
+        NoLink test1 = new NoLink();
+        test1.t(2);
+        NoLink test2 = new NoLink();
+        test2.t(2);
+        cheats.stopBroadcast();
+
+        cheats.startBroadcast(user);
+        NoLink test3 = new NoLink();
+        NoLink test4 = new NoLink();
+        test4.t(2);
+        cheats.stopBroadcast();
+
+        cheats.broadcast();
+        test4.t(2);
+
+        cheats.broadcast();
+        NoLink test5 = new NoLink();
+
+        cheats.broadcast();
+        INoLink test6 = INoLink(address(new NoLink()));
+
+        cheats.broadcast();
+        NoLink test7 = new NoLink();
+
+        cheats.broadcast(user);
+        NoLink test8 = new NoLink();
+
+        cheats.broadcast();
+        NoLink test9 = new NoLink();
+
+        cheats.broadcast(user);
+        NoLink test10 = new NoLink();
+
+        more();
     }
 }

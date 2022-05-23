@@ -1,15 +1,19 @@
+use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::{AbiEncode, Address},
-    prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer},
+    prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer, H160},
     types::{NameOrAddress, H256, U256},
     utils,
 };
 use revm::{CreateInputs, Database, EVMData};
-use std::str::FromStr;
 
-use super::Cheatcodes;
+pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
+    78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
+]);
+pub const MISSING_CREATE2_DEPLOYER: &str =
+    "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]";
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
@@ -79,27 +83,24 @@ pub fn process_create<DB: Database>(
         }
         revm::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            let create2_deployer =
-                Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+            data.subroutine.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
 
-            data.subroutine.load_account(create2_deployer, data.db);
-
-            let info = &data.subroutine.account(create2_deployer).info;
+            let info = &data.subroutine.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
-                        panic!("CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]")
+                        panic!("{MISSING_CREATE2_DEPLOYER}")
                     }
                 }
                 None => {
                     // SharedBacked
                     if data.db.code_by_hash(info.code_hash).is_empty() {
-                        panic!("CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]")
+                        panic!("{MISSING_CREATE2_DEPLOYER}")
                     }
                 }
             }
 
-            call.caller = create2_deployer;
+            call.caller = DEFAULT_CREATE2_DEPLOYER;
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
@@ -114,7 +115,7 @@ pub fn process_create<DB: Database>(
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            (calldata.freeze(), Some(NameOrAddress::Address(create2_deployer)), nonce)
+            (calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce)
         }
     }
 }

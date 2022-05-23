@@ -10,6 +10,7 @@ mod ext;
 mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
+pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
 use self::{
     env::Broadcast,
