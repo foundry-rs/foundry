@@ -37,7 +37,10 @@ use crate::{
     mem::storage::MinedBlockOutcome,
 };
 use anvil_core::eth::transaction::PendingTransaction;
-use ethers::types::{TxHash, U64};
+use ethers::{
+    prelude::TxpoolStatus,
+    types::{TxHash, U64},
+};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -62,9 +65,22 @@ impl Pool {
         self.inner.read().ready_transactions()
     }
 
+    /// Returns all transactions that are not ready to be included in a block yet
+    pub fn pending_transactions(&self) -> Vec<Arc<PoolTransaction>> {
+        self.inner.read().pending_transactions.transactions().collect()
+    }
+
     /// Returns the _pending_ transaction for that `hash` if it exists in the mempool
     pub fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
         self.inner.read().get_transaction(hash)
+    }
+
+    /// Returns the number of tx that are ready and queued for further execution
+    pub fn txpool_status(&self) -> TxpoolStatus {
+        // Note: naming differs here compared to geth's `TxpoolStatus`
+        let pending = self.ready_transactions().count().into();
+        let queued = self.inner.read().pending_transactions.len().into();
+        TxpoolStatus { pending, queued }
     }
 
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.

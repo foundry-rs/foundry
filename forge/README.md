@@ -104,7 +104,7 @@ function testDoubleWithFuzzing(uint256 x) public {
 
 Foundry will show you a comprehensive gas report about your contracts. It returns the `min`, `average`, `median` and, `max` gas cost for every function. 
 
-It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's propably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
+It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's probably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
 
 Usually, the `median` value is what your users will probably end up paying. `max` and `min` concern edge cases that you might want to explicitly test against, but users will probably never encounter.
 

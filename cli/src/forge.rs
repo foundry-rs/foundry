@@ -99,9 +99,9 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        // Subcommands::Fmt(cmd) => {
-        //     cmd.run()?;
-        // }
+        Subcommands::Fmt(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }

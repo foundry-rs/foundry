@@ -197,7 +197,7 @@ impl NodeHandle {
     pub fn http_provider(&self) -> Provider<Http> {
         Provider::<Http>::try_from(self.http_endpoint())
             .unwrap()
-            .interval(Duration::from_millis(2_0000))
+            .interval(Duration::from_millis(500))
     }
 
     /// Connects to the websocket Provider of the node

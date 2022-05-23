@@ -4,7 +4,7 @@ use hash256_std_hasher::Hash256StdHasher;
 use hash_db::Hasher;
 
 /// Concrete `Hasher` impl for the Keccak-256 hash
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Keccak256Hasher;
 impl Hasher for Keccak256Hasher {
     type Out = H256;

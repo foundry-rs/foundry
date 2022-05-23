@@ -299,10 +299,28 @@ pub enum EthRequest {
     /// transaction (instead of just txhash/receipt)
     #[serde(rename = "anvil_enableTraces", with = "empty_params")]
     EnableTraces(()),
+
+    /// Returns the number of transactions currently pending for inclusion in the next block(s), as
+    /// well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    #[serde(rename = "txpool_status", with = "empty_params")]
+    TxPoolStatus(()),
+
+    /// Returns a summary of all the transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect)
+    #[serde(rename = "txpool_inspect", with = "empty_params")]
+    TxPoolInspect(()),
+
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
+    #[serde(rename = "txpool_content", with = "empty_params")]
+    TxPoolContent(()),
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthPubSub {
     /// Subscribe to an eth subscription

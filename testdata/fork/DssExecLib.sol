@@ -735,7 +735,7 @@ library DssExecLib {
     }
 
     /**
-        @dev Set the amout of time before an auction resets.
+        @dev Set the amount of time before an auction resets.
         @param _ilk      The ilk to update (ex. bytes32("ETH-A"))
         @param _duration Amount of time before auction resets (in seconds).
     */
