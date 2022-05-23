@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::wallet::WalletTrait;
 
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Parser, Debug, Clone, Serialize, Default)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
     doc,

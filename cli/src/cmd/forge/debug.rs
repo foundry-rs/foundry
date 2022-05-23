@@ -1,15 +1,12 @@
+use super::{build::BuildArgs, script::ScriptArgs, watch::WatchArgs};
 use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
     opts::MultiWallet,
 };
 use clap::{Parser, ValueHint};
-
-use foundry_common::evm::EvmArgs;
-
 use ethers::solc::utils::RuntimeOrHandle;
+use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
-
-use super::{build::BuildArgs, script::ScriptArgs};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);
@@ -48,6 +45,12 @@ pub struct DebugArgs {
 impl Cmd for DebugArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
+        RuntimeOrHandle::new().block_on(self.debug())
+    }
+}
+
+impl DebugArgs {
+    async fn debug(self) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,
@@ -59,25 +62,13 @@ impl Cmd for DebugArgs {
                 args: self.opts,
                 names: false,
                 sizes: false,
-                watch: Default::default(),
+                watch: WatchArgs::default(),
             },
-            wallets: MultiWallet {
-                interactives: 0,
-                private_keys: None,
-                mnemonic_paths: None,
-                mnemonic_indexes: None,
-                keystore_paths: None,
-                keystore_passwords: None,
-                ledger: false,
-                trezor: false,
-                hd_path: None,
-                froms: None,
-                private_key: None,
-            },
+            wallets: MultiWallet::default(),
             evm_opts: self.evm_opts,
             resume: false,
             debug: true,
         };
-        RuntimeOrHandle::new().block_on(script.run_script())
+        script.run_script().await
     }
 }
