@@ -2,9 +2,6 @@ use crate::{
     cmd::ScriptSequence,
     utils::{get_http_provider, print_receipt},
 };
-
-use std::str::FromStr;
-
 use ethers::{
     prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, Wallet},
     providers::Middleware,
@@ -50,7 +47,7 @@ impl ScriptArgs {
                     );
 
                     // This is an actual used address
-                    if from == Address::from_str(Config::DEFAULT_SENDER).unwrap() {
+                    if from == Config::DEFAULT_SENDER {
                         err_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender."
                     }
 

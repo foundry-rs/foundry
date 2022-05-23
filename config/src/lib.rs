@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, U256};
+use ethers_core::types::{Address, H160, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -298,7 +298,9 @@ impl Config {
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Default address for tx.origin
-    pub const DEFAULT_SENDER: &'static str = "00a329c0648769a73afac7f9381e08fb43dbea72";
+    pub const DEFAULT_SENDER: H160 = H160([
+        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+    ]);
 
     /// Returns the current `Config`
     ///
@@ -1259,8 +1261,8 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             ffi: false,
-            sender: Config::DEFAULT_SENDER.parse().unwrap(),
-            tx_origin: Config::DEFAULT_SENDER.parse().unwrap(),
+            sender: Config::DEFAULT_SENDER,
+            tx_origin: Config::DEFAULT_SENDER,
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,
