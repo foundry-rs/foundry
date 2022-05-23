@@ -292,13 +292,13 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_items_separated(items, "", multiline)
     }
 
-    fn write_chunks<'b>(
-        &mut self,
-        items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        self.write_chunks_separated(items, "", multiline)
-    }
+    // fn write_chunks<'b>(
+    //     &mut self,
+    //     items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
+    //     multiline: bool,
+    // ) -> std::fmt::Result {
+    //     self.write_chunks_separated(items, "", multiline)
+    // }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
     fn write_items_separated(
@@ -1401,7 +1401,12 @@ mod tests {
         }
     }
 
-    fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected: &str) {
+    fn test_formatter(
+        filename: &str,
+        config: FormatterConfig,
+        source: &str,
+        expected_source: &str,
+    ) {
         #[derive(PartialEq, Eq)]
         struct PrettyString(String);
 
@@ -1413,9 +1418,10 @@ mod tests {
 
         let (mut source_pt, source_comments) = solang_parser::parse(source, 1).unwrap();
         println!("{:?}", source_pt);
-        let comments = Comments::new(source_comments, source);
+        let source_comments = Comments::new(source_comments, source);
 
-        let (expected_pt, _) = solang_parser::parse(expected, 1).unwrap();
+        let (mut expected_pt, expected_comments) =
+            solang_parser::parse(expected_source, 1).unwrap();
         if !source_pt.ast_eq(&expected_pt) {
             pretty_assertions::assert_eq!(
                 source_pt,
@@ -1424,17 +1430,30 @@ mod tests {
                 filename
             );
         }
+        let expected_comments = Comments::new(expected_comments, expected_source);
 
-        let mut result = String::new();
-        let mut f = Formatter::new(&mut result, source, comments, config);
+        let expected = PrettyString(expected_source.trim().to_string());
 
+        let mut source_formatted = String::new();
+        let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
-
-        let formatted = PrettyString(result);
-        let expected = PrettyString(expected.trim().to_string());
+        let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
-            formatted,
+            source_formatted,
+            expected,
+            "(formatted == expected) in {}",
+            filename
+        );
+
+        let mut expected_formatted = String::new();
+        let mut f =
+            Formatter::new(&mut expected_formatted, expected_source, expected_comments, config);
+        expected_pt.visit(&mut f).unwrap();
+        let expected_formatted = PrettyString(expected_formatted);
+
+        pretty_assertions::assert_eq!(
+            expected_formatted,
             expected,
             "(formatted == expected) in {}",
             filename
