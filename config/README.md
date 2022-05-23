@@ -104,7 +104,7 @@ block_difficulty = 0
 # "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
 revert_strings = "default"
 # caches storage retrieved locally for certain chains and endpoints
-# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
 # to disable storage caching entirely set `no_storage_caching = true`
 rpc_storage_caching = { chains = "all", endpoints = "all" }
