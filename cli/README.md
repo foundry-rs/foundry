@@ -318,7 +318,7 @@ contract ContractBar { ... }
 * `forge test --no-match-contract FooBar` will run the tests in `ContractFoo` and `ContractBar`
 
 
-`--match-test` and `--no-match-test` matches agains the test function names, by default they start with the `test` prefix. Consider the following contracts with a few test functions.
+`--match-test` and `--no-match-test` matches against the test function names, by default they start with the `test` prefix. Consider the following contracts with a few test functions.
 
 ```solidity
 contract ContractFoo {

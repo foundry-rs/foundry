@@ -44,7 +44,7 @@ pub mod config;
 pub mod create;
 pub mod debug;
 pub mod flatten;
-// pub mod fmt;
+pub mod fmt;
 pub mod init;
 pub mod inspect;
 pub mod install;

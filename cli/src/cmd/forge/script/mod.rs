@@ -14,9 +14,9 @@ mod executor;
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet};
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, Function, RawLog},
+    abi::{Abi, Function},
     prelude::{artifacts::ContractBytecodeSome, ArtifactId, Bytes, Project},
-    types::{transaction::eip2718::TypedTransaction, Address, TransactionRequest, U256},
+    types::{transaction::eip2718::TypedTransaction, Address, Log, TransactionRequest, U256},
 };
 use forge::{
     debug::DebugArena,
@@ -96,7 +96,7 @@ pub struct ScriptArgs {
 
 pub struct ScriptResult {
     pub success: bool,
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
     pub gas: u64,

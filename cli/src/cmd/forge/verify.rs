@@ -305,7 +305,7 @@ impl VerifyArgs {
         };
         let input = CompilerInput {
             language: "Solidity".to_string(),
-            sources: BTreeMap::from([("constract.sol".into(), Source { content: content.into() })]),
+            sources: BTreeMap::from([("contract.sol".into(), Source { content: content.into() })]),
             settings: Default::default(),
         };
 
@@ -317,7 +317,7 @@ impl VerifyArgs {
 
             eprintln!(
                 r#"Failed to compile the flattened code locally.
-This could be a bug, please inspect the outout of `forge flatten {}` and report an issue.
+This could be a bug, please inspect the output of `forge flatten {}` and report an issue.
 To skip this solc dry, pass `--force`.
 "#,
                 contract_path.display()

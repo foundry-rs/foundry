@@ -196,7 +196,7 @@ OPTIONS:
     -b, --branch    Install a specific branch
     -P, --pr        Install a specific Pull Request
     -C, --commit    Install a specific commit
-    -r, --repo      Install from a remote GitHib repo (uses default branch if no other options are set)
+    -r, --repo      Install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Install a local repository
 EOF
 }

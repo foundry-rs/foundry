@@ -419,6 +419,15 @@ impl Config {
 
         self.cache_path = p(&root, &self.cache_path);
 
+        if let Some(ref mut model_checker) = self.model_checker {
+            model_checker.contracts = std::mem::take(&mut model_checker.contracts)
+                .into_iter()
+                .map(|(path, contracts)| {
+                    (format!("{}", p(&root, path.as_ref()).display()), contracts)
+                })
+                .collect();
+        }
+
         self
     }
 
@@ -1817,7 +1826,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
 /// ```
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BasicConfig {
     /// the profile tag: `[default]`
     #[serde(skip)]
@@ -2743,6 +2752,49 @@ mod tests {
 
             let reloaded = Config::load();
             assert_eq!(loaded, reloaded);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_model_checker_settings_relative_paths() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+
+                [default.model_checker]
+                contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
+                engine = 'chc'
+                targets = [ 'assert', 'outOfBounds' ]
+                timeout = 10000
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            let dir = jail.directory();
+            assert_eq!(
+                loaded.model_checker,
+                Some(ModelCheckerSettings {
+                    contracts: BTreeMap::from([
+                        (
+                            format!("{}", dir.join("a.sol").display()),
+                            vec!["A1".to_string(), "A2".to_string()]
+                        ),
+                        (
+                            format!("{}", dir.join("b.sol").display()),
+                            vec!["B1".to_string(), "B2".to_string()]
+                        ),
+                    ]),
+                    engine: Some(ModelCheckerEngine::CHC),
+                    targets: Some(vec![
+                        ModelCheckerTarget::Assert,
+                        ModelCheckerTarget::OutOfBounds
+                    ]),
+                    timeout: Some(10000)
+                })
+            );
 
             Ok(())
         });

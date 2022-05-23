@@ -197,7 +197,7 @@ impl fmt::Display for RawOrDecodedLog {
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
@@ -205,7 +205,7 @@ pub enum LogCallOrder {
 
 // TODO: Maybe unify with output
 /// Raw or decoded calldata.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
     Raw(Vec<u8>),
@@ -234,7 +234,7 @@ impl Default for RawOrDecodedCall {
 }
 
 /// Raw or decoded return data.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
     Raw(Vec<u8>),
@@ -273,7 +273,7 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
