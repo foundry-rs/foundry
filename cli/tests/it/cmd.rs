@@ -375,7 +375,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
-== Return ==
+
 == Logs ==
   script ran
 ",
@@ -408,7 +408,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
-== Return ==
+
 == Logs ==
   script ran
 ",
@@ -444,7 +444,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 3957
-== Return ==
+
 == Logs ==
   script ran
   1
@@ -478,9 +478,11 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1836
+
 == Return ==
 result: uint256 255
 1: uint8 3
+
 == Logs ==
   script ran
 ",
