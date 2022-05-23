@@ -30,8 +30,9 @@ use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
-    abi::{Abi, Detokenize, RawLog, Tokenize},
+    abi::{Abi, Detokenize, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
+    types::Log,
 };
 use eyre::Result;
 use foundry_utils::IntoFunction;
@@ -54,7 +55,7 @@ pub enum EvmError {
         reason: String,
         gas: u64,
         stipend: u64,
-        logs: Vec<RawLog>,
+        logs: Vec<Log>,
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
@@ -76,7 +77,7 @@ pub struct DeployResult {
     /// The gas cost of the deployment
     pub gas: u64,
     /// The logs emitted during the deployment
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     /// The traces of the deployment
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
@@ -95,7 +96,7 @@ pub struct CallResult<D: Detokenize> {
     /// The initial gas stipend for the transaction
     pub stipend: u64,
     /// The logs emitted during the call
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
@@ -123,7 +124,7 @@ pub struct RawCallResult {
     /// The initial gas stipend for the transaction
     pub stipend: u64,
     /// The logs emitted during the call
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
@@ -336,7 +337,7 @@ where
             result,
             gas,
             stipend,
-            logs: logs.to_vec(),
+            logs: logs.into(),
             labels,
             traces,
             debug,
