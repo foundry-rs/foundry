@@ -247,8 +247,8 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    pub fn set_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
-        self.receipts = receipts;
+    pub fn add_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
+        self.receipts.extend(receipts.into_iter());
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json

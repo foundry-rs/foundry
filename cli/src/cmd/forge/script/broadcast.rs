@@ -74,9 +74,9 @@ impl ScriptArgs {
         }
 
         if sequential_broadcast {
-            deployment_sequence.set_receipts(receipts)
+            deployment_sequence.add_receipts(receipts)
         } else {
-            deployment_sequence.set_receipts(self.wait_for_receipts(future_receipts).await?)
+            deployment_sequence.add_receipts(self.wait_for_receipts(future_receipts).await?)
         }
 
         println!("\n\n==========================");
@@ -98,6 +98,7 @@ impl ScriptArgs {
 
         if sequential_broadcast {
             let nonce = foundry_utils::next_nonce(*from, fork_url, None)
+                .await
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
             let tx_nonce = tx.nonce().expect("no nonce");

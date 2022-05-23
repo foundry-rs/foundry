@@ -12,7 +12,6 @@ use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
-    utils::RuntimeOrHandle,
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
@@ -27,14 +26,13 @@ use std::{
     time::Duration,
 };
 
-pub fn next_nonce(
+pub async fn next_nonce(
     caller: Address,
     provider_url: &str,
     block: Option<BlockId>,
 ) -> Result<U256, ProviderError> {
     let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
-    let rt = RuntimeOrHandle::new();
-    rt.block_on(provider.get_transaction_count(caller, block))
+    provider.get_transaction_count(caller, block).await
 }
 
 pub enum SelectorOrSig {

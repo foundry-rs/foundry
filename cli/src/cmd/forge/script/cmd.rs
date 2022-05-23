@@ -28,7 +28,7 @@ impl ScriptArgs {
 
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
             script_config.sender_nonce =
-                foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None)?
+                foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
         } else {
             script_config.config.libraries = Default::default();
         }
@@ -136,7 +136,8 @@ impl ScriptArgs {
                 .as_ref()
                 .expect("You must provide an RPC URL (see --fork-url) when broadcasting."),
             None,
-        )?;
+        )
+        .await?;
         script_config.sender_nonce = nonce;
 
         let BuildOutput { contract, highlevel_known_contracts, predeploy_libraries, .. } = self
