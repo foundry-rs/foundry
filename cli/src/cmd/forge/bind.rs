@@ -67,6 +67,10 @@ pub struct BindArgs {
     #[clap(long = "single-file", help = "Generate bindings as a single file.")]
     #[serde(skip)]
     single_file: bool,
+
+    #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml from consistency checks.")]
+    #[serde(skip)]
+    skip_cargo_toml: bool,
 }
 
 impl BindArgs {
@@ -109,6 +113,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
                 &self.crate_version,
                 self.bindings_root(),
                 self.single_file,
+                !self.skip_cargo_toml,
             )?;
         } else {
             bindings.ensure_consistent_module(self.bindings_root(), self.single_file)?;
@@ -141,7 +146,7 @@ impl Cmd for BindArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings()
+            return self.check_existing_bindings();
         }
 
         if self.overwrite {
