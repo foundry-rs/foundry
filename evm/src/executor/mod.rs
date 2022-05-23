@@ -337,7 +337,7 @@ where
             result,
             gas,
             stipend,
-            logs: logs.into(),
+            logs,
             labels,
             traces,
             debug,
