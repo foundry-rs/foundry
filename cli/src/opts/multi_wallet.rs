@@ -1,5 +1,8 @@
 use clap::Parser;
-use ethers::{signers::LocalWallet, types::Address};
+use ethers::{
+    signers::{LocalWallet, Signer},
+    types::Address,
+};
 use eyre::Result;
 
 use serde::Serialize;
@@ -112,6 +115,29 @@ pub struct MultiWallet {
 impl WalletTrait for MultiWallet {}
 
 impl MultiWallet {
+    // TODO: Add trezor and ledger support (supported in multiwallet, just need to
+    // add derivation + SignerMiddleware creation logic)
+    // foundry/cli/src/opts/mod.rs:110
+    pub fn all(&self, chain: u64) -> Result<Vec<LocalWallet>> {
+        let mut local_wallets = vec![];
+        if let Some(wallets) = self.private_keys()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
+        }
+
+        if let Some(wallets) = self.interactives()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
+        }
+
+        if let Some(wallets) = self.mnemonics()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
+        }
+
+        if let Some(wallets) = self.keystores()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
+        }
+        Ok(local_wallets)
+    }
+
     pub fn interactives(&self) -> Result<Option<Vec<LocalWallet>>> {
         if self.interactives != 0 {
             let mut wallets = vec![];

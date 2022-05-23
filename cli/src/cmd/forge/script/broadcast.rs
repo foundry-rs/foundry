@@ -21,38 +21,16 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
     ) -> eyre::Result<()> {
-        // The user wants to actually send the transactions
-        let mut local_wallets = vec![];
-        if let Some(wallets) = self.wallets.private_keys()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-        }
+        let provider = get_http_provider(fork_url);
+        let chain = provider.get_chainid().await?.as_u64();
 
-        if let Some(wallets) = self.wallets.interactives()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-        }
-
-        if let Some(wallets) = self.wallets.mnemonics()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-        }
-
-        if let Some(wallets) = self.wallets.keystores()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-        }
-
-        // TODO: Add trezor and ledger support (supported in multiwallet, just need to
-        // add derivation + SignerMiddleware creation logic)
-        // foundry/cli/src/opts/mod.rs:110
+        let local_wallets = self.wallets.all(chain)?;
         if local_wallets.is_empty() {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
 
-        let provider = get_http_provider(fork_url);
-        let chain = provider.get_chainid().await?.as_u64();
-
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
-        local_wallets =
-            local_wallets.into_iter().map(|wallet| wallet.with_chain_id(chain)).collect();
 
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
