@@ -1,4 +1,5 @@
 use crate::{cmd::get_cached_entry_by_name, compile, opts::forge::ContractInfo};
+use eyre::{Context, ContextCompat};
 
 use ethers::{
     prelude::{
@@ -42,14 +43,13 @@ impl ScriptArgs {
         nonce: U256,
     ) -> eyre::Result<BuildOutput> {
         let mut run_dependencies = vec![];
-        let mut contract =
-            CompactContractBytecode { abi: None, bytecode: None, deployed_bytecode: None };
+        let mut contract = CompactContractBytecode::default();
         let mut highlevel_known_contracts = BTreeMap::new();
 
         let mut target_fname = dunce::canonicalize(&self.path)
-            .expect("Couldn't convert contract path to absolute path")
+            .wrap_err("Couldn't convert contract path to absolute path.")?
             .to_str()
-            .expect("Bad path to string")
+            .wrap_err("Bad path to string.")?
             .to_string();
 
         let no_target_name = if let Some(target_name) = &self.target_contract {
