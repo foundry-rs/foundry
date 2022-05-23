@@ -146,7 +146,7 @@ impl Cmd for BindArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
-            return self.check_existing_bindings();
+            return self.check_existing_bindings()
         }
 
         if self.overwrite {
