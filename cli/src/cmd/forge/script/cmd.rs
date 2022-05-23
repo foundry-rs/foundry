@@ -116,7 +116,7 @@ impl ScriptArgs {
 
                 self.handle_broadcastable_transactions(
                     &target,
-                    result,
+                    result.transactions,
                     &mut decoder,
                     &script_config,
                 )

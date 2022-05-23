@@ -36,7 +36,7 @@ impl ScriptArgs {
         // wallet. Then send the transaction. Panics if we find a unknown `from`
         let transactions = deployment_sequence.transactions.clone();
         let sequence =
-            transactions.into_iter().skip(deployment_sequence.receipts.len() as usize).map(|tx| {
+            transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
@@ -69,21 +69,14 @@ impl ScriptArgs {
         let wait = local_wallets.len() > 1;
 
         for payload in sequence {
-            match payload {
-                Ok((tx, signer)) => {
-                    let receipt =
-                        self.send_transaction(tx, signer, wait, chain, is_legacy, fork_url);
-                    if !wait {
-                        receipts.push(receipt);
-                    } else {
-                        let (receipt, nonce) = receipt.await?;
-                        print_receipt(&receipt, nonce)?;
-                        deployment_sequence.add_receipt(receipt);
-                    }
-                }
-                Err(e) => {
-                    eyre::bail!("{e}");
-                }
+            let (tx, signer) = payload?;
+            let receipt = self.send_transaction(tx, signer, wait, chain, is_legacy, fork_url);
+            if !wait {
+                receipts.push(receipt);
+            } else {
+                let (receipt, nonce) = receipt.await?;
+                print_receipt(&receipt, nonce)?;
+                deployment_sequence.add_receipt(receipt);
             }
         }
 
@@ -116,17 +109,13 @@ impl ScriptArgs {
         let from = *legacy_or_1559.from().expect("no sender");
 
         if wait {
-            match foundry_utils::next_nonce(from, fork_url, None) {
-                Ok(nonce) => {
-                    let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+            let nonce = foundry_utils::next_nonce(from, fork_url, None)
+                .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
-                    if nonce != tx_nonce {
-                        eyre::bail!("EOA nonce changed unexpectedly while sending transactions.");
-                    }
-                }
-                Err(_) => {
-                    eyre::bail!("Not able to query the EOA nonce.");
-                }
+            let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+
+            if nonce != tx_nonce {
+                eyre::bail!("EOA nonce changed unexpectedly while sending transactions.");
             }
         }
 
@@ -160,43 +149,38 @@ impl ScriptArgs {
         Ok(receipt)
     }
 
+    /// Executes the passed transactions in sequence, and if no error has occurred, it broadcasts
+    /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
         target: &ArtifactId,
-        result: ScriptResult,
+        transactions: Option<VecDeque<TypedTransaction>>,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
     ) -> eyre::Result<()> {
-        if let Some(txs) = result.transactions {
+        if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                if let Ok(gas_filled_txs) =
-                    self.execute_transactions(txs, script_config, decoder).await
-                {
-                    if !result.success {
-                        eyre::bail!("\nSIMULATION FAILED");
-                    } else {
-                        let txs = gas_filled_txs;
-                        let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
+                let gas_filled_txs =
+                    self.execute_transactions(txs, script_config, decoder)
+                    .await
+                    .map_err(|_| eyre::eyre!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`"))?;
+                let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
-                        let provider = get_http_provider(&fork_url);
-                        let chain = provider.get_chainid().await?.as_u64();
+                let provider = get_http_provider(&fork_url);
+                let chain = provider.get_chainid().await?.as_u64();
 
-                        let mut deployment_sequence = ScriptSequence::new(
-                            txs,
-                            &self.sig,
-                            target,
-                            &script_config.config,
-                            chain,
-                        )?;
+                let mut deployment_sequence = ScriptSequence::new(
+                    gas_filled_txs,
+                    &self.sig,
+                    target,
+                    &script_config.config,
+                    chain,
+                )?;
 
-                        if self.broadcast {
-                            self.send_transactions(&mut deployment_sequence, &fork_url).await?;
-                        } else {
-                            println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
-                        }
-                    }
+                if self.broadcast {
+                    self.send_transactions(&mut deployment_sequence, &fork_url).await?;
                 } else {
-                    eyre::bail!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`")
+                    println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                 }
             } else {
                 println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.");
