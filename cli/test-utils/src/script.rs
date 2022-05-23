@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use crate::TestCommand;
 
-pub const BROADCAST_TEST_PATH: &'static str = "src/Broadcast.t.sol";
+pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
 pub enum ScriptOutcome {
     OkSimulation,

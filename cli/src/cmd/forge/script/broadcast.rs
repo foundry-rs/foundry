@@ -29,9 +29,6 @@ impl ScriptArgs {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
 
-        let is_legacy =
-            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
-
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
         let sequence =
@@ -69,8 +66,7 @@ impl ScriptArgs {
         let wait = local_wallets.len() > 1;
         for payload in sequence {
             let (tx, signer) = payload?;
-            let receipt =
-                self.send_transaction(tx.clone(), signer, wait, chain, is_legacy, fork_url);
+            let receipt = self.send_transaction(tx.clone(), signer, wait, fork_url);
             if !wait {
                 future_receipts.push(receipt);
             } else {
@@ -99,26 +95,17 @@ impl ScriptArgs {
         tx: TypedTransaction,
         signer: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
         wait: bool,
-        chain: u64,
-        is_legacy: bool,
         fork_url: &str,
     ) -> eyre::Result<(TransactionReceipt, U256)> {
-        let mut legacy_or_1559 = if is_legacy {
-            TypedTransaction::Legacy(tx.into())
-        } else {
-            TypedTransaction::Eip1559(tx.into())
-        };
-        legacy_or_1559.set_chain_id(chain);
-
-        let from = *legacy_or_1559.from().expect("no sender");
+        let from = tx.from().expect("no sender");
 
         if wait {
-            let nonce = foundry_utils::next_nonce(from, fork_url, None)
+            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
                 .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
 
-            let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+            let tx_nonce = tx.nonce().expect("no nonce");
 
-            if nonce != tx_nonce {
+            if nonce != *tx_nonce {
                 eyre::bail!("EOA nonce changed unexpectedly while sending transactions.");
             }
         }
@@ -137,8 +124,8 @@ impl ScriptArgs {
             }
         }
 
-        let nonce = *legacy_or_1559.nonce().expect("no nonce");
-        let receipt = match broadcast(signer, legacy_or_1559).await {
+        let nonce = *tx.nonce().expect("no nonce");
+        let receipt = match broadcast(signer, tx).await {
             Ok(Some(res)) => (res, nonce),
 
             Ok(None) => {
@@ -172,14 +159,24 @@ impl ScriptArgs {
 
                 let provider = get_http_provider(&fork_url);
                 let chain = provider.get_chainid().await?.as_u64();
+                let is_legacy = self.legacy ||
+                    Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
 
-                let mut deployment_sequence = ScriptSequence::new(
-                    gas_filled_txs,
-                    &self.sig,
-                    target,
-                    &script_config.config,
-                    chain,
-                )?;
+                let txes = gas_filled_txs
+                    .into_iter()
+                    .map(|tx| {
+                        let mut tx = if is_legacy {
+                            TypedTransaction::Legacy(tx.into())
+                        } else {
+                            TypedTransaction::Eip1559(tx.into())
+                        };
+                        tx.set_chain_id(chain);
+                        tx
+                    })
+                    .collect();
+
+                let mut deployment_sequence =
+                    ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
