@@ -31,7 +31,7 @@ fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Script(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.run_script())?;
         }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
@@ -44,7 +44,7 @@ fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Debug(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.debug())?;
         }
         Subcommands::VerifyContract(args) => {
             utils::block_on(args.run())?;

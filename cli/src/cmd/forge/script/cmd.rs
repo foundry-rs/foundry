@@ -1,26 +1,16 @@
 use crate::{
-    cmd::{unwrap_contracts, Cmd, ScriptSequence},
+    cmd::{unwrap_contracts, ScriptSequence},
     utils::get_http_provider,
 };
-
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
-    solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, U256},
 };
 use forge::executor::opts::EvmOpts;
-
 use foundry_config::{figment::Figment, Config};
 
 use super::*;
-
-impl Cmd for ScriptArgs {
-    type Output = ();
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.run_script())
-    }
-}
 
 impl ScriptArgs {
     pub async fn run_script(mut self) -> eyre::Result<()> {

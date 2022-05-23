@@ -1,10 +1,6 @@
 use super::{build::BuildArgs, script::ScriptArgs, watch::WatchArgs};
-use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd},
-    opts::MultiWallet,
-};
+use crate::{cmd::forge::build::CoreBuildArgs, opts::MultiWallet};
 use clap::{Parser, ValueHint};
-use ethers::solc::utils::RuntimeOrHandle;
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
 
@@ -42,15 +38,8 @@ pub struct DebugArgs {
     pub evm_opts: EvmArgs,
 }
 
-impl Cmd for DebugArgs {
-    type Output = ();
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.debug())
-    }
-}
-
 impl DebugArgs {
-    async fn debug(self) -> eyre::Result<()> {
+    pub async fn debug(self) -> eyre::Result<()> {
         let script = ScriptArgs {
             path: self.path.to_str().expect("Invalid path string.").to_string(),
             args: self.args,

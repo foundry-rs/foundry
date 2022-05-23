@@ -503,7 +503,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         opts: args.opts,
                         evm_opts: args.evm_opts,
                     };
-                    debugger.run()?;
+                    utils::block_on(debugger.debug())?;
 
                     Ok(TestOutcome::new(results, args.allow_failure))
                 }
