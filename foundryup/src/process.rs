@@ -1,3 +1,7 @@
+use reqwest::{
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+    Client,
+};
 use std::{cell::RefCell, env, ffi::OsString, fmt, io, ops::Deref, path::PathBuf, sync::Arc};
 
 thread_local! {
@@ -51,6 +55,9 @@ pub trait Processor: 'static + fmt::Debug + Send + Sync {
             .and_then(std::ffi::OsStr::to_str)
             .map(String::from)
     }
+
+    /// Returns the client to make requests with
+    fn client(&self) -> &Client;
 }
 
 /// Sets this processor as the scoped processor for the duration of a closure.
@@ -158,10 +165,31 @@ impl Drop for ScopeGuard {
 /// The default `Process` impl
 ///
 /// The `CURRENT_STATE` will hold a new instance of this on every thread.
-#[derive(Copy, Clone, Debug, Default)]
-pub struct DefaultProcess(());
+#[derive(Clone, Debug)]
+pub struct DefaultProcess {
+    client: Client,
+}
 
-impl Processor for DefaultProcess {}
+impl Default for DefaultProcess {
+    fn default() -> Self {
+        Self {
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .default_headers(HeaderMap::from_iter([(
+                    USER_AGENT,
+                    HeaderValue::from_static(concat!("foundryup/", env!("CARGO_PKG_VERSION"))),
+                )]))
+                .build()
+                .expect("Failed to create reqwest::Client"),
+        }
+    }
+}
+
+impl Processor for DefaultProcess {
+    fn client(&self) -> &Client {
+        &self.client
+    }
+}
 
 #[cfg(test)]
 mod tests {}

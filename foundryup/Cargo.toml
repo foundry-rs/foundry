@@ -19,7 +19,7 @@ vergen = { version = "7.0", default-features = false, features = [
 [dependencies]
 
 # async
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls", "gzip"] }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "gzip"] }
 tokio = { version = "1", features = ["full"] }
 
 # cli

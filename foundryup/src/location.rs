@@ -1,5 +1,9 @@
 //! Provides locations where to find foundry files
-use crate::{platform::Platform, utils};
+use crate::{
+    platform::Platform,
+    process::{get_process, Process},
+    utils,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use url::Url;
@@ -20,11 +24,19 @@ pub fn release_tarball_url(tag: impl AsRef<str>, version: impl AsRef<str>) -> ey
     )
 }
 
+/// Returns the github tag for `nightly`
 pub async fn fetch_nightly_tag() -> eyre::Result<GithubTag> {
-    todo!()
+    let process = get_process();
+    Ok(process
+        .client()
+        .get(format!("https://api.github.com/repos/{FOUNDRY_REPO}/git/refs/tags/nightly"))
+        .send()
+        .await?
+        .json()
+        .await?)
 }
 
-/// Bindings for a gitbug tag
+/// Bindings for a github tag
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GithubTag {
     #[serde(rename = "ref")]
@@ -47,5 +59,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    fn nightly_exists() {}
+    async fn nightly_exists() {}
+
+    #[tokio::test]
+    async fn can_fetch_nightly_tag() {
+        let _tag = fetch_nightly_tag().await.unwrap();
+    }
 }
