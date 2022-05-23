@@ -78,8 +78,8 @@ impl WatchArgs {
         let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
 
         if !has_paths {
-            // use alternative pathset
-            runtime.pathset(f());
+            // use alternative pathset, but only those that exists
+            runtime.pathset(f().into_iter().filter(|p| p.exists()));
         }
         Ok((init, runtime))
     }
