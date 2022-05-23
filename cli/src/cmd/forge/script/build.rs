@@ -19,9 +19,18 @@ impl ScriptArgs {
     pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
 
-        let (contracts, sources) = output.into_artifacts_with_sources();
-        let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
-            contracts.into_iter().map(|(id, artifact)| (id, artifact.into())).collect();
+        let mut contracts: BTreeMap<ArtifactId, CompactContractBytecode> = BTreeMap::new();
+        let mut sources: BTreeMap<u32, String> = BTreeMap::new();
+
+        for (id, artifact) in output.into_artifacts() {
+            let source = artifact.source_file().ok_or(eyre::eyre!("Artifact has no source."))?;
+            sources.insert(
+                source.id,
+                source.ast.ok_or(eyre::eyre!("Source from artifact has no AST."))?.absolute_path,
+            );
+
+            contracts.insert(id, artifact.into());
+        }
 
         let mut output = self.link(
             project,
@@ -30,7 +39,7 @@ impl ScriptArgs {
             script_config.evm_opts.sender,
             script_config.sender_nonce,
         )?;
-        output.sources = sources.into_ids().collect();
+        output.sources = sources;
         Ok(output)
     }
 
@@ -141,30 +150,34 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.ephemeral_no_artifacts_project()?;
 
-        let path = match dunce::canonicalize(&self.path) {
-            Ok(target_contract) => target_contract,
+        let output = match dunce::canonicalize(&self.path) {
+            // We got passed an existing path to the contract
+            Ok(target_contract) => compile::compile_files(&project, vec![target_contract])?,
             Err(_) => {
+                // We either got passed `contract_path:contract_name` or the contract name.
                 let contract = ContractInfo::from_str(&self.path)?;
-                let path = if let Some(path) = contract.path {
-                    path
+                let (path, output) = if let Some(path) = contract.path {
+                    let output =
+                        compile::compile_files(&project, vec![dunce::canonicalize(&path)?])?;
+
+                    (path, output)
                 } else {
                     let project = script_config.config.project()?;
-                    compile::compile(&project, false, false)?;
+                    let output = compile::compile(&project, false, false)?;
                     let cache = SolFilesCache::read_joined(&project.paths)?;
 
                     let res = get_cached_entry_by_name(&cache, &contract.name)?;
-                    res.0.to_str().expect("Invalid path string.").to_string()
+                    (res.0.to_str().ok_or(eyre::eyre!("Invalid path string."))?.to_string(), output)
                 };
 
                 self.path = path;
                 self.target_contract = Some(contract.name);
-                dunce::canonicalize(&self.path)?
+                output
             }
         };
 
         // We always compile our contract path, since it's not possible to get srcmaps from cached
         // artifacts
-        let output = compile::compile_files(&project, vec![path])?;
         Ok((project, output))
     }
 }
