@@ -68,7 +68,7 @@ pub struct BindArgs {
     #[serde(skip)]
     single_file: bool,
 
-    #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml from consistency checks.")]
+    #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml consistency checks.")]
     #[serde(skip)]
     skip_cargo_toml: bool,
 }
