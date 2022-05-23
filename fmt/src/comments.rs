@@ -2,6 +2,49 @@ use crate::solang_ext::*;
 use itertools::Itertools;
 use solang_parser::pt::*;
 
+fn trim_comments(s: &str) -> String {
+    enum CommentState {
+        None,
+        Line,
+        Block,
+    }
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    let mut state = CommentState::None;
+    while let Some(ch) = chars.next() {
+        match state {
+            CommentState::None => match ch {
+                '/' => match chars.peek() {
+                    Some('/') => {
+                        chars.next();
+                        state = CommentState::Line;
+                    }
+                    Some('*') => {
+                        chars.next();
+                        state = CommentState::Block;
+                    }
+                    _ => out.push(ch),
+                },
+                _ => out.push(ch),
+            },
+            CommentState::Line => {
+                if ch == '\n' {
+                    state = CommentState::None;
+                    out.push('\n')
+                }
+            }
+            CommentState::Block => {
+                if ch == '*' {
+                    if let Some('/') = chars.next() {
+                        state = CommentState::None
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum CommentType {
     Line,
@@ -15,20 +58,69 @@ pub enum CommentPosition {
 }
 
 #[derive(Debug, Clone)]
-pub struct DestructuredComment {
+pub struct CommentWithMetadata {
     pub ty: CommentType,
     pub loc: Loc,
+    pub has_newline_before: bool,
     pub comment: String,
     pub position: CommentPosition,
 }
 
-impl DestructuredComment {
-    fn new(comment: Comment, position: CommentPosition) -> Self {
+impl CommentWithMetadata {
+    fn new(comment: Comment, position: CommentPosition, has_newline_before: bool) -> Self {
         let (ty, loc, comment) = match comment {
             Comment::Line(loc, comment) => (CommentType::Line, loc, comment),
             Comment::Block(loc, comment) => (CommentType::Block, loc, comment),
         };
-        Self { ty, loc, comment, position }
+        Self { ty, loc, comment, position, has_newline_before }
+    }
+    fn from_comment_and_src(comment: Comment, src: &str) -> Self {
+        let (position, has_newline_before) = {
+            let src_before = &src[..comment.loc().start()];
+            if src_before.is_empty() {
+                // beginning of code
+                (CommentPosition::Prefix, false)
+            } else {
+                let mut lines_before = src_before.lines().rev();
+                let this_line =
+                    if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap() };
+                if this_line.trim_start().is_empty() {
+                    // comment sits on a new line
+                    if let Some(last_line) = lines_before.next() {
+                        if last_line.trim_start().is_empty() {
+                            // line before is empty
+                            (CommentPosition::Prefix, true)
+                        } else {
+                            // line has something
+                            let next_code = src[comment.loc().end()..]
+                                .lines()
+                                .find(|line| !trim_comments(line).trim().is_empty());
+                            if let Some(next_code) = next_code {
+                                let next_indent =
+                                    next_code.chars().position(|ch| !ch.is_whitespace()).unwrap();
+                                if this_line.len() > next_indent {
+                                    // next line has a smaller indent
+                                    (CommentPosition::Postfix, false)
+                                } else {
+                                    // next line has same or equal indent
+                                    (CommentPosition::Prefix, false)
+                                }
+                            } else {
+                                // end of file
+                                (CommentPosition::Postfix, false)
+                            }
+                        }
+                    } else {
+                        // beginning of file
+                        (CommentPosition::Prefix, false)
+                    }
+                } else {
+                    // comment is after some code
+                    (CommentPosition::Postfix, false)
+                }
+            }
+        };
+        Self::new(comment, position, has_newline_before)
     }
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line)
@@ -47,8 +139,8 @@ impl DestructuredComment {
 /// Comments are stored in reverse order for easy removal
 #[derive(Debug, Clone)]
 pub struct Comments {
-    prefixes: Vec<DestructuredComment>,
-    postfixes: Vec<DestructuredComment>,
+    prefixes: Vec<CommentWithMetadata>,
+    postfixes: Vec<CommentWithMetadata>,
 }
 
 impl Comments {
@@ -57,27 +149,17 @@ impl Comments {
         let mut postfixes = Vec::new();
 
         for comment in comments.into_iter().rev() {
-            if Self::is_newline_comment(&comment, src) {
-                prefixes.push(DestructuredComment::new(comment, CommentPosition::Prefix))
+            let comment = CommentWithMetadata::from_comment_and_src(comment, src);
+            if comment.is_prefix() {
+                prefixes.push(comment)
             } else {
-                postfixes.push(DestructuredComment::new(comment, CommentPosition::Postfix))
+                postfixes.push(comment)
             }
         }
         Self { prefixes, postfixes }
     }
 
-    fn is_newline_comment(comment: &Comment, src: &str) -> bool {
-        for ch in src[..comment.loc().start()].chars().rev() {
-            if ch == '\n' {
-                return true
-            } else if !ch.is_whitespace() {
-                return false
-            }
-        }
-        true
-    }
-
-    pub(crate) fn pop_prefix(&mut self, byte: usize) -> Option<DestructuredComment> {
+    pub(crate) fn pop_prefix(&mut self, byte: usize) -> Option<CommentWithMetadata> {
         if self.prefixes.last()?.is_before(byte) {
             Some(self.prefixes.pop().unwrap())
         } else {
@@ -85,7 +167,7 @@ impl Comments {
         }
     }
 
-    pub(crate) fn peek_prefix(&mut self, byte: usize) -> Option<&DestructuredComment> {
+    pub(crate) fn peek_prefix(&mut self, byte: usize) -> Option<&CommentWithMetadata> {
         self.prefixes.last().and_then(
             |comment| {
                 if comment.is_before(byte) {
@@ -97,7 +179,7 @@ impl Comments {
         )
     }
 
-    pub(crate) fn pop_postfix(&mut self, byte: usize) -> Option<DestructuredComment> {
+    pub(crate) fn pop_postfix(&mut self, byte: usize) -> Option<CommentWithMetadata> {
         if self.postfixes.last()?.is_before(byte) {
             Some(self.postfixes.pop().unwrap())
         } else {
@@ -105,7 +187,7 @@ impl Comments {
         }
     }
 
-    pub(crate) fn get_comments_before(&self, byte: usize) -> Vec<&DestructuredComment> {
+    pub(crate) fn get_comments_before(&self, byte: usize) -> Vec<&CommentWithMetadata> {
         let mut out = self
             .prefixes
             .iter()
@@ -117,7 +199,7 @@ impl Comments {
         out
     }
 
-    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<DestructuredComment> {
+    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         let mut out = self.prefixes.split_off(
             self.prefixes
                 .iter()
@@ -138,7 +220,7 @@ impl Comments {
         out
     }
 
-    pub(crate) fn drain(&mut self) -> Vec<DestructuredComment> {
+    pub(crate) fn drain(&mut self) -> Vec<CommentWithMetadata> {
         let mut out = std::mem::take(&mut self.prefixes);
         out.append(&mut self.postfixes);
         out.sort_by_key(|comment| comment.loc.start());
