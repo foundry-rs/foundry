@@ -77,7 +77,7 @@ impl Default for TransactionOrder {
 pub struct TransactionPriority(pub U256);
 
 /// Internal Transaction type
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PoolTransaction {
     /// the pending eth transaction
     pub pending_transaction: PendingTransaction,

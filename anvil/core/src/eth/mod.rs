@@ -302,7 +302,7 @@ pub enum EthRequest {
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthPubSub {
     /// Subscribe to an eth subscription
