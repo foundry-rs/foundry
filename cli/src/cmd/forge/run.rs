@@ -4,14 +4,14 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, Function, RawLog},
+    abi::{Abi, Function},
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
         utils::RuntimeOrHandle,
         Project,
     },
-    types::{Address, Bytes, U256},
+    types::{Address, Bytes, Log, U256},
 };
 use forge::{
     debug::DebugArena,
@@ -396,7 +396,7 @@ impl RunArgs {
 struct RunResult {
     pub success: bool,
     pub returned: bytes::Bytes,
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
     pub gas: u64,
