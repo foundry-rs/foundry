@@ -16,6 +16,7 @@ use ethers::{
 use eyre::{Context, Result};
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
+use rustc_hex::ToHex;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -263,11 +264,15 @@ impl CreateArgs {
 
         println!("Starting contract verification...");
         let constructor_args = if !args.is_empty() {
+            // we're passing an empty vec to the `encode_input` of the constructor because we only
+            // need the constructor arguments and the encoded input is `code + args`
+            let code = Vec::new();
             let encoded_args = abi
                 .constructor()
                 .ok_or(eyre::eyre!("could not find constructor"))?
-                .encode_input(bin.to_vec(), &args)?;
-            Some(String::from_utf8(encoded_args).wrap_err("ABI encoded constructor arguments contain invalid UTF-8 and can't be submitted for verification.".to_string())?)
+                .encode_input(code, &args)?
+                .to_hex::<String>();
+            Some(encoded_args)
         } else {
             None
         };
