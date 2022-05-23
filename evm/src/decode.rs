@@ -15,7 +15,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
     // NOTE: We need to do this conversion because ethers-rs does not
     // support passing `Log`s
     let raw_log = RawLog { topics: log.topics.clone(), data: log.data.to_vec() };
-    let decoded = match ConsoleEvents::decode_log(&rawlog).ok()? {
+    let decoded = match ConsoleEvents::decode_log(&raw_log).ok()? {
         LogsFilter(inner) => format!("{}", inner.0),
         LogBytesFilter(inner) => format!("{}", inner.0),
         LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
