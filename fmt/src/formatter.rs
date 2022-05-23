@@ -30,13 +30,80 @@ impl Default for FormatterConfig {
     }
 }
 
-// TODO: use it inside Formatter since they're sharing same fields
-#[derive(Default)]
-struct FormatBuffer {
+struct FormatBuffer<W: Sized> {
     level: usize,
+    tab_width: usize,
     current_line: usize,
     pending_indent: bool,
-    w: String,
+    last_char: Option<char>,
+    w: W,
+}
+
+impl<W: Sized> FormatBuffer<W> {
+    fn new(w: W, tab_width: usize) -> Self {
+        Self { w, tab_width, level: 0, current_line: 0, pending_indent: true, last_char: None }
+    }
+
+    fn indent(&mut self, delta: usize) {
+        self.level += delta;
+    }
+
+    fn dedent(&mut self, delta: usize) {
+        self.level -= delta;
+    }
+
+    fn current_indent_len(&self) -> usize {
+        self.tab_width * self.level
+    }
+
+    fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
+        self.current_indent_len().saturating_add(self.current_line).saturating_add(s.as_ref().len())
+    }
+
+    fn is_beginning_of_line(&self) -> bool {
+        self.pending_indent
+    }
+
+    fn last_char_is_whitespace(&self) -> bool {
+        self.last_char.map(|ch| ch.is_whitespace()).unwrap_or(true)
+    }
+}
+
+impl<W: Write> FormatBuffer<W> {
+    fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
+        self.w.write_str(s.as_ref())
+    }
+}
+
+impl<W: Write> Write for FormatBuffer<W> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        println!("{}", self.current_indent_len());
+        let indent = " ".repeat(self.current_indent_len());
+
+        if self.pending_indent {
+            IndentWriter::new(&indent, &mut self.w).write_str(s)?;
+        } else {
+            IndentWriter::new_skip_initial(&indent, &mut self.w).write_str(s)?;
+        }
+
+        if let Some(last_char) = s.chars().next_back() {
+            self.last_char = Some(last_char);
+        }
+
+        if s.contains('\n') {
+            self.pending_indent = s.ends_with('\n');
+            if self.pending_indent {
+                self.current_line = 0;
+            } else {
+                self.current_line = s.lines().last().unwrap().len();
+            }
+        } else {
+            self.pending_indent = false;
+            self.current_line += s.len();
+        }
+
+        Ok(())
+    }
 }
 
 // TODO: store context entities as references without copying
@@ -48,151 +115,107 @@ struct Context {
 
 /// A Solidity formatter
 pub struct Formatter<'a, W> {
-    w: &'a mut W,
+    buf: FormatBuffer<&'a mut W>,
     source: &'a str,
     config: FormatterConfig,
-    level: usize,
-    pending_indent: bool,
-    current_line: usize,
-    bufs: Vec<FormatBuffer>,
+    temp_bufs: Vec<FormatBuffer<String>>,
     context: Context,
     comments: Comments,
-    last_char: Option<char>,
 }
 
 macro_rules! write_chunk {
     ($self:ident, $loc:expr) => {{
-        println!("write_chunk[{}:{}]", file!(), line!());
-        $self.write_chunk($loc, format_args!(""), false)
+        write_chunk!($self, $loc, "")
     }};
     ($self:ident, $loc:expr, $($arg:tt)*) => {{
-        println!("write_chunk[{}:{}]", file!(), line!());
-        $self.write_chunk($loc, format_args!($($arg)*), false)
+        // println!("write_chunk[{}:{}]", file!(), line!());
+        $self.write_chunk($loc, format_args!($($arg)*))
     }};
 }
 
 macro_rules! writeln_chunk {
     ($self:ident, $loc:expr) => {{
-        $self.write_chunk($loc, format_args!(""), true)
+        writeln_chunk!($self, $loc, "")
     }};
     ($self:ident, $loc:expr, $($arg:tt)*) => {{
-        println!("writeln_chunk[{}:{}]", file!(), line!());
-        $self.write_chunk($loc, format_args!($($arg)*), true)
+        write_chunk!($self, $loc, "{}\n", format_args!($($arg)*))
     }};
 }
 
-macro_rules! format_chunk {
-    ($self:ident, $loc:expr) => {{
-        println!("format chunk[{}:{}]", file!(), line!());
-        $self.chunk_to_string($loc, format_args!(""), false)
-    }};
-    ($self:ident, $loc:expr, $($arg:tt)*) => {{
-        println!("format chunk[{}:{}]", file!(), line!());
-        $self.chunk_to_string($loc, format_args!($($arg)*), false)
-    }};
+macro_rules! buf_fn {
+    ($vis:vis fn $name:ident(&self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
+        $vis fn $name(&self, $($arg_name : $arg_ty),*) $(-> $ret)? {
+            if self.temp_bufs.is_empty() {
+                self.buf.$name($($arg_name),*)
+            } else {
+                self.temp_bufs.last().unwrap().$name($($arg_name),*)
+            }
+        }
+    };
+    ($vis:vis fn $name:ident(&mut self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
+        $vis fn $name(&mut self, $($arg_name : $arg_ty),*) $(-> $ret)? {
+            if self.temp_bufs.is_empty() {
+                self.buf.$name($($arg_name),*)
+            } else {
+                self.temp_bufs.last_mut().unwrap().$name($($arg_name),*)
+            }
+        }
+    };
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
     pub fn new(w: &'a mut W, source: &'a str, comments: Comments, config: FormatterConfig) -> Self {
         Self {
-            w,
+            buf: FormatBuffer::new(w, config.tab_width),
             source,
             config,
-            level: 0,
-            pending_indent: true,
-            bufs: Vec::new(),
-            current_line: 0,
+            temp_bufs: Vec::new(),
             context: Context::default(),
             comments,
-            last_char: None,
         }
     }
 
-    fn buffer_mut(&mut self) -> &mut dyn Write {
-        if let Some(buf) = self.bufs.last_mut() {
-            &mut buf.w
+    fn buf(&mut self) -> &mut dyn Write {
+        if self.temp_bufs.is_empty() {
+            &mut self.buf as &mut dyn Write
         } else {
-            &mut self.w
+            self.temp_bufs.last_mut().unwrap() as &mut dyn Write
         }
     }
 
-    fn level_mut(&mut self) -> &mut usize {
-        if let Some(buf) = self.bufs.last_mut() {
-            &mut buf.level
-        } else {
-            &mut self.level
-        }
-    }
-
-    fn current_line(&self) -> usize {
-        if let Some(buf) = self.bufs.last() {
-            buf.current_line
-        } else {
-            self.current_line
-        }
-    }
-
-    fn level(&self) -> usize {
-        if let Some(buf) = self.bufs.last() {
-            buf.level
-        } else {
-            self.level
-        }
-    }
-
-    fn indent(&mut self, delta: usize) {
-        let level = self.level_mut();
-
-        *level += delta;
-    }
-
-    fn dedent(&mut self, delta: usize) {
-        let level = self.level_mut();
-
-        *level -= delta;
-    }
+    buf_fn! { fn indent(&mut self, delta: usize) }
+    buf_fn! { fn dedent(&mut self, delta: usize) }
+    // buf_fn! { fn current_indent_len(&self) -> usize }
+    buf_fn! { fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize }
+    buf_fn! { fn is_beginning_of_line(&self) -> bool }
+    buf_fn! { fn last_char_is_whitespace(&self) -> bool }
+    buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
     fn write_opening_bracket(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { "{ " } else { "{" })
+        let bracket = if self.config.bracket_spacing { "{ " } else { "{" };
+        write!(self.buf(), "{}", bracket)
     }
 
     /// Write closing bracket with respect to `config.bracket_spacing` setting:
     /// `" }"` if `true`, `"}"` if `false`
     fn write_closing_bracket(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { " }" } else { "}" })
+        let bracket = if self.config.bracket_spacing { " }" } else { "}" };
+        write!(self.buf(), "{}", bracket)
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
-    }
-
-    fn current_indent_len(&self) -> usize {
-        self.config.tab_width * self.level()
-    }
-
-    /// Length of the line `s` with respect to already written line and indentation
-    fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        self.current_indent_len()
-            .saturating_add(self.current_line())
-            .saturating_add(s.as_ref().len())
-    }
-
-    fn is_beginning_of_line(&self) -> bool {
-        self.current_line() == 0
-    }
-
-    fn last_char_is_whitespace(&self) -> bool {
-        self.last_char.map(|ch| ch.is_whitespace()).unwrap_or(true)
+        let brackets = if self.config.bracket_spacing { "{ }" } else { "{}" };
+        write!(self.buf(), "{}", brackets)
     }
 
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         if text.as_ref().contains('\n') {
-            return false
+            return false;
         }
         self.len_indented_with_current(text) <= self.config.line_length
     }
@@ -200,12 +223,12 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn will_chunk_fit(&self, byte_end: usize, chunk: impl std::fmt::Display) -> bool {
         let mut string = chunk.to_string();
         if string.contains('\n') {
-            return false
+            return false;
         }
         // we don't care about order we just care about string length
         for comment in self.comments.get_comments_before(byte_end) {
             if comment.needs_newline() {
-                return false
+                return false;
             } else {
                 string.push_str(&format!(" {} ", comment.comment))
             }
@@ -244,7 +267,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             });
             let item = item.to_string();
             if item.contains('\n') {
-                return true
+                return true;
             }
             // create separated string
             string.push_str(&item);
@@ -287,14 +310,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         if multiline {
             let mut items = items.into_iter().peekable();
             while let Some(item) = items.next() {
-                write!(self, "{}", item.as_ref())?;
+                write!(self.buf(), "{}", item.as_ref())?;
 
                 if items.peek().is_some() {
-                    writeln!(self, "{}", separator.trim_end())?;
+                    writeln!(self.buf(), "{}", separator.trim_end())?;
                 }
             }
         } else {
-            write!(self, "{}", items.into_iter().join(separator))?;
+            write!(self.buf(), "{}", items.into_iter().join(separator))?;
         }
 
         Ok(())
@@ -314,7 +337,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             write_chunk!(self, *byte_end, "{}", item)?;
 
             if let Some((next_byte_end, _)) = items.peek() {
-                write!(self, "{}", separator)?;
+                write!(self.buf(), "{}", separator)?;
                 write_chunk!(self, *next_byte_end)?;
             }
         }
@@ -323,24 +346,9 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     fn visit_to_string(&mut self, visitable: &mut impl Visitable) -> Result<String, VError> {
-        let last_char = self.last_char.take();
-        self.bufs.push(FormatBuffer::default());
+        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
         visitable.visit(self)?;
-        let buf = self.bufs.pop().unwrap();
-        self.last_char = last_char;
-        Ok(buf.w)
-    }
-
-    fn chunk_to_string(
-        &mut self,
-        byte_end: usize,
-        item: impl std::fmt::Display,
-    ) -> Result<String, VError> {
-        let last_char = self.last_char.take();
-        self.bufs.push(FormatBuffer::default());
-        self.write_chunk(byte_end, item, false)?;
-        let buf = self.bufs.pop().unwrap();
-        self.last_char = last_char;
+        let buf = self.temp_bufs.pop().unwrap();
         Ok(buf.w)
     }
 
@@ -352,14 +360,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_postfix_comments_before(&mut self, byte_end: usize) -> std::fmt::Result {
         while let Some(postfix) = self.comments.pop_postfix(byte_end) {
             if !self.is_beginning_of_line() && !self.last_char_is_whitespace() {
-                write!(self, " ")?;
+                write!(self.buf(), " ")?;
             }
             if postfix.is_line() {
                 // TODO handle indent for blocks (most likely handled by some kind of block
                 // context)
-                writeln!(self, "{}", postfix.comment)?;
+                writeln!(self.buf(), "{}", postfix.comment)?;
             } else {
-                write!(self, "{}", postfix.comment)?;
+                write!(self.buf(), "{}", postfix.comment)?;
             }
         }
         Ok(())
@@ -367,71 +375,22 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn write_prefix_comments_before(&mut self, byte_end: usize) -> std::fmt::Result {
         if !self.is_beginning_of_line() && self.comments.peek_prefix(byte_end).is_some() {
-            writeln!(self)?;
+            writeln!(self.buf())?;
         }
         while let Some(prefix) = self.comments.pop_prefix(byte_end) {
-            writeln!(self, "{}", prefix.comment)?;
+            writeln!(self.buf(), "{}", prefix.comment)?;
         }
         Ok(())
     }
 
-    fn write_chunk(
-        &mut self,
-        byte_end: usize,
-        chunk: impl std::fmt::Display,
-        newline: bool,
-    ) -> std::fmt::Result {
+    fn write_chunk(&mut self, byte_end: usize, chunk: impl std::fmt::Display) -> std::fmt::Result {
         let last_char_was_whitespace = self.last_char_is_whitespace();
         self.write_postfix_comments_before(byte_end)?;
         self.write_prefix_comments_before(byte_end)?;
         if last_char_was_whitespace && !self.last_char_is_whitespace() {
-            write!(self, " ")?;
+            write!(self.buf(), " ")?;
         }
-        if newline {
-            writeln!(self, "{}", chunk)
-        } else {
-            write!(self, "{}", chunk)
-        }
-    }
-
-    fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
-        self.buffer_mut().write_str(s.as_ref())
-    }
-}
-
-impl<'a, W: Write> Write for Formatter<'a, W> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let indent = " ".repeat(self.current_indent_len());
-        let (current_line, pending_indent, w): (_, _, &mut dyn Write) =
-            if let Some(buf) = self.bufs.last_mut() {
-                (&mut buf.current_line, &mut buf.pending_indent, &mut buf.w)
-            } else {
-                (&mut self.current_line, &mut self.pending_indent, self.w)
-            };
-
-        if *pending_indent {
-            IndentWriter::new(&indent, w).write_str(s)?;
-        } else {
-            IndentWriter::new_skip_initial(&indent, w).write_str(s)?;
-        }
-
-        if let Some(last_char) = s.chars().next_back() {
-            self.last_char = Some(last_char);
-        }
-
-        if s.contains('\n') {
-            *pending_indent = s.ends_with('\n');
-            if *pending_indent {
-                *current_line = 0;
-            } else {
-                *current_line = s.lines().last().unwrap().len();
-            }
-        } else {
-            *pending_indent = false;
-            *current_line += s.len();
-        }
-
-        Ok(())
+        write!(self.buf(), "{}", chunk)
     }
 }
 
@@ -477,20 +436,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.write_postfix_comments_before(next_unit.loc().start())?;
 
                 if !is_comment(unit) && !self.is_beginning_of_line() {
-                    writeln!(self)?;
+                    writeln!(self.buf())?;
                 }
 
                 // If source has zero blank lines between imports or errors, leave it as is. If one
                 // or more, separate with one blank line.
-                let separate = (is_import(unit) || is_error(unit)) &&
-                    (is_import(next_unit) || is_error(next_unit)) &&
-                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
+                let separate = (is_import(unit) || is_error(unit))
+                    && (is_import(next_unit) || is_error(next_unit))
+                    && self.blank_lines(unit.loc(), next_unit.loc()) > 1;
 
-                if (is_declaration(unit) || is_declaration(next_unit)) ||
-                    (is_pragma(unit) || is_pragma(next_unit)) ||
-                    separate
+                if (is_declaration(unit) || is_declaration(next_unit))
+                    || (is_pragma(unit) || is_pragma(next_unit))
+                    || separate
                 {
-                    writeln!(self)?;
+                    writeln!(self.buf())?;
                 }
             }
         }
@@ -498,14 +457,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut comments = self.comments.drain().into_iter().peekable();
         while let Some(comment) = comments.next() {
             if comment.is_prefix() {
-                writeln!(self)?;
+                writeln!(self.buf())?;
             } else if !self.is_beginning_of_line() {
-                write!(self, " ")?;
+                write!(self.buf(), " ")?;
             }
             if comment.is_line() && comments.peek().is_some() {
-                writeln!(self, "{}", comment.comment)?;
+                writeln!(self.buf(), "{}", comment.comment)?;
             } else {
-                write!(self, "{}", comment.comment)?;
+                write!(self.buf(), "{}", comment.comment)?;
             }
         }
         Ok(())
@@ -514,7 +473,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
         match doc_comment.ty {
             CommentType::Line => {
-                write!(self, "///{}", doc_comment.comment)?;
+                write!(self.buf(), "///{}", doc_comment.comment)?;
             }
             CommentType::Block => {
                 let lines = doc_comment
@@ -525,22 +484,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     .peekable()
                     .collect::<Vec<_>>();
                 if lines.iter().skip(1).all(|line| line.starts_with('*')) {
-                    writeln!(self, "/**")?;
+                    writeln!(self.buf(), "/**")?;
                     let mut lines = lines.into_iter();
                     if let Some(first_line) = lines.next() {
                         if !first_line.is_empty() {
                             // write the original first line
-                            writeln!(self, " *{}", doc_comment.comment.lines().next().unwrap())?;
+                            writeln!(
+                                self.buf(),
+                                " *{}",
+                                doc_comment.comment.lines().next().unwrap()
+                            )?;
                         }
                     }
                     for line in lines {
-                        writeln!(self, " *{}", &line[1..])?;
+                        writeln!(self.buf(), " *{}", &line[1..])?;
                     }
-                    write!(self, " */")?;
+                    write!(self.buf(), " */")?;
                 } else {
-                    write!(self, "/**")?;
+                    write!(self.buf(), "/**")?;
                     self.write_raw(&doc_comment.comment)?;
-                    write!(self, "*/")?;
+                    write!(self.buf(), "*/")?;
                 }
             }
         }
@@ -554,7 +517,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             doc_comment.visit(self)?
         }
         for doc_comment in iter {
-            writeln!(self)?;
+            writeln!(self.buf())?;
             doc_comment.visit(self)?;
         }
 
@@ -580,32 +543,32 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let multiline = self.is_separated_multiline(&bases, ", ");
 
             if multiline {
-                writeln!(self)?;
+                writeln!(self.buf())?;
                 self.indent(1);
             } else {
-                write!(self, " ")?;
+                write!(self.buf(), " ")?;
             }
 
             self.write_items_separated(&bases, ", ", multiline)?;
 
             if multiline {
                 self.dedent(1);
-                writeln!(self)?;
+                writeln!(self.buf())?;
             } else {
-                write!(self, " ")?;
+                write!(self.buf(), " ")?;
             }
         }
 
         if contract.parts.is_empty() {
             self.write_empty_brackets()?;
         } else {
-            writeln!(self, "{{")?;
+            writeln!(self.buf(), "{{")?;
 
             self.indent(1);
             let mut contract_parts_iter = contract.parts.iter_mut().peekable();
             while let Some(part) = contract_parts_iter.next() {
                 part.visit(self)?;
-                writeln!(self)?;
+                writeln!(self.buf())?;
 
                 // If source has zero blank lines between parts and the current part is not a
                 // function, leave it as is. If it has one or more blank lines or
@@ -618,9 +581,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             matches!(
                                 **function_definition,
                                 FunctionDefinition {
-                                    ty: FunctionTy::Function |
-                                        FunctionTy::Receive |
-                                        FunctionTy::Fallback,
+                                    ty: FunctionTy::Function
+                                        | FunctionTy::Receive
+                                        | FunctionTy::Fallback,
                                     ..
                                 }
                             )
@@ -628,13 +591,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             false
                         };
                     if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln!(self)?;
+                        writeln!(self.buf())?;
                     }
                 }
             }
             self.dedent(1);
 
-            write!(self, "}}")?;
+            write!(self.buf(), "}}")?;
         }
 
         self.context.contract = None;
@@ -643,7 +606,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        write!(self, "pragma {} ", &ident.name)?;
+        write!(self.buf(), "pragma {} ", &ident.name)?;
 
         #[allow(clippy::if_same_then_else)]
         if ident.name == "solidity" {
@@ -651,16 +614,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
             // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
             // TODO: semver-solidity crate :D
-            write!(self, "{};", str.string)?;
+            write!(self.buf(), "{};", str.string)?;
         } else {
-            write!(self, "{};", str.string)?;
+            write!(self.buf(), "{};", str.string)?;
         }
 
         Ok(())
     }
 
     fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
-        write!(self, "import \"{}\";", &import.string)?;
+        write!(self.buf(), "import \"{}\";", &import.string)?;
 
         Ok(())
     }
@@ -670,7 +633,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         global: &mut StringLiteral,
         alias: &mut Identifier,
     ) -> VResult {
-        write!(self, "import \"{}\" as {};", global.string, alias.name)?;
+        write!(self.buf(), "import \"{}\" as {};", global.string, alias.name)?;
 
         Ok(())
     }
@@ -680,7 +643,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         imports: &mut [(Identifier, Option<Identifier>)],
         from: &mut StringLiteral,
     ) -> VResult {
-        write!(self, "import ")?;
+        write!(self.buf(), "import ")?;
 
         let mut imports = imports
             .iter()
@@ -697,7 +660,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let multiline = self.is_separated_multiline(&imports, ", ");
 
         if multiline {
-            writeln!(self, "{{")?;
+            writeln!(self.buf(), "{{")?;
             self.indent(1);
         } else {
             self.write_opening_bracket()?;
@@ -707,12 +670,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if multiline {
             self.dedent(1);
-            write!(self, "\n}}")?;
+            write!(self.buf(), "\n}}")?;
         } else {
             self.write_closing_bracket()?;
         }
 
-        write!(self, " from \"{}\";", from.string)?;
+        write!(self.buf(), " from \"{}\";", from.string)?;
 
         Ok(())
     }
@@ -724,7 +687,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_empty_brackets()?;
         } else {
             // TODO rewrite with some enumeration
-            write!(self, "{{")?;
+            write!(self.buf(), "{{")?;
 
             self.indent(1);
             for (i, value) in enumeration.values.iter().enumerate() {
@@ -732,15 +695,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, value.loc.end(), "{}", &value.name)?;
 
                 if i != enumeration.values.len() - 1 {
-                    write!(self, ",")?;
+                    write!(self.buf(), ",")?;
                 }
             }
             self.dedent(1);
 
             self.write_postfix_comments_before(enumeration.loc.end())?;
             self.write_prefix_comments_before(enumeration.loc.end())?;
-            writeln!(self)?;
-            write!(self, "}}")?;
+            writeln!(self.buf())?;
+            write!(self.buf(), "}}")?;
         }
 
         Ok(())
@@ -762,19 +725,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
                     from.visit(self)?;
-                    write!(self, " => ")?;
+                    write!(self.buf(), " => ")?;
                     to.visit(self)?;
-                    write!(self, ")")?;
+                    write!(self.buf(), ")")?;
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
-                write!(self, "[")?;
+                write!(self.buf(), "[")?;
                 if let Some(size_exp) = size_exp {
                     size_exp.visit(self)?;
                 }
-                write!(self, "]")?;
+                write!(self.buf(), "]")?;
             }
             _ => self.visit_source(loc)?,
         };
@@ -788,9 +751,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
-        write!(self, "emit ")?;
+        write!(self.buf(), "emit ")?;
         event.loc().visit(self)?;
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         Ok(())
     }
@@ -799,22 +762,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         var.ty.visit(self)?;
 
         if let Some(storage) = &var.storage {
-            write!(self, " {}", storage)?;
+            write!(self.buf(), " {}", storage)?;
         }
 
-        write!(self, " {}", var.name.name)?;
+        write!(self.buf(), " {}", var.name.name)?;
 
         Ok(())
     }
 
     fn visit_break(&mut self) -> VResult {
-        write!(self, "break;")?;
+        write!(self.buf(), "break;")?;
 
         Ok(())
     }
 
     fn visit_continue(&mut self) -> VResult {
-        write!(self, "continue;")?;
+        write!(self.buf(), "continue;")?;
 
         Ok(())
     }
@@ -822,10 +785,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
 
-        write!(self, "{}", func.ty)?;
+        write!(self.buf(), "{}", func.ty)?;
 
         if let Some(Identifier { name, .. }) = &func.name {
-            write!(self, " {name}")?;
+            write!(self.buf(), " {name}")?;
         }
 
         let params = self.visit_to_string(&mut func.params)?;
@@ -859,17 +822,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         };
 
         let attributes_returns_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
-            !returns_multiline;
+            .will_it_fit(&format!(" {attributes_returns}{body_first_line}"))
+            && !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
         if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
-            write!(self, " {attributes_returns}")?;
+            write!(self.buf(), " {attributes_returns}")?;
         } else {
             // If attributes and returns can't fit in one line, we write all attributes in multiple
             // lines.
             if !func.attributes.is_empty() {
-                writeln!(self)?;
+                writeln!(self.buf())?;
                 self.indent(1);
                 func.attributes.visit(self)?;
                 self.dedent(1);
@@ -879,8 +842,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if returns_indent {
                     self.indent(1);
                 }
-                writeln!(self)?;
-                write!(self, "returns ")?;
+                writeln!(self.buf())?;
+                write!(self.buf(), "returns ")?;
 
                 self.write_items(returns.lines(), returns_multiline)?;
 
@@ -892,18 +855,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         match body {
             Some(body) => {
-                if self.will_it_fit(format!(" {}", body_first_line)) &&
-                    attributes_returns_fits_one_line
+                if self.will_it_fit(format!(" {}", body_first_line))
+                    && attributes_returns_fits_one_line
                 {
-                    write!(self, " ")?;
+                    write!(self.buf(), " ")?;
                 } else {
-                    writeln!(self)?;
+                    writeln!(self.buf())?;
                 }
                 // TODO: when we implement visitors for statements, write `body_string` here instead
                 //  of visiting it twice.
                 body.visit(self)?;
             }
-            None => write!(self, ";")?,
+            None => write!(self.buf(), ";")?,
         }
 
         self.context.function = None;
@@ -920,7 +883,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         while let Some(attribute) = attributes.next() {
             attribute.visit(self)?;
             if attributes.peek().is_some() {
-                writeln!(self)?;
+                writeln!(self.buf())?;
             }
         }
 
@@ -929,21 +892,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
         match attribute {
-            FunctionAttribute::Mutability(mutability) => write!(self, "{mutability}")?,
-            FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
-            FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
-            FunctionAttribute::Immutable(_) => write!(self, "immutable")?,
+            FunctionAttribute::Mutability(mutability) => write!(self.buf(), "{mutability}")?,
+            FunctionAttribute::Visibility(visibility) => write!(self.buf(), "{visibility}")?,
+            FunctionAttribute::Virtual(_) => write!(self.buf(), "virtual")?,
+            FunctionAttribute::Immutable(_) => write!(self.buf(), "immutable")?,
             FunctionAttribute::Override(_, args) => {
-                write!(self, "override")?;
+                write!(self.buf(), "override")?;
                 if !args.is_empty() {
-                    write!(self, "(")?;
+                    write!(self.buf(), "(")?;
 
                     let args = args.iter().map(|arg| &arg.name).collect::<Vec<_>>();
 
                     let multiline = self.is_separated_multiline(&args, ", ");
 
                     if multiline {
-                        writeln!(self)?;
+                        writeln!(self.buf())?;
                         self.indent(1);
                     }
 
@@ -951,10 +914,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
                     if multiline {
                         self.dedent(1);
-                        writeln!(self)?;
+                        writeln!(self.buf())?;
                     }
 
-                    write!(self, ")")?;
+                    write!(self.buf(), ")")?;
                 }
             }
             FunctionAttribute::BaseOrModifier(_, base) => {
@@ -969,7 +932,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     let base_or_modifier = self.visit_to_string(base)?;
                     write!(
-                        self,
+                        self.buf(),
                         "{}",
                         base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
                     )?;
@@ -998,7 +961,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let multiline = self.are_chunks_separated_multiline(&args, ", ");
 
             if multiline {
-                writeln!(self)?;
+                writeln!(self.buf())?;
                 self.indent(1);
             }
 
@@ -1006,7 +969,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             if multiline {
                 self.dedent(1);
-                writeln!(self)?;
+                writeln!(self.buf())?;
             }
         }
 
@@ -1021,11 +984,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         parameter.ty.visit(self)?;
 
         if let Some(storage) = &parameter.storage {
-            write!(self, " {storage}")?;
+            write!(self.buf(), " {storage}")?;
         }
 
         if let Some(name) = &parameter.name {
-            write!(self, " {}", name.name)?;
+            write!(self.buf(), " {}", name.name)?;
         }
 
         Ok(())
@@ -1046,13 +1009,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         self.visit_opening_paren()?;
         if params_multiline {
-            writeln!(self)?;
+            writeln!(self.buf())?;
             self.indent(1);
         }
         self.write_items_separated(&params, ", ", params_multiline)?;
         if params_multiline {
             self.dedent(1);
-            writeln!(self)?;
+            writeln!(self.buf())?;
         }
         self.visit_closing_paren()?;
 
@@ -1060,36 +1023,36 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        write!(self, "struct {} ", &structure.name.name)?;
+        write!(self.buf(), "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
             self.write_empty_brackets()?;
         } else {
-            writeln!(self, "{{")?;
+            writeln!(self.buf(), "{{")?;
 
             self.indent(1);
             for field in structure.fields.iter_mut() {
                 field.visit(self)?;
-                writeln!(self, ";")?;
+                writeln!(self.buf(), ";")?;
             }
             self.dedent(1);
 
-            write!(self, "}}")?;
+            write!(self.buf(), "}}")?;
         }
 
         Ok(())
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        write!(self, "type {} is ", def.name.name)?;
+        write!(self.buf(), "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         Ok(())
     }
 
     fn visit_stray_semicolon(&mut self) -> VResult {
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         Ok(())
     }
@@ -1101,18 +1064,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         statements: &mut Vec<Statement>,
     ) -> VResult {
         if unchecked {
-            write!(self, "unchecked ")?;
+            write!(self.buf(), "unchecked ")?;
         }
 
         if statements.is_empty() {
             self.write_empty_brackets()?;
-            return Ok(())
+            return Ok(());
         }
 
         let multiline = self.source[loc.start()..loc.end()].contains('\n');
 
         if multiline {
-            writeln!(self, "{{")?;
+            writeln!(self.buf(), "{{")?;
             self.indent(1);
         } else {
             self.write_opening_bracket()?;
@@ -1122,21 +1085,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         while let Some(stmt) = statements_iter.next() {
             stmt.visit(self)?;
             if multiline {
-                writeln!(self)?;
+                writeln!(self.buf())?;
             }
 
             // If source has zero blank lines between statements, leave it as is. If one
             //  or more, separate statements with one blank line.
             if let Some(next_stmt) = statements_iter.peek() {
                 if self.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
-                    writeln!(self)?;
+                    writeln!(self.buf())?;
                 }
             }
         }
 
         if multiline {
             self.dedent(1);
-            write!(self, "}}")?;
+            write!(self.buf(), "}}")?;
         } else {
             self.write_closing_bracket()?;
         }
@@ -1145,25 +1108,25 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_opening_paren(&mut self) -> VResult {
-        write!(self, "(")?;
+        write!(self.buf(), "(")?;
 
         Ok(())
     }
 
     fn visit_closing_paren(&mut self) -> VResult {
-        write!(self, ")")?;
+        write!(self.buf(), ")")?;
 
         Ok(())
     }
 
     fn visit_newline(&mut self) -> VResult {
-        writeln!(self)?;
+        writeln!(self.buf())?;
 
         Ok(())
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        write!(self, "event {}(", event.name.name)?;
+        write!(self.buf(), "event {}(", event.name.name)?;
 
         let params = event
             .fields
@@ -1178,7 +1141,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         ));
 
         if multiline {
-            writeln!(self)?;
+            writeln!(self.buf())?;
             self.indent(1);
         }
 
@@ -1186,16 +1149,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if multiline {
             self.dedent(1);
-            writeln!(self)?;
+            writeln!(self.buf())?;
         }
 
-        write!(self, ")")?;
+        write!(self.buf(), ")")?;
 
         if event.anonymous {
-            write!(self, " anonymous")?;
+            write!(self.buf(), " anonymous")?;
         }
 
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         Ok(())
     }
@@ -1204,17 +1167,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         param.ty.visit(self)?;
 
         if param.indexed {
-            write!(self, " indexed")?;
+            write!(self.buf(), " indexed")?;
         }
         if let Some(name) = &param.name {
-            write!(self, " {}", name.name)?;
+            write!(self.buf(), " {}", name.name)?;
         }
 
         Ok(())
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        write!(self, "error {}(", error.name.name)?;
+        write!(self.buf(), "error {}(", error.name.name)?;
 
         let params = error
             .fields
@@ -1225,7 +1188,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let multiline = self.is_separated_multiline(&params, ", ");
 
         if multiline {
-            writeln!(self)?;
+            writeln!(self.buf())?;
             self.indent(1);
         }
 
@@ -1233,10 +1196,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if multiline {
             self.dedent(1);
-            writeln!(self)?;
+            writeln!(self.buf())?;
         }
 
-        write!(self, ");")?;
+        write!(self.buf(), ");")?;
 
         Ok(())
     }
@@ -1245,14 +1208,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         param.ty.visit(self)?;
 
         if let Some(name) = &param.name {
-            write!(self, " {}", name.name)?;
+            write!(self.buf(), " {}", name.name)?;
         }
 
         Ok(())
     }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
-        write!(self, "using ")?;
+        write!(self.buf(), "using ")?;
 
         match &mut using.list {
             UsingList::Library(library) => {
@@ -1270,19 +1233,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         }
 
-        write!(self, " for ")?;
+        write!(self.buf(), " for ")?;
 
         if let Some(ty) = &mut using.ty {
             ty.visit(self)?;
         } else {
-            write!(self, "*")?;
+            write!(self.buf(), "*")?;
         }
 
         if let Some(global) = &mut using.global {
-            write!(self, " {}", global.name)?;
+            write!(self.buf(), " {}", global.name)?;
         }
 
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         Ok(())
     }
@@ -1319,7 +1282,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let variable = self.visit_to_string(&mut var.name)?;
 
         if self.will_it_fit(&format!(" {}", variable)) {
-            write!(self, " {}", variable)?;
+            write!(self.buf(), " {}", variable)?;
         } else {
             if !multiline {
                 multiline = true;
@@ -1333,30 +1296,30 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             // does assignment with equals fit?
             if self.will_chunk_fit(loc.start(), " =") {
-                write!(self, " =")?;
+                write!(self.buf(), " =")?;
                 write_chunk!(self, loc.start())?;
             } else {
-                writeln!(self, " =")?;
+                writeln!(self.buf(), " =")?;
                 // write comments on new line
                 write_chunk!(self, loc.start())?
             }
 
             let formatted_init = self.visit_to_string(init)?;
             if self.will_it_fit(format!(" {}", formatted_init)) {
-                write!(self, " {}", formatted_init)?;
+                write!(self.buf(), " {}", formatted_init)?;
             } else {
-                writeln!(self)?;
+                writeln!(self.buf())?;
                 if !multiline {
                     self.indent(1);
                 }
-                write!(self, "{}", formatted_init)?;
+                write!(self.buf(), "{}", formatted_init)?;
                 if !multiline {
                     self.dedent(1);
                 }
             }
         }
 
-        write!(self, ";")?;
+        write!(self.buf(), ";")?;
 
         if multiline {
             self.dedent(1);
@@ -1403,7 +1366,7 @@ mod tests {
                             .and_then(|line| line.trim().strip_prefix("config:"))
                             .map(str::trim);
                         if entry.is_none() {
-                            break
+                            break;
                         }
 
                         if let Some((key, value)) = entry.unwrap().split_once('=') {
@@ -1420,7 +1383,7 @@ mod tests {
                         lines.next();
                     }
 
-                    return Some((filename.to_string(), config, lines.join("\n")))
+                    return Some((filename.to_string(), config, lines.join("\n")));
                 }
             }
 
