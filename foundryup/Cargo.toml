@@ -39,10 +39,13 @@ url = "2.1"
 tar = "0.4"
 remove_dir_all = "0.7.0"
 dirs-next = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # tracing
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing = "0.1"
+
 
 [dev-dependencies]
 tempfile = "3"

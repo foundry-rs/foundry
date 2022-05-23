@@ -4,5 +4,7 @@
 pub mod cli;
 pub mod config;
 pub mod errors;
+pub mod location;
+pub mod platform;
 pub mod process;
 pub mod utils;

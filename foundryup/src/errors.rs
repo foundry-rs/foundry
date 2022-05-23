@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use thiserror::Error;
+use url::Url;
 
 /// Main error type
 #[derive(Error, Debug)]
@@ -18,4 +19,10 @@ pub enum FoundryupError {
     WritingFile { name: String, path: PathBuf },
     #[error("couldn't determine self executable name")]
     NoExeName,
+    #[error("foundryup is not installed at '{}'", .p.display())]
+    FoundryupNotInstalled { p: PathBuf },
+    #[error("could not download file from '{url}' to '{}'", .path.display())]
+    DownloadingFile { url: Url, path: PathBuf },
+    #[error("current platform is not supported by foundry: os='{os}' arch='{arch}'")]
+    UnsupportedPlatform { os: &'static str, arch: &'static str },
 }

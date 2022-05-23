@@ -1,7 +1,7 @@
 //! common utilities used in foundryup
 use crate::{
     errors::FoundryupError,
-    process::{with_default, Processor},
+    process::{get_process, with_default, Processor},
 };
 use eyre::WrapErr;
 use std::{
@@ -10,6 +10,7 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
+use url::Url;
 
 /// The version message for the current program, like
 /// `foundryup 0.1.0 (f01b232bc 2022-01-22T23:28:39.493201+00:00)`
@@ -103,6 +104,32 @@ pub fn write_new_file(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()>
     let mut file = fs::OpenOptions::new().write(true).truncate(true).create(true).open(path)?;
     io::Write::write_all(&mut file, contents.as_ref())?;
     file.sync_data()?;
+
+    Ok(())
+}
+
+/// Remove the given file
+pub fn remove_file(name: &str, path: &Path) -> eyre::Result<()> {
+    fs::remove_file(path).with_context(|| FoundryupError::RemovingFile {
+        name: name.to_string(),
+        path: PathBuf::from(path),
+    })
+}
+
+pub(crate) fn parse_url(url: &str) -> eyre::Result<Url> {
+    Url::parse(url).with_context(|| format!("failed to parse url: {}", url))
+}
+
+/// Downloads the file from the `url` to the given `path`
+pub async fn download_file(url: &Url, path: &Path) -> eyre::Result<()> {
+    download_file_(url, path).await.with_context(|| FoundryupError::DownloadingFile {
+        url: url.clone(),
+        path: path.to_path_buf(),
+    })
+}
+
+async fn download_file_(url: &Url, path: &Path) -> eyre::Result<()> {
+    let process = get_process();
 
     Ok(())
 }
