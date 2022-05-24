@@ -455,10 +455,11 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     - cast upload-signature "transfer(address,uint256)"
     - cast upload-signature "function transfer(address,uint256)"
     - cast upload-signature "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
+    - cast upload-signature ./out/Contract.sol/Contract.json
     "#)]
     UploadSignature {
         #[clap(
-            help = "The signatures to upload. Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given"
+            help = "The signatures to upload. Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given. Can also take paths to contract artifact JSON."
         )]
         signatures: Vec<String>,
     },

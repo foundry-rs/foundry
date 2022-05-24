@@ -178,11 +178,17 @@ pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result
     Ok(possible_info)
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, PartialEq, Debug, Eq)]
 pub struct RawSelectorImportData {
     pub function: Vec<String>,
     pub event: Vec<String>,
     pub error: Vec<String>,
+}
+
+impl RawSelectorImportData {
+    pub fn is_empty(&self) -> bool {
+        self.function.is_empty() && self.event.is_empty() && self.error.is_empty()
+    }
 }
 
 #[derive(Serialize)]
@@ -254,6 +260,66 @@ pub async fn import_selectors(data: SelectorImportData) -> Result<SelectorImport
     Ok(reqwest::Client::new().post(SELECTOR_IMPORT_URL).json(&request).send().await?.json().await?)
 }
 
+#[derive(PartialEq, Default, Debug)]
+pub struct ParsedSignatures {
+    pub signatures: RawSelectorImportData,
+    pub abis: Vec<LosslessAbi>,
+}
+
+#[derive(Deserialize)]
+struct Artifact {
+    abi: LosslessAbi,
+}
+
+/// Parses a list of tokens into function, event, and error signatures.
+/// Also handles JSON artifact files
+/// Ignores invalid tokens
+pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
+    // if any of the given tokens are json artifact files,
+    // Parse them and read in the ABI from the file
+    let abis = tokens
+        .iter()
+        .filter(|sig| sig.ends_with(".json"))
+        .filter_map(|filename| std::fs::read_to_string(filename).ok())
+        .filter_map(|file| serde_json::from_str(file.as_str()).ok())
+        .map(|artifact: Artifact| artifact.abi)
+        .collect();
+
+    // for tokens that are not json artifact files,
+    // try to parse them as raw signatures
+    let signatures = tokens.iter().filter(|sig| !sig.ends_with(".json")).fold(
+        RawSelectorImportData::default(),
+        |mut data, signature| {
+            let mut split = signature.split(' ');
+            match split.next() {
+                Some("function") => {
+                    if let Some(sig) = split.next() {
+                        data.function.push(sig.to_string())
+                    }
+                }
+                Some("event") => {
+                    if let Some(sig) = split.next() {
+                        data.event.push(sig.to_string())
+                    }
+                }
+                Some("error") => {
+                    if let Some(sig) = split.next() {
+                        data.error.push(sig.to_string())
+                    }
+                }
+                Some(signature) => {
+                    // if no type given, assume function
+                    data.function.push(signature.to_string());
+                }
+                None => {}
+            }
+            data
+        },
+    );
+
+    ParsedSignatures { signatures, abis }
+}
+
 #[tokio::test]
 async fn test_decode_selector() {
     let sigs = decode_function_selector("0xa9059cbb").await;
@@ -294,6 +360,65 @@ async fn test_import_selectors() {
     assert_eq!(
         result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
         "0xa9059cbb"
+    );
+}
+
+#[tokio::test]
+async fn test_parse_signatures() {
+    let result = parse_signatures(vec!["transfer(address,uint256)".to_string()]);
+    assert_eq!(
+        result,
+        ParsedSignatures {
+            signatures: RawSelectorImportData {
+                function: vec!["transfer(address,uint256)".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    );
+
+    let result = parse_signatures(vec![
+        "transfer(address,uint256)".to_string(),
+        "function approve(address,uint256)".to_string(),
+    ]);
+    assert_eq!(
+        result,
+        ParsedSignatures {
+            signatures: RawSelectorImportData {
+                function: vec![
+                    "transfer(address,uint256)".to_string(),
+                    "approve(address,uint256)".to_string()
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    );
+
+    let result = parse_signatures(vec![
+        "transfer(address,uint256)".to_string(),
+        "event Approval(address,address,uint256)".to_string(),
+    ]);
+    assert_eq!(
+        result,
+        ParsedSignatures {
+            signatures: RawSelectorImportData {
+                function: vec!["transfer(address,uint256)".to_string()],
+                event: vec!["Approval(address,address,uint256)".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    );
+
+    // skips invalid
+    let result = parse_signatures(vec!["event".to_string()]);
+    assert_eq!(
+        result,
+        ParsedSignatures {
+            signatures: RawSelectorImportData { ..Default::default() },
+            ..Default::default()
+        }
     );
 }
 

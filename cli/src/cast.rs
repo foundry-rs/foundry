@@ -47,7 +47,7 @@ use foundry_utils::{
     format_tokens,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
-        pretty_calldata, RawSelectorImportData, SelectorImportData,
+        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
 };
 
@@ -466,31 +466,15 @@ async fn main() -> eyre::Result<()> {
             let sigs = decode_event_topic(&topic).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
-        Subcommands::UploadSignature { signatures } => {
-            let raw_data =
-                signatures.iter().fold(RawSelectorImportData::default(), |mut data, signature| {
-                    let mut split = signature.split(' ');
-                    match split.next() {
-                        Some("function") => {
-                            data.function
-                                .push(split.next().expect("Invalid signature").to_string());
-                        }
-                        Some("event") => {
-                            data.event.push(split.next().expect("Invalid signature").to_string());
-                        }
-                        Some("error") => {
-                            data.error.push(split.next().expect("Invalid signature").to_string());
-                        }
-                        Some(signature) => {
-                            // if no type given, assume function
-                            data.function.push(signature.to_string());
-                        }
-                        None => {}
-                    }
-                    data
-                });
 
-            import_selectors(SelectorImportData::Raw(raw_data)).await?.describe();
+        Subcommands::UploadSignature { signatures } => {
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {
