@@ -11,13 +11,11 @@ use ethers::{
 };
 use std::sync::Arc;
 
+// import helper module that provides rotating rpc endpoints
+#[path = "../../../cli/test-utils/src/rpc.rs"]
+mod rpc;
+
 abigen!(Greeter, "test-data/greeter.json");
-
-const MAINNET_RPC_URL: &str =
-    "https://eth-mainnet.alchemyapi.io/v2/Ww7tIozwnqazPdcguuHLmayvrSraRNVK";
-
-const RINKEBY_RPC_URL: &str =
-    "https://eth-rinkeby.alchemyapi.io/v2/Ww7tIozwnqazPdcguuHLmayvrSraRNVK";
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
@@ -57,7 +55,7 @@ impl LocalFork {
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_port(next_port())
-        .with_eth_rpc_url(Some(MAINNET_RPC_URL))
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
 }
@@ -262,7 +260,7 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
     let (_api, handle) = spawn(
         NodeConfig::test()
             .with_port(next_port())
-            .with_eth_rpc_url(Some(RINKEBY_RPC_URL))
+            .with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint()))
             .silent()
             .with_fork_block_number(Some(10074295u64)),
     )

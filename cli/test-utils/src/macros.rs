@@ -169,8 +169,10 @@ macro_rules! forgetest_external {
                 "--ffi",
             ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
+
+            let next_eth_rpc_url = $crate::next_http_rpc_endpoint();
             if $fork_block > 0 {
-                cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
+                cmd.set_env("FOUNDRY_ETH_RPC_URL", next_eth_rpc_url);
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
             }
             cmd.assert_non_empty_stdout();
