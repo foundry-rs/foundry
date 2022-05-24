@@ -14,10 +14,10 @@ use std::sync::Arc;
 abigen!(Greeter, "test-data/greeter.json");
 
 const MAINNET_RPC_URL: &str =
-    "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
+    "https://eth-mainnet.alchemyapi.io/v2/Ww7tIozwnqazPdcguuHLmayvrSraRNVK";
 
 const RINKEBY_RPC_URL: &str =
-    "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W";
+    "https://eth-rinkeby.alchemyapi.io/v2/Ww7tIozwnqazPdcguuHLmayvrSraRNVK";
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
