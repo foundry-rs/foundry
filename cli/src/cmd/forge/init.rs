@@ -22,7 +22,8 @@ use std::{
 pub struct InitArgs {
     #[clap(
         help = "The root directory of the new project. Defaults to the current working directory.",
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "ROOT"
     )]
     root: Option<PathBuf>,
     #[clap(help = "The template to start from.", long, short, value_name = "TEMPLATE")]

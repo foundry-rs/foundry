@@ -37,10 +37,13 @@ pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[clap(help = "The address of the contract to verify.")]
+    #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
     pub address: Address,
 
-    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
+    #[clap(
+        help = "The contract identifier in the form `<path>:<contractname>`.",
+        value_name = "CONTRACT"
+    )]
     pub contract: ContractInfo,
 
     #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
@@ -71,7 +74,11 @@ pub struct VerifyArgs {
     )]
     pub chain: Chain,
 
-    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
+    #[clap(
+        help = "Your Etherscan API key.",
+        env = "ETHERSCAN_API_KEY",
+        value_name = "ETHERSCAN_KEY"
+    )]
     pub etherscan_key: String,
 
     #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
@@ -426,7 +433,7 @@ async fn ensure_solc_build_metadata(version: Version) -> eyre::Result<Version> {
 /// Check verification status arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyCheckArgs {
-    #[clap(help = "The verification GUID.")]
+    #[clap(help = "The verification GUID.", value_name = "GUID")]
     guid: String,
 
     #[clap(
@@ -442,7 +449,11 @@ pub struct VerifyCheckArgs {
     #[clap(flatten)]
     retry: RetryArgs,
 
-    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
+    #[clap(
+        help = "Your Etherscan API key.",
+        env = "ETHERSCAN_API_KEY",
+        value_name = "ETHERSCAN_KEY"
+    )]
     etherscan_key: String,
 }
 

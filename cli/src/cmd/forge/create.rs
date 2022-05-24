@@ -23,7 +23,10 @@ pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: So
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
+    #[clap(
+        help = "The contract identifier in the form `<path>:<contractname>`.",
+        value_name = "CONTRACT"
+    )]
     contract: ContractInfo,
 
     #[clap(

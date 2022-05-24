@@ -43,7 +43,8 @@ pub struct CleanArgs {
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = Chain::VARIANTS
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
 
@@ -65,7 +66,8 @@ pub struct LsArgs {
         env = "CHAIN",
         default_value = "all",
         possible_value = "all",
-        possible_values = Chain::VARIANTS
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAINS"
     )]
     chains: Vec<ChainOrAll>,
 }
