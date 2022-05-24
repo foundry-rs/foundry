@@ -236,6 +236,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), "{}", brackets)
     }
 
+    fn write_semicolon(&mut self) -> std::fmt::Result {
+        write!(self.buf(), ";")
+    }
+
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         if text.as_ref().contains('\n') {
@@ -760,7 +764,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
         write!(self.buf(), "emit ")?;
         event.loc().visit(self)?;
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
 
         Ok(())
     }
@@ -896,7 +900,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 //  of visiting it twice.
                 body.visit(self)?;
             }
-            None => self.visit_stray_semicolon()?,
+            None => self.write_semicolon()?,
         }
 
         self.context.function = None;
@@ -1056,13 +1060,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
         write!(self.buf(), "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
 
         Ok(())
     }
 
     fn visit_stray_semicolon(&mut self) -> VResult {
-        write!(self.buf(), ";")?;
+        self.write_semicolon()?;
 
         Ok(())
     }
@@ -1157,7 +1161,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " anonymous")?;
         }
 
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
 
         Ok(())
     }
@@ -1186,7 +1190,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let multiline = self.are_chunks_separated_multiline(&params, ", ");
         self.write_chunks_separated_with_paren(&params, ", ", multiline)?;
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
         Ok(())
     }
 
@@ -1231,7 +1235,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " {}", global.name)?;
         }
 
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
 
         Ok(())
     }
@@ -1307,7 +1311,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         }
 
-        self.visit_stray_semicolon()?;
+        self.write_semicolon()?;
 
         if multiline {
             self.dedent(1);
