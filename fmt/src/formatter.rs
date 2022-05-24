@@ -760,7 +760,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
         write!(self.buf(), "emit ")?;
         event.loc().visit(self)?;
-        write!(self.buf(), ";")?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -896,7 +896,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 //  of visiting it twice.
                 body.visit(self)?;
             }
-            None => write!(self.buf(), ";")?,
+            None => self.visit_stray_semicolon()?,
         }
 
         self.context.function = None;
@@ -1056,7 +1056,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
         write!(self.buf(), "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
-        write!(self.buf(), ";")?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -1146,7 +1146,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         // TODO:
         let multiline = !self.will_it_fit(format!(
-            "{}){};",
+            "({}){};",
             params.iter().map(|p| p.1.to_owned()).join(", "),
             if event.anonymous { " anonymous" } else { "" }
         ));
@@ -1157,7 +1157,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " anonymous")?;
         }
 
-        write!(self.buf(), ";")?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -1231,7 +1231,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " {}", global.name)?;
         }
 
-        write!(self.buf(), ";")?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -1307,7 +1307,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         }
 
-        write!(self.buf(), ";")?;
+        self.visit_stray_semicolon()?;
 
         if multiline {
             self.dedent(1);
