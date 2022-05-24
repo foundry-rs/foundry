@@ -13,7 +13,7 @@ use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
-use foundry_evm::executor::backend::Backend;
+use foundry_evm::executor::Backend;
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]

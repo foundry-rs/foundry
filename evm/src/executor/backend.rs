@@ -1,8 +1,9 @@
-use revm::db::{DatabaseRef, EmptyDB};
+use crate::executor::{fork::SharedBackend, Fork};
 use ethers::prelude::{H160, H256, U256};
-use revm::{AccountInfo, Env};
-use crate::executor::Fork;
-use crate::executor::fork::SharedBackend;
+use revm::{
+    db::{DatabaseRef, EmptyDB},
+    AccountInfo, Env,
+};
 
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]
@@ -12,7 +13,6 @@ pub enum Backend {
     /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
     /// same data
     Forked(SharedBackend),
-
     // TODO
 }
 

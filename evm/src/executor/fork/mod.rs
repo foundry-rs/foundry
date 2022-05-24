@@ -7,4 +7,6 @@ pub use init::environment;
 mod cache;
 pub use cache::{BlockchainDb, BlockchainDbMeta, JsonBlockCacheDB, MemDb};
 
+pub mod database;
+
 mod multi;

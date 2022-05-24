@@ -1,4 +1,4 @@
-//! support for snapshotting the state of the blockchain in memory
+//! support for snapshotting different states
 
 use ethers::types::U256;
 use std::collections::HashMap;

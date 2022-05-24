@@ -2,7 +2,7 @@
 
 use crate::{
     eth::backend::db::{Db, StateDb},
-    mem::{snapshot::Snapshots, state::state_merkle_trie_root},
+    mem::{state::state_merkle_trie_root},
     revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit},
     Address, U256,
 };
@@ -10,6 +10,7 @@ use bytes::Bytes;
 use ethers::prelude::{H160, H256};
 use foundry_evm::{revm::InMemoryDB, HashMap as Map};
 use tracing::{trace, warn};
+use foundry_evm::executor::snapshot::Snapshots;
 
 /// In memory Database for anvil
 ///

@@ -49,7 +49,7 @@ impl ClientFork {
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
         {
-            self.database.write().reset(url.clone(), block_number)?;
+            self.database.write().reset(url.clone(), block_number).map_err(BlockchainError::Internal)?;
         }
 
         if let Some(url) = url {

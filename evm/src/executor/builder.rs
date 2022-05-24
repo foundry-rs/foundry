@@ -1,21 +1,15 @@
-use ethers::prelude::Provider;
-use revm::{
-    Env, SpecId,
-};
-use std::{path::PathBuf, sync::Arc};
-
 use super::{
-    Executor,
     fork::SharedBackend,
     inspector::{Cheatcodes, InspectorStackConfig},
+    Executor,
 };
-
-use ethers::types::{U256};
-
-use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
-
-
-use crate::executor::backend::Backend;
+use crate::executor::{
+    backend::Backend,
+    fork::{BlockchainDb, BlockchainDbMeta},
+};
+use ethers::{prelude::Provider, types::U256};
+use revm::{Env, SpecId};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {

@@ -1,11 +1,11 @@
 /// ABIs used internally in the executor
 pub mod abi;
+use self::inspector::{InspectorData, InspectorStackConfig};
+use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
-use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, Tokenize},
@@ -15,30 +15,29 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
+/// Reexport commonly used revm types
+pub use revm::{db::DatabaseRef, Env, SpecId};
 use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::BTreeMap;
-/// Reexport commonly used revm types
-pub use revm::{
-    db::DatabaseRef,
-    SpecId,
-    Env
-};
 
-/// Executor configuration
-pub mod opts;
-/// Executor inspectors
-pub mod inspector;
-/// Forking provider
-pub mod fork;
-/// Executor builder
-pub mod builder;
 /// custom revm database implementations
 mod backend;
+/// Executor builder
+pub mod builder;
+/// Forking provider
+pub mod fork;
+/// Executor inspectors
+pub mod inspector;
+/// Executor configuration
+pub mod opts;
+pub use backend::Backend;
 
-pub use builder::{ExecutorBuilder, Fork, Backend};
+pub mod snapshot;
+
+pub use builder::{ExecutorBuilder, Fork};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;

@@ -57,7 +57,6 @@ use tracing::{trace, warn};
 
 pub mod fork_db;
 pub mod in_memory_db;
-pub mod snapshot;
 pub mod state;
 pub mod storage;
 
