@@ -336,15 +336,21 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes } =
+        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
 
-        let transactions = if let Some(ref cheatcodes) = cheatcodes {
+        let transactions = if let Some(ref mut cheatcodes) = cheatcodes {
             if !cheatcodes.broadcastable_transactions.is_empty() {
-                Some(cheatcodes.broadcastable_transactions.clone())
+                let transactions = Some(cheatcodes.broadcastable_transactions.clone());
+
+                // Clear broadcast state from cheatcode state
+                cheatcodes.broadcastable_transactions.clear();
+                cheatcodes.corrected_nonce = false;
+
+                transactions
             } else {
                 None
             }

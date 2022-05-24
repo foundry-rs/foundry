@@ -226,3 +226,27 @@ contract BroadcastTestNoLinking is DSTest {
         more();
     }
 }
+
+
+contract BroadcastTestSetup is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function setUp() public {
+        cheats.broadcast();
+        Test t = new Test();
+
+        cheats.broadcast();
+        t.t(2);
+    }
+
+    function run() public {
+        cheats.broadcast();
+        new NoLink();
+
+        cheats.broadcast();
+        Test t = new Test();
+        
+        cheats.broadcast();
+        t.t(3);
+    }
+}

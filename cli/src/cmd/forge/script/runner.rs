@@ -97,9 +97,11 @@ impl<DB: DatabaseRef> Runner<DB> {
                     logs.extend_from_slice(&setup_logs);
 
                     // We call the `setUp()` function with self.sender, and if there haven't been
-                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce
+                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
+                    // So we have to
                     if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor.set_nonce(self.sender, sender_nonce.as_u64());
+                        self.executor
+                            .set_nonce(self.sender, sender_nonce.as_u64() + libraries.len() as u64);
                     }
 
                     (

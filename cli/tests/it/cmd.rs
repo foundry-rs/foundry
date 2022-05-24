@@ -917,3 +917,21 @@ forgetest_async!(
             .await;
     })
 );
+
+forgetest_async!(
+    deploy_with_setup,
+    (|prj: TestProject, cmd: TestCommand| async move {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTestSetup", "run()")
+            .simulate(ScriptOutcome::OkSimulation)
+            .broadcast(ScriptOutcome::OkBroadcast)
+            .assert_nonce_increment(vec![(0, 6)])
+            .await;
+    })
+);
