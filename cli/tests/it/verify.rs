@@ -183,3 +183,50 @@ forgetest!(can_verify_watch_random_contract_goerli, |prj: TestProject, cmd: Test
 forgetest!(can_verify_on_create_random_contract_goerli, |prj: TestProject, cmd: TestCommand| {
     verify_flag_on_create_on_chain(EnvExternalities::goerli(), prj, cmd);
 });
+
+// tests `create --verify` on goerli with constructor args
+forgetest!(
+    can_verify_on_create_random_contract_constructor_args_goerli,
+    |prj: TestProject, mut cmd: TestCommand| {
+        if let Some(info) = EnvExternalities::goerli() {
+            add_unique(&prj);
+            prj.inner()
+                .add_source(
+                    "Verify.sol",
+                    r#"
+    // SPDX-License-Identifier: UNLICENSED
+    pragma solidity =0.8.10;
+    import {Unique} from "./unique.sol";
+    contract Verify is Unique {
+        address _a;
+        address _b;
+        address _c;
+        address _d;
+        constructor(address a, address b, address c, address d)  {
+            _a = a;
+            _b = b;
+            _c = c;
+            _d = d;
+        }
+    }
+    "#,
+                )
+                .unwrap();
+
+            let contract_path = "src/Verify.sol:Verify";
+            cmd.arg("create")
+                .args(info.create_args())
+                .args([
+                    "--constructor-args",
+                    "0x82A0F5F531F9ce0df1DF5619f74a0d3fA31FF561",
+                    "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                    "0x1717A0D5C8705EE89A8aD6E808268D6A826C97A4",
+                    "0xc778417E063141139Fce010982780140Aa0cD5Ab",
+                ])
+                .arg("--verify")
+                .arg(contract_path);
+
+            parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+        }
+    }
+);
