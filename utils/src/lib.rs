@@ -10,12 +10,12 @@ use ethers_core::{
 };
 use ethers_etherscan::Client;
 use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, LosslessAbi},
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env::VarError,
@@ -27,6 +27,7 @@ use std::{
 pub mod rpc;
 
 static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
+static SELECTOR_IMPORT_URL: &str = "https://sig.eth.samczsun.com/api/v1/import";
 
 pub enum SelectorOrSig {
     Selector(String),
@@ -688,6 +689,82 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
     Ok(res)
 }
 
+#[derive(Default, Serialize)]
+pub struct RawSelectorImportData {
+    pub function: Vec<String>,
+    pub event: Vec<String>,
+    pub error: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum SelectorImportData {
+    Abi(Vec<LosslessAbi>),
+    Raw(RawSelectorImportData),
+}
+
+#[derive(Serialize)]
+struct SelectorImportRequest {
+    #[serde(rename = "type")]
+    import_type: String,
+    data: SelectorImportData,
+}
+
+#[derive(Deserialize)]
+struct SelectorImportEffect {
+    imported: HashMap<String, String>,
+    duplicated: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct SelectorImportResult {
+    function: SelectorImportEffect,
+    event: SelectorImportEffect,
+}
+
+#[derive(Deserialize)]
+pub struct SelectorImportResponse {
+    result: SelectorImportResult,
+}
+
+impl SelectorImportResponse {
+    /// Print info about the functions which were uploaded or already known
+    pub fn describe(&self) {
+        self.result
+            .function
+            .imported
+            .iter()
+            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
+        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
+        self.result
+            .function
+            .duplicated
+            .iter()
+            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
+        self.result
+            .event
+            .duplicated
+            .iter()
+            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
+
+        println!("Selectors successfully uploaded to https://sig.eth.samczsun.com");
+    }
+}
+
+/// uploads selectors to sig.eth.samczsun.com using the given data
+pub async fn import_selectors(data: SelectorImportData) -> Result<SelectorImportResponse> {
+    let request = match &data {
+        SelectorImportData::Abi(_) => {
+            SelectorImportRequest { import_type: "abi".to_string(), data }
+        }
+        SelectorImportData::Raw(_) => {
+            SelectorImportRequest { import_type: "raw".to_string(), data }
+        }
+    };
+
+    Ok(reqwest::Client::new().post(SELECTOR_IMPORT_URL).json(&request).send().await?.json().await?)
+}
+
 /// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
 /// by
 /// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
@@ -1208,6 +1285,24 @@ mod tests {
 
         let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
         assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_import_selectors() {
+        let mut data = RawSelectorImportData::default();
+        data.function.push("transfer(address,uint256)".to_string());
+        let result = import_selectors(SelectorImportData::Raw(data)).await;
+        assert_eq!(
+            result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
+            "0xa9059cbb"
+        );
+
+        let abi: LosslessAbi = serde_json::from_str(r#"[{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]"#).unwrap();
+        let result = import_selectors(SelectorImportData::Abi(vec![abi])).await;
+        assert_eq!(
+            result.unwrap().result.function.duplicated.get("transfer(address,uint256)").unwrap(),
+            "0xa9059cbb"
+        );
     }
 
     #[tokio::test]
