@@ -51,11 +51,6 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     let retry = Retry::new(retries, Some(30));
     retry.run(|| -> eyre::Result<()> {
         let output = cmd.unchecked_output();
-
-        // print command output
-        // println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        // println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-
         let out = String::from_utf8_lossy(&output.stdout);
         if out.contains("Contract successfully verified") {
             return Ok(())
