@@ -23,19 +23,19 @@ pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
         prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-        solc::{artifacts::Libraries, utils::RuntimeOrHandle, Project, ProjectPathsConfig},
+        solc::{artifacts::Libraries, Project, ProjectPathsConfig, utils::RuntimeOrHandle},
         types::{Address, U256},
     };
     use foundry_evm::{
+        CALLER,
         executor::{
-            builder::Backend,
-            opts::{Env, EvmOpts},
-            DatabaseRef, Executor, ExecutorBuilder,
+            DatabaseRef,
+            Executor, ExecutorBuilder, opts::{Env, EvmOpts},
         },
         fuzz::FuzzedExecutor,
-        CALLER,
     };
     use std::str::FromStr;
+    use foundry_evm::executor::backend::Backend;
 
     pub static PROJECT: Lazy<Project> = Lazy::new(|| {
         let paths = ProjectPathsConfig::builder()

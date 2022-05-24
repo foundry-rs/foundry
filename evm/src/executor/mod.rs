@@ -4,28 +4,6 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
-
-/// Executor configuration
-pub mod opts;
-
-/// Executor inspectors
-pub mod inspector;
-
-/// Forking provider
-pub mod fork;
-
-/// Executor builder
-pub mod builder;
-pub use builder::{ExecutorBuilder, Fork};
-
-/// Executor EVM spec identifiers
-pub use revm::SpecId;
-
-/// Executor database trait
-pub use revm::db::DatabaseRef;
-
-pub use revm::Env;
-
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
@@ -42,6 +20,25 @@ use revm::{
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::BTreeMap;
+/// Reexport commonly used revm types
+pub use revm::{
+    db::DatabaseRef,
+    SpecId,
+    Env
+};
+
+/// Executor configuration
+pub mod opts;
+/// Executor inspectors
+pub mod inspector;
+/// Forking provider
+pub mod fork;
+/// Executor builder
+pub mod builder;
+/// custom revm database implementations
+mod backend;
+
+pub use builder::{ExecutorBuilder, Fork, Backend};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
@@ -164,6 +161,7 @@ pub struct Executor<DB: DatabaseRef> {
     // Also, if we stored the VM here we would still need to
     // take `&mut self` when we are not committing to the database, since
     // we need to set `evm.env`.
+    // TODO in order to support multiforks we need to move this to the `Backend`
     pub db: CacheDB<DB>,
     env: Env,
     inspector_config: InspectorStackConfig,

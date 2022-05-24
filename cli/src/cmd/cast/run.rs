@@ -9,8 +9,8 @@ use ethers::{
 };
 use forge::{
     debug::DebugArena,
-    executor::{builder::Backend, opts::EvmOpts, DeployResult, ExecutorBuilder, RawCallResult},
-    trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
+    executor::{DeployResult, ExecutorBuilder, opts::EvmOpts, RawCallResult},
+    trace::{CallTraceArena, CallTraceDecoderBuilder, identifier::EtherscanIdentifier, TraceKind},
 };
 use foundry_config::Config;
 use std::{
@@ -18,8 +18,9 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use ui::{TUIExitReason, Tui, Ui};
+use ui::{Tui, TUIExitReason, Ui};
 use yansi::Paint;
+use foundry_evm::executor::Backend;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
