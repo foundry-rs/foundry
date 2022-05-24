@@ -247,7 +247,8 @@ pub struct TestArgs {
     #[clap(
         long,
         env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces"
+        help = "Set etherscan api key to better decode traces",
+        value_name = "KEY"
     )]
     etherscan_api_key: Option<String>,
 
