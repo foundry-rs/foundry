@@ -11,6 +11,7 @@ use crate::cmd::forge::{
     create::CreateArgs,
     flatten,
     fmt::FmtArgs,
+    fourbyte::UploadSelectorsArgs,
     init::InitArgs,
     inspect,
     install::InstallArgs,
@@ -144,6 +145,12 @@ pub enum Subcommands {
 
     #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
+
+    #[clap(
+        alias = "up",
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database"
+    )]
+    UploadSelectors(UploadSelectorsArgs),
 
     #[clap(
         alias = "tr",

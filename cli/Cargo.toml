@@ -72,6 +72,7 @@ similar = { version = "2.1.0", features = ["inline"] }
 strsim = "0.10.0"
 bytes = "1.1.0"
 strum = { version = "0.24", features = ["derive"] }
+reqwest = { version = "0.11.8", default-features = false, features = ["json"] } 
 
 [dev-dependencies]
 foundry-utils = { path = "./../utils", features = ["test"] }
