@@ -386,10 +386,10 @@ pub struct SharedBackend {
 }
 
 impl SharedBackend {
-    /// _Spawns_ a new `BackendHandler` on a background thread that listens for requests from any
+    /// _Spawns_ a new `BackendHandler` on a `tokio::task` that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `db`.
     ///
-    /// The spawned `BackendHandler` is dropped once the last `SharedBackend` connected to it is
+    /// The spawned `BackendHandler` finishes once the last `SharedBackend` connected to it is
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
@@ -398,9 +398,39 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
-        // spawn the provider handler to background
-        trace!(target: "backendhandler", "spawning Backendhandler");
+        // spawn the provider handler to a task
+        trace!(target: "backendhandler", "spawning Backendhandler task");
         tokio::spawn(handler);
+        shared
+    }
+
+    /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
+    /// its own `tokio::Runtime`
+    pub fn spawn_backend_thread<M>(
+        provider: M,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> Self
+    where
+        M: Middleware + Unpin + 'static + Clone,
+    {
+        let (shared, handler) = Self::new(provider, db, pin_block);
+
+        // spawn a light-weight thread with a thread-local async runtime just for
+        // sending and receiving data from the remote client
+        let _ = std::thread::Builder::new()
+            .name("fork-backend-thread".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .build()
+                    .expect("failed to create fork-backend-thread tokio runtime");
+
+                rt.block_on(async move { handler.await });
+            })
+            .expect("failed to spawn backendhandler thread");
+        trace!(target: "backendhandler", "spawned Backendhandler thread");
+
         shared
     }
 

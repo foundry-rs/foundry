@@ -430,11 +430,11 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::fourbyte(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = foundry_utils::decode_function_selector(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
         }
-        Subcommands::FourByteDecode { calldata, id } => {
-            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+        Subcommands::FourByteDecode { calldata } => {
+            let sigs = foundry_utils::decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -456,8 +456,8 @@ async fn main() -> eyre::Result<()> {
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::fourbyte_event(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = foundry_utils::decode_event_topic(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {

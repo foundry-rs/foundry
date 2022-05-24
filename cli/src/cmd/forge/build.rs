@@ -61,7 +61,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
     }
 }
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct CoreBuildArgs {
     #[clap(
         help_heading = "CACHE OPTIONS",
@@ -310,7 +310,7 @@ impl Provider for BuildArgs {
 
 impl_figment_convert!(BuildArgs, args);
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct ProjectPathsArgs {
     #[clap(
         help = "The project's root path.",

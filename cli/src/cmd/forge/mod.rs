@@ -45,6 +45,7 @@ pub mod create;
 pub mod debug;
 pub mod flatten;
 pub mod fmt;
+pub mod fourbyte;
 pub mod init;
 pub mod inspect;
 pub mod install;

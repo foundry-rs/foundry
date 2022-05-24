@@ -13,7 +13,9 @@ pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
 ///
 /// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
-    fn visit_source(&mut self, _loc: Loc) -> VResult;
+    fn visit_source(&mut self, _loc: Loc) -> VResult {
+        Ok(())
+    }
 
     fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
         Ok(())
@@ -286,13 +288,21 @@ pub trait Visitor {
         self.visit_source(def.loc)
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult;
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_opening_paren(&mut self) -> VResult;
+    fn visit_opening_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_closing_paren(&mut self) -> VResult;
+    fn visit_closing_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_newline(&mut self) -> VResult;
+    fn visit_newline(&mut self) -> VResult {
+        Ok(())
+    }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
