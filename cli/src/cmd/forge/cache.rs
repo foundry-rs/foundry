@@ -52,7 +52,8 @@ pub struct CleanArgs {
         long,
         multiple_values(true),
         use_value_delimiter(true),
-        require_value_delimiter(true)
+        require_value_delimiter(true),
+        value_name = "BLOCKS"
     )]
     blocks: Vec<u64>,
 }

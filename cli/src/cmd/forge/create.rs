@@ -31,7 +31,8 @@ pub struct CreateArgs {
         multiple_values = true,
         help = "The constructor arguments.",
         name = "constructor_args",
-        conflicts_with = "constructor_args_path"
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS"
     )]
     constructor_args: Vec<String>,
 
@@ -41,6 +42,7 @@ pub struct CreateArgs {
         value_hint = ValueHint::FilePath,
         name = "constructor_args_path",
         conflicts_with = "constructor_args",
+        value_name = "FILE"
     )]
     constructor_args_path: Option<PathBuf>,
 
@@ -59,7 +61,8 @@ This is automatically enabled for common networks without EIP1559."#
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value)
+        parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
     )]
     gas_price: Option<U256>,
 
@@ -68,7 +71,8 @@ This is automatically enabled for common networks without EIP1559."#
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas limit for the transaction.",
         env = "ETH_GAS_LIMIT",
-        parse(try_from_str = parse_u256)
+        parse(try_from_str = parse_u256),
+        value_name = "GAS_LIMIT"
     )]
     gas_limit: Option<U256>,
 
@@ -76,7 +80,8 @@ This is automatically enabled for common networks without EIP1559."#
         long = "priority-fee", 
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas priority fee for EIP1559 transactions.",
-        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value)
+        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
     )]
     priority_fee: Option<U256>,
     #[clap(
@@ -86,7 +91,8 @@ This is automatically enabled for common networks without EIP1559."#
         long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-        parse(try_from_str = parse_ether_value)
+        parse(try_from_str = parse_ether_value),
+        value_name = "VALUE"
     )]
     value: Option<U256>,
 

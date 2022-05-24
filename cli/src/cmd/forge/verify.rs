@@ -43,16 +43,21 @@ pub struct VerifyArgs {
     #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
     pub contract: ContractInfo,
 
-    #[clap(long, help = "the encoded constructor arguments")]
+    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
     pub constructor_args: Option<String>,
 
-    #[clap(long, help = "The compiler version used to build the smart contract.")]
+    #[clap(
+        long,
+        help = "The compiler version used to build the smart contract.",
+        value_name = "VERSION"
+    )]
     pub compiler_version: Option<String>,
 
     #[clap(
         alias = "optimizer-runs",
         long,
-        help = "The number of optimization runs used to build the smart contract."
+        help = "The number of optimization runs used to build the smart contract.",
+        value_name = "NUM"
     )]
     pub num_of_optimizations: Option<usize>,
 
@@ -61,7 +66,8 @@ pub struct VerifyArgs {
         alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet"
+        default_value = "mainnet",
+        value_name = "CHAIN"
     )]
     pub chain: Chain,
 
@@ -428,7 +434,8 @@ pub struct VerifyCheckArgs {
         alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet"
+        default_value = "mainnet",
+        value_name = "CHAIN"
     )]
     chain: Chain,
 

@@ -25,7 +25,7 @@ pub struct InitArgs {
         value_hint = ValueHint::DirPath
     )]
     root: Option<PathBuf>,
-    #[clap(help = "The template to start from.", long, short)]
+    #[clap(help = "The template to start from.", long, short, value_name = "TEMPLATE")]
     template: Option<String>,
     #[clap(help = "Do not create a git repository.", conflicts_with = "template", long)]
     no_git: bool,

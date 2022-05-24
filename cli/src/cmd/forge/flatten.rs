@@ -14,7 +14,8 @@ pub struct FlattenArgs {
         short,
         help = "The path to output the flattened contract.",
         long_help = "The path to output the flattened contract. If not specified, the flattened contract will be output to stdout.",
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE"
     )]
     pub output: Option<PathBuf>,
 
