@@ -12,6 +12,9 @@ use futures::{
     Future, FutureExt,
 };
 use std::{collections::HashMap, pin::Pin};
+use ethers::types::BlockId;
+use futures::stream::Fuse;
+use tracing::trace;
 
 // TODO move some types from avil fork to evm
 
@@ -55,15 +58,40 @@ impl MutltiFork {
     }
 }
 
+/// Request that's send to the handler
+#[derive(Debug)]
+enum Request {
+    Create {
+        fork_id: ForkId,
+
+        endpoint: String,
+
+        chain_id: Option<u64>,
+
+        block: Option<BlockId>,
+    }
+}
+
+type RequestFuture =
+Pin<Box<dyn Future<Output = ()> >>;
+
 /// The type that manages connections in the background
 #[derive(Debug)]
 pub struct MutltiForkHandler {
     /// Incoming requests from the `MultiFork`.
-    incoming: Receiver<Request>,
+    incoming: Fuse<Receiver<Request>>,
     /// All active handlers
     ///
     /// It's expected that this list will be rather small
     handlers: Vec<(ForkId, BackendHandler<Provider<Http>>)>,
+    // requests currently in progress
+    requests: Vec<RequestFuture>
+}
+
+// === impl MutltiForkHandler ===
+
+impl MutltiForkHandler {
+    fn on_request(&mut self, req: Request) {}
 }
 
 // Drives all handler to completion
@@ -72,10 +100,47 @@ impl Future for MutltiForkHandler {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let pin = self.get_mut();
+
+        // receive new requests
+        loop {
+            match Pin::new(&mut pin.incoming).poll_next(cx) {
+                Poll::Ready(Some(req)) => {
+                    pin.on_request(req);
+                }
+                Poll::Ready(None) => {
+                    // channel closed, but we still need to drive the fork handlers to completion
+                    trace!(target: "fork::multi", "request channel closed");
+                    break
+                }
+                Poll::Pending => break,
+            }
+        }
+
+        // advance all jobs
+        for n in (0..pin.requests.len()).rev() {
+            let mut request = pin.requests.swap_remove(n);
+            // TODO poll future
+        }
+
+        // advance all handlers
+        for n in (0..pin.handlers.len()).rev() {
+            let (id, mut handler) = pin.handlers.swap_remove(n);
+            match handler.poll_unpin(cx) {
+                Poll::Ready(_) => {
+                    trace!(target: "fork::multi", "fork {:?} completed", id);
+                }
+                Poll::Pending => {
+                    pin.handlers.push((id, handler));
+                }
+            }
+        }
+
+        if pin.handlers.is_empty() && pin.incoming.is_done()  {
+            trace!(target: "fork::multi", "completed");
+            return Poll::Ready(())
+        }
+
+        Poll::Pending
     }
 }
-
-/// Request that's send to the handler
-#[derive(Debug)]
-enum Request {}
