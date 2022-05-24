@@ -17,12 +17,14 @@ use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     env::VarError,
     fmt::{self, Write},
     str::FromStr,
     time::Duration,
 };
+
+static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
 
 pub enum SelectorOrSig {
     Selector(String),
@@ -531,28 +533,38 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
-/// Fetches a function signature given the selector using 4byte.directory
-pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
+pub enum SelectorType {
+    Function,
+    Event,
+}
+
+/// Decodes the given function or event selector using sig.eth.samczsun.com
+async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Decoded {
-        text_signature: String,
-        id: i32,
+        name: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResult {
+        event: HashMap<String, Vec<Decoded>>,
+        function: HashMap<String, Vec<Decoded>>,
     }
 
     #[derive(Deserialize)]
     struct ApiResponse {
-        results: Vec<Decoded>,
+        ok: bool,
+        result: ApiResult,
     }
 
-    let selector = &selector.strip_prefix("0x").unwrap_or(selector);
-    if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"))
-    }
-    let selector = &selector[..8];
+    // using samczsun signature database over 4byte
+    // see https://github.com/foundry-rs/foundry/issues/1672
+    let url = match selector_type {
+        SelectorType::Function => format!("{SELECTOR_DATABASE_URL}?function={selector}"),
+        SelectorType::Event => format!("{SELECTOR_DATABASE_URL}?event={selector}"),
+    };
 
-    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={selector}");
-    let res = reqwest::get(url).await?;
-    let res = res.text().await?;
+    let res = reqwest::get(url).await?.text().await?;
     let api_response = match serde_json::from_str::<ApiResponse>(&res) {
         Ok(inner) => inner,
         Err(err) => {
@@ -560,88 +572,55 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
         }
     };
 
-    if api_response.results.is_empty() {
-        eyre::bail!("no signature found for provided function selector")
+    if !api_response.ok {
+        eyre::bail!("Failed to decode:\n {res}")
     }
 
-    Ok(api_response
-        .results
-        .into_iter()
-        .map(|d| (d.text_signature, d.id))
-        .collect::<Vec<(String, i32)>>())
+    let decoded = match selector_type {
+        SelectorType::Function => api_response.result.function,
+        SelectorType::Event => api_response.result.event,
+    };
+
+    Ok(decoded
+        .get(selector)
+        .ok_or(eyre::eyre!("No signature found"))?
+        .iter()
+        .map(|d| d.name.clone())
+        .collect::<Vec<String>>())
 }
 
-pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Result<Vec<String>> {
-    let mut sigs = fourbyte(calldata).await?;
-
-    match id {
-        Some(id) => {
-            let sig = match &id[..] {
-                "earliest" => {
-                    sigs.sort_by(|a, b| a.1.cmp(&b.1));
-                    sigs.get(0)
-                }
-                "latest" => {
-                    sigs.sort_by(|a, b| b.1.cmp(&a.1));
-                    sigs.get(0)
-                }
-                _ => {
-                    let id: i32 = id.parse().expect("Must be integer");
-                    sigs = sigs
-                        .iter()
-                        .filter(|sig| sig.1 == id)
-                        .cloned()
-                        .collect::<Vec<(String, i32)>>();
-                    sigs.get(0)
-                }
-            };
-            match sig {
-                Some(sig) => Ok(vec![sig.clone().0]),
-                None => Ok(vec![]),
-            }
-        }
-        None => {
-            // filter for signatures that can be decoded
-            Ok(sigs
-                .iter()
-                .map(|sig| sig.clone().0)
-                .filter(|sig| {
-                    let res = abi_decode(sig, calldata, true);
-                    res.is_ok()
-                })
-                .collect::<Vec<String>>())
-        }
+/// Fetches a function signature given the selector using sig.eth.samczsun.com
+pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
+    let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
+    if prefixed_selector.len() < 10 {
+        return Err(eyre::eyre!("Invalid selector"))
     }
+
+    decode_selector(&prefixed_selector[..10], SelectorType::Function).await
 }
 
-/// Fetches a event signature given the 32 byte topic using 4byte.directory
-pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
-    #[derive(Deserialize)]
-    struct Decoded {
-        text_signature: String,
-        id: i32,
-    }
+/// Fetches all possible signatures and attempts to abi decode the calldata
+pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
+    let sigs = decode_function_selector(calldata).await?;
 
-    #[derive(Deserialize)]
-    struct ApiResponse {
-        results: Vec<Decoded>,
-    }
+    // filter for signatures that can be decoded
+    Ok(sigs
+        .iter()
+        .cloned()
+        .filter(|sig| {
+            let res = abi_decode(sig, calldata, true);
+            res.is_ok()
+        })
+        .collect::<Vec<String>>())
+}
 
-    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
-    if topic.len() < 64 {
+/// Fetches a event signature given the 32 byte topic using sig.eth.samczsun.com
+pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
+    let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
+    if prefixed_topic.len() < 66 {
         return Err(eyre::eyre!("Invalid topic"))
     }
-    let topic = &topic[..8];
-
-    let url = format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={topic}");
-    let res = reqwest::get(url).await?;
-    let api_response = res.json::<ApiResponse>().await?;
-
-    Ok(api_response
-        .results
-        .into_iter()
-        .map(|d| (d.text_signature, d.id))
-        .collect::<Vec<(String, i32)>>())
+    decode_selector(&prefixed_topic[..66], SelectorType::Event).await
 }
 
 /// Pretty print calldata and if available, fetch possible function signatures
@@ -667,7 +646,7 @@ pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result
     let sigs = if offline {
         vec![]
     } else {
-        fourbyte(selector).await.unwrap_or_default().into_iter().map(|sig| sig.0).collect()
+        decode_function_selector(selector).await.unwrap_or_default().into_iter().collect()
     };
     let (_, data) = calldata.split_at(8);
 
@@ -1049,7 +1028,6 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
-    use std::future::Future;
 
     #[test]
     fn parse_hex_uint_tokens() {
@@ -1205,72 +1183,54 @@ mod tests {
         );
     }
 
-    /// Executes the _fourbyte_ request and if the site is not down (502 Bad Gateway) executes the
-    /// test
-    async fn test_if_fourbyte_not_down<Req, Out, Test>(r: Req, test: Test)
-    where
-        Req: Future<Output = Result<Out>>,
-        Test: FnOnce(Out),
-    {
-        match r.await {
-            Ok(out) => test(out),
-            Err(err) => {
-                let msg = err.to_string();
-                eprintln!("fourbyte request failed:\n{}", msg);
-                if !msg.contains("502 Bad Gateway") {
-                    panic!("{}", msg)
-                }
-            }
-        }
+    #[tokio::test]
+    async fn test_decode_selector() {
+        let sigs = decode_function_selector("0xa9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
+
+        let sigs = decode_function_selector("a9059cbb").await;
+        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
+
+        // invalid signature
+        decode_function_selector("0xa9059c")
+            .await
+            .map_err(|e| assert_eq!(e.to_string(), "Invalid selector"))
+            .map(|_| panic!("Expected fourbyte error"))
+            .ok();
     }
 
     #[tokio::test]
-    async fn test_fourbyte() {
-        test_if_fourbyte_not_down(fourbyte("0xa9059cbb"), |sigs| {
-            assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
-            assert_eq!(sigs[0].1, 313067);
-        })
-        .await;
+    async fn test_decode_calldata() {
+        let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
+
+        let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
+        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
     }
 
     #[tokio::test]
-    async fn test_fourbyte_possible_sigs() {
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None), |sigs| {
-            assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
-            assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())), |sigs| {
-            assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
-    }
-
-    #[tokio::test]
-    async fn test_fourbyte_event() {
-        test_if_fourbyte_not_down(
-            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
-            |sigs| {
-                assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
-                assert_eq!(sigs[0].1, 79573);
-            },
+    async fn test_decode_event_topic() {
+        let decoded = decode_event_topic(
+            "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
         )
         .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
 
-        test_if_fourbyte_not_down(
-            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
-            |sigs| {
-                assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
-            },
+        let decoded =
+            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
+
+        let decoded = decode_event_topic(
+            "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
         )
         .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
+
+        let decoded =
+            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await;
+        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
     }
 
     #[test]
