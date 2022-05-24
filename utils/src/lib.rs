@@ -24,6 +24,8 @@ use std::{
     time::Duration,
 };
 
+pub mod rpc;
+
 static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
 
 pub enum SelectorOrSig {

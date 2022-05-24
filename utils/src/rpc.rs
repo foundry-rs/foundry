@@ -40,12 +40,23 @@ const fn num_keys() -> usize {
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_http_rpc_endpoint() -> String {
+    next_rpc_endpoint("mainnet")
+}
+
+/// Returns the next _rinkeby_ rpc endpoint in inline
+///
+/// This will rotate all available rpc endpoints
+pub fn next_rinkeby_http_rpc_endpoint() -> String {
+    next_rpc_endpoint("rinkeby")
+}
+
+pub fn next_rpc_endpoint(network: &str) -> String {
     let idx = next() % num_keys();
     if idx < INFURA_KEYS.len() {
-        format!("https://mainnet.infura.io/v3/{}", INFURA_KEYS[idx])
+        format!("https://{}.infura.io/v3/{}", network, INFURA_KEYS[idx])
     } else {
         let idx = idx - INFURA_KEYS.len();
-        format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
+        format!("https://eth-{}.alchemyapi.io/v2/{}", network, ALCHEMY_MAINNET_KEYS[idx])
     }
 }
 
@@ -53,11 +64,6 @@ pub fn next_http_rpc_endpoint() -> String {
 pub fn next_http_archive_rpc_endpoint() -> String {
     let idx = next() % ALCHEMY_MAINNET_KEYS.len();
     format!("https://eth-mainnet.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
-}
-
-pub fn next_rinkeby_http_rpc_endpoint() -> String {
-    // infura keys don't have access to archive state
-    "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W".to_string()
 }
 
 #[cfg(test)]

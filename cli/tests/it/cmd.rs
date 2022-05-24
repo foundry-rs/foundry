@@ -5,10 +5,11 @@ use ethers::solc::{
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
-    forgetest, forgetest_ignore, forgetest_init, next_http_rpc_endpoint,
+    forgetest, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::fs;
 use yansi::Paint;
 

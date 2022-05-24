@@ -1,9 +1,10 @@
 //! Contains various tests for checking cast commands
 
 use foundry_cli_test_utils::{
-    casttest, next_http_rpc_endpoint,
+    casttest,
     util::{TestCommand, TestProject},
 };
+use foundry_utils::rpc::next_http_rpc_endpoint;
 
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {

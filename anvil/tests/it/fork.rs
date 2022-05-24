@@ -11,9 +11,7 @@ use ethers::{
 };
 use std::sync::Arc;
 
-// import helper module that provides rotating rpc endpoints
-#[path = "../../../cli/test-utils/src/rpc.rs"]
-mod rpc;
+use foundry_utils::rpc;
 
 abigen!(Greeter, "test-data/greeter.json");
 
@@ -261,15 +259,12 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
         NodeConfig::test()
             .with_port(next_port())
             .with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint()))
-            .silent()
-            .with_fork_block_number(Some(10074295u64)),
+            .silent(),
     )
     .await;
     let provider = handle.http_provider();
     let wallet = handle.dev_wallets().next().unwrap();
-    let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 5845u64.into());
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
         .unwrap()

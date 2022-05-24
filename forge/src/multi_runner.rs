@@ -1096,12 +1096,8 @@ mod tests {
 
     #[test]
     fn test_fork() {
-        let rpc_url = std::env::var("ETH_RPC_URL");
-        if rpc_url.is_err() {
-            eprintln!("Skipping test, ETH_RPC_URL is not set.");
-            return
-        }
-        let mut runner = forked_runner(&(rpc_url.unwrap()));
+        let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+        let mut runner = forked_runner(&rpc_url);
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
