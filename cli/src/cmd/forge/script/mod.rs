@@ -11,6 +11,8 @@ mod cmd;
 
 mod executor;
 
+mod receipts;
+
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet};
 use clap::{Parser, ValueHint};
 use ethers::{

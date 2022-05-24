@@ -1,14 +1,16 @@
 use crate::{
-    cmd::ScriptSequence,
+    cmd::{
+        forge::script::receipts::{get_pending_txes, maybe_has_receipt, wait_for_receipts},
+        ScriptSequence,
+    },
     utils::{get_http_provider, print_receipt},
 };
 use ethers::{
-    prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, Wallet},
+    prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, TxHash, Wallet},
     providers::Middleware,
     signers::Signer,
     types::{transaction::eip2718::TypedTransaction, Address, Chain, TransactionReceipt},
 };
-use futures::future::join_all;
 
 use super::*;
 
@@ -26,10 +28,12 @@ impl ScriptArgs {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
 
+        let transactions = deployment_sequence.transactions.clone();
+
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
         let sequence =
-        deployment_sequence.transactions.iter().skip(deployment_sequence.receipts.len()).map(|tx| {
+        transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
                 if let Some(wallet) =
                     local_wallets.iter().find(|wallet| (**wallet).address() == from)
@@ -55,28 +59,37 @@ impl ScriptArgs {
                 }
             });
 
+        let pending_txes = get_pending_txes(&deployment_sequence.pending, fork_url).await;
         let mut future_receipts = vec![];
-        let mut receipts = vec![];
 
         // We only wait for a transaction receipt before sending the next transaction, if there is
         // more than one signer. There would be no way of assuring their order otherwise.
         let sequential_broadcast = local_wallets.len() != 1;
         for payload in sequence {
             let (tx, signer) = payload?;
-            let receipt = self.send_transaction(tx.clone(), signer, sequential_broadcast, fork_url);
-            if sequential_broadcast {
-                let (receipt, nonce) = receipt.await?;
-                print_receipt(&receipt, nonce)?;
-                receipts.push(receipt);
-            } else {
-                future_receipts.push(receipt);
+
+            // pending transactions from a previous failed run can be retrieve when passing
+            // `--resume`
+            match maybe_has_receipt(&tx, &pending_txes, fork_url).await {
+                Some(receipt) => {
+                    print_receipt(&receipt, *tx.nonce().unwrap())?;
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.add_receipt(receipt);
+                }
+                None => {
+                    let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+
+                    if sequential_broadcast {
+                        wait_for_receipts(vec![receipt], deployment_sequence).await?;
+                    } else {
+                        future_receipts.push(receipt);
+                    }
+                }
             }
         }
 
-        if sequential_broadcast {
-            deployment_sequence.add_receipts(receipts)
-        } else {
-            deployment_sequence.add_receipts(self.wait_for_receipts(future_receipts).await?)
+        if !sequential_broadcast {
+            wait_for_receipts(future_receipts, deployment_sequence).await.unwrap();
         }
 
         println!("\n\n==========================");
@@ -93,49 +106,24 @@ impl ScriptArgs {
         signer: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> eyre::Result<(TransactionReceipt, U256)> {
+    ) -> Result<(TransactionReceipt, U256), BroadcastError> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
-            let nonce = foundry_utils::next_nonce(*from, fork_url, None)
-                .await
-                .map_err(|_| eyre::eyre!("Not able to query the EOA nonce."))?;
+            let nonce = foundry_utils::next_nonce(*from, fork_url, None).await.map_err(|_| {
+                BroadcastError::Simple("Not able to query the EOA nonce.".to_string())
+            })?;
 
             let tx_nonce = tx.nonce().expect("no nonce");
 
             if nonce != *tx_nonce {
-                eyre::bail!("EOA nonce changed unexpectedly while sending transactions.");
+                return Err(BroadcastError::Simple(
+                    "EOA nonce changed unexpectedly while sending transactions.".to_string(),
+                ))
             }
         }
 
-        async fn broadcast<T, U>(
-            signer: SignerMiddleware<T, U>,
-            legacy_or_1559: TypedTransaction,
-        ) -> eyre::Result<Option<TransactionReceipt>>
-        where
-            SignerMiddleware<T, U>: Middleware,
-        {
-            tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-            match signer.send_transaction(legacy_or_1559, None).await {
-                Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
-                Err(e) => Err(eyre::eyre!(e.to_string())),
-            }
-        }
-
-        let nonce = *tx.nonce().expect("no nonce");
-        let receipt = match broadcast(signer, tx).await {
-            Ok(Some(res)) => (res, nonce),
-
-            Ok(None) => {
-                // todo what if it has been actually sent
-                eyre::bail!("Failed to get transaction receipt?")
-            }
-            Err(e) => {
-                eyre::bail!("Aborting! A transaction failed to send: {:#?}", e)
-            }
-        };
-
-        Ok(receipt)
+        broadcast(signer, tx).await
     }
 
     /// Executes the passed transactions in sequence, and if no error has occurred, it broadcasts
@@ -189,36 +177,43 @@ impl ScriptArgs {
         }
         Ok(())
     }
+}
 
-    async fn wait_for_receipts(
-        &self,
-        tasks: Vec<impl futures::Future<Output = eyre::Result<(TransactionReceipt, U256)>>>,
-    ) -> eyre::Result<Vec<TransactionReceipt>> {
-        let res = join_all(tasks).await;
+#[derive(Debug)]
+pub enum BroadcastError {
+    Simple(String),
+    ErrorWithTxHash(String, TxHash),
+}
 
-        let mut err = None;
-        let mut receipts = vec![];
+/// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the
+/// transaction hash that can be used on a later run with `--resume`.
+async fn broadcast<T, U>(
+    signer: SignerMiddleware<T, U>,
+    legacy_or_1559: TypedTransaction,
+) -> Result<(TransactionReceipt, U256), BroadcastError>
+where
+    SignerMiddleware<T, U>: Middleware,
+{
+    tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+    let nonce = *legacy_or_1559.nonce().unwrap();
+    let pending = signer
+        .send_transaction(legacy_or_1559, None)
+        .await
+        .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
-        for receipt in res {
-            match receipt {
-                Ok(v) => receipts.push(v),
-                Err(e) => {
-                    err = Some(e);
-                    break
-                }
-            };
-        }
+    let tx_hash = pending.tx_hash();
 
-        // Receipts may have arrived out of order
-        receipts.sort_by(|a, b| a.1.cmp(&b.1));
-        for (receipt, nonce) in &receipts {
-            print_receipt(receipt, *nonce)?;
-        }
-
-        if let Some(err) = err {
-            Err(err)
-        } else {
-            Ok(receipts.into_iter().map(|(receipt, _)| receipt).collect())
-        }
-    }
+    let receipt = match pending.await {
+        Ok(receipt) => match receipt {
+            Some(receipt) => receipt,
+            None => {
+                return Err(BroadcastError::ErrorWithTxHash(
+                    format!("Didn't receive a receipt for {}", tx_hash),
+                    tx_hash,
+                ))
+            }
+        },
+        Err(err) => return Err(BroadcastError::ErrorWithTxHash(err.to_string(), tx_hash)),
+    };
+    Ok((receipt, nonce))
 }

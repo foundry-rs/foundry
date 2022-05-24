@@ -2,7 +2,7 @@ use crate::{opts::forge::ContractInfo, suggestions};
 use clap::Parser;
 use ethers::{
     abi::Abi,
-    prelude::{ArtifactId, TransactionReceipt},
+    prelude::{ArtifactId, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
             CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
@@ -175,6 +175,7 @@ pub fn unwrap_contracts(
 pub struct ScriptSequence {
     pub transactions: VecDeque<TypedTransaction>,
     pub receipts: Vec<TransactionReceipt>,
+    pub pending: Vec<TxHash>,
     pub path: PathBuf,
     pub timestamp: u64,
 }
@@ -192,6 +193,7 @@ impl ScriptSequence {
         Ok(ScriptSequence {
             transactions,
             receipts: vec![],
+            pending: vec![],
             path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -249,6 +251,14 @@ impl ScriptSequence {
 
     pub fn add_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
         self.receipts.extend(receipts.into_iter());
+    }
+
+    pub fn add_pending(&mut self, tx_hash: TxHash) {
+        self.pending.push(tx_hash);
+    }
+
+    pub fn remove_pending(&mut self, tx_hash: TxHash) {
+        self.pending.retain(|element| element != &tx_hash);
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
