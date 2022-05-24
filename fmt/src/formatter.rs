@@ -253,21 +253,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         for comment in self.comments.get_comments_before(byte_end) {
             if comment.needs_newline() {
                 return false
-            } else {
-                string.push_str(&format!(" {} ", comment.comment))
             }
+
+            string.push_str(&format!(" {} ", comment.comment))
         }
         self.will_it_fit(string)
-    }
-
-    /// Is length of the line consisting of `items` separated by `separator` with respect to
-    /// already written line greater than `config.line_length`
-    fn is_separated_multiline(
-        &self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        separator: &str,
-    ) -> bool {
-        !self.will_it_fit(items.into_iter().join(separator))
     }
 
     fn are_chunks_separated_multiline<'b>(
@@ -316,13 +306,13 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_items_separated(items, "", multiline)
     }
 
-    // fn write_chunks<'b>(
-    //     &mut self,
-    //     items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
-    //     multiline: bool,
-    // ) -> std::fmt::Result {
-    //     self.write_chunks_separated(items, "", multiline)
-    // }
+    fn write_chunks<'b>(
+        &mut self,
+        items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
+        multiline: bool,
+    ) -> std::fmt::Result {
+        self.write_chunks_separated(items, "", multiline)
+    }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
     fn write_items_separated(
@@ -561,10 +551,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let bases = contract
                 .base
                 .iter_mut()
-                .map(|base| self.visit_to_string(base))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|base| Ok((base.loc.end(), self.visit_to_string(base)?)))
+                .collect::<Result<Vec<_>, VError>>()?;
 
-            let multiline = self.is_separated_multiline(&bases, ", ");
+            let multiline = self.are_chunks_separated_multiline(&bases, ", ");
 
             if multiline {
                 writeln!(self.buf())?;
@@ -573,7 +563,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write!(self.buf(), " ")?;
             }
 
-            self.write_items_separated(&bases, ", ", multiline)?;
+            self.write_chunks_separated(&bases, ", ", multiline)?;
 
             if multiline {
                 self.dedent(1);
@@ -672,16 +662,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut imports = imports
             .iter()
             .map(|(ident, alias)| {
-                format!(
-                    "{}{}",
-                    ident.name,
-                    alias.as_ref().map_or("".to_string(), |alias| format!(" as {}", alias.name))
+                (
+                    ident.loc.end(), // TODO:
+                    format!(
+                        "{}{}",
+                        ident.name,
+                        alias
+                            .as_ref()
+                            .map_or("".to_string(), |alias| format!(" as {}", alias.name))
+                    ),
                 )
             })
             .collect::<Vec<_>>();
         imports.sort();
 
-        let multiline = self.is_separated_multiline(&imports, ", ");
+        let multiline = self.are_chunks_separated_multiline(&imports, ", ");
 
         if multiline {
             writeln!(self.buf(), "{{")?;
@@ -690,7 +685,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_opening_bracket()?;
         }
 
-        self.write_items_separated(&imports, ", ", multiline)?;
+        self.write_chunks_separated(&imports, ", ", multiline)?;
 
         if multiline {
             self.dedent(1);
@@ -815,23 +810,57 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " {name}")?;
         }
 
-        let params = self.visit_to_string(&mut func.params)?;
-        let params_multiline = params.contains('\n');
+        // TODO:
+        // let params = self.visit_to_string(&mut func.params)?;
+        // let params_multiline = params.contains('\n');
+        let params = func
+            .params
+            .iter_mut()
+            .map(|(loc, param)| {
+                Ok((loc.end(), self.visit_to_string(param.as_mut().unwrap() /* TODO: */)?))
+            })
+            .collect::<Result<Vec<_>, VError>>()?;
+        let params_multiline = self.are_chunks_separated_multiline(&params, ", ");
 
-        self.write_items(params.lines(), params_multiline)?;
+        self.visit_opening_paren()?;
+        if params_multiline {
+            writeln!(self.buf())?;
+            self.indent(1);
+        }
+        self.write_chunks_separated(&params, ", ", params_multiline)?;
+        if params_multiline {
+            self.dedent(1);
+            writeln!(self.buf())?;
+        }
+        self.visit_closing_paren()?;
 
+        // TODO:
         let attributes = self.visit_to_string(&mut func.attributes)?;
         let attributes = attributes.lines().collect::<Vec<_>>();
 
-        let returns = self.visit_to_string(&mut func.returns)?;
-        let returns_multiline = returns.contains('\n');
-        let returns_indent = params_multiline || !attributes.is_empty() || returns_multiline;
+        // TODO:
+        // let returns = self.visit_to_string(&mut func.returns)?;
+        // let returns_multiline = returns.contains('\n');
+        let returns = func
+            .returns
+            .iter_mut()
+            .map(|(loc, param)| {
+                Ok((loc.end(), self.visit_to_string(param.as_mut().unwrap() /* TODO: */)?))
+            })
+            .collect::<Result<Vec<_>, VError>>()?;
+        let returns_multiline =
+            self.are_chunks_separated_multiline(&returns, ", ") || params_multiline;
+        let returns_indent = !attributes.is_empty() || returns_multiline;
 
         // Compose one line string consisting of attributes and return parameters.
         let attributes_returns = format!(
-            "{} {}",
+            "{}{}",
             attributes.join(" "),
-            if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
+            if func.returns.is_empty() {
+                "".to_string()
+            } else {
+                format!(" returns ({})", returns.iter().map(|r| r.1.clone()).join(", ")) // TODO:
+            }
         );
         let attributes_returns = attributes_returns.trim();
 
@@ -845,16 +874,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => (None, ";".to_string()),
         };
 
-        let attributes_returns_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
-            !returns_multiline;
+        let attributes_returns_multiline = !self
+            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) ||
+            (!returns.is_empty() && returns_multiline);
 
         // Check that we can fit both attributes and return arguments in one line.
-        if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
+        if !attributes_returns.is_empty() && !attributes_returns_multiline {
             write!(self.buf(), " {attributes_returns}")?;
         } else {
-            // If attributes and returns can't fit in one line, we write all attributes in multiple
-            // lines.
+            // If attributes and returns can't fit in one line, we write all attributes in
+            // multiple lines.
             if !func.attributes.is_empty() {
                 writeln!(self.buf())?;
                 self.indent(1);
@@ -869,7 +898,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 writeln!(self.buf())?;
                 write!(self.buf(), "returns ")?;
 
-                self.write_items(returns.lines(), returns_multiline)?;
+                self.visit_opening_paren()?;
+                if returns_multiline {
+                    writeln!(self.buf())?;
+                    self.indent(1);
+                }
+
+                // TODO: write chunks w/ ()
+                self.write_chunks_separated(&returns, ", ", returns_multiline)?;
+
+                if returns_multiline {
+                    self.dedent(1);
+                    writeln!(self.buf())?;
+                }
+                self.visit_closing_paren()?;
 
                 if returns_indent {
                     self.dedent(1);
@@ -880,7 +922,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         match body {
             Some(body) => {
                 if self.will_it_fit(format!(" {}", body_first_line)) &&
-                    attributes_returns_fits_one_line
+                    !attributes_returns_multiline
                 {
                     write!(self.buf(), " ")?;
                 } else {
@@ -925,16 +967,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if !args.is_empty() {
                     write!(self.buf(), "(")?;
 
-                    let args = args.iter().map(|arg| &arg.name).collect::<Vec<_>>();
+                    let args =
+                        args.iter().map(|arg| (arg.loc.end(), &arg.name)).collect::<Vec<_>>();
 
-                    let multiline = self.is_separated_multiline(&args, ", ");
+                    let multiline = self.are_chunks_separated_multiline(&args, ", ");
 
                     if multiline {
                         writeln!(self.buf())?;
                         self.indent(1);
                     }
 
-                    self.write_items_separated(&args, ", ", multiline)?;
+                    self.write_chunks_separated(&args, ", ", multiline)?;
 
                     if multiline {
                         self.dedent(1);
@@ -1023,20 +1066,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
         let params = list
             .iter_mut()
-            .map(|(_, param)| param.as_mut().map(|param| self.visit_to_string(param)).transpose())
+            .map(|(_, param)| {
+                param
+                    .as_mut()
+                    .map(|param| Ok((param.loc.end(), self.visit_to_string(param)?)))
+                    .transpose()
+            })
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
 
-        let params_multiline = params.len() > 2 || self.is_separated_multiline(&params, ", ");
+        let params_multiline =
+            params.len() > 2 || self.are_chunks_separated_multiline(&params, ", ");
 
         self.visit_opening_paren()?;
         if params_multiline {
             writeln!(self.buf())?;
             self.indent(1);
         }
-        self.write_items_separated(&params, ", ", params_multiline)?;
+        self.write_chunks_separated(&params, ", ", params_multiline)?;
         if params_multiline {
             self.dedent(1);
             writeln!(self.buf())?;
@@ -1155,12 +1204,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let params = event
             .fields
             .iter_mut()
-            .map(|param| self.visit_to_string(param))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|param| Ok((param.loc.end(), self.visit_to_string(param)?)))
+            .collect::<Result<Vec<_>, VError>>()?;
 
+        // TODO:
         let multiline = !self.will_it_fit(format!(
             "{}){};",
-            params.iter().join(", "),
+            params.iter().map(|p| p.1.to_owned()).join(", "),
             if event.anonymous { " anonymous" } else { "" }
         ));
 
@@ -1169,7 +1219,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.indent(1);
         }
 
-        self.write_items_separated(&params, ", ", multiline)?;
+        self.write_chunks_separated(&params, ", ", multiline)?;
 
         if multiline {
             self.dedent(1);
@@ -1206,17 +1256,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let params = error
             .fields
             .iter_mut()
-            .map(|param| self.visit_to_string(param))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|param| Ok((param.loc.end(), self.visit_to_string(param)?)))
+            .collect::<Result<Vec<_>, VError>>()?;
 
-        let multiline = self.is_separated_multiline(&params, ", ");
+        let multiline = self.are_chunks_separated_multiline(&params, ", ");
 
         if multiline {
             writeln!(self.buf())?;
             self.indent(1);
         }
 
-        self.write_items_separated(&params, ", ", multiline)?;
+        self.write_chunks_separated(&params, ", ", multiline)?;
 
         if multiline {
             self.dedent(1);
@@ -1248,11 +1298,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             UsingList::Functions(funcs) => {
                 let func_strs = funcs
                     .iter_mut()
-                    .map(|func| self.visit_to_string(func))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let multiline = self.is_separated_multiline(func_strs.iter(), ", ");
+                    .map(|func| Ok((func.loc().end(), self.visit_to_string(func)?)))
+                    .collect::<Result<Vec<_>, VError>>()?;
+                let multiline = self.are_chunks_separated_multiline(func_strs.iter(), ", ");
                 self.write_opening_bracket()?;
-                self.write_items_separated(func_strs, ", ", multiline)?;
+                self.write_chunks_separated(&func_strs, ", ", multiline)?;
                 self.write_closing_bracket()?;
             }
         }
@@ -1283,14 +1333,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .iter_mut()
             .attr_sorted()
             .map(|attribute| match attribute {
-                VariableAttribute::Visibility(visibility) => visibility.to_string(),
-                VariableAttribute::Constant(_) => "constant".to_string(),
-                VariableAttribute::Immutable(_) => "immutable".to_string(),
-                VariableAttribute::Override(_) => "override".to_string(),
+                VariableAttribute::Visibility(visibility) => {
+                    (visibility.loc().unwrap().end(), visibility.to_string())
+                }
+                VariableAttribute::Constant(loc) => (loc.end(), "constant".to_string()),
+                VariableAttribute::Immutable(loc) => (loc.end(), "immutable".to_string()),
+                VariableAttribute::Override(loc) => (loc.end(), "override".to_string()),
             })
             .collect::<Vec<_>>();
 
-        let mut multiline = self.is_separated_multiline(&attributes, " ");
+        let mut multiline = self.are_chunks_separated_multiline(&attributes, " ");
 
         if !var.attrs.is_empty() {
             if multiline {
@@ -1300,7 +1352,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, var.loc.end(), " ")?;
             }
 
-            self.write_items_separated(&attributes, " ", multiline)?;
+            self.write_chunks_separated(&attributes, " ", multiline)?;
         }
 
         let variable = self.visit_to_string(&mut var.name)?;
@@ -1441,7 +1493,6 @@ mod tests {
         }
 
         let (mut source_pt, source_comments) = solang_parser::parse(source, 1).unwrap();
-        println!("{:?}", source_pt);
         let source_comments = Comments::new(source_comments, source);
 
         let (mut expected_pt, expected_comments) =

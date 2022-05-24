@@ -1,3 +1,4 @@
+// config: line-length=60
 interface FunctionInterfaces {
     function noParamsNoModifiersNoReturns();
 
