@@ -297,44 +297,12 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// Write `items` with no separator with respect to `config.line_length` setting
-    fn write_items(
-        &mut self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        self.write_items_separated(items, "", multiline)
-    }
-
     fn write_chunks<'b>(
         &mut self,
         items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
         multiline: bool,
     ) -> std::fmt::Result {
         self.write_chunks_separated(items, "", multiline)
-    }
-
-    /// Write `items` separated by `separator` with respect to `config.line_length` setting
-    fn write_items_separated(
-        &mut self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        separator: &str,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        if multiline {
-            let mut items = items.into_iter().peekable();
-            while let Some(item) = items.next() {
-                write!(self.buf(), "{}", item.as_ref())?;
-
-                if items.peek().is_some() {
-                    writeln!(self.buf(), "{}", separator.trim_end())?;
-                }
-            }
-        } else {
-            write!(self.buf(), "{}", items.into_iter().join(separator))?;
-        }
-
-        Ok(())
     }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
@@ -356,6 +324,26 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
 
+        Ok(())
+    }
+
+    fn write_chunks_separated_with_paren<'b>(
+        &mut self,
+        items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
+        separator: &str,
+        multiline: bool,
+    ) -> Result<(), VError> {
+        self.visit_opening_paren()?;
+        if multiline {
+            writeln!(self.buf())?;
+            self.indent(1);
+        }
+        self.write_chunks_separated(items, separator, multiline)?;
+        if multiline {
+            self.dedent(1);
+            writeln!(self.buf())?;
+        }
+        self.visit_closing_paren()?;
         Ok(())
     }
 
@@ -821,18 +809,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             })
             .collect::<Result<Vec<_>, VError>>()?;
         let params_multiline = self.are_chunks_separated_multiline(&params, ", ");
-
-        self.visit_opening_paren()?;
-        if params_multiline {
-            writeln!(self.buf())?;
-            self.indent(1);
-        }
-        self.write_chunks_separated(&params, ", ", params_multiline)?;
-        if params_multiline {
-            self.dedent(1);
-            writeln!(self.buf())?;
-        }
-        self.visit_closing_paren()?;
+        self.write_chunks_separated_with_paren(&params, ", ", params_multiline)?;
 
         // TODO:
         let attributes = self.visit_to_string(&mut func.attributes)?;
@@ -898,20 +875,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 writeln!(self.buf())?;
                 write!(self.buf(), "returns ")?;
 
-                self.visit_opening_paren()?;
-                if returns_multiline {
-                    writeln!(self.buf())?;
-                    self.indent(1);
-                }
-
-                // TODO: write chunks w/ ()
-                self.write_chunks_separated(&returns, ", ", returns_multiline)?;
-
-                if returns_multiline {
-                    self.dedent(1);
-                    writeln!(self.buf())?;
-                }
-                self.visit_closing_paren()?;
+                self.write_chunks_separated_with_paren(&returns, ", ", returns_multiline)?;
 
                 if returns_indent {
                     self.dedent(1);
@@ -965,26 +929,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Override(_, args) => {
                 write!(self.buf(), "override")?;
                 if !args.is_empty() {
-                    write!(self.buf(), "(")?;
-
                     let args =
                         args.iter().map(|arg| (arg.loc.end(), &arg.name)).collect::<Vec<_>>();
-
                     let multiline = self.are_chunks_separated_multiline(&args, ", ");
-
-                    if multiline {
-                        writeln!(self.buf())?;
-                        self.indent(1);
-                    }
-
-                    self.write_chunks_separated(&args, ", ", multiline)?;
-
-                    if multiline {
-                        self.dedent(1);
-                        writeln!(self.buf())?;
-                    }
-
-                    write!(self.buf(), ")")?;
+                    self.write_chunks_separated_with_paren(&args, ", ", multiline)?;
                 }
             }
             FunctionAttribute::BaseOrModifier(_, base) => {
@@ -1079,18 +1027,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let params_multiline =
             params.len() > 2 || self.are_chunks_separated_multiline(&params, ", ");
-
-        self.visit_opening_paren()?;
-        if params_multiline {
-            writeln!(self.buf())?;
-            self.indent(1);
-        }
-        self.write_chunks_separated(&params, ", ", params_multiline)?;
-        if params_multiline {
-            self.dedent(1);
-            writeln!(self.buf())?;
-        }
-        self.visit_closing_paren()?;
+        self.write_chunks_separated_with_paren(&params, ", ", params_multiline)?;
 
         Ok(())
     }
@@ -1199,7 +1136,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        write!(self.buf(), "event {}(", event.name.name)?;
+        write!(self.buf(), "event {}", event.name.name)?;
 
         let params = event
             .fields
@@ -1214,19 +1151,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if event.anonymous { " anonymous" } else { "" }
         ));
 
-        if multiline {
-            writeln!(self.buf())?;
-            self.indent(1);
-        }
-
-        self.write_chunks_separated(&params, ", ", multiline)?;
-
-        if multiline {
-            self.dedent(1);
-            writeln!(self.buf())?;
-        }
-
-        write!(self.buf(), ")")?;
+        self.write_chunks_separated_with_paren(&params, ", ", multiline)?;
 
         if event.anonymous {
             write!(self.buf(), " anonymous")?;
@@ -1251,7 +1176,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        write!(self.buf(), "error {}(", error.name.name)?;
+        write!(self.buf(), "error {}", error.name.name)?;
 
         let params = error
             .fields
@@ -1260,21 +1185,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .collect::<Result<Vec<_>, VError>>()?;
 
         let multiline = self.are_chunks_separated_multiline(&params, ", ");
-
-        if multiline {
-            writeln!(self.buf())?;
-            self.indent(1);
-        }
-
-        self.write_chunks_separated(&params, ", ", multiline)?;
-
-        if multiline {
-            self.dedent(1);
-            writeln!(self.buf())?;
-        }
-
-        write!(self.buf(), ");")?;
-
+        self.write_chunks_separated_with_paren(&params, ", ", multiline)?;
+        self.visit_stray_semicolon()?;
         Ok(())
     }
 
