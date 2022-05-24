@@ -23,3 +23,11 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     // Output block time: Mar 21 2022 06:20:09 UTC
     assert!(output.contains("14428082"), "{}", output);
 });
+
+// tests that we can create a new wallet with keystore
+casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
+    let out = cmd.stdout_lossy();
+    assert!(out.contains("Created new encrypted keystore file"));
+    assert!(out.contains("Public Address of the key"));
+});

@@ -79,19 +79,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
-/// Securely reads a secret from stdin, or proceeds to return a fallback value
-/// which was provided in cleartext via CLI or env var
-#[allow(dead_code)]
-pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
-    Ok(if secret {
-        println!("Insert secret:");
-        rpassword::read_password()?
-    } else {
-        // guaranteed to be Some(..)
-        unsafe_secret.unwrap()
-    })
-}
-
 /// Artifact/Contract identifier can take the following form:
 /// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
 /// the contract's artifact and the contract name is the name of the solidity contract, like
