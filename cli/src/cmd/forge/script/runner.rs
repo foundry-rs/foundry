@@ -96,6 +96,12 @@ impl<DB: DatabaseRef> Runner<DB> {
                         .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
                     logs.extend_from_slice(&setup_logs);
 
+                    // We call the `setUp()` function with self.sender, and if there haven't been
+                    // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce
+                    if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
+                        self.executor.set_nonce(self.sender, sender_nonce.as_u64());
+                    }
+
                     (
                         !reverted,
                         gas,
