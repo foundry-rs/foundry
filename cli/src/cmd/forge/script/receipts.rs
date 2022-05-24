@@ -59,7 +59,14 @@ pub async fn wait_for_receipts(
 
     for receipt in res {
         match receipt {
-            Ok(v) => receipts.push(v),
+            Ok(ret) => {
+                if let Some(status) = ret.0.status {
+                    if status.is_zero() {
+                        errors.push(format!("Transaction Failure: {}", ret.0.transaction_hash));
+                    }
+                }
+                receipts.push(ret)
+            }
             Err(e) => {
                 let err = match e {
                     BroadcastError::Simple(err) => err,
