@@ -165,6 +165,8 @@ pub struct Config {
     pub fuzz_runs: u32,
     /// The number of calls executed to attempt to break invariants
     pub invariant_depth: u32,
+    /// Fails the invariant fuzzing if a reversion occurs
+    pub invariant_fail_on_revert: bool,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -1095,6 +1097,7 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             invariant_depth: 15,
+            invariant_fail_on_revert: false,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
@@ -2054,6 +2057,7 @@ mod tests {
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
                 invariant_depth = 15
+                invariant_fail_on_revert = false
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']

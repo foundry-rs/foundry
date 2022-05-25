@@ -407,8 +407,11 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
-    let mut test_options =
-        TestOptions { include_fuzz_tests, invariant_depth: config.invariant_depth };
+    let mut test_options = TestOptions {
+        include_fuzz_tests,
+        invariant_depth: config.invariant_depth,
+        invariant_fail_on_revert: config.invariant_fail_on_revert,
+    };
 
     // Setup the fuzzer
     // TODO: Add CLI Options to modify the persistence

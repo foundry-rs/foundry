@@ -281,7 +281,11 @@ mod tests {
     };
     use foundry_evm::trace::TraceKind;
 
-    static TEST_OPTS: TestOptions = TestOptions { include_fuzz_tests: true, invariant_depth: 15 };
+    static TEST_OPTS: TestOptions = TestOptions {
+        include_fuzz_tests: true,
+        invariant_depth: 15,
+        invariant_fail_on_revert: false,
+    };
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {

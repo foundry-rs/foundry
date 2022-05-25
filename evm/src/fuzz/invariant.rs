@@ -55,6 +55,7 @@ where
         invariant_address: Address,
         abi: &Abi,
         invariant_depth: u32,
+        fail_on_revert: bool,
     ) -> eyre::Result<Option<InvariantFuzzTestResult>> {
         // Finds out the chosen deployed contracts and/or senders.
         let (senders, contracts) = self.select_contracts_and_senders(invariant_address, abi)?;
@@ -86,14 +87,20 @@ where
         let _test_error = self
             .runner
             .run(&strat, |inputs| {
+                if fail_on_revert && reverts.get() > 0 {
+                    return Err(TestCaseError::fail("Revert occurred."))
+                }
+
                 let mut sequence = vec![];
-                'all: for (sender, (address, calldata)) in inputs.iter() {
+
+                'all: for (index, (sender, (address, calldata))) in inputs.iter().enumerate() {
                     // Send nth randomly assigned sender + contract + input
-                    let RawCallResult { reverted, gas, stipend, state_changeset, logs, .. } =
-                        executor
-                            .borrow()
-                            .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
-                            .expect("could not make raw evm call");
+                    let RawCallResult {
+                        result, reverted, gas, stipend, state_changeset, logs, ..
+                    } = executor
+                        .borrow()
+                        .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
+                        .expect("could not make raw evm call");
 
                     // Collect data for fuzzing
                     let state_changeset =
@@ -116,10 +123,10 @@ where
                                 func.name.clone(),
                                 Some(InvariantFuzzError::new(
                                     invariant_address,
-                                    func,
+                                    Some(func),
                                     abi,
                                     &result,
-                                    &inputs,
+                                    inputs.split_at(index + 1).0,
                                 )),
                             );
 
@@ -127,6 +134,21 @@ where
                         }
                     } else {
                         reverts.set(reverts.get() + 1);
+                        if fail_on_revert {
+                            let error = InvariantFuzzError::new(
+                                invariant_address,
+                                None,
+                                abi,
+                                &result,
+                                inputs.split_at(index + 1).0,
+                            );
+                            *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
+
+                            invariant_doesnt_hold
+                                .borrow_mut()
+                                .insert("Revert".to_string(), Some(error));
+                            break 'all
+                        }
                     }
                 }
 
@@ -143,7 +165,7 @@ where
                 return_reason: "".into(),
                 revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
                 addr: invariant_address,
-                func: ethers::prelude::Bytes::default(),
+                func: Some(ethers::prelude::Bytes::default()),
             });
 
         Ok(Some(InvariantFuzzTestResult {
@@ -333,22 +355,32 @@ pub struct InvariantFuzzError {
     /// Address of the invariant asserter
     pub addr: Address,
     /// Function data for invariant check
-    pub func: ethers::prelude::Bytes,
+    pub func: Option<ethers::prelude::Bytes>,
 }
 
 impl InvariantFuzzError {
     fn new(
         invariant_address: Address,
-        func: &Function,
+        error_func: Option<&Function>,
         abi: &Abi,
         result: &bytes::Bytes,
         inputs: &[(Address, (Address, Bytes))],
     ) -> Self {
+        let mut func = None;
+        let origin: String;
+
+        if let Some(f) = error_func {
+            func = Some(f.short_signature().into());
+            origin = f.name.clone();
+        } else {
+            origin = "Revert".to_string();
+        }
+
         InvariantFuzzError {
             test_error: proptest::test_runner::TestError::Fail(
                 format!(
                     "{}, reason: '{}'",
-                    func.name,
+                    origin,
                     match foundry_utils::decode_revert(result.as_ref(), Some(abi)) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
@@ -362,7 +394,7 @@ impl InvariantFuzzError {
             revert_reason: foundry_utils::decode_revert(result.as_ref(), Some(abi))
                 .unwrap_or_default(),
             addr: invariant_address,
-            func: func.short_signature().into(),
+            func,
         }
     }
 }

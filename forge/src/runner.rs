@@ -30,6 +30,8 @@ pub struct TestOptions {
     pub include_fuzz_tests: bool,
     /// The number of calls executed to attempt to break invariants
     pub invariant_depth: u32,
+    /// Fails the invariant fuzzing if a reversion occurs
+    pub invariant_fail_on_revert: bool,
 }
 
 /// Results and duration for a set of tests included in the same test contract
@@ -584,9 +586,13 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         let mut evm =
             InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
-            evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)?
-        {
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
+            funcs,
+            address,
+            self.contract,
+            test_options.invariant_depth,
+            test_options.invariant_fail_on_revert,
+        )? {
             let results = invariants
                 .iter()
                 .map(|(_k, test_error)| {
@@ -615,23 +621,20 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                     identified_contracts,
                                 ));
 
-                                let error_call_result = self
-                                    .executor
-                                    .call_raw(
-                                        self.sender,
-                                        error.addr,
-                                        error.func.0.clone(),
-                                        0.into(),
-                                    )
-                                    .expect("bad call to evm");
+                                if let Some(func) = &error.func {
+                                    let error_call_result = self
+                                        .executor
+                                        .call_raw(self.sender, error.addr, func.0.clone(), 0.into())
+                                        .expect("bad call to evm");
 
-                                if error_call_result.reverted {
-                                    logs.extend(error_call_result.logs);
-                                    traces.push((
-                                        TraceKind::Execution,
-                                        error_call_result.traces.unwrap(),
-                                    ));
-                                    break
+                                    if error_call_result.reverted {
+                                        logs.extend(error_call_result.logs);
+                                        traces.push((
+                                            TraceKind::Execution,
+                                            error_call_result.traces.unwrap(),
+                                        ));
+                                        break
+                                    }
                                 }
                             }
                         }
