@@ -23,7 +23,7 @@ use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.", value_name = "TX")]
+    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
     tx: String,
     #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
