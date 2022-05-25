@@ -41,6 +41,7 @@ pub struct InstallArgs {
     ///
     /// Target installation directory can be added via `<alias>=` suffix.
     /// The dependency will installed to `lib/<alias>`.
+    #[clap(value_name = "DEPENDENCIES")]
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
@@ -48,7 +49,8 @@ pub struct InstallArgs {
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     pub root: Option<PathBuf>,
 }

@@ -23,9 +23,9 @@ use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.")]
+    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
     tx: String,
-    #[clap(short, long, env = "ETH_RPC_URL")]
+    #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
     debug: bool,
@@ -37,7 +37,8 @@ pub struct RunArgs {
     quick: bool,
     #[clap(
         long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth"
+        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
+        value_name = "LABEL"
     )]
     label: Vec<String>,
 }

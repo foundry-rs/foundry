@@ -11,13 +11,15 @@ pub struct RemappingArgs {
     #[clap(
         help = "The project's root path. Defaults to the current working directory.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     root: Option<PathBuf>,
     #[clap(
         help = "The path to the library folder.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     lib_path: Vec<PathBuf>,
 }
