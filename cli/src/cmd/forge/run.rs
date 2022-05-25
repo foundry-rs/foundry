@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{Cmd, forge::build::CoreBuildArgs},
+    cmd::{forge::build::CoreBuildArgs, Cmd},
     compile, utils,
 };
 use clap::{Parser, ValueHint};
@@ -8,28 +8,27 @@ use ethers::{
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-        Project,
         utils::RuntimeOrHandle,
+        Project,
     },
     types::{Address, Bytes, Log, U256},
 };
 use forge::{
-    CALLER,
     debug::DebugArena,
     decode::decode_console_logs,
     executor::{
-        CallResult, DatabaseRef, DeployResult, EvmError, Executor, ExecutorBuilder,
-        opts::EvmOpts, RawCallResult,
+        opts::EvmOpts, Backend, CallResult, DatabaseRef, DeployResult, EvmError, Executor,
+        ExecutorBuilder, RawCallResult,
     },
-    trace::{CallTraceArena, CallTraceDecoderBuilder, identifier::LocalTraceIdentifier, TraceKind},
+    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
+    CALLER,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{Config, figment::Figment};
+use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, format_token, IntoFunction, PostLinkInput};
 use std::{collections::BTreeMap, path::PathBuf};
-use ui::{Tui, TUIExitReason, Ui};
+use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
-use foundry_evm::executor::Backend;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);

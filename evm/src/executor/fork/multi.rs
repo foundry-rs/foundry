@@ -4,16 +4,17 @@
 //! concurrently active pairs at once.
 
 use crate::executor::fork::{database::ForkedDatabase, BackendHandler};
-use ethers::providers::{Http, Provider};
+use ethers::{
+    providers::{Http, Provider},
+    types::BlockId,
+};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
-    stream::Stream,
+    stream::{Fuse, Stream},
     task::{Context, Poll},
     Future, FutureExt,
 };
 use std::{collections::HashMap, pin::Pin};
-use ethers::types::BlockId;
-use futures::stream::Fuse;
 use tracing::trace;
 
 // TODO move some types from avil fork to evm
@@ -61,22 +62,12 @@ impl MutltiFork {
 /// Request that's send to the handler
 #[derive(Debug)]
 enum Request {
-    Create {
-        fork_id: ForkId,
-
-        endpoint: String,
-
-        chain_id: Option<u64>,
-
-        block: Option<BlockId>,
-    }
+    Create { fork_id: ForkId, endpoint: String, chain_id: Option<u64>, block: Option<BlockId> },
 }
 
-type RequestFuture =
-Pin<Box<dyn Future<Output = ()> >>;
+type RequestFuture = Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
 
 /// The type that manages connections in the background
-#[derive(Debug)]
 pub struct MutltiForkHandler {
     /// Incoming requests from the `MultiFork`.
     incoming: Fuse<Receiver<Request>>,
@@ -85,7 +76,7 @@ pub struct MutltiForkHandler {
     /// It's expected that this list will be rather small
     handlers: Vec<(ForkId, BackendHandler<Provider<Http>>)>,
     // requests currently in progress
-    requests: Vec<RequestFuture>
+    requests: Vec<RequestFuture>,
 }
 
 // === impl MutltiForkHandler ===
@@ -136,7 +127,7 @@ impl Future for MutltiForkHandler {
             }
         }
 
-        if pin.handlers.is_empty() && pin.incoming.is_done()  {
+        if pin.handlers.is_empty() && pin.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
             return Poll::Ready(())
         }

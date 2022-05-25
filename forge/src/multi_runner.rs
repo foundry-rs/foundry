@@ -1,19 +1,18 @@
 use crate::{ContractRunner, SuiteResult, TestFilter};
 use ethers::{
     abi::Abi,
-    prelude::{ArtifactId, ArtifactOutput, artifacts::CompactContractBytecode},
-    solc::{Artifact, ProjectCompileOutput, utils::RuntimeOrHandle},
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{utils::RuntimeOrHandle, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_evm::executor::{
-    DatabaseRef, Executor, ExecutorBuilder, Fork, opts::EvmOpts, SpecId,
+    opts::EvmOpts, Backend, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
-use foundry_evm::executor::Backend;
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -317,7 +316,7 @@ mod tests {
     use crate::{
         decode::decode_console_logs,
         test_helpers::{
-            COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, filter::Filter, LIBS_PROJECT, PROJECT,
+            filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
     use foundry_evm::trace::TraceKind;

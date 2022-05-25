@@ -1,8 +1,6 @@
 use crate::{
-    eth::{
-        backend::db::{Db, StateDb},
-    },
-    revm::{AccountInfo},
+    eth::backend::db::{Db, StateDb},
+    revm::AccountInfo,
     Address, U256,
 };
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
@@ -22,7 +20,7 @@ impl Db for ForkedDatabase {
     }
 
     fn revert(&mut self, id: U256) -> bool {
-       self.revert_snapshot(id)
+        self.revert_snapshot(id)
     }
 
     fn current_state(&self) -> StateDb {
