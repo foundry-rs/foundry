@@ -1,6 +1,7 @@
 //! Cast
 //!
 //! TODO
+use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -17,11 +18,13 @@ pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
+use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 mod print_utils;
+mod rlp_converter;
 mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -1087,25 +1090,17 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_rlp("foundry".to_string())?, "0x87666f756e647279");
-    ///     assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
-    ///     assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "0xc161");
-    ///     assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "0xc26162");
+    ///    assert_eq!(Cast::to_rlp("\"foundry\"".to_string()).unwrap(), "0x87666f756e647279" );
+    ///    assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
+    ///    assert_eq!(Cast::to_rlp("[\"a\"]".to_string()).unwrap(), "0xc161");
+    ///    assert_eq!(Cast::to_rlp("[\"a\",\"b\"]".to_string()).unwrap(), "0xc26162");
     ///     Ok(())
     /// }
     /// ```
     pub fn to_rlp(value: String) -> Result<String> {
-        if !value.starts_with('[') {
-            Ok(format!("0x{}", hex::encode(rlp::encode(&value.as_bytes()))))
-        } else {
-            let content = value.chars().skip(1).take(value.len() - 2).collect::<String>();
-            let list: Vec<String> = if content.is_empty() {
-                vec![]
-            } else {
-                content.split(',').map(|x| x.to_string()).collect()
-            };
-            Ok(format!("0x{}", hex::encode(rlp::encode_list::<String, String>(&list))))
-        }
+        let val = serde_json::from_str(&value)?;
+        let item = rlp_converter::value_to_item(&val, false);
+        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 
     /// Decodes rlp encoded hexadecimal string
@@ -1114,22 +1109,58 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string())?, "foundry");
-    ///     assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string())?, "foundry");
+    ///     assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string()).unwrap(), "\"foundry\"");
+    ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "\"foundry\"");
     ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
-    ///     assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
-    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[a,b]");
+    ///     assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[\"a\"]");
+    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"a\",\"b\"]");
     ///     Ok(())
     /// }
     /// ```
     pub fn from_rlp(value: String) -> Result<String> {
-        let striped_value = value.strip_prefix("0x").unwrap_or(&value);
-        let decoded = hex::decode(striped_value).expect("could not decode hex");
-        if decoded[0] >= b'\xC0' {
-            Ok(format!("[{}]", rlp::decode_list::<String>(&decoded).join(",")))
-        } else {
-            Ok(rlp::decode(&decoded).expect("rlp decoding failed"))
-        }
+        let striped_value = strip_0x(&value);
+        let bytes = hex::decode(striped_value).expect("could not decode hex");
+        Ok(format!("{}", rlp::decode::<Item>(&bytes).expect("rlp decoding failed")))
+    }
+
+    /// Encodes hex data or list of hex data to hexadecimal rlp
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::hex_to_rlp("[]").unwrap(),"0xc0".to_string());
+    ///     assert_eq!(Cast::hex_to_rlp("0x22").unwrap(),"0x22".to_string());
+    ///     assert_eq!(Cast::hex_to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    ///     assert_eq!(Cast::hex_to_rlp( "[\"0x61\",\"62\"]").unwrap(), "0xc26162".to_string());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn hex_to_rlp(value: &str) -> Result<String> {
+        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let item = rlp_converter::value_to_item(&val, true);
+        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    }
+
+    /// Decodes rlp encoded list with hex data
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::hex_from_rlp("0xc0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::hex_from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
+    ///     assert_eq!(Cast::hex_from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
+    ///     assert_eq!(Cast::hex_from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
+    ///     assert_eq!(Cast::hex_from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn hex_from_rlp(value: String) -> Result<String> {
+        let striped_value = strip_0x(&value);
+        let bytes = hex::decode(striped_value).expect("could not decode hex");
+        let item = rlp::decode::<Item>(&bytes)?;
+        Ok(format!("{:x}", item))
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1372,22 +1403,5 @@ mod tests {
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
         assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
-    }
-
-    #[test]
-    fn rlp_test() {
-        assert_eq!(Cast::to_rlp("foundry".to_string()).unwrap(), "0x87666f756e647279");
-        assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string()).unwrap(), "foundry");
-        assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "foundry");
-    }
-
-    #[test]
-    fn rlp_test_list() {
-        assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
-        assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
-        assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[a,b]");
-        assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
-        assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "0xc161");
-        assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "0xc26162");
     }
 }

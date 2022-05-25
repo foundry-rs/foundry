@@ -185,11 +185,17 @@ Examples:
         unit: Option<String>,
     },
     #[clap(name = "--to-rlp")]
-    #[clap(about = "Convert a string to RLP encoded data")]
+    #[clap(about = "Encodes an array of string or a string to RLP encoded data")]
     ToRlp { value: Option<String> },
     #[clap(name = "--from-rlp")]
-    #[clap(about = "Convert RLP encoded date to a string")]
+    #[clap(about = "Decodes RLP encoded string data")]
     FromRlp { value: Option<String> },
+    #[clap(name = "--hex-to-rlp")]
+    #[clap(about = "Encodes an array of hex data or hex data to RLP data")]
+    HexToRlp { value: Option<String> },
+    #[clap(name = "--from-rlp-hex")]
+    #[clap(about = "Decodes hex RLP encoded data ")]
+    HexFromRlp { value: Option<String> },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
