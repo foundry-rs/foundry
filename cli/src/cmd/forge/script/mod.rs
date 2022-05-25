@@ -94,6 +94,12 @@ pub struct ScriptArgs {
 
     #[clap(long, help = "Takes precedence over broadcast")]
     pub debug: bool,
+
+    #[clap(
+        long,
+        help = "Makes sure a transaction is sent, only after its previous one has been confirmed and succeeded."
+    )]
+    pub slow: bool,
 }
 
 pub struct ScriptResult {

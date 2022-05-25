@@ -64,7 +64,7 @@ impl ScriptArgs {
 
         // We only wait for a transaction receipt before sending the next transaction, if there is
         // more than one signer. There would be no way of assuring their order otherwise.
-        let sequential_broadcast = local_wallets.len() != 1;
+        let sequential_broadcast = local_wallets.len() != 1 || self.slow;
         for payload in sequence {
             let (tx, signer) = payload?;
 

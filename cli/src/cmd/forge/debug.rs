@@ -57,6 +57,7 @@ impl DebugArgs {
             evm_opts: self.evm_opts,
             resume: false,
             debug: true,
+            slow: false,
         };
         script.run_script().await
     }
