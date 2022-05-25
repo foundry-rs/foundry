@@ -71,7 +71,7 @@ jobs:
         uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
-      # required for forge commands
+      # required for forge commands that use git
       - name: setup git config
         run: |
           git config user.name "GitHub Actions Bot"
