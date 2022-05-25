@@ -38,7 +38,8 @@ pub struct ClapChain {
         env = "CHAIN",
         default_value = "mainnet",
         // if Chain implemented ArgEnum, we'd get this for free
-        possible_values = Chain::VARIANTS
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAIN"
     )]
     pub inner: Chain,
 }
