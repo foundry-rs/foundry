@@ -43,6 +43,13 @@ use crate::{
     utils::{consume_config_rpc_url, read_secret},
 };
 use eyre::WrapErr;
+use foundry_utils::{
+    format_tokens,
+    selectors::{
+        decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
+        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
+    },
+};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -414,12 +421,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
@@ -430,11 +437,11 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::decode_function_selector(&selector).await?;
+            let sigs = decode_function_selector(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
         Subcommands::FourByteDecode { calldata } => {
-            let sigs = foundry_utils::decode_calldata(&calldata).await?;
+            let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -451,13 +458,23 @@ async fn main() -> eyre::Result<()> {
             }?;
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::decode_event_topic(&topic).await?;
+            let sigs = decode_event_topic(&topic).await?;
             sigs.iter().for_each(|sig| println!("{}", sig));
+        }
+
+        Subcommands::UploadSignature { signatures } => {
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {
@@ -465,7 +482,7 @@ async fn main() -> eyre::Result<()> {
                 eprintln!("Expected calldata hex string, received \"{calldata}\"");
                 std::process::exit(0)
             }
-            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
+            let pretty_data = pretty_calldata(&calldata, offline).await?;
             println!("{pretty_data}");
         }
         Subcommands::Age { block, rpc_url } => {
