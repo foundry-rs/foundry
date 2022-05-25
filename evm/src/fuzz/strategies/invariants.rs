@@ -2,20 +2,20 @@ use ethers::{
     abi::{Abi, Function, ParamType},
     types::{Address, Bytes},
 };
-use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
 
-use crate::fuzz::{fuzz_calldata, fuzz_calldata_from_state, strategies::fuzz_param, EvmFuzzState};
-
-// use super::{};
+use crate::fuzz::{
+    fuzz_calldata, fuzz_calldata_from_state, invariant::TargetedContracts, strategies::fuzz_param,
+    EvmFuzzState,
+};
 
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     depth: usize,
     senders: Vec<Address>,
-    contracts: BTreeMap<Address, (String, Abi)>,
+    contracts: TargetedContracts,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
     let iters = 1..depth + 1;
     proptest::collection::vec(gen_call(fuzz_state, senders, contracts), iters).boxed()
@@ -24,12 +24,12 @@ pub fn invariant_strat(
 fn gen_call(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
-    contracts: BTreeMap<Address, (String, Abi)>,
+    contracts: TargetedContracts,
 ) -> BoxedStrategy<(Address, (Address, Bytes))> {
     let random_contract = select_random_contract(contracts);
     random_contract
-        .prop_flat_map(move |(contract, abi)| {
-            let func = select_random_function(abi);
+        .prop_flat_map(move |(contract, abi, functions)| {
+            let func = select_random_function(abi, functions);
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
             func.prop_flat_map(move |func| {
@@ -55,16 +55,19 @@ fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address>
 }
 
 fn select_random_contract(
-    contracts: BTreeMap<Address, (String, Abi)>,
-) -> impl Strategy<Value = (Address, Abi)> {
+    contracts: TargetedContracts,
+) -> impl Strategy<Value = (Address, Abi, Vec<Function>)> {
     let selectors = any::<prop::sample::Selector>();
     selectors.prop_map(move |selector| {
         let res = selector.select(&contracts);
-        (*res.0, res.1 .1.clone())
+        (*res.0, res.1 .1.clone(), res.1 .2.clone())
     })
 }
 
-fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
+fn select_random_function(
+    abi: Abi,
+    targeted_functions: Vec<Function>,
+) -> impl Strategy<Value = Function> {
     let selectors = any::<prop::sample::Selector>();
     let possible_funcs: Vec<ethers::abi::Function> = abi
         .functions()
@@ -76,10 +79,26 @@ fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
         })
         .cloned()
         .collect();
-    selectors.prop_map(move |selector| {
+
+    let total_random = selectors.prop_map(move |selector| {
         let func = selector.select(&possible_funcs);
         func.clone()
-    })
+    });
+
+    if !targeted_functions.is_empty() {
+        let selector = any::<prop::sample::Selector>()
+            .prop_map(move |selector| selector.select(targeted_functions.clone()));
+
+        selector.boxed()
+        // todo make it an union too?
+        // proptest::strategy::Union::new_weighted(vec![
+        //     (100, selector.boxed()),
+        //     (0, total_random.boxed()),
+        // ])
+        // .boxed()
+    } else {
+        total_random.boxed()
+    }
 }
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata

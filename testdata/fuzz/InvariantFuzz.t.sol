@@ -13,6 +13,9 @@ contract UnbreakableMockToken {
     function mint(uint _a) public {
         totalSupply *= _a;
     } 
+
+    function harmless() public {
+    } 
 }
 
 contract BreakableMockToken {
@@ -33,6 +36,11 @@ contract InvariantFuzzTest is DSTest {
     UnbreakableMockToken ignore;
     UnbreakableMockToken unbreakable;
     BreakableMockToken breakable;
+
+  struct FuzzSelector {
+      address addr;
+      bytes4[] selectors;
+  }
 
   function setUp() public {
       unbreakable = new UnbreakableMockToken();
@@ -59,6 +67,14 @@ contract InvariantFuzzTest is DSTest {
     addrs[0] = address(0x1337);
     addrs[1] = address(0x1338);
     return addrs;
+  }
+
+  function targetSelectors() public returns (FuzzSelector[] memory) {
+    FuzzSelector[] memory targets = new FuzzSelector[](1);
+    bytes4[] memory selectors = new bytes4[](1);
+    selectors[0] = BreakableMockToken.shouldRevert.selector;
+    targets[0] = FuzzSelector(address(breakable), selectors);
+    return targets;
   }
 
   function invariantTestPass2() public {

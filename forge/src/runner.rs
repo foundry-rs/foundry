@@ -585,7 +585,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
 
         if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
-            evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)
+            evm.invariant_fuzz(funcs, address, self.contract, test_options.invariant_depth)?
         {
             let results = invariants
                 .iter()
@@ -663,7 +663,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                         logs: logs.clone(),
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         traces: traces.clone(),
-                        labeled_addresses: dbg!(labeled_addresses.clone()),
+                        labeled_addresses: labeled_addresses.clone(),
                     }
                 })
                 .collect();
