@@ -4,12 +4,8 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use ethers::prelude::artifacts::{output_selection::ContractOutputSelection, LosslessAbi};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use tracing::trace;
-
-static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/import";
+use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
+use foundry_utils::selectors::{import_selectors, SelectorImportData};
 
 #[derive(Debug, Clone, Parser)]
 pub struct UploadSelectorsArgs {
@@ -34,7 +30,6 @@ impl UploadSelectorsArgs {
             ..Default::default()
         };
 
-        trace!("Building project");
         let project = build_args.project()?;
         let outcome = compile::suppress_compile(&project)?;
         let found_artifact = outcome.find(&contract);
@@ -42,71 +37,14 @@ impl UploadSelectorsArgs {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
-        let body = ImportRequest {
-            import_type: "abi".to_string(),
-            data: vec![artifact.abi.clone().ok_or(eyre::eyre!("Unable to fetch abi"))?],
-        };
+        let import_data = SelectorImportData::Abi(vec![artifact
+            .abi
+            .clone()
+            .ok_or(eyre::eyre!("Unable to fetch abi"))?]);
 
         // upload abi to selector database
-        trace!("Uploading selector args {:?}", body);
-        let res: ImportResponse = reqwest::Client::new()
-            .post(SELECTOR_DATABASE_URL)
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?;
-        trace!("Got response: {:?}", res);
-        res.describe_upload();
+        import_selectors(import_data).await?.describe();
 
         Ok(())
-    }
-}
-
-#[derive(Serialize, Debug)]
-struct ImportRequest {
-    #[serde(rename = "type")]
-    import_type: String,
-    data: Vec<LosslessAbi>,
-}
-
-#[derive(Deserialize, Debug)]
-struct ImportTypeData {
-    imported: HashMap<String, String>,
-    duplicated: HashMap<String, String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct ImportData {
-    function: ImportTypeData,
-    event: ImportTypeData,
-}
-
-#[derive(Deserialize, Debug)]
-struct ImportResponse {
-    result: ImportData,
-}
-
-impl ImportResponse {
-    /// Print info about the functions which were uploaded or already known
-    pub fn describe_upload(&self) {
-        self.result
-            .function
-            .imported
-            .iter()
-            .for_each(|(k, v)| println!("Imported: Function {k}: {v}"));
-        self.result.event.imported.iter().for_each(|(k, v)| println!("Imported: Event {k}: {v}"));
-        self.result
-            .function
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Function {k}: {v}"));
-        self.result
-            .event
-            .duplicated
-            .iter()
-            .for_each(|(k, v)| println!("Duplicated: Event {k}: {v}"));
-
-        println!("Selectors successfully uploaded to https://sig.eth.samczsun.com");
     }
 }

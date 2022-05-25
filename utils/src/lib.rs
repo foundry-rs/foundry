@@ -15,55 +15,16 @@ use ethers_solc::{
 };
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
-use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     env::VarError,
-    fmt::{self, Write},
+    fmt::Write,
     str::FromStr,
     time::Duration,
 };
 
 pub mod rpc;
-
-static SELECTOR_DATABASE_URL: &str = "https://sig.eth.samczsun.com/api/v1/signatures";
-
-pub enum SelectorOrSig {
-    Selector(String),
-    Sig(Vec<String>),
-}
-
-pub struct PossibleSigs {
-    method: SelectorOrSig,
-    data: Vec<String>,
-}
-impl PossibleSigs {
-    fn new() -> Self {
-        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
-    }
-}
-impl fmt::Display for PossibleSigs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.method {
-            SelectorOrSig::Selector(selector) => {
-                writeln!(f, "\n Method: {}", selector)?;
-            }
-            SelectorOrSig::Sig(sigs) => {
-                writeln!(f, "\n Possible methods:")?;
-                for sig in sigs {
-                    writeln!(f, " - {}", sig)?;
-                }
-            }
-        }
-
-        writeln!(f, " ------------")?;
-        for (i, row) in self.data.iter().enumerate() {
-            let pad = if i < 10 { "  " } else { " " };
-            writeln!(f, " [{}]:{}{}", i, pad, row)?;
-        }
-        Ok(())
-    }
-}
+pub mod selectors;
 
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
@@ -533,140 +494,6 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
         .collect::<Vec<_>>();
     let tokens = parse_tokens(params, true)?;
     Ok(func.encode_input(&tokens)?)
-}
-
-pub enum SelectorType {
-    Function,
-    Event,
-}
-
-/// Decodes the given function or event selector using sig.eth.samczsun.com
-async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<Vec<String>> {
-    #[derive(Deserialize)]
-    struct Decoded {
-        name: String,
-    }
-
-    #[derive(Deserialize)]
-    struct ApiResult {
-        event: HashMap<String, Vec<Decoded>>,
-        function: HashMap<String, Vec<Decoded>>,
-    }
-
-    #[derive(Deserialize)]
-    struct ApiResponse {
-        ok: bool,
-        result: ApiResult,
-    }
-
-    // using samczsun signature database over 4byte
-    // see https://github.com/foundry-rs/foundry/issues/1672
-    let url = match selector_type {
-        SelectorType::Function => format!("{SELECTOR_DATABASE_URL}?function={selector}"),
-        SelectorType::Event => format!("{SELECTOR_DATABASE_URL}?event={selector}"),
-    };
-
-    let res = reqwest::get(url).await?.text().await?;
-    let api_response = match serde_json::from_str::<ApiResponse>(&res) {
-        Ok(inner) => inner,
-        Err(err) => {
-            eyre::bail!("Could not decode response:\n {res}.\nError: {err}")
-        }
-    };
-
-    if !api_response.ok {
-        eyre::bail!("Failed to decode:\n {res}")
-    }
-
-    let decoded = match selector_type {
-        SelectorType::Function => api_response.result.function,
-        SelectorType::Event => api_response.result.event,
-    };
-
-    Ok(decoded
-        .get(selector)
-        .ok_or(eyre::eyre!("No signature found"))?
-        .iter()
-        .map(|d| d.name.clone())
-        .collect::<Vec<String>>())
-}
-
-/// Fetches a function signature given the selector using sig.eth.samczsun.com
-pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
-    let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
-    if prefixed_selector.len() < 10 {
-        return Err(eyre::eyre!("Invalid selector"))
-    }
-
-    decode_selector(&prefixed_selector[..10], SelectorType::Function).await
-}
-
-/// Fetches all possible signatures and attempts to abi decode the calldata
-pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
-    let sigs = decode_function_selector(calldata).await?;
-
-    // filter for signatures that can be decoded
-    Ok(sigs
-        .iter()
-        .cloned()
-        .filter(|sig| {
-            let res = abi_decode(sig, calldata, true);
-            res.is_ok()
-        })
-        .collect::<Vec<String>>())
-}
-
-/// Fetches a event signature given the 32 byte topic using sig.eth.samczsun.com
-pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
-    let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
-    if prefixed_topic.len() < 66 {
-        return Err(eyre::eyre!("Invalid topic"))
-    }
-    decode_selector(&prefixed_topic[..66], SelectorType::Event).await
-}
-
-/// Pretty print calldata and if available, fetch possible function signatures
-///
-/// ```no_run
-/// 
-/// use foundry_utils::pretty_calldata;
-///
-/// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-///   println!("{}",pretty_data);
-/// # Ok(())
-/// # }
-/// ```
-
-pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result<PossibleSigs> {
-    let mut possible_info = PossibleSigs::new();
-    let calldata = calldata.as_ref().trim_start_matches("0x");
-
-    let selector =
-        calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
-
-    let sigs = if offline {
-        vec![]
-    } else {
-        decode_function_selector(selector).await.unwrap_or_default().into_iter().collect()
-    };
-    let (_, data) = calldata.split_at(8);
-
-    if data.len() % 64 != 0 {
-        eyre::bail!("\nInvalid calldata size")
-    }
-
-    let row_length = data.len() / 64;
-
-    for row in 0..row_length {
-        possible_info.data.push(data[64 * row..64 * (row + 1)].to_string());
-    }
-    if sigs.is_empty() {
-        possible_info.method = SelectorOrSig::Selector(selector.to_string());
-    } else {
-        possible_info.method = SelectorOrSig::Sig(sigs);
-    }
-    Ok(possible_info)
 }
 
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
@@ -1183,56 +1010,6 @@ mod tests {
             resolve_addr(NameOrAddress::Address(Address::zero()), Chain::Mainnet).ok(),
             Some(NameOrAddress::Address(Address::zero())),
         );
-    }
-
-    #[tokio::test]
-    async fn test_decode_selector() {
-        let sigs = decode_function_selector("0xa9059cbb").await;
-        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
-
-        let sigs = decode_function_selector("a9059cbb").await;
-        assert_eq!(sigs.unwrap()[0], "transfer(address,uint256)".to_string());
-
-        // invalid signature
-        decode_function_selector("0xa9059c")
-            .await
-            .map_err(|e| assert_eq!(e.to_string(), "Invalid selector"))
-            .map(|_| panic!("Expected fourbyte error"))
-            .ok();
-    }
-
-    #[tokio::test]
-    async fn test_decode_calldata() {
-        let decoded = decode_calldata("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
-        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
-
-        let decoded = decode_calldata("a9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79").await;
-        assert_eq!(decoded.unwrap()[0], "transfer(address,uint256)".to_string());
-    }
-
-    #[tokio::test]
-    async fn test_decode_event_topic() {
-        let decoded = decode_event_topic(
-            "0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6",
-        )
-        .await;
-        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
-
-        let decoded =
-            decode_event_topic("7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
-                .await;
-        assert_eq!(decoded.unwrap()[0], "updateAuthority(address,uint8)".to_string());
-
-        let decoded = decode_event_topic(
-            "0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd",
-        )
-        .await;
-        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
-
-        let decoded =
-            decode_event_topic("b7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
-                .await;
-        assert_eq!(decoded.unwrap()[0], "canCall(address,address,bytes4)".to_string());
     }
 
     #[test]
