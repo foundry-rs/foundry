@@ -13,7 +13,12 @@ use ethers::solc::resolver::{Charset, TreeOptions};
 pub struct TreeArgs {
     #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
     no_dedupe: bool,
-    #[clap(help = "Character set to use in output: utf8, ascii", default_value = "utf8", long)]
+    #[clap(
+        help = "Character set to use in output: utf8, ascii",
+        default_value = "utf8",
+        long,
+        value_name = "CHARSET"
+    )]
     charset: Charset,
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     opts: ProjectPathsArgs,

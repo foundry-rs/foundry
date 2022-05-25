@@ -39,10 +39,11 @@ pub struct RunArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
+    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
