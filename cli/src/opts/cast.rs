@@ -424,24 +424,44 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     },
     #[clap(name = "4byte")]
     #[clap(aliases = &["4", "4b"])]
-    #[clap(about = "Get the function signatures for the given selector from 4byte.directory.")]
+    #[clap(
+        about = "Get the function signatures for the given selector from https://sig.eth.samczsun.com."
+    )]
     FourByte {
         #[clap(help = "The function selector.")]
         selector: String,
     },
     #[clap(name = "4byte-decode")]
     #[clap(aliases = &["4d", "4bd"])]
-    #[clap(about = "Decode ABI-encoded calldata using 4byte.directory.")]
+    #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
     },
     #[clap(name = "4byte-event")]
     #[clap(aliases = &["4e", "4be"])]
-    #[clap(about = "Get the event signature for a given topic 0 from 4byte.directory.")]
+    #[clap(
+        about = "Get the event signature for a given topic 0 from https://sig.eth.samczsun.com."
+    )]
     FourByteEvent {
         #[clap(help = "Topic 0", value_name = "TOPIC_0")]
         topic: String,
+    },
+    #[clap(name = "upload-signature")]
+    #[clap(aliases = &["ups"])]
+    #[clap(about = r#"Upload the given signatures to https://sig.eth.samczsun.com.
+
+    Examples:
+    - cast upload-signature "transfer(address,uint256)"
+    - cast upload-signature "function transfer(address,uint256)"
+    - cast upload-signature "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
+    - cast upload-signature ./out/Contract.sol/Contract.json
+    "#)]
+    UploadSignature {
+        #[clap(
+            help = "The signatures to upload. Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given. Can also take paths to contract artifact JSON."
+        )]
+        signatures: Vec<String>,
     },
     #[clap(name = "pretty-calldata")]
     #[clap(alias = "pc")]
@@ -449,12 +469,12 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         about = "Pretty print calldata.",
         long_about = r#"Pretty print calldata.
 
-Tries to decode the calldata using 4byte.directory unless --offline is passed."#
+Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed."#
     )]
     PrettyCalldata {
         #[clap(help = "The calldata.")]
         calldata: String,
-        #[clap(long, short, help = "Skip the 4byte directory lookup.")]
+        #[clap(long, short, help = "Skip the https://sig.eth.samczsun.com lookup.")]
         offline: bool,
     },
     #[clap(name = "age")]
