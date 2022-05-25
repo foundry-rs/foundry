@@ -294,6 +294,22 @@ impl<'a, W: Write> Formatter<'a, W> {
     //     }
     //     chunks
     // }
+    // fn extend_chunks<T, P>(&self, chunks: Vec<(usize, T)>, prefix: P, postfix: P) -> Vec<(usize,
+    // T)> where
+    //     T: std::fmt::Display,
+    //     P: Into<T>,
+    // {
+    //     if chunks.is_empty() {
+    //         return chunks
+    //     }
+
+    //     let first = chunks.first().unwrap();
+    //     chunks.insert(0, (first.0 - prefix.len(), prefix.into()));
+    // }
+
+    // fn extend_chunks_with_paren<T>(&self, chunks: Vec<(usize, T)>) -> Vec<(usize, T)> {
+    //     chunks
+    // }
 
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
@@ -348,13 +364,13 @@ impl<'a, W: Write> Formatter<'a, W> {
         !self.will_chunk_fit(max_byte_end, string)
     }
 
-    fn write_chunks<'b>(
-        &mut self,
-        items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        self.write_chunks_separated(items, "", multiline)
-    }
+    // fn write_chunks<'b>(
+    //     &mut self,
+    //     items: impl IntoIterator<Item = &'b (usize, impl std::fmt::Display + 'b)> + 'b,
+    //     multiline: bool,
+    // ) -> std::fmt::Result {
+    //     self.write_chunks_separated(items, "", multiline)
+    // }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
     fn write_chunks_separated<'b>(
@@ -443,7 +459,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         if last_char_was_whitespace && !self.last_char_is_whitespace() {
             write!(self.buf(), " ")?;
         }
-        write!(self.buf(), "{}", chunk)
+        write!(self.buf(), "{chunk}")
     }
 }
 
@@ -655,25 +671,24 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        write!(self.buf(), "pragma {} ", &ident.name)?;
-
         #[allow(clippy::if_same_then_else)]
-        if ident.name == "solidity" {
+        let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
             // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
             // TODO: semver-solidity crate :D
-            write!(self.buf(), "{};", str.string)?;
+            &str.string
         } else {
-            write!(self.buf(), "{};", str.string)?;
-        }
+            &str.string
+        };
+
+        write_chunk!(self, str.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
 
         Ok(())
     }
 
     fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
-        write!(self.buf(), "import \"{}\";", &import.string)?;
-
+        write_chunk!(self, import.loc.end(), "import \"{}\";", &import.string)?;
         Ok(())
     }
 
@@ -682,8 +697,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         global: &mut StringLiteral,
         alias: &mut Identifier,
     ) -> VResult {
-        write!(self.buf(), "import \"{}\" as {};", global.string, alias.name)?;
-
+        write_chunk!(self, alias.loc.end(), "import \"{}\" as {};", global.string, alias.name)?;
         Ok(())
     }
 
@@ -729,7 +743,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_closing_bracket()?;
         }
 
-        write!(self.buf(), " from \"{}\";", from.string)?;
+        write_chunk!(self, from.loc.end(), " from \"{}\";", from.string)?;
 
         Ok(())
     }
@@ -816,10 +830,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         var.ty.visit(self)?;
 
         if let Some(storage) = &var.storage {
-            write!(self.buf(), " {}", storage)?;
+            write_chunk!(self, storage.loc().end(), " {}", storage)?;
         }
 
-        write!(self.buf(), " {}", var.name.name)?;
+        write_chunk!(self, var.name.loc.end(), " {}", var.name.name)?;
 
         Ok(())
     }
@@ -839,10 +853,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
 
-        write!(self.buf(), "{}", func.ty)?;
+        write!(self.buf(), "{}", func.ty)?; // TODO:
 
-        if let Some(Identifier { name, .. }) = &func.name {
-            write!(self.buf(), " {name}")?;
+        if let Some(Identifier { name, loc }) = &func.name {
+            write_chunk!(self, loc.end(), " {name}")?;
         }
 
         let params = self.items_to_chunks(&mut func.params, |(loc, param)| {
@@ -857,6 +871,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let returns = self.items_to_chunks(&mut func.returns, |(loc, param)| {
             Ok((*loc, param.as_mut().ok_or("no param")?))
         })?;
+
+        let (body, body_first_line) = match &mut func.body {
+            Some(body) => {
+                let body_string = self.visit_to_string(body)?;
+                let first_line = body_string.lines().next().unwrap_or_default();
+                (Some(body), format!(" {first_line}"))
+            }
+            None => (None, ";".to_string()),
+        };
+
+        // Compose one line string consisting of params, attributes, return params & first line
+        let params_string = params.iter().map(|a| &a.1).join(", ");
+        let attr_string = attributes.iter().map(|a| &a.1).join(" ");
+        let returns_string = if returns.is_empty() {
+            "".to_owned()
+        } else {
+            returns.iter().map(|r| &r.1).join(", ")
+        };
+        let fun_def_string =
+            format!("({params_string}){attr_string}{returns_string}{body_first_line}");
+
+        // if self.will_it_fit(&fun_def_string) {
+        //     write!(self.buf(), "{fun_def_string}")?;
+        // } else {
+        // }
 
         // Compose one line string consisting of attributes and return parameters.
         let attr_string = attributes.iter().map(|a| &a.1).join(" ");
@@ -882,16 +921,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let returns_multiline =
             self.are_chunks_separated_multiline(&returns, ", ") || params_multiline;
         let returns_indent = !attributes.is_empty() || returns_multiline;
-
-        let (body, body_first_line) = match &mut func.body {
-            Some(body) => {
-                let body_string = self.visit_to_string(body)?;
-                let first_line = body_string.lines().next().unwrap_or_default();
-
-                (Some(body), format!(" {first_line}"))
-            }
-            None => (None, ";".to_string()),
-        };
 
         let attributes_returns_multiline = !self
             .will_it_fit(&format!("{attributes_returns}{body_first_line}")) ||
@@ -965,10 +994,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
         match attribute {
-            FunctionAttribute::Mutability(mutability) => write!(self.buf(), "{mutability}")?,
-            FunctionAttribute::Visibility(visibility) => write!(self.buf(), "{visibility}")?,
-            FunctionAttribute::Virtual(_) => write!(self.buf(), "virtual")?,
-            FunctionAttribute::Immutable(_) => write!(self.buf(), "immutable")?,
+            FunctionAttribute::Mutability(mutability) => {
+                write_chunk!(self, mutability.loc().end(), "{mutability}")?
+            }
+            FunctionAttribute::Visibility(visibility) => write!(self.buf(), "{visibility}")?, /* TODO: */
+            FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
+            FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(_, args) => {
                 write!(self.buf(), "override")?;
                 if !args.is_empty() {
@@ -978,7 +1009,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     self.write_chunks_with_paren_separated(&args, ", ", multiline)?;
                 }
             }
-            FunctionAttribute::BaseOrModifier(_, base) => {
+            FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract.base.iter().any(|contract_base| {
                         helpers::namespace_matches(&contract_base.name, &base.name)
@@ -989,11 +1020,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     base.visit(self)?;
                 } else {
                     let base_or_modifier = self.visit_to_string(base)?;
-                    write!(
-                        self.buf(),
-                        "{}",
-                        base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
-                    )?;
+                    let base_or_modifier =
+                        base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier);
+                    write_chunk!(self, loc.end(), "{base_or_modifier}")?;
                 }
             }
         };
@@ -1039,11 +1068,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         parameter.ty.visit(self)?;
 
         if let Some(storage) = &parameter.storage {
-            write!(self.buf(), " {storage}")?;
+            write_chunk!(self, storage.loc().end(), " {storage}")?;
         }
 
         if let Some(name) = &parameter.name {
-            write!(self.buf(), " {}", name.name)?;
+            write_chunk!(self, parameter.loc.end(), " {}", name.name)?;
         }
 
         Ok(())
@@ -1073,7 +1102,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        write!(self.buf(), "struct {} ", &structure.name.name)?;
+        write_chunk!(self, structure.name.loc.end(), "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
             self.write_empty_brackets()?;
@@ -1094,7 +1123,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        write!(self.buf(), "type {} is ", def.name.name)?;
+        write_chunk!(self, def.name.loc.end(), "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
         self.write_semicolon()?;
 
@@ -1176,7 +1205,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        write!(self.buf(), "event {}", event.name.name)?;
+        write_chunk!(self, event.name.loc.end(), "event {}", event.name.name)?;
 
         let params = self.items_to_chunks(&mut event.fields, |param| Ok((param.loc, param)))?;
 
@@ -1205,14 +1234,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self.buf(), " indexed")?;
         }
         if let Some(name) = &param.name {
-            write!(self.buf(), " {}", name.name)?;
+            write_chunk!(self, name.loc.end(), " {}", name.name)?;
         }
 
         Ok(())
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        write!(self.buf(), "error {}", error.name.name)?;
+        write_chunk!(self, error.name.loc.end(), "error {}", error.name.name)?;
 
         let params = self.items_to_chunks(&mut error.fields, |param| Ok((param.loc, param)))?;
 
@@ -1226,7 +1255,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         param.ty.visit(self)?;
 
         if let Some(name) = &param.name {
-            write!(self.buf(), " {}", name.name)?;
+            write_chunk!(self, name.loc.end(), " {}", name.name)?;
         }
 
         Ok(())
@@ -1257,7 +1286,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         if let Some(global) = &mut using.global {
-            write!(self.buf(), " {}", global.name)?;
+            write_chunk!(self, global.loc.end(), " {}", global.name)?;
         }
 
         self.write_semicolon()?;

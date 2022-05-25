@@ -416,12 +416,6 @@ impl Visitable for Expression {
     }
 }
 
-impl Visitable for Box<Expression> {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_expr(LineOfCode::loc(self), self)
-    }
-}
-
 impl Visitable for Identifier {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_ident(self.loc, self)
