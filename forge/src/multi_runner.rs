@@ -2,14 +2,14 @@ use crate::{runner::TestOptions, ContractRunner, SuiteResult, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{Artifact, ProjectCompileOutput},
+    solc::{utils::RuntimeOrHandle, Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_evm::executor::{
     builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
-use foundry_utils::{PostLinkInput, RuntimeOrHandle};
+use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
@@ -185,6 +185,48 @@ impl MultiContractRunner {
                 abi.functions().filter(|func| filter.matches_test(func.signature()))
             })
             .count()
+    }
+
+    // Get all tests of matching path and contract
+    pub fn get_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> Vec<String> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
+            .filter(|sig| sig.starts_with("test"))
+            .collect()
+    }
+
+    pub fn list(
+        &self,
+        filter: &(impl TestFilter + Send + Sync),
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map(|(id, (abi, _, _))| {
+                let source = id.source.as_path().display().to_string();
+                let name = id.name.clone();
+                let tests = abi
+                    .functions()
+                    .filter(|func| func.name.starts_with("test"))
+                    .filter(|func| filter.matches_test(func.signature()))
+                    .map(|func| func.name.clone())
+                    .collect::<Vec<_>>();
+
+                (source, name, tests)
+            })
+            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
+                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
+                acc
+            })
     }
 
     pub fn test(
@@ -1065,12 +1107,8 @@ mod tests {
 
     #[test]
     fn test_fork() {
-        let rpc_url = std::env::var("ETH_RPC_URL");
-        if rpc_url.is_err() {
-            eprintln!("Skipping test, ETH_RPC_URL is not set.");
-            return
-        }
-        let mut runner = forked_runner(&(rpc_url.unwrap()));
+        let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+        let mut runner = forked_runner(&rpc_url);
         let suite_result =
             runner.test(&Filter::new(".*", ".*", ".*fork"), None, TEST_OPTS).unwrap();
 

@@ -8,7 +8,7 @@ sensible set of defaults.
 Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
-in `FOUNDRY_PROFILE`.
+in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
 
@@ -104,7 +104,7 @@ block_difficulty = 0
 # "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
 revert_strings = "default"
 # caches storage retrieved locally for certain chains and endpoints
-# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
 # to disable storage caching entirely set `no_storage_caching = true`
 rpc_storage_caching = { chains = "all", endpoints = "all" }
@@ -116,6 +116,8 @@ bytecode_hash = "ipfs"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false
+# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+etherscan_api_key="YOURETHERSCANAPIKEY"
 ```
 
 ##### Additional Optimizer settings
@@ -137,6 +139,42 @@ yul = true
 stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
+
+##### Additional Model Checker settings
+
+[Solidity's built-in model checker](https://docs.soliditylang.org/en/latest/smtchecker.html#tutorial)
+is an opt-in module that can be enabled via the `ModelChecker` object.
+
+See [Compiler Input Description `settings.modelChecker`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
+and [the model checker's options](https://docs.soliditylang.org/en/latest/smtchecker.html#smtchecker-options-and-tuning).
+
+The module is available in `solc` release binaries for OSX and Linux.
+The latter requires the z3 library version [4.8.8, 4.8.14] to be installed
+in the system (SO version 4.8).
+
+Similarly to the optimizer settings above, the `model_checker` settings must be
+prefixed with the profile they correspond to: `[default.model_checker]` belongs
+to the `[default]` profile.
+
+```toml
+[default.model_checker]
+contracts = { '/path/to/project/src/Contract.sol' = [ 'Contract' ] }
+engine = 'chc'
+timeout = 10000
+targets = [ 'assert' ]
+```
+
+The fields above are recommended when using the model checker.
+Setting which contract should be verified is extremely important, otherwise all
+available contracts will be verified which can consume a lot of time.
+The recommended engine is `chc`, but `bmc` and `all` (runs both) are also
+accepted.
+It is also important to set a proper timeout (given in milliseconds), since the
+default time given to the underlying solvers may not be enough.
+If no verification targets are given, only assertions will be checked.
+
+The model checker will run when `forge build` is invoked, and will show
+findings as warnings if any.
 
 ## Environment Variables
 

@@ -1,20 +1,13 @@
 //! Support for forking off another client
 
+use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
+use anvil_core::eth::call::CallRequest;
 use ethers::{
-    prelude::{Http, Provider},
-    types::H256,
-};
-use std::{collections::HashMap, sync::Arc};
-
-use crate::eth::error::BlockchainError;
-
-use crate::eth::backend::mem::fork_db::ForkedDatabase;
-use ethers::{
-    prelude::BlockNumber,
+    prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError},
     types::{
-        Address, Block, BlockId, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt,
-        TxHash, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, Filter, Log,
+        Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -22,6 +15,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
 /// Represents a fork of a remote client
@@ -37,20 +31,46 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: ForkedDatabase,
+    pub database: Arc<RwLock<ForkedDatabase>>,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
+    /// Creates a new instance of the fork
+    pub fn new(config: ClientForkConfig, database: Arc<RwLock<ForkedDatabase>>) -> Self {
+        Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
+    }
+
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(
+    pub async fn reset(
         &self,
         url: Option<String>,
         block_number: Option<u64>,
     ) -> Result<(), BlockchainError> {
-        self.database.reset(url.clone(), block_number)?;
-        self.config.write().update(url, block_number)?;
+        {
+            self.database.write().reset(url.clone(), block_number)?;
+        }
+
+        if let Some(url) = url {
+            self.config.write().update_url(url)?;
+            let chain_id = self.provider().get_chainid().await?;
+            self.config.write().chain_id = chain_id.as_u64();
+        }
+
+        let block = if let Some(block_number) = block_number {
+            let provider = self.provider();
+            let block =
+                provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+            let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+            let timestamp = block.timestamp.as_u64();
+
+            Some((block_number, block_hash, timestamp))
+        } else {
+            None
+        };
+
+        self.config.write().update_block(block);
         self.clear_cached_storage();
         Ok(())
     }
@@ -62,7 +82,11 @@ impl ClientFork {
 
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
-        block <= self.block_number()
+        block < self.block_number()
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.config.read().timestamp
     }
 
     pub fn block_number(&self) -> u64 {
@@ -91,6 +115,39 @@ impl ClientFork {
 
     fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
         self.storage.write()
+    }
+
+    /// Sends `eth_call`
+    pub async fn call(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_call", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn estimate_gas(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<U256, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_estimateGas", [tx, block]).await
+    }
+
+    /// Sends `eth_call`
+    pub async fn create_access_list(
+        &self,
+        request: &CallRequest,
+        block: Option<BlockNumber>,
+    ) -> Result<AccessListWithGasUsed, ProviderError> {
+        let tx = ethers::utils::serialize(request);
+        let block = ethers::utils::serialize(&block.unwrap_or(BlockNumber::Latest));
+        self.provider().request("eth_createAccessList", [tx, block]).await
     }
 
     pub async fn storage_at(
@@ -319,34 +376,34 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<Http>>,
     pub chain_id: u64,
+    /// The timestamp for the forked block
+    pub timestamp: u64,
 }
 
 // === impl ClientForkConfig ===
 
 impl ClientForkConfig {
-    /// Updates the forking metadata
+    /// Updates the provider URL
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    pub fn update(
-        &mut self,
-        url: Option<String>,
-        block_number: Option<u64>,
-    ) -> Result<(), BlockchainError> {
-        if let Some(url) = url {
-            self.provider = Arc::new(
-                Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
-            );
-            trace!(target: "fork", "Updated rpc url  {}", url);
-            self.eth_rpc_url = url;
-        }
-        if let Some(block_number) = block_number {
-            self.block_number = block_number;
-            trace!(target: "fork", "Updated block number {}", block_number);
-        }
-
+    fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
+        self.provider = Arc::new(
+            Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+        );
+        trace!(target: "fork", "Updated rpc url  {}", url);
+        self.eth_rpc_url = url;
         Ok(())
+    }
+    /// Updates the block forked off `(block number, block hash, timestamp)`
+    pub fn update_block(&mut self, block: Option<(u64, H256, u64)>) {
+        if let Some((block_number, block_hash, timestamp)) = block {
+            self.block_number = block_number;
+            self.block_hash = block_hash;
+            self.timestamp = timestamp;
+            trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
+        }
     }
 }
 

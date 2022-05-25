@@ -23,7 +23,8 @@ serde = "1.0.132"
 serde_json = { version = "1.0.67", default-features = false }
 tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
 rlp = "0.5.1"
-
+futures = "0.3.17"
+tracing = "0.1.26"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }

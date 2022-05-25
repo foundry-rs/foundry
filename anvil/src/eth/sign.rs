@@ -35,20 +35,24 @@ pub trait Signer: Send + Sync {
     ) -> Result<TypedTransaction, BlockchainError>;
 }
 
+/// Maintains developer keys
 pub struct DevSigner {
+    addresses: Vec<Address>,
     accounts: HashMap<Address, Wallet<SigningKey>>,
 }
 
 impl DevSigner {
-    pub fn new(accounts: HashMap<Address, Wallet<SigningKey>>) -> Self {
-        Self { accounts }
+    pub fn new(accounts: Vec<Wallet<SigningKey>>) -> Self {
+        let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
+        let accounts = addresses.iter().cloned().zip(accounts.into_iter()).collect();
+        Self { addresses, accounts }
     }
 }
 
 #[async_trait::async_trait]
 impl Signer for DevSigner {
     fn accounts(&self) -> Vec<Address> {
-        self.accounts.keys().copied().collect()
+        self.addresses.clone()
     }
 
     fn is_signer_for(&self, addr: Address) -> bool {

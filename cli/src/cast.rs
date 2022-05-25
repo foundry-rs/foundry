@@ -43,6 +43,13 @@ use crate::{
     utils::{consume_config_rpc_url, read_secret},
 };
 use eyre::WrapErr;
+use foundry_utils::{
+    format_tokens,
+    selectors::{
+        decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
+        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
+    },
+};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -171,8 +178,12 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
+
+            let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+
             let mut builder =
-                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+                TxBuilder::new(&provider, config.sender, address, chain, false).await?;
             builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
@@ -266,6 +277,7 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
             let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
             let sig = sig.unwrap_or_default();
 
             if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
@@ -290,7 +302,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -309,7 +321,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -328,7 +340,7 @@ async fn main() -> eyre::Result<()> {
                             gas_price,
                             value,
                             nonce,
-                            eth.chain,
+                            chain,
                             config.etherscan_api_key,
                             cast_async,
                             legacy,
@@ -355,7 +367,7 @@ async fn main() -> eyre::Result<()> {
                     gas_price,
                     value,
                     nonce,
-                    eth.chain,
+                    chain,
                     config.etherscan_api_key,
                     cast_async,
                     legacy,
@@ -390,9 +402,12 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
+            let chain_id = Cast::new(&provider).chain_id().await?;
+            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+
             let from = eth.sender().await;
 
-            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
+            let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
             builder
                 .etherscan_api_key(config.etherscan_api_key)
                 .value(value)
@@ -406,12 +421,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
@@ -422,11 +437,11 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::fourbyte(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_function_selector(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
         }
-        Subcommands::FourByteDecode { calldata, id } => {
-            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+        Subcommands::FourByteDecode { calldata } => {
+            let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -443,13 +458,23 @@ async fn main() -> eyre::Result<()> {
             }?;
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::fourbyte_event(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_event_topic(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
+        }
+
+        Subcommands::UploadSignature { signatures } => {
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {
@@ -457,7 +482,7 @@ async fn main() -> eyre::Result<()> {
                 eprintln!("Expected calldata hex string, received \"{calldata}\"");
                 std::process::exit(0)
             }
-            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
+            let pretty_data = pretty_calldata(&calldata, offline).await?;
             println!("{pretty_data}");
         }
         Subcommands::Age { block, rpc_url } => {
@@ -493,13 +518,15 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::Interface {
             path_or_address,
+            name,
             pragma,
             chain,
             output_location,
             etherscan_api_key,
         } => {
             let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
+                SimpleCast::generate_interface(InterfacePath::Local { path: path_or_address, name })
+                    .await?
             } else {
                 let api_key = match etherscan_api_key {
                     Some(inner) => inner,
@@ -822,13 +849,13 @@ where
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
     let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
     builder
+        .etherscan_api_key(etherscan_api_key)
         .args(params)
         .await?
         .gas(gas)
         .gas_price(gas_price)
         .value(value)
-        .nonce(nonce)
-        .etherscan_api_key(etherscan_api_key);
+        .nonce(nonce);
     let builder_output = builder.build();
 
     let cast = Cast::new(provider);

@@ -1,6 +1,9 @@
 //! background service
 
-use crate::eth::{backend, fees::FeeHistoryService, miner::Miner, pool::Pool};
+use crate::{
+    eth::{backend, fees::FeeHistoryService, miner::Miner, pool::Pool},
+    filter::Filters,
+};
 use futures::FutureExt;
 use std::{
     future::Future,
@@ -9,8 +12,6 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::time::Interval;
-
-use crate::filter::Filters;
 use tracing::trace;
 
 /// The type that drives the blockchain's state

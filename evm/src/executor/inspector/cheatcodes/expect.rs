@@ -1,9 +1,11 @@
+use std::cmp::Ordering;
+
 use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
     abi::{AbiEncode, RawLog},
-    types::{Address, H160},
+    types::{Address, H160, U256},
 };
 use revm::{return_ok, Database, EVMData, Return};
 
@@ -160,6 +162,39 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ExpectedCallData {
+    /// The expected calldata
+    pub calldata: Bytes,
+    /// The expected value sent in the call
+    pub value: Option<U256>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MockCallDataContext {
+    /// The partial calldata to match for mock
+    pub calldata: Bytes,
+    /// The value to match for mock
+    pub value: Option<U256>,
+}
+
+impl Ord for MockCallDataContext {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Calldata matching is reversed to ensure that a tighter match is
+        // returned if an exact match is not found. In case, there is
+        // a partial match to calldata that is more specific than
+        // a match to a msg.value, then the more specific calldata takes
+        // precedence.
+        self.calldata.cmp(&other.calldata).reverse().then(self.value.cmp(&other.value).reverse())
+    }
+}
+
+impl PartialOrd for MockCallDataContext {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -190,16 +225,34 @@ pub fn apply<DB: Database>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectCall(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push(inner.1.to_vec().into());
-            Ok(Bytes::new())
-        }
-        HEVMCalls::MockCall(inner) => {
+        HEVMCalls::ExpectCall0(inner) => {
             state
-                .mocked_calls
+                .expected_calls
                 .entry(inner.0)
                 .or_default()
-                .insert(inner.1.to_vec().into(), inner.2.to_vec().into());
+                .push(ExpectedCallData { calldata: inner.1.to_vec().into(), value: None });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall1(inner) => {
+            state
+                .expected_calls
+                .entry(inner.0)
+                .or_default()
+                .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCall0(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
+                inner.2.to_vec().into(),
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCall1(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+                inner.3.to_vec().into(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::ClearMockedCalls(_) => {

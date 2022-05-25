@@ -16,7 +16,7 @@ use url::Url;
 
 /// Represents a remote repository.
 /// It gets cloned into a local `GitLocal`.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct GitRemote {
     url: Url,
 }

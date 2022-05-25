@@ -1,6 +1,3 @@
-use colored::Colorize;
-use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
-
 use crate::{
     eth::{
         backend::{
@@ -10,20 +7,23 @@ use crate::{
             mem::fork_db::ForkedDatabase,
         },
         fees::INITIAL_BASE_FEE,
+        pool::transactions::TransactionOrder,
     },
     mem,
     mem::in_memory_db::MemDb,
     FeeManager,
 };
 use anvil_server::ServerConfig;
+use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{rand::thread_rng, Address, Wallet, U256},
+    prelude::{rand::thread_rng, Wallet, U256},
     providers::{Middleware, Provider},
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
     },
+    types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
 use foundry_config::Config;
@@ -33,6 +33,7 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -78,9 +79,11 @@ pub struct NodeConfig {
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub accounts: HashMap<Address, Wallet<SigningKey>>,
+    pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub block_time: Option<Duration>,
+    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    pub no_mining: bool,
     /// port to use for the server
     pub port: u16,
     /// maximum number of transactions in a block
@@ -99,6 +102,10 @@ pub struct NodeConfig {
     pub no_storage_caching: bool,
     /// How to configure the server
     pub server_config: ServerConfig,
+    /// The host the server will listen on
+    pub host: Option<IpAddr>,
+    /// How transactions are sorted in the mempool
+    pub transaction_order: TransactionOrder,
 }
 
 // === impl NodeConfig ===
@@ -120,11 +127,12 @@ impl Default for NodeConfig {
             gas_limit: U256::from(30_000_000),
             gas_price: U256::from(20_000_000_000u64),
             hardfork: Hardfork::default(),
-            accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
+            signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
             block_time: None,
+            no_mining: false,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
@@ -136,6 +144,8 @@ impl Default for NodeConfig {
             enable_tracing: true,
             no_storage_caching: false,
             server_config: Default::default(),
+            host: None,
+            transaction_order: Default::default(),
         }
     }
 }
@@ -160,7 +170,7 @@ impl NodeConfig {
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         });
-        self.accounts.values_mut().for_each(|wallet| {
+        self.signer_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(self.chain_id);
         })
     }
@@ -201,17 +211,25 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+    pub fn with_genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
         self.genesis_accounts = accounts;
         self
     }
 
-    /// Sets the genesis accounts
+    /// Sets the signer accounts
+    #[must_use]
+    pub fn with_signer_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
+        self.signer_accounts = accounts;
+        self
+    }
+
+    /// Sets both the genesis accounts and the signer accounts
+    /// so that `genesis_accounts == accounts`
     #[must_use]
     pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
         let accounts = generator.gen();
         self.account_generator = Some(generator);
-        self.genesis_accounts(accounts)
+        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -225,6 +243,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_blocktime<D: Into<Duration>>(mut self, block_time: Option<D>) -> Self {
         self.block_time = block_time.map(Into::into);
+        self
+    }
+
+    /// If set to `true` auto mining will be disabled
+    #[must_use]
+    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+        self.no_mining = no_mining;
         self
     }
 
@@ -283,6 +308,19 @@ impl NodeConfig {
     #[must_use]
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
+        self
+    }
+
+    /// Sets the host the server will listen on
+    #[must_use]
+    pub fn with_host(mut self, host: Option<IpAddr>) -> Self {
+        self.host = host;
+        self
+    }
+
+    #[must_use]
+    pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
+        self.transaction_order = transaction_order;
         self
     }
 
@@ -411,6 +449,7 @@ Chain ID:       {}
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
         let fees = FeeManager::new(self.base_fee, self.gas_price);
+        let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
             self.eth_rpc_url.clone()
@@ -425,11 +464,17 @@ Chain ID:       {}
             } else {
                 provider.get_block_number().await.expect("Failed to get fork block number").as_u64()
             };
+
+            let block = provider
+                .get_block(BlockNumber::Number(fork_block_number.into()))
+                .await
+                .expect("Failed to get fork block")
+                .unwrap();
+
             env.block.number = fork_block_number.into();
+            fork_timestamp = Some(block.timestamp);
 
-            let block_hash =
-                provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
-
+            let block_hash = block.hash.unwrap();
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
             // need to update the dev signers and env with the chain id
             self.set_chain_id(chain_id);
@@ -440,29 +485,26 @@ Chain ID:       {}
 
             let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
 
-            // This will spawn the background service that will use the provider to fetch blockchain
+            // This will spawn the background thread that will use the provider to fetch blockchain
             // data from the other client
-            let backend = SharedBackend::spawn_backend(
+            let backend = SharedBackend::spawn_backend_thread(
                 Arc::clone(&provider),
                 block_chain_db.clone(),
                 Some(fork_block_number.into()),
-            )
-            .await;
+            );
 
-            let db = ForkedDatabase::new(backend, block_chain_db);
-            let fork = ClientFork {
-                storage: Default::default(),
-                config: Arc::new(RwLock::new(ClientForkConfig {
+            let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
+            let fork = ClientFork::new(
+                ClientForkConfig {
                     eth_rpc_url,
                     block_number: fork_block_number,
                     block_hash,
                     provider,
                     chain_id,
-                })),
-                database: db.clone(),
-            };
-
-            let db = Arc::new(RwLock::new(db));
+                    timestamp: block.timestamp.as_u64(),
+                },
+                Arc::clone(&db),
+            );
 
             (db, Some(fork))
         } else {
@@ -475,7 +517,13 @@ Chain ID:       {}
         };
         // only memory based backend for now
 
-        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork)
+        let backend =
+            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork);
+
+        if let Some(timestamp) = fork_timestamp {
+            backend.time().set_start_timestamp(timestamp.as_u64());
+        }
+        backend
     }
 }
 

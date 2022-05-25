@@ -1,6 +1,6 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
-use crate::loc::*;
+use crate::solang_ext::*;
 use solang_parser::pt::*;
 
 /// The error type a [Visitor] may return
@@ -13,7 +13,9 @@ pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
 ///
 /// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
-    fn visit_source(&mut self, _loc: Loc) -> VResult;
+    fn visit_source(&mut self, _loc: Loc) -> VResult {
+        Ok(())
+    }
 
     fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
         Ok(())
@@ -95,10 +97,6 @@ pub trait Visitor {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
-        if !var.doc.is_empty() {
-            self.visit_doc_comments(&mut var.doc)?;
-            self.visit_newline()?;
-        }
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -133,8 +131,20 @@ pub trait Visitor {
     fn visit_revert(
         &mut self,
         loc: Loc,
-        _error: &mut Option<Identifier>,
+        _error: &mut Option<Expression>,
         _args: &mut Vec<Expression>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
+    fn visit_revert_named_args(
+        &mut self,
+        loc: Loc,
+        _error: &mut Option<Expression>,
+        _args: &mut Vec<NamedArgument>,
     ) -> VResult {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -196,10 +206,6 @@ pub trait Visitor {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
-        if !func.doc.is_empty() {
-            self.visit_doc_comments(&mut func.doc)?;
-            self.visit_newline()?;
-        }
         self.visit_source(func.loc())?;
         if func.body.is_none() {
             self.visit_stray_semicolon()?;
@@ -251,20 +257,12 @@ pub trait Visitor {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        if !structure.doc.is_empty() {
-            self.visit_doc_comments(&mut structure.doc)?;
-            self.visit_newline()?;
-        }
         self.visit_source(structure.loc)?;
 
         Ok(())
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        if !event.doc.is_empty() {
-            self.visit_doc_comments(&mut event.doc)?;
-            self.visit_newline()?;
-        }
         self.visit_source(event.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -276,10 +274,6 @@ pub trait Visitor {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        if !error.doc.is_empty() {
-            self.visit_doc_comments(&mut error.doc)?;
-            self.visit_newline()?;
-        }
         self.visit_source(error.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -294,13 +288,21 @@ pub trait Visitor {
         self.visit_source(def.loc)
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult;
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_opening_paren(&mut self) -> VResult;
+    fn visit_opening_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_closing_paren(&mut self) -> VResult;
+    fn visit_closing_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_newline(&mut self) -> VResult;
+    fn visit_newline(&mut self) -> VResult {
+        Ok(())
+    }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
@@ -324,8 +326,8 @@ impl Visitable for SourceUnitPart {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
-            SourceUnitPart::PragmaDirective(_, _, ident, str) => v.visit_pragma(ident, str),
-            SourceUnitPart::ImportDirective(_, import) => import.visit(v),
+            SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
+            SourceUnitPart::ImportDirective(import) => import.visit(v),
             SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),
             SourceUnitPart::EventDefinition(event) => v.visit_event(event),
@@ -334,6 +336,8 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
+            SourceUnitPart::DocComment(doc) => v.visit_doc_comment(doc),
+            SourceUnitPart::Using(using) => v.visit_using(using),
         }
     }
 }
@@ -360,6 +364,7 @@ impl Visitable for ContractPart {
             ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
+            ContractPart::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }
@@ -391,13 +396,14 @@ impl Visitable for Statement {
             Statement::Break(_) => v.visit_break(),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
+            Statement::RevertNamedArgs(loc, error, args) => {
+                v.visit_revert_named_args(*loc, error, args)
+            }
             Statement::Emit(loc, event) => v.visit_emit(*loc, event),
             Statement::Try(loc, expr, returns, clauses) => {
                 v.visit_try(*loc, expr, returns, clauses)
             }
-            // TODO: statement doc comments are parsed differently than doc comments attached to
-            //  another node. Ideally, Solang should parse them into `solang::pt::DocComment` enum.
-            Statement::DocComment(..) => Ok(()),
+            Statement::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }
@@ -410,7 +416,7 @@ impl Visitable for Loc {
 
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_expr(self.loc(), self)
+        v.visit_expr(LineOfCode::loc(self), self)
     }
 }
 

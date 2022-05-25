@@ -1,13 +1,13 @@
 //! foundry configuration.
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
-use crate::caching::StorageCachingConfig;
+use crate::cache::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Libraries, Optimizer, RevertStrings, Settings,
+        Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -38,7 +38,8 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
-pub mod caching;
+pub mod cache;
+use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
@@ -135,6 +136,8 @@ pub struct Config {
     /// The "enabled" switch above provides two defaults which can be
     /// tweaked here. If "details" is given, "enabled" can be omitted.
     pub optimizer_details: Option<OptimizerDetails>,
+    /// Model checker settings.
+    pub model_checker: Option<ModelCheckerSettings>,
     /// verbosity to use
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
@@ -184,7 +187,10 @@ pub struct Config {
     /// Block gas limit
     pub gas_limit: GasLimit,
     /// `tx.gasprice` value during EVM execution"
-    pub gas_price: u64,
+    ///
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
+    /// (if set by user) or the remote client's gas price
+    pub gas_price: Option<u64>,
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,
     /// the `block.coinbase` value during EVM execution
@@ -412,6 +418,15 @@ impl Config {
 
         self.cache_path = p(&root, &self.cache_path);
 
+        if let Some(ref mut model_checker) = self.model_checker {
+            model_checker.contracts = std::mem::take(&mut model_checker.contracts)
+                .into_iter()
+                .map(|(path, contracts)| {
+                    (format!("{}", p(&root, path.as_ref()).display()), contracts)
+                })
+                .collect();
+        }
+
         self
     }
 
@@ -627,6 +642,16 @@ impl Config {
         let libraries = self.parsed_libraries()?.with_applied_remappings(&self.project_paths());
         let optimizer = self.optimizer();
 
+        // By default if no targets are specifically selected the model checker uses all targets.
+        // This might be too much here, so only enable assertion checks.
+        // If users wish to enable all options they need to do so explicitly.
+        let mut model_checker = self.model_checker.clone();
+        if let Some(ref mut model_checker_settings) = model_checker {
+            if model_checker_settings.targets.is_none() {
+                model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
+            }
+        }
+
         let mut settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
@@ -636,6 +661,7 @@ impl Config {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
             }),
+            model_checker,
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -751,6 +777,54 @@ impl Config {
         }
     }
 
+    /// Updates the `foundry.toml` file for the given `root` based on the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`.
+    pub fn update_at<F>(root: impl Into<PathBuf>, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&Config, &mut toml_edit::Document) -> bool,
+    {
+        let config = Self::load_with_root(root).sanitized();
+        config.update(|doc| f(&config, doc))
+    }
+
+    /// Updates the `foundry.toml` file this `Config` ias based on with the provided closure.
+    ///
+    /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
+    /// [Self::get_config_path()] and if the closure returns `true`
+    pub fn update<F>(&self, f: F) -> eyre::Result<()>
+    where
+        F: FnOnce(&mut toml_edit::Document) -> bool,
+    {
+        let file_path = self.get_config_path();
+        if !file_path.exists() {
+            return Ok(())
+        }
+        let cargo_toml_content = fs::read_to_string(&file_path)?;
+        let mut doc = cargo_toml_content.parse::<toml_edit::Document>()?;
+        if f(&mut doc) {
+            fs::write(file_path, doc.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Sets the `libs` entry inside a `foundry.toml` file but only if it exists
+    ///
+    /// # Errors
+    ///
+    /// An error if the `foundry.toml` could not be parsed.
+    pub fn update_libs(&self) -> eyre::Result<()> {
+        self.update(|doc| {
+            let profile = self.profile.as_str().as_str();
+            let libs: toml_edit::Value =
+                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let libs = toml_edit::value(libs);
+            doc[profile]["libs"] = libs;
+            true
+        })
+    }
+
     /// Serialize the config type as a String of TOML.
     ///
     /// This serializes to a table with the name of the profile
@@ -776,6 +850,19 @@ impl Config {
                     &format!("[{}.optimizer_details.yulDetails]", self.profile),
                 );
         }
+        if self.model_checker.is_some() {
+            // similarly to the optimizer details above,
+            // this is a hack to make nested tables work because this requires the config's profile
+            s = ["contracts", "engine", "targets", "timeout"]
+                .iter()
+                .fold(s, |acc, op| {
+                    acc.replace(
+                        &format!("[model_checker.{}]", op),
+                        &format!("[{}.model_checker.{}]", self.profile, op),
+                    )
+                })
+                .replace("[model_checker]", &format!("[{}.model_checker]", self.profile));
+        }
         s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
 
         Ok(format!(
@@ -783,6 +870,11 @@ impl Config {
 {}"#,
             self.profile, s
         ))
+    }
+
+    /// Returns the path to the `foundry.toml`  of this `Config`
+    pub fn get_config_path(&self) -> PathBuf {
+        self.__root.0.join(Config::FILE_NAME)
     }
 
     /// Returns the selected profile
@@ -905,6 +997,59 @@ impl Config {
 
         Ok(())
     }
+
+    /// List the data in the foundry cache
+    pub fn list_foundry_cache() -> eyre::Result<Cache> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let mut cache = Cache { chains: vec![] };
+            if !cache_dir.exists() {
+                return Ok(cache)
+            }
+            if let Ok(entries) = cache_dir.as_path().read_dir() {
+                for entry in entries.flatten().filter(|x| x.path().is_dir()) {
+                    cache.chains.push(ChainCache {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        blocks: Self::get_cached_blocks(&entry.path())?,
+                    })
+                }
+                Ok(cache)
+            } else {
+                eyre::bail!("failed to access foundry_cache_dir");
+            }
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+    }
+
+    /// List the cached data for `chain`
+    pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let blocks = Self::get_cached_blocks(&cache_dir)?;
+            Ok(ChainCache { name: chain.to_string(), blocks })
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+    }
+
+    //The path provided to this function should point to a cached chain folder
+    fn get_cached_blocks(chain_path: &Path) -> eyre::Result<Vec<(String, u64)>> {
+        let mut blocks = vec![];
+        if !chain_path.exists() {
+            return Ok(blocks)
+        }
+        for block in chain_path
+            .read_dir()?
+            .flatten()
+            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
+        {
+            let filepath = block.path().join("storage.json");
+            blocks.push((
+                block.file_name().to_string_lossy().into_owned(),
+                fs::metadata(filepath)?.len(),
+            ));
+        }
+        Ok(blocks)
+    }
 }
 
 impl From<Config> for Figment {
@@ -917,6 +1062,20 @@ impl From<Config> for Figment {
             figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
                 Toml::file(global_toml).nested(),
             )))
+        }
+
+        if profile != Config::DEFAULT_PROFILE {
+            // a different profile was set: inherit from the `default` profile by merging the
+            // default profile of the toml file
+            let inherit = InheritProvider {
+                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
+                    "FOUNDRY_CONFIG",
+                    c.__root.0.join(Config::FILE_NAME),
+                ))),
+                parent: Config::DEFAULT_PROFILE,
+                profile: profile.clone(),
+            };
+            figment = figment.merge(inherit);
         }
 
         figment = figment
@@ -1083,6 +1242,7 @@ impl Default for Config {
             optimizer: true,
             optimizer_runs: 200,
             optimizer_details: None,
+            model_checker: None,
             extra_output: Default::default(),
             extra_output_files: Default::default(),
             names: false,
@@ -1106,7 +1266,7 @@ impl Default for Config {
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
-            gas_price: 0,
+            gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
             block_timestamp: 1,
@@ -1337,6 +1497,27 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
+    }
+}
+
+/// A Provider that extracts the data for a `parent` profile and emits that as `profile`.
+struct InheritProvider<P> {
+    provider: P,
+    parent: Profile,
+    profile: Profile,
+}
+
+impl<P: Provider> Provider for InheritProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        if let Some(data) = data.remove(&self.parent) {
+            return Ok(Map::from([(self.profile.clone(), data)]))
+        }
+        Ok(Default::default())
     }
 }
 
@@ -1645,7 +1826,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 ///
 /// let my_config = Config::figment().extract::<BasicConfig>();
 /// ```
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BasicConfig {
     /// the profile tag: `[default]`
     #[serde(skip)]
@@ -1706,15 +1887,18 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use ethers_solc::artifacts::YulDetails;
+    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
     use figment::error::Kind::InvalidType;
     use std::{collections::BTreeMap, str::FromStr};
 
-    use crate::caching::{CachedChains, CachedEndpoints};
+    use crate::cache::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    use std::{fs::File, io::Write};
+    use tempfile::tempdir;
 
     #[test]
     fn test_figment_is_default() {
@@ -1773,6 +1957,37 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_from_default_test_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                test = "defaulttest"
+                src  = "defaultsrc"
+                libs = ['lib', 'node_modules']
+                
+                [custom]
+                src = "customsrc"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.src, PathBuf::from("defaultsrc"));
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
+            jail.set_env("FOUNDRY_PROFILE", "custom");
+            let config = Config::load();
+
+            assert_eq!(config.src, PathBuf::from("customsrc"));
+            assert_eq!(config.test, PathBuf::from("defaulttest"));
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
             Ok(())
         });
     }
@@ -1906,6 +2121,27 @@ mod tests {
                 ],
             );
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_can_update_libs() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ["node_modules"]
+            "#,
+            )?;
+
+            let mut config = Config::load();
+            config.libs.push("libs".into());
+            config.update_libs().unwrap();
+
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules"), PathBuf::from("libs"),]);
             Ok(())
         });
     }
@@ -2281,7 +2517,7 @@ mod tests {
                 BasicConfig {
                     profile: Config::DEFAULT_PROFILE,
                     src: "other-src".into(),
-                    out: "out".into(),
+                    out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
                 }
@@ -2481,6 +2717,91 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_model_checker_settings_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+
+                [default.model_checker]
+                contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
+                engine = 'chc'
+                targets = [ 'assert', 'outOfBounds' ]
+                timeout = 10000
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(
+                loaded.model_checker,
+                Some(ModelCheckerSettings {
+                    contracts: BTreeMap::from([
+                        ("a.sol".to_string(), vec!["A1".to_string(), "A2".to_string()]),
+                        ("b.sol".to_string(), vec!["B1".to_string(), "B2".to_string()]),
+                    ]),
+                    engine: Some(ModelCheckerEngine::CHC),
+                    targets: Some(vec![
+                        ModelCheckerTarget::Assert,
+                        ModelCheckerTarget::OutOfBounds
+                    ]),
+                    timeout: Some(10000)
+                })
+            );
+
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let reloaded = Config::load();
+            assert_eq!(loaded, reloaded);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_model_checker_settings_relative_paths() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+
+                [default.model_checker]
+                contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
+                engine = 'chc'
+                targets = [ 'assert', 'outOfBounds' ]
+                timeout = 10000
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            let dir = jail.directory();
+            assert_eq!(
+                loaded.model_checker,
+                Some(ModelCheckerSettings {
+                    contracts: BTreeMap::from([
+                        (
+                            format!("{}", dir.join("a.sol").display()),
+                            vec!["A1".to_string(), "A2".to_string()]
+                        ),
+                        (
+                            format!("{}", dir.join("b.sol").display()),
+                            vec!["B1".to_string(), "B2".to_string()]
+                        ),
+                    ]),
+                    engine: Some(ModelCheckerEngine::CHC),
+                    targets: Some(vec![
+                        ModelCheckerTarget::Assert,
+                        ModelCheckerTarget::OutOfBounds
+                    ]),
+                    timeout: Some(10000)
+                })
+            );
+
+            Ok(())
+        });
+    }
+
     // a test to print the config, mainly used to update the example config in the README
     #[test]
     #[ignore]
@@ -2540,5 +2861,37 @@ mod tests {
 
         let _figment: Figment = From::from(&Outer::default());
         let _config: Config = From::from(&Outer::default());
+    }
+
+    #[test]
+    fn list_cached_blocks() -> eyre::Result<()> {
+        fn fake_block_cache(chain_path: &Path, block_number: &str, size_bytes: usize) {
+            let block_path = chain_path.join(block_number);
+            fs::create_dir(block_path.as_path()).unwrap();
+            let file_path = block_path.join("storage.json");
+            let mut file = File::create(file_path).unwrap();
+            writeln!(file, "{}", vec![' '; size_bytes - 1].iter().collect::<String>()).unwrap();
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_block_cache(chain_dir.path(), "1", 100);
+        fake_block_cache(chain_dir.path(), "2", 500);
+        // Pollution file that should not show up in the cached block
+        let mut pol_file = File::create(chain_dir.path().join("pol.txt")).unwrap();
+        writeln!(pol_file, "{}", vec![' '; 10].iter().collect::<String>()).unwrap();
+
+        let result = Config::get_cached_blocks(chain_dir.path())?;
+
+        assert_eq!(result.len(), 2);
+        let block1 = &result.iter().find(|x| x.0 == "1").unwrap();
+        let block2 = &result.iter().find(|x| x.0 == "2").unwrap();
+        assert_eq!(block1.0, "1");
+        assert_eq!(block1.1, 100);
+        assert_eq!(block2.0, "2");
+        assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
     }
 }

@@ -8,7 +8,8 @@ WORKDIR /opt/foundry
 COPY . .
 RUN source $HOME/.profile && cargo build --release \
     && strip /opt/foundry/target/release/forge \
-    && strip /opt/foundry/target/release/cast
+    && strip /opt/foundry/target/release/cast \
+    && strip /opt/foundry/target/release/anvil
 
 from alpine as foundry-client
 ENV GLIBC_KEY=https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
@@ -21,4 +22,5 @@ RUN wget -q -O ${GLIBC_KEY_FILE} ${GLIBC_KEY} \
     && apk add glibc.apk --force
 COPY --from=build-environment /opt/foundry/target/release/forge /usr/local/bin/forge
 COPY --from=build-environment /opt/foundry/target/release/cast /usr/local/bin/cast
+COPY --from=build-environment /opt/foundry/target/release/anvil /usr/local/bin/anvil
 ENTRYPOINT ["/bin/sh", "-c"]

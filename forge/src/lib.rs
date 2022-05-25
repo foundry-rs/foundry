@@ -23,7 +23,7 @@ pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
         prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-        solc::{artifacts::Libraries, Project, ProjectPathsConfig},
+        solc::{artifacts::Libraries, utils::RuntimeOrHandle, Project, ProjectPathsConfig},
         types::{Address, U256},
     };
     use foundry_evm::{
@@ -35,7 +35,6 @@ pub mod test_helpers {
         fuzz::FuzzedExecutor,
         CALLER,
     };
-    use foundry_utils::RuntimeOrHandle;
     use std::str::FromStr;
 
     pub static PROJECT: Lazy<Project> = Lazy::new(|| {

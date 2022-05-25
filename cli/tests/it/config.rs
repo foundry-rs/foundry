@@ -11,7 +11,7 @@ use foundry_cli_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{
-    caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, OptimizerDetails, SolcReq,
 };
 use std::{fs, path::PathBuf, str::FromStr};
@@ -47,6 +47,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
             ..Default::default()
         }),
+        model_checker: None,
         extra_output: Default::default(),
         extra_output_files: Default::default(),
         names: true,
@@ -70,7 +71,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
         gas_limit: 99_000_000.into(),
-        gas_price: 999,
+        gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
         block_timestamp: 10,
@@ -357,14 +358,14 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
 
     // explicitly set gas_price
-    let config = Config { gas_price: 1337, ..Default::default() };
+    let config = Config { gas_price: Some(1337), ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-    assert_eq!(config.gas_price, 1337);
+    assert_eq!(config.gas_price, Some(1337));
 
     let config = prj.config_from_output(["--gas-price", "300"]);
-    assert_eq!(config.gas_price, 300);
+    assert_eq!(config.gas_price, Some(300));
 });
 
 // test that optimizer runs works
@@ -445,7 +446,6 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
 forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
 
     // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
     let mut config = config.clone();
@@ -466,4 +466,29 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd
             "src/=src/".parse().unwrap(),
         ]
     );
+});
+
+// test to check that foundry.toml libs section updates on install
+forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    cmd.git_init();
+
+    // explicitly set gas_price
+    let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
+    prj.write_config(init.clone());
+
+    cmd.args(["install", "foundry-rs/forge-std"]);
+    cmd.assert_non_empty_stdout();
+
+    let config = cmd.forge_fuse().config();
+    // `lib` was added automatically
+    let expected = vec![PathBuf::from("node_modules"), PathBuf::from("lib")];
+    assert_eq!(config.libs, expected);
+
+    // additional install don't edit `libs`
+    cmd.forge_fuse().args(["install", "dapphub/ds-test"]);
+    cmd.assert_non_empty_stdout();
+
+    let config = cmd.forge_fuse().config();
+    assert_eq!(config.libs, expected);
 });

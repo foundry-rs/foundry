@@ -1,4 +1,7 @@
-use ethers::{providers::Middleware, types::Address};
+use ethers::{
+    providers::Middleware,
+    types::{Address, U256},
+};
 use revm::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
@@ -6,6 +9,7 @@ use revm::{BlockEnv, CfgEnv, Env, TxEnv};
 pub async fn environment<M: Middleware>(
     provider: &M,
     memory_limit: u64,
+    gas_price: Option<u64>,
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
@@ -15,7 +19,7 @@ pub async fn environment<M: Middleware>(
     } else {
         provider.get_block_number().await?.as_u64()
     };
-    let (gas_price, rpc_chain_id, block) = tokio::try_join!(
+    let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
         provider.get_chainid(),
         provider.get_block(block_number)
@@ -31,14 +35,14 @@ pub async fn environment<M: Middleware>(
         block: BlockEnv {
             number: block.number.expect("block number not found").as_u64().into(),
             timestamp: block.timestamp,
-            coinbase: block.author,
+            coinbase: block.author.unwrap_or_default(),
             difficulty: block.difficulty,
             basefee: block.base_fee_per_gas.unwrap_or_default(),
             gas_limit: block.gas_limit,
         },
         tx: TxEnv {
             caller: origin,
-            gas_price,
+            gas_price: gas_price.map(U256::from).unwrap_or(fork_gas_price),
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()

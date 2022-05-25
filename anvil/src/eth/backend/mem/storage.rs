@@ -1,15 +1,79 @@
 //! In-memory blockchain storage
-use crate::eth::backend::time::duration_since_unix_epoch;
+use crate::eth::{
+    backend::{db::StateDb, time::duration_since_unix_epoch},
+    pool::transactions::PoolTransaction,
+};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
 use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
-
-use crate::eth::pool::transactions::PoolTransaction;
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    sync::Arc,
+};
+
+/// Represents the complete state of single block
+pub struct InMemoryBlockStates {
+    /// The states at a certain block
+    states: HashMap<H256, StateDb>,
+    /// How many states to store at most
+    limit: usize,
+    /// all states present, used to enforce `limit`
+    present: VecDeque<H256>,
+}
+
+// === impl InMemoryBlockStates ===
+
+impl InMemoryBlockStates {
+    /// Creates a new instance with limited slots
+    pub fn new(limit: usize) -> Self {
+        Self { states: Default::default(), limit, present: Default::default() }
+    }
+
+    /// Inserts a new (hash -> state) pair
+    ///
+    /// When the configured limit for the number of states that can be stored in memory is reached,
+    /// the oldest state is removed.
+    pub fn insert(&mut self, hash: H256, state: StateDb) {
+        if self.present.len() > self.limit {
+            // evict the oldest block
+            self.present.pop_front().and_then(|hash| self.states.remove(&hash));
+        }
+        self.states.insert(hash, state);
+        self.present.push_back(hash);
+    }
+
+    /// Returns the state for the given `hash` if present
+    pub fn get(&self, hash: &H256) -> Option<&StateDb> {
+        self.states.get(hash)
+    }
+
+    /// Clears all entries
+    pub fn clear(&mut self) {
+        self.states.clear();
+        self.present.clear();
+    }
+}
+
+impl fmt::Debug for InMemoryBlockStates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InMemoryBlockStates")
+            .field("limit", &self.limit)
+            .field("present", &self.present)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for InMemoryBlockStates {
+    fn default() -> Self {
+        // unlimited
+        Self::new(usize::MAX)
+    }
+}
 
 /// Stores the blockchain data (blocks, transactions)
 #[derive(Clone)]
@@ -30,6 +94,17 @@ pub struct BlockchainStorage {
 }
 
 impl BlockchainStorage {
+    pub fn forked(block_number: u64, block_hash: H256) -> Self {
+        BlockchainStorage {
+            blocks: Default::default(),
+            hashes: HashMap::from([(block_number.into(), block_hash)]),
+            best_hash: block_hash,
+            best_number: block_number.into(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+        }
+    }
+
     #[allow(unused)]
     pub fn empty() -> Self {
         Self {
@@ -91,15 +166,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
-        let storage = BlockchainStorage {
-            blocks: Default::default(),
-            hashes: HashMap::from([(block_number.into(), block_hash)]),
-            best_hash: block_hash,
-            best_number: block_number.into(),
-            genesis_hash: Default::default(),
-            transactions: Default::default(),
-        };
-        Self { storage: Arc::new(RwLock::new(storage)) }
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
     }
 
     /// returns the header hash of given block

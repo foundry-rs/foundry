@@ -5,7 +5,7 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    utils,
+    suggestions, utils,
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
@@ -26,6 +26,7 @@ use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
+    fmt,
     path::{Path, PathBuf},
     sync::mpsc::channel,
     thread,
@@ -43,23 +44,38 @@ pub struct Filter {
     pub pattern: Option<regex::Regex>,
 
     /// Only run test functions matching the specified regex pattern.
-    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern")]
+    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern", value_name = "REGEX")]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
-    #[clap(long = "no-match-test", alias = "nmt", conflicts_with = "pattern")]
+    #[clap(
+        long = "no-match-test",
+        alias = "nmt",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub test_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(long = "match-contract", alias = "mc", conflicts_with = "pattern")]
+    #[clap(
+        long = "match-contract",
+        alias = "mc",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub contract_pattern: Option<regex::Regex>,
 
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(long = "no-match-contract", alias = "nmc", conflicts_with = "pattern")]
+    #[clap(
+        long = "no-match-contract",
+        alias = "nmc",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern")]
+    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern", value_name = "GLOB")]
     pub path_pattern: Option<globset::Glob>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
@@ -67,7 +83,8 @@ pub struct Filter {
         name = "no-match-path",
         long = "no-match-path",
         alias = "nmp",
-        conflicts_with = "pattern"
+        conflicts_with = "pattern",
+        value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<globset::Glob>,
 }
@@ -158,6 +175,34 @@ impl TestFilter for Filter {
     }
 }
 
+impl fmt::Display for Filter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut patterns = Vec::new();
+        if let Some(ref p) = self.pattern {
+            patterns.push(format!("\tmatch: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.test_pattern {
+            patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.test_pattern_inverse {
+            patterns.push(format!("\tno-match-test: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.contract_pattern {
+            patterns.push(format!("\tmatch-contract: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.contract_pattern_inverse {
+            patterns.push(format!("\tno-match-contract: `{}`", p.as_str()));
+        }
+        if let Some(ref p) = self.path_pattern {
+            patterns.push(format!("\tmatch-path: `{}`", p.glob()));
+        }
+        if let Some(ref p) = self.path_pattern_inverse {
+            patterns.push(format!("\tno-match-path: `{}`", p.glob()));
+        }
+        write!(f, "{}", patterns.join("\n"))
+    }
+}
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
 
@@ -182,7 +227,7 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST FUNCTION")]
+    #[clap(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
     /// Print a gas report.
@@ -203,7 +248,8 @@ pub struct TestArgs {
     #[clap(
         long,
         env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces"
+        help = "Set etherscan api key to better decode traces",
+        value_name = "KEY"
     )]
     etherscan_api_key: Option<String>,
 
@@ -212,6 +258,10 @@ pub struct TestArgs {
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     pub watch: WatchArgs,
+
+    /// List tests instead of running them
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
+    list: bool,
 }
 
 impl TestArgs {
@@ -498,6 +548,8 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         \n
                         Use --match-contract and --match-path to further limit the search."))
             }
+    } else if args.list {
+        list(runner, filter, args.json)
     } else {
         test(
             config,
@@ -512,6 +564,24 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     }
 }
 
+/// Lists all matching tests
+fn list(runner: MultiContractRunner, filter: Filter, json: bool) -> eyre::Result<TestOutcome> {
+    let results = runner.list(&filter);
+
+    if json {
+        println!("{}", serde_json::to_string(&results)?);
+    } else {
+        for (file, contracts) in results.iter() {
+            println!("{}", file);
+            for (contract, tests) in contracts.iter() {
+                println!("  {}", contract);
+                println!("    {}\n", tests.join("\n    "));
+            }
+        }
+    }
+    Ok(TestOutcome::new(BTreeMap::new(), false))
+}
+
 /// Runs all the tests
 #[allow(clippy::too_many_arguments)]
 fn test(
@@ -524,6 +594,26 @@ fn test(
     test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
+    if runner.count_filtered_tests(&filter) == 0 {
+        let filter_str = filter.to_string();
+        if filter_str.is_empty() {
+            println!(
+                "\nNo tests found in project! Forge looks for functions that starts with `test`."
+            );
+        } else {
+            println!("\nNo tests match the provided pattern:");
+            println!("{}", filter_str);
+            // Try to suggest a test when there's no match
+            if let Some(ref test_pattern) = filter.test_pattern {
+                let test_name = test_pattern.as_str();
+                let candidates = runner.get_tests(&filter);
+                if let Some(suggestion) = suggestions::did_you_mean(test_name, &candidates).pop() {
+                    println!("\nDid you mean `{}`?", suggestion);
+                }
+            }
+        }
+    }
+
     if json {
         let results = runner.test(&filter, None, test_options)?;
         println!("{}", serde_json::to_string(&results)?);

@@ -10,6 +10,8 @@ use crate::cmd::forge::{
     config,
     create::CreateArgs,
     flatten,
+    fmt::FmtArgs,
+    fourbyte::UploadSelectorsArgs,
     init::InitArgs,
     inspect,
     install::InstallArgs,
@@ -121,7 +123,8 @@ pub enum Subcommands {
         #[clap(
             help = "The project's root path. Defaults to the current working directory.",
             long,
-            value_hint = ValueHint::DirPath
+            value_hint = ValueHint::DirPath,
+            value_name = "PATH"
         )]
         root: Option<PathBuf>,
     },
@@ -138,10 +141,17 @@ pub enum Subcommands {
     #[clap(alias = "f", about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
 
-    // #[clap(about = "formats Solidity source files")]
-    // Fmt(FmtArgs),
+    #[clap(about = "formats Solidity source files")]
+    Fmt(FmtArgs),
+
     #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
+
+    #[clap(
+        alias = "up",
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database"
+    )]
+    UploadSelectors(UploadSelectorsArgs),
 
     #[clap(
         alias = "tr",
@@ -156,7 +166,7 @@ pub enum Subcommands {
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "The target EVM version.", long)]
+    #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
@@ -164,7 +174,7 @@ pub struct CompilerArgs {
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "The number of optimizer runs.", long)]
+    #[clap(help = "The number of optimizer runs.", long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
 
@@ -173,16 +183,16 @@ pub struct CompilerArgs {
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
     /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output: Option<Vec<ContractOutputSelection>>,
+    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output_files: Option<Vec<ContractOutputSelection>>,
+    #[clap(long, min_values = 1, value_name = "SELECTOR")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_output_files: Vec<ContractOutputSelection>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

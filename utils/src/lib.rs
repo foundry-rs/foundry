@@ -14,81 +14,17 @@ use ethers_solc::{
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
-use serde::Deserialize;
+use futures::future::BoxFuture;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
-    fmt::{self, Write},
+    fmt::Write,
     str::FromStr,
+    time::Duration,
 };
 
-use tokio::runtime::{Handle, Runtime};
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum RuntimeOrHandle {
-    Runtime(Runtime),
-    Handle(Handle),
-}
-
-impl Default for RuntimeOrHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RuntimeOrHandle {
-    pub fn new() -> RuntimeOrHandle {
-        match Handle::try_current() {
-            Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
-        }
-    }
-
-    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
-        match &self {
-            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
-            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
-        }
-    }
-}
-
-pub enum SelectorOrSig {
-    Selector(String),
-    Sig(Vec<String>),
-}
-
-pub struct PossibleSigs {
-    method: SelectorOrSig,
-    data: Vec<String>,
-}
-impl PossibleSigs {
-    fn new() -> Self {
-        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
-    }
-}
-impl fmt::Display for PossibleSigs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.method {
-            SelectorOrSig::Selector(selector) => {
-                writeln!(f, "\n Method: {}", selector)?;
-            }
-            SelectorOrSig::Sig(sigs) => {
-                writeln!(f, "\n Possible methods:")?;
-                for sig in sigs {
-                    writeln!(f, " - {}", sig)?;
-                }
-            }
-        }
-
-        writeln!(f, " ------------")?;
-        for (i, row) in self.data.iter().enumerate() {
-            let pad = if i < 10 { "  " } else { " " };
-            writeln!(f, " [{}]:{}{}", i, pad, row)?;
-        }
-        Ok(())
-    }
-}
+pub mod rpc;
+pub mod selectors;
 
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
@@ -500,6 +436,7 @@ pub async fn get_func_etherscan(
 }
 
 /// Parses string input as Token against the expected ParamType
+#[allow(clippy::no_effect)]
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
@@ -514,15 +451,30 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
             };
 
             if token.is_err() && value.starts_with("0x") {
-                if let ParamType::Uint(_) = param {
-                    // try again if value is hex
-                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
-                        token = if lenient {
-                            LenientTokenizer::tokenize(param, &value)
-                        } else {
-                            StrictTokenizer::tokenize(param, &value)
-                        };
+                match param {
+                    ParamType::FixedBytes(32) => {
+                        if value.len() < 66 {
+                            let padded_value = [value, &"0".repeat(66 - value.len())].concat();
+                            token = if lenient {
+                                LenientTokenizer::tokenize(param, &padded_value)
+                            } else {
+                                StrictTokenizer::tokenize(param, &padded_value)
+                            };
+                        }
                     }
+                    ParamType::Uint(_) => {
+                        // try again if value is hex
+                        if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                            token = if lenient {
+                                LenientTokenizer::tokenize(param, &value)
+                            } else {
+                                StrictTokenizer::tokenize(param, &value)
+                            };
+                        }
+                    }
+                    // TODO: Not sure what to do here. Put the no effect in for now, but that is not
+                    // ideal. We could attempt massage for every value type?
+                    _ => {}
                 }
             }
             token
@@ -542,163 +494,6 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
         .collect::<Vec<_>>();
     let tokens = parse_tokens(params, true)?;
     Ok(func.encode_input(&tokens)?)
-}
-
-/// Fetches a function signature given the selector using 4byte.directory
-pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
-    #[derive(Deserialize)]
-    struct Decoded {
-        text_signature: String,
-        id: i32,
-    }
-
-    #[derive(Deserialize)]
-    struct ApiResponse {
-        results: Vec<Decoded>,
-    }
-
-    let selector = &selector.strip_prefix("0x").unwrap_or(selector);
-    if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"))
-    }
-    let selector = &selector[..8];
-
-    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={selector}");
-    let res = reqwest::get(url).await?;
-    let res = res.text().await?;
-    let api_response = match serde_json::from_str::<ApiResponse>(&res) {
-        Ok(inner) => inner,
-        Err(err) => {
-            eyre::bail!("Could not decode response:\n {res}.\nError: {err}")
-        }
-    };
-
-    if api_response.results.is_empty() {
-        eyre::bail!("no signature found for provided function selector")
-    }
-
-    Ok(api_response
-        .results
-        .into_iter()
-        .map(|d| (d.text_signature, d.id))
-        .collect::<Vec<(String, i32)>>())
-}
-
-pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Result<Vec<String>> {
-    let mut sigs = fourbyte(calldata).await?;
-
-    match id {
-        Some(id) => {
-            let sig = match &id[..] {
-                "earliest" => {
-                    sigs.sort_by(|a, b| a.1.cmp(&b.1));
-                    sigs.get(0)
-                }
-                "latest" => {
-                    sigs.sort_by(|a, b| b.1.cmp(&a.1));
-                    sigs.get(0)
-                }
-                _ => {
-                    let id: i32 = id.parse().expect("Must be integer");
-                    sigs = sigs
-                        .iter()
-                        .filter(|sig| sig.1 == id)
-                        .cloned()
-                        .collect::<Vec<(String, i32)>>();
-                    sigs.get(0)
-                }
-            };
-            match sig {
-                Some(sig) => Ok(vec![sig.clone().0]),
-                None => Ok(vec![]),
-            }
-        }
-        None => {
-            // filter for signatures that can be decoded
-            Ok(sigs
-                .iter()
-                .map(|sig| sig.clone().0)
-                .filter(|sig| {
-                    let res = abi_decode(sig, calldata, true);
-                    res.is_ok()
-                })
-                .collect::<Vec<String>>())
-        }
-    }
-}
-
-/// Fetches a event signature given the 32 byte topic using 4byte.directory
-pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
-    #[derive(Deserialize)]
-    struct Decoded {
-        text_signature: String,
-        id: i32,
-    }
-
-    #[derive(Deserialize)]
-    struct ApiResponse {
-        results: Vec<Decoded>,
-    }
-
-    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
-    if topic.len() < 64 {
-        return Err(eyre::eyre!("Invalid topic"))
-    }
-    let topic = &topic[..8];
-
-    let url = format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={topic}");
-    let res = reqwest::get(url).await?;
-    let api_response = res.json::<ApiResponse>().await?;
-
-    Ok(api_response
-        .results
-        .into_iter()
-        .map(|d| (d.text_signature, d.id))
-        .collect::<Vec<(String, i32)>>())
-}
-
-/// Pretty print calldata and if available, fetch possible function signatures
-///
-/// ```no_run
-/// 
-/// use foundry_utils::pretty_calldata;
-///
-/// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
-///   println!("{}",pretty_data);
-/// # Ok(())
-/// # }
-/// ```
-
-pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result<PossibleSigs> {
-    let mut possible_info = PossibleSigs::new();
-    let calldata = calldata.as_ref().trim_start_matches("0x");
-
-    let selector =
-        calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
-
-    let sigs = if offline {
-        vec![]
-    } else {
-        fourbyte(selector).await.unwrap_or_default().into_iter().map(|sig| sig.0).collect()
-    };
-    let (_, data) = calldata.split_at(8);
-
-    if data.len() % 64 != 0 {
-        eyre::bail!("\nInvalid calldata size")
-    }
-
-    let row_length = data.len() / 64;
-
-    for row in 0..row_length {
-        possible_info.data.push(data[64 * row..64 * (row + 1)].to_string());
-    }
-    if sigs.is_empty() {
-        possible_info.method = SelectorOrSig::Selector(selector.to_string());
-    } else {
-        possible_info.method = SelectorOrSig::Sig(sigs);
-    }
-    Ok(possible_info)
 }
 
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
@@ -995,6 +790,56 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
     })
 }
 
+/// A type that keeps track of attempts
+#[derive(Debug, Clone)]
+pub struct Retry {
+    retries: u32,
+    delay: Option<u32>,
+}
+
+/// Sample retry logic implementation
+impl Retry {
+    pub fn new(retries: u32, delay: Option<u32>) -> Self {
+        Self { retries, delay }
+    }
+
+    fn handle_err(&mut self, err: eyre::Report) {
+        self.retries -= 1;
+        tracing::warn!(
+            "erroneous attempt ({} tries remaining): {}",
+            self.retries,
+            err.root_cause()
+        );
+        if let Some(delay) = self.delay {
+            std::thread::sleep(Duration::from_secs(delay.into()));
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        loop {
+            match callback() {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            }
+        }
+    }
+
+    pub async fn run_async<'a, T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> BoxFuture<'a, eyre::Result<T>>,
+    {
+        loop {
+            match callback().await {
+                Err(e) if self.retries > 0 => self.handle_err(e),
+                res => return res,
+            };
+        }
+    }
+}
+
 /// Enables tracing
 #[cfg(any(feature = "test"))]
 pub fn init_tracing_subscriber() {
@@ -1012,7 +857,6 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
-    use std::future::Future;
 
     #[test]
     fn parse_hex_uint_tokens() {
@@ -1166,74 +1010,6 @@ mod tests {
             resolve_addr(NameOrAddress::Address(Address::zero()), Chain::Mainnet).ok(),
             Some(NameOrAddress::Address(Address::zero())),
         );
-    }
-
-    /// Executes the _fourbyte_ request and if the site is not down (502 Bad Gateway) executes the
-    /// test
-    async fn test_if_fourbyte_not_down<Req, Out, Test>(r: Req, test: Test)
-    where
-        Req: Future<Output = Result<Out>>,
-        Test: FnOnce(Out),
-    {
-        match r.await {
-            Ok(out) => test(out),
-            Err(err) => {
-                let msg = err.to_string();
-                eprintln!("fourbyte request failed:\n{}", msg);
-                if !msg.contains("502 Bad Gateway") {
-                    panic!("{}", msg)
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_fourbyte() {
-        test_if_fourbyte_not_down(fourbyte("0xa9059cbb"), |sigs| {
-            assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
-            assert_eq!(sigs[0].1, 313067);
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_fourbyte_possible_sigs() {
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None), |sigs| {
-            assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
-            assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())), |sigs| {
-            assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
-        }).await;
-
-        test_if_fourbyte_not_down( fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())), |sigs| {
-            assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-        }).await;
-    }
-
-    #[tokio::test]
-    async fn test_fourbyte_event() {
-        test_if_fourbyte_not_down(
-            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6"),
-            |sigs| {
-                assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
-                assert_eq!(sigs[0].1, 79573);
-            },
-        )
-        .await;
-
-        test_if_fourbyte_not_down(
-            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd"),
-            |sigs| {
-                assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
-            },
-        )
-        .await;
     }
 
     #[test]

@@ -2,11 +2,13 @@
 
 use clap::{Parser, Subcommand};
 use std::str::FromStr;
+use strum::VariantNames;
 
 use crate::cmd::Cmd;
+use cache::{Cache, ChainCache};
 use ethers::prelude::Chain;
 use eyre::Result;
-use foundry_config::{Chain as FoundryConfigChain, Config};
+use foundry_config::{cache, Chain as FoundryConfigChain, Config};
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {
@@ -40,25 +42,10 @@ pub struct CleanArgs {
     #[clap(
         env = "CHAIN",
         default_value = "all",
-        possible_values = [
-            "all",
-            "mainnet",
-            "ropsten",
-            "rinkeby",
-            "goerli",
-            "kovan",
-            "xdai",
-            "polygon",
-            "polygon_mumbai",
-            "avalanche",
-            "avalanche_fuji",
-            "sepolia",
-            "moonbeam",
-            "moonbeam_dev",
-            "moonriver",
-            "optimism",
-            "optimism-kovan"
-    ])]
+        possible_value = "all",
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAINS"
+    )]
     chains: Vec<ChainOrAll>,
 
     #[clap(
@@ -66,15 +53,31 @@ pub struct CleanArgs {
         long,
         multiple_values(true),
         use_value_delimiter(true),
-        require_value_delimiter(true)
+        require_value_delimiter(true),
+        value_name = "BLOCKS"
     )]
     blocks: Vec<u64>,
+}
+
+#[derive(Debug, Parser)]
+pub struct LsArgs {
+    // TODO refactor to dedup shared logic with ClapChain in opts/mod
+    #[clap(
+        env = "CHAIN",
+        default_value = "all",
+        possible_value = "all",
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAINS"
+    )]
+    chains: Vec<ChainOrAll>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum CacheSubcommands {
     #[clap(about = "Cleans cached data from ~/.foundry.")]
     Clean(CleanArgs),
+    #[clap(about = "Shows cached data from ~/.foundry.")]
+    Ls(LsArgs),
 }
 
 impl Cmd for CleanArgs {
@@ -94,6 +97,23 @@ impl Cmd for CleanArgs {
     }
 }
 
+impl Cmd for LsArgs {
+    type Output = ();
+
+    fn run(self) -> Result<Self::Output> {
+        let LsArgs { chains } = self;
+        let mut cache = Cache::default();
+        for chain_or_all in chains {
+            match chain_or_all {
+                ChainOrAll::Chain(chain) => cache.chains.push(list_chain_cache(chain)?),
+                ChainOrAll::All => cache = Config::list_foundry_cache()?,
+            }
+        }
+        print!("{}", cache);
+        Ok(())
+    }
+}
+
 fn clean_chain_cache(chain: Chain, blocks: Vec<u64>) -> Result<()> {
     if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
         if blocks.is_empty() {
@@ -108,4 +128,12 @@ fn clean_chain_cache(chain: Chain, blocks: Vec<u64>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn list_chain_cache(chain: Chain) -> Result<ChainCache> {
+    if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
+        Config::list_foundry_chain_cache(foundry_chain)
+    } else {
+        eyre::bail!("failed to recognise chain: {}", chain);
+    }
 }

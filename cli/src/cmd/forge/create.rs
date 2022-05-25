@@ -1,6 +1,7 @@
 //! Create command
+use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd},
+    cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
     compile,
     opts::{forge::ContractInfo, EthereumOpts, WalletType},
     utils::{parse_ether_value, parse_u256},
@@ -9,17 +10,24 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 use eyre::{Context, Result};
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
+use rustc_hex::ToHex;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 
+pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
+
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
+    #[clap(
+        help = "The contract identifier in the form `<path>:<contractname>`.",
+        value_name = "CONTRACT"
+    )]
     contract: ContractInfo,
 
     #[clap(
@@ -27,7 +35,8 @@ pub struct CreateArgs {
         multiple_values = true,
         help = "The constructor arguments.",
         name = "constructor_args",
-        conflicts_with = "constructor_args_path"
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS"
     )]
     constructor_args: Vec<String>,
 
@@ -37,6 +46,7 @@ pub struct CreateArgs {
         value_hint = ValueHint::FilePath,
         name = "constructor_args_path",
         conflicts_with = "constructor_args",
+        value_name = "FILE"
     )]
     constructor_args_path: Option<PathBuf>,
 
@@ -55,7 +65,8 @@ This is automatically enabled for common networks without EIP1559."#
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value)
+        parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
     )]
     gas_price: Option<U256>,
 
@@ -64,7 +75,8 @@ This is automatically enabled for common networks without EIP1559."#
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas limit for the transaction.",
         env = "ETH_GAS_LIMIT",
-        parse(try_from_str = parse_u256)
+        parse(try_from_str = parse_u256),
+        value_name = "GAS_LIMIT"
     )]
     gas_limit: Option<U256>,
 
@@ -72,7 +84,8 @@ This is automatically enabled for common networks without EIP1559."#
         long = "priority-fee", 
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas priority fee for EIP1559 transactions.",
-        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value)
+        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
     )]
     priority_fee: Option<U256>,
     #[clap(
@@ -82,7 +95,8 @@ This is automatically enabled for common networks without EIP1559."#
         long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
 Examples: 1ether, 10gwei, 0.01ether"#,
-        parse(try_from_str = parse_ether_value)
+        parse(try_from_str = parse_ether_value),
+        value_name = "VALUE"
     )]
     value: Option<U256>,
 
@@ -98,28 +112,45 @@ Examples: 1ether, 10gwei, 0.01ether"#,
         help = "Print the deployment information as JSON."
     )]
     json: bool,
+
+    #[clap(long, help = "Verify contract after creation.")]
+    verify: bool,
 }
 
 impl Cmd for CreateArgs {
     type Output = ();
+    fn run(self) -> eyre::Result<Self::Output> {
+        RuntimeOrHandle::new().block_on(self.run_create())
+    }
+}
 
-    fn run(self) -> Result<Self::Output> {
+impl CreateArgs {
+    pub async fn run_create(self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = if self.json {
+        if self.json {
             // Suppress compile stdout messages when printing json output
-            compile::suppress_compile(&project)?
+            compile::suppress_compile(&project)?;
         } else {
-            compile::compile(&project, false, false)?
-        };
+            compile::compile(&project, false, false)?;
+        }
 
         // Get ABI and BIN
-        let (abi, bin, _) =
-            crate::cmd::utils::read_artifact(&project, compiled, self.contract.clone())?;
+        let (abi, bin, _) = crate::cmd::utils::read_artifact(&project, self.contract.clone())?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
-            _ => eyre::bail!("Dynamic linking not supported in `create` command - deploy the library contract first, then provide the address to link at compile time")
+            _ => {
+                let link_refs = bin
+                    .link_references
+                    .iter()
+                    .flat_map(|(path, names)| {
+                        names.keys().map(move |name| format!("\t{}: {}", name, path))
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                eyre::bail!("Dynamic linking not supported in `create` command - deploy the following library contracts first, then provide the address to link at compile time\n{}", link_refs)
+            }
         };
 
         // Add arguments to constructor
@@ -145,29 +176,19 @@ impl Cmd for CreateArgs {
         };
 
         // Deploy with signer
-        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-        let chain_id = rt.block_on(provider.get_chainid())?;
-        if let Some(signer) = rt.block_on(self.eth.signer_with(chain_id, provider))? {
-            match signer {
-                WalletType::Ledger(signer) => {
-                    rt.block_on(self.deploy(abi, bin, params, signer))?;
-                }
-                WalletType::Local(signer) => {
-                    rt.block_on(self.deploy(abi, bin, params, signer))?;
-                }
-                WalletType::Trezor(signer) => {
-                    rt.block_on(self.deploy(abi, bin, params, signer))?;
-                }
-            }
-        } else {
-            eyre::bail!("could not find artifact")
-        }
+        let chain_id = provider.get_chainid().await?;
+        match self.eth.signer_with(chain_id, provider).await? {
+            Some(signer) => match signer {
+                WalletType::Ledger(signer) => self.deploy(abi, bin, params, signer).await?,
+                WalletType::Local(signer) => self.deploy(abi, bin, params, signer).await?,
+                WalletType::Trezor(signer) => self.deploy(abi, bin, params, signer).await?,
+            },
+            None => eyre::bail!("could not find artifact"),
+        };
 
         Ok(())
     }
-}
 
-impl CreateArgs {
     async fn deploy<M: Middleware + 'static>(
         self,
         abi: Abi,
@@ -182,11 +203,11 @@ impl CreateArgs {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
         let provider = Arc::new(provider);
-        let factory = ContractFactory::new(abi, bin, provider.clone());
+        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone());
 
         let is_args_empty = args.is_empty();
         let deployer =
-            factory.deploy_tokens(args).context("Failed to deploy contract").map_err(|e| {
+            factory.deploy_tokens(args.clone()).context("Failed to deploy contract").map_err(|e| {
                 if is_args_empty {
                     e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
                 } else {
@@ -232,20 +253,59 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+        let address = deployed_contract.address();
         if self.json {
             let output = json!({
                 "deployer": deployer_address,
-                "deployedTo": deployed_contract.address(),
+                "deployedTo": address,
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
             println!("Deployer: {deployer_address:?}");
-            println!("Deployed to: {:?}", deployed_contract.address());
+            println!("Deployed to: {:?}", address);
             println!("Transaction hash: {:?}", receipt.transaction_hash);
+        };
+
+        if !self.verify {
+            return Ok(())
         }
 
-        Ok(())
+        println!("Starting contract verification...");
+        let constructor_args = if !args.is_empty() {
+            // we're passing an empty vec to the `encode_input` of the constructor because we only
+            // need the constructor arguments and the encoded input is `code + args`
+            let code = Vec::new();
+            let encoded_args = abi
+                .constructor()
+                .ok_or(eyre::eyre!("could not find constructor"))?
+                .encode_input(code, &args)?
+                .to_hex::<String>();
+            Some(encoded_args)
+        } else {
+            None
+        };
+        let num_of_optimizations =
+            if self.opts.compiler.optimize { self.opts.compiler.optimizer_runs } else { None };
+        let verify = verify::VerifyArgs {
+            address,
+            contract: self.contract,
+            compiler_version: None,
+            constructor_args,
+            num_of_optimizations,
+            chain: chain.into(),
+            etherscan_key: self
+                .eth
+                .etherscan_api_key
+                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
+            project_paths: self.opts.project_paths,
+            flatten: false,
+            force: false,
+            watch: true,
+            retry: RETRY_VERIFY_ON_CREATE,
+        };
+        println!("Waiting for etherscan to detect contract deployment...");
+        verify.run().await
     }
 
     fn parse_constructor_args(

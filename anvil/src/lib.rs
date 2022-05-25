@@ -78,13 +78,23 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let fork = backend.get_fork().cloned();
 
-    let NodeConfig { accounts, block_time, port, max_transactions, server_config, .. } =
-        config.clone();
+    let NodeConfig {
+        signer_accounts,
+        block_time,
+        port,
+        max_transactions,
+        server_config,
+        no_mining,
+        transaction_order,
+        ..
+    } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
     let mode = if let Some(block_time) = block_time {
         MiningMode::interval(block_time)
+    } else if no_mining {
+        MiningMode::None
     } else {
         // get a listener for ready transactions
         let listener = pool.add_ready_listener();
@@ -92,7 +102,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     };
     let miner = Miner::new(mode);
 
-    let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
+    let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(signer_accounts));
     let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
@@ -114,13 +124,15 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         miner.clone(),
         logger,
         filters.clone(),
+        transaction_order,
     );
 
     // spawn the node service
     let node_service =
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
-    let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+    let host = config.host.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let socket = SocketAddr::new(host, port);
 
     // launch the rpc server
     let serve = tokio::task::spawn(server::serve(socket, api.clone(), server_config));
@@ -185,7 +197,7 @@ impl NodeHandle {
     pub fn http_provider(&self) -> Provider<Http> {
         Provider::<Http>::try_from(self.http_endpoint())
             .unwrap()
-            .interval(Duration::from_millis(2_0000))
+            .interval(Duration::from_millis(500))
     }
 
     /// Connects to the websocket Provider of the node
@@ -197,12 +209,12 @@ impl NodeHandle {
 
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub fn dev_accounts(&self) -> impl Iterator<Item = Address> + '_ {
-        self.config.accounts.keys().cloned()
+        self.config.signer_accounts.iter().map(|wallet| wallet.address())
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub fn dev_wallets(&self) -> impl Iterator<Item = Wallet<SigningKey>> + '_ {
-        self.config.accounts.values().cloned()
+        self.config.signer_accounts.iter().cloned()
     }
 
     /// Accounts that will be initialised with `genesis_balance` in the genesis block

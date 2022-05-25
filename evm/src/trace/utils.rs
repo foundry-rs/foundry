@@ -1,4 +1,4 @@
-//! utilities used withing tracing
+//! utilities used within tracing
 
 use ethers::abi::{Abi, Address, Function, Token};
 use foundry_utils::format_token;

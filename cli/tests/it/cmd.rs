@@ -6,10 +6,11 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
-    util::{pretty_err, read_string, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs};
+use foundry_utils::rpc::next_http_rpc_endpoint;
+use std::{fs, path::PathBuf};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -228,6 +229,41 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
+// checks that extra output works
+forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
+    cmd.assert_non_empty_stdout();
+
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
+    assert!(artifact.ir.is_some());
+    assert!(artifact.ir_optimized.is_some());
+
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+            "evm.bytecode.sourceMap",
+            "--force",
+        ])
+        .root_arg();
+    cmd.assert_non_empty_stdout();
+
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+
+    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    std::fs::read_to_string(iropt).unwrap();
+
+    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    std::fs::read_to_string(sourcemap).unwrap();
+});
+
 forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
@@ -334,6 +370,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -366,6 +403,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 1751
+== Return ==
 == Logs ==
   script ran
 ",
@@ -401,6 +439,7 @@ contract Demo {
         "Compiler run successful
 {}
 Gas used: 3957
+== Return ==
 == Logs ==
   script ran
   1
@@ -408,6 +447,40 @@ Gas used: 3957
 ",
         Paint::green("Script ran successfully.")
     ),));
+});
+
+// Tests that the run command can run functions with return values
+forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external returns (uint256 result, uint8) {
+        emit log_string("script ran");
+        return (255, 3);
+    }
+}"#,
+        )
+        .unwrap();
+    cmd.arg("run").arg(script);
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 1836
+== Return ==
+result: uint256 255
+1: uint8 3
+== Logs ==
+  script ran
+",
+        Paint::green("Script ran successfully.")
+    )));
 });
 
 // tests that the `inspect` command works correctly
@@ -483,16 +556,8 @@ contract BTest is DSTest {
 
     cmd.arg("snapshot");
 
-    let out = cmd.stdout();
-
-    assert!(
-        out.contains(&format!(
-            "Running 1 test for {}/src/BTest.t.sol:BTest",
-            prj.root().to_string_lossy()
-        )) && out.contains(&format!(
-            "Running 1 test for {}/src/ATest.t.sol:ATest",
-            prj.root().to_string_lossy()
-        ))
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
     );
 
     cmd.arg("--check");
@@ -546,7 +611,7 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
         .to_string();
     println!("project root: \"{root}\"");
 
-    let eth_rpc_url = env::var("ETH_RPC_URL").unwrap();
+    let eth_rpc_url = next_http_rpc_endpoint();
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
     cmd.args([

@@ -1,5 +1,6 @@
 use ethers::{
     providers::{Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::{Address, Chain, U256},
 };
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
@@ -33,7 +34,7 @@ pub struct EvmOpts {
     /// enables the FFI cheatcode
     pub ffi: bool,
 
-    /// Verbosity mode of EVM output as number of occurences
+    /// Verbosity mode of EVM output as number of occurrences
     pub verbosity: u8,
 
     /// The memory limit of the EVM in bytes.
@@ -48,6 +49,7 @@ impl EvmOpts {
             environment(
                 &provider,
                 self.memory_limit,
+                self.env.gas_price,
                 self.env.chain_id,
                 self.fork_block_number,
                 self.sender,
@@ -71,7 +73,7 @@ impl EvmOpts {
                     memory_limit: self.memory_limit,
                 },
                 tx: TxEnv {
-                    gas_price: self.env.gas_price.into(),
+                    gas_price: self.env.gas_price.unwrap_or_default().into(),
                     gas_limit: self.gas_limit().as_u64(),
                     caller: self.sender,
                     ..Default::default()
@@ -107,7 +109,7 @@ impl EvmOpts {
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
+            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
                 return Chain::try_from(id.as_u64()).ok()
             }
         }
@@ -126,7 +128,11 @@ pub struct Env {
     pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution
-    pub gas_price: u64,
+    ///
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
+    /// (if set by user) or the remote client's gas price.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_price: Option<u64>,
 
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,

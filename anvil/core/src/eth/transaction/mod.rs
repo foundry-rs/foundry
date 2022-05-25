@@ -387,6 +387,14 @@ impl TypedTransaction {
         }
     }
 
+    pub fn data(&self) -> &Bytes {
+        match self {
+            TypedTransaction::Legacy(tx) => &tx.input,
+            TypedTransaction::EIP2930(tx) => &tx.input,
+            TypedTransaction::EIP1559(tx) => &tx.input,
+        }
+    }
+
     /// Max cost of the transaction
     pub fn max_cost(&self) -> U256 {
         self.gas_limit().saturating_mul(self.gas_price())
@@ -442,6 +450,14 @@ impl TypedTransaction {
         }
     }
 
+    pub fn chain_id(&self) -> Option<u64> {
+        match self {
+            TypedTransaction::Legacy(t) => t.chain_id(),
+            TypedTransaction::EIP2930(t) => Some(t.chain_id),
+            TypedTransaction::EIP1559(t) => Some(t.chain_id),
+        }
+    }
+
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
@@ -471,6 +487,25 @@ impl TypedTransaction {
     /// Returns the callee if this transaction is a call
     pub fn to(&self) -> Option<&Address> {
         self.kind().as_call()
+    }
+
+    /// Returns the Signature of the transaction
+    pub fn signature(&self) -> Signature {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.signature,
+            TypedTransaction::EIP2930(tx) => {
+                let v = tx.odd_y_parity as u8;
+                let r = U256::from_big_endian(&tx.r[..]);
+                let s = U256::from_big_endian(&tx.s[..]);
+                Signature { r, s, v: v.into() }
+            }
+            TypedTransaction::EIP1559(tx) => {
+                let v = tx.odd_y_parity as u8;
+                let r = U256::from_big_endian(&tx.r[..]);
+                let s = U256::from_big_endian(&tx.s[..]);
+                Signature { r, s, v: v.into() }
+            }
+        }
     }
 }
 

@@ -15,10 +15,14 @@ use futures::{
     Future, FutureExt,
 };
 
+use crate::executor::fork::cache::FlushJsonBlockCacheDB;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
-    sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+    sync::{
+        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+        Arc,
+    },
 };
 use tracing::{trace, warn};
 
@@ -256,10 +260,7 @@ where
                         trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
                         return Poll::Ready(())
                     }
-                    Poll::Pending => {
-                        cx.waker().wake_by_ref();
-                        break
-                    }
+                    Poll::Pending => break,
                 }
             }
 
@@ -345,19 +346,11 @@ where
     }
 }
 
-impl<M: Middleware> Drop for BackendHandler<M> {
-    fn drop(&mut self) {
-        trace!(target: "backendhandler", "flushing cache");
-        self.db.cache().flush();
-        trace!(target: "backendhandler", "flushing cache finished");
-    }
-}
-
 /// A cloneable backend type that shares access to the backend data with all its clones.
 ///
-/// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandlers`
-/// is spawned on a background thread and listens for incoming commands on the receiver half of the
-/// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so their can be
+/// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
+/// is spawned on a tokio task and listens for incoming commands on the receiver half of the
+/// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so there can be
 /// multiple `SharedBackend`s communicating with the same `BackendHandler`, hence this `Backend`
 /// type is thread safe.
 ///
@@ -375,17 +368,28 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 /// from `B` and simply adds it as an additional listener for the request already in progress,
 /// instead of sending another one. So that after the provider returns the response all listeners
 /// (`A` and `B`) get notified.
+// **Note**: the implementation makes use of [tokio::task::block_in_place()] when interacting with
+// the underlying [BackendHandler] which runs on a separate spawned tokio task.
+// [tokio::task::block_in_place()]
+// > Runs the provided blocking function on the current thread without blocking the executor.
+// This prevents issues (hangs) we ran into were the [SharedBackend] itself is called from a spawned
+// task.
 #[derive(Debug, Clone)]
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
+    /// Ensures that the underlying cache gets flushed once the last `SharedBackend` is dropped.
+    ///
+    /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
+    /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
+    _cache: Arc<FlushJsonBlockCacheDB>,
 }
 
 impl SharedBackend {
-    /// _Spawns_ a new `BackendHandler` on a background thread that listens for requests from any
+    /// _Spawns_ a new `BackendHandler` on a `tokio::task` that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `db`.
     ///
-    /// The spawned `BackendHandler` is dropped once the last `SharedBackend` connected to it is
+    /// The spawned `BackendHandler` finishes once the last `SharedBackend` connected to it is
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
@@ -394,9 +398,39 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
-        // spawn the provider handler to background
-        trace!(target: "backendhandler", "spawning Backendhandler");
+        // spawn the provider handler to a task
+        trace!(target: "backendhandler", "spawning Backendhandler task");
         tokio::spawn(handler);
+        shared
+    }
+
+    /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
+    /// its own `tokio::Runtime`
+    pub fn spawn_backend_thread<M>(
+        provider: M,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> Self
+    where
+        M: Middleware + Unpin + 'static + Clone,
+    {
+        let (shared, handler) = Self::new(provider, db, pin_block);
+
+        // spawn a light-weight thread with a thread-local async runtime just for
+        // sending and receiving data from the remote client
+        let _ = std::thread::Builder::new()
+            .name("fork-backend-thread".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .build()
+                    .expect("failed to create fork-backend-thread tokio runtime");
+
+                rt.block_on(async move { handler.await });
+            })
+            .expect("failed to spawn backendhandler thread");
+        trace!(target: "backendhandler", "spawned Backendhandler thread");
+
         shared
     }
 
@@ -410,35 +444,44 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
+        let _cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend }, handler)
+        (Self { backend, _cache }, handler)
     }
 
     /// Updates the pinned block to fetch data from
     pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
-        let req = BackendRequest::SetPinnedBlock(block.into());
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
+        tokio::task::block_in_place(|| {
+            let req = BackendRequest::SetPinnedBlock(block.into());
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
+        })
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Basic(address, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Basic(address, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 
     fn do_get_storage(&self, address: Address, index: U256) -> eyre::Result<U256> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Storage(address, index, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::Storage(address, index, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 
     fn do_get_block_hash(&self, number: u64) -> eyre::Result<H256> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::BlockHash(number, sender);
-        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        tokio::task::block_in_place(|| {
+            let (sender, rx) = oneshot_channel();
+            let req = BackendRequest::BlockHash(number, sender);
+            self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+            Ok(rx.recv()?)
+        })
     }
 }
 
@@ -485,9 +528,9 @@ mod tests {
     };
     use ethers::{
         providers::{Http, Provider},
+        solc::utils::RuntimeOrHandle,
         types::Address,
     };
-    use foundry_utils::RuntimeOrHandle;
 
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 

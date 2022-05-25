@@ -1,6 +1,6 @@
 //! Contains various tests for checking `forge test`
 use foundry_cli_test_utils::{
-    forgetest,
+    forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
@@ -38,6 +38,63 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.contract_pattern_inverse, None);
     assert_eq!(config.path_pattern.unwrap(), glob);
     assert_eq!(config.path_pattern_inverse, None);
+});
+
+// tests that warning is displayed when there are no tests in project
+forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.set_current_dir(prj.root());
+    cmd.args(["test"]);
+
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
+    );
+});
+
+// tests that warning is displayed with pattern when no tests match
+forgetest!(warn_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.set_current_dir(prj.root());
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests_match.stdout"),
+    );
+});
+
+// tests that suggestion is provided with pattern when no tests match
+forgetest!(suggest_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    // set up project
+    prj.inner()
+        .add_source(
+            "TestE.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+
+contract TestC {
+    function test1() public {
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    // set up command
+    cmd.set_current_dir(prj.root());
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
+    );
 });
 
 // tests that direct import paths are handled correctly
@@ -162,3 +219,61 @@ contract MyTest is DSTest {
             .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
     );
 });
+
+// checks that forge test repeatedly produces the same output
+forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("test");
+    cmd.assert_non_empty_stdout();
+
+    for _ in 0..10 {
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_test_repeatedly.stdout"),
+        );
+    }
+});
+
+// tests that `forge test` will run a test only once after changing the version
+forgetest!(
+    runs_tests_exactly_once_with_changed_versions,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.insert_ds_test();
+
+        prj.inner()
+            .add_source(
+                "Contract.t.sol",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+import "./test.sol";
+contract ContractTest is DSTest {
+    function setUp() public {}
+
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+        // pin version
+        let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.arg("test");
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.10.stdout",
+            ));
+
+        // pin version
+        let config = Config { solc: Some("0.8.13".into()), ..Default::default() };
+        prj.write_config(config);
+
+        cmd.unchecked_output()
+            .stdout_matches_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+                "tests/fixtures/runs_tests_exactly_once_with_changed_versions.0.8.13.stdout",
+            ));
+    }
+);

@@ -9,7 +9,7 @@ use crate::{
 };
 use ethers_core::{
     abi::ethereum_types::H64,
-    types::{Address, BlockNumber, Bytes, TxHash, H256, U256},
+    types::{Address, BlockId, BlockNumber, Bytes, TxHash, H256, U256},
 };
 use serde::{Deserialize, Deserializer};
 
@@ -48,10 +48,10 @@ pub enum EthRequest {
     EthBlockNumber(()),
 
     #[serde(rename = "eth_getBalance")]
-    EthGetBalance(Address, Option<BlockNumber>),
+    EthGetBalance(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
-    EthGetStorageAt(Address, U256, Option<BlockNumber>),
+    EthGetStorageAt(Address, U256, Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(H256, bool),
@@ -60,7 +60,7 @@ pub enum EthRequest {
     EthGetBlockByNumber(BlockNumber, bool),
 
     #[serde(rename = "eth_getTransactionCount")]
-    EthGetTransactionCount(Address, Option<BlockNumber>),
+    EthGetTransactionCount(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash")]
     EthGetTransactionCountByHash(H256),
@@ -75,7 +75,7 @@ pub enum EthRequest {
     EthGetUnclesCountByNumber(BlockNumber),
 
     #[serde(rename = "eth_getCode")]
-    EthGetCodeAt(Address, Option<BlockNumber>),
+    EthGetCodeAt(Address, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
@@ -88,13 +88,13 @@ pub enum EthRequest {
     EthSendRawTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
-    EthCall(CallRequest, #[serde(default)] Option<BlockNumber>),
+    EthCall(CallRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_createAccessList")]
-    EthCreateAccessList(CallRequest, #[serde(default)] Option<BlockNumber>),
+    EthCreateAccessList(CallRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_estimateGas")]
-    EthEstimateGas(CallRequest, #[serde(default)] Option<BlockNumber>),
+    EthEstimateGas(CallRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
@@ -299,10 +299,28 @@ pub enum EthRequest {
     /// transaction (instead of just txhash/receipt)
     #[serde(rename = "anvil_enableTraces", with = "empty_params")]
     EnableTraces(()),
+
+    /// Returns the number of transactions currently pending for inclusion in the next block(s), as
+    /// well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status)
+    #[serde(rename = "txpool_status", with = "empty_params")]
+    TxPoolStatus(()),
+
+    /// Returns a summary of all the transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_inspect)
+    #[serde(rename = "txpool_inspect", with = "empty_params")]
+    TxPoolInspect(()),
+
+    /// Returns the details of all transactions currently pending for inclusion in the next
+    /// block(s), as well as the ones that are being scheduled for future execution only.
+    /// Ref: [Here](https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_content)
+    #[serde(rename = "txpool_content", with = "empty_params")]
+    TxPoolContent(()),
 }
 
 /// Represents ethereum JSON-RPC API
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthPubSub {
     /// Subscribe to an eth subscription
@@ -489,14 +507,35 @@ mod tests {
     fn test_custom_mine() {
         let s = r#"{"method": "anvil_mine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_none());
+                assert!(time.is_none());
+            }
+            _ => unreachable!(),
+        }
         let s =
             r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_some());
+                assert!(time.is_none());
+            }
+            _ => unreachable!(),
+        }
         let s = r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Mine(num, time) => {
+                assert!(num.is_some());
+                assert!(time.is_some());
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -522,14 +561,91 @@ mod tests {
 
     #[test]
     fn test_custom_reset() {
-        let s = r#"{"method": "anvil_reset", "params": [ {
-            "forking" : {
+        let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
                 "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>",
                 "blockNumber": 11095000
-            }
-        }]}"#;
+        }}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some(
+                            "https://eth-mainnet.alchemyapi.io/v2/<key>".to_string()
+                        ),
+                        block_number: Some(11095000)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "anvil_reset", "params": [ { "forking": {
+                "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>"
+        }}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some(
+                            "https://eth-mainnet.alchemyapi.io/v2/<key>".to_string()
+                        ),
+                        block_number: None
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{"jsonRpcUrl": "http://localhost:8545", "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("http://localhost:8545".to_string()),
+                        block_number: Some(14000000)
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{ "blockNumber": 14000000}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking { json_rpc_url: None, block_number: Some(14000000) })
+                )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method":"anvil_reset","params":[{"jsonRpcUrl": "http://localhost:8545"}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert_eq!(
+                    forking,
+                    Some(Forking {
+                        json_rpc_url: Some("http://localhost:8545".to_string()),
+                        block_number: None
+                    })
+                )
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -630,11 +746,27 @@ mod tests {
             "blocks": 100
         }]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert_eq!(
+                    params.unwrap().params,
+                    EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
+                )
+            }
+            _ => unreachable!(),
+        }
 
         let s = r#"{"method": "evm_mine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        match req {
+            EthRequest::EvmMine(params) => {
+                assert!(params.is_none())
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[test]
@@ -708,6 +840,15 @@ mod tests {
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
 
         let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+
+        let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "latest" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+
+        let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockNumber": "0x0" }]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+
+        let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}, { "blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" }]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 

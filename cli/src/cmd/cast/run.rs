@@ -1,9 +1,10 @@
-use crate::{cmd::Cmd, utils};
+use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
 use cast::trace::CallTraceDecoder;
 use clap::Parser;
 use ethers::{
     abi::Address,
     prelude::{Middleware, Provider},
+    solc::utils::RuntimeOrHandle,
     types::H256,
 };
 use forge::{
@@ -12,7 +13,6 @@ use forge::{
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
 use foundry_config::Config;
-use foundry_utils::RuntimeOrHandle;
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
@@ -23,10 +23,10 @@ use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "The transaction hash.")]
+    #[clap(help = "The transaction hash.", value_name = "TXHASH")]
     tx: String,
-    #[clap(short, long, env = "ETH_RPC_URL")]
-    rpc_url: String,
+    #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+    rpc_url: Option<String>,
     #[clap(long, short = 'd', help = "Debugs the transaction.")]
     debug: bool,
     #[clap(
@@ -37,7 +37,8 @@ pub struct RunArgs {
     quick: bool,
     #[clap(
         long,
-        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth"
+        help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
+        value_name = "LABEL"
     )]
     label: Vec<String>,
 }
@@ -55,15 +56,16 @@ impl RunArgs {
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
+        let rpc_url = consume_config_rpc_url(self.rpc_url);
         let provider =
-            Provider::try_from(self.rpc_url.as_str()).expect("could not instantiate provider");
+            Provider::try_from(rpc_url.as_str()).expect("could not instantiate provider");
 
         if let Some(tx) =
             provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")).await?
         {
             let tx_block_number = tx.block_number.expect("no block number").as_u64();
             let tx_hash = tx.hash();
-            evm_opts.fork_url = Some(self.rpc_url);
+            evm_opts.fork_url = Some(rpc_url);
             evm_opts.fork_block_number = Some(tx_block_number - 1);
 
             // Set up the execution environment

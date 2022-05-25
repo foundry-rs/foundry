@@ -646,7 +646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9213f7cd7c27e95c2b57c49f0e69b1ea65b27138da84a170133fd21b07659c00"
 dependencies = [
  "num 0.1.42",
- "time",
+ "time 0.1.43",
 ]
 
 [[package]]
@@ -658,7 +658,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
- "time",
+ "time 0.1.43",
  "winapi",
 ]
 
@@ -854,14 +854,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "combine"
+version = "4.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a604e93b79d1808327a6fca85a6f2d69de66461e7620f5a4cbf5fb4d1d7c948"
+dependencies = [
+ "bytes",
+ "memchr",
+]
+
+[[package]]
 name = "comfy-table"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b103d85ca6e209388771bfb7aa6b68a7aeec4afbf6f0a0264bfbf50360e5212e"
 dependencies = [
  "crossterm 0.23.2",
- "strum",
- "strum_macros",
+ "strum 0.23.0",
+ "strum_macros 0.23.1",
  "unicode-width",
 ]
 
@@ -1427,8 +1437,8 @@ dependencies = [
 
 [[package]]
 name = "ethers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1443,7 +1453,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1453,8 +1463,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1471,8 +1481,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-abigen"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1493,8 +1503,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-derive"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1507,12 +1517,13 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.3"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
  "cargo_metadata",
+ "chrono 0.4.19",
  "convert_case",
  "elliptic-curve",
  "ethabi",
@@ -1526,19 +1537,22 @@ dependencies = [
  "rlp-derive",
  "serde",
  "serde_json",
+ "strum 0.24.0",
  "syn",
  "thiserror",
  "tiny-keccak",
+ "unicode-xid",
 ]
 
 [[package]]
 name = "ethers-etherscan"
-version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.2.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "ethers-core",
  "ethers-solc",
  "reqwest",
+ "semver",
  "serde",
  "serde-aux",
  "serde_json",
@@ -1548,8 +1562,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-middleware"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1572,8 +1586,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-providers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1607,8 +1621,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-signers"
-version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+version = "0.6.2"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1631,8 +1645,9 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#44cbbc769a4139c023ca6f5e22b4ea8b6ead23b3"
+source = "git+https://github.com/gakonst/ethers-rs#a150666d545950180ab7df3299189d8ff6d458f7"
 dependencies = [
+ "cfg-if 1.0.0",
  "colored",
  "dunce",
  "ethers-core",
@@ -1864,6 +1879,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "atty",
+ "bytes",
  "cast",
  "clap",
  "clap_complete",
@@ -1896,6 +1912,7 @@ dependencies = [
  "similar",
  "solang-parser",
  "strsim",
+ "strum 0.24.0",
  "tokio",
  "toml",
  "tracing",
@@ -1946,12 +1963,15 @@ dependencies = [
  "eyre",
  "figment",
  "globset",
+ "number_prefix",
  "pretty_assertions",
  "regex",
  "semver",
  "serde",
  "serde_regex",
+ "tempfile",
  "toml",
+ "toml_edit",
  "walkdir",
 ]
 
@@ -1994,6 +2014,7 @@ dependencies = [
  "ethers-providers",
  "ethers-solc",
  "eyre",
+ "futures",
  "hex",
  "reqwest",
  "rlp",
@@ -2001,6 +2022,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -3192,6 +3214,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_threads"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2819ce041d2ee131036f4fc9d6ae7ae125a3a40e97ba64d04fe799ad9dabbb44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "number_prefix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3208,9 +3239,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.10.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87f3e037eac156d1775da914196f0f37741a274155e34a0b7e427c35d2a2ecb9"
+checksum = "7709cef83f0c1f58f666e746a08b21e0085f7440fa6a29cc194d68aac97a4225"
 
 [[package]]
 name = "opaque-debug"
@@ -3670,11 +3701,11 @@ checksum = "dbf0c48bc1d91375ae5c3cd81e3722dff1abcf81a30960240640d223f59fe0e5"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.37"
+version = "1.0.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec757218438d5fda206afc041538b2f6d889286160d649a86a24d37e1235afd1"
+checksum = "c54b25569025b7fc9651de43004ae593a75ad88543b17178aa5e1b9c4f15f56f"
 dependencies = [
- "unicode-xid",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -3851,9 +3882,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd249e82c21598a9a426a4e00dd7adc1d640b22445ec8545feef801d1a74c221"
+checksum = "bd99e5772ead8baa5215278c9b15bf92087709e9c1b2d1f97cdb5a183c933a7d"
 dependencies = [
  "autocfg",
  "crossbeam-deque",
@@ -3895,9 +3926,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.5.5"
+version = "1.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a11647b6b25ff05a515cb92c365cec08801e83423a235b51e231e1808747286"
+checksum = "d83f127d94bdbcda4c8cc2e50f6f84f4b611f69c902699ca385a39c3a75f9ff1"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3915,9 +3946,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.6.25"
+version = "0.6.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
+checksum = "49b3de9ec5dc0a3417da371aab17d729997c15010e7fd24ff707773a33bddb64"
 
 [[package]]
 name = "remove_dir_all"
@@ -4493,15 +4524,13 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b2ad9c159bd02219a59368133301e6195fdaa2b5d55c628ccdcd611d49235f"
+checksum = "395b6e1ec5af117bd08f963c7cd80f8efd4eed51c5a332aed42b13e3f9bc860b"
 dependencies = [
+ "itertools",
  "lalrpop",
  "lalrpop-util",
- "num-bigint",
- "num-rational",
- "num-traits",
  "phf 0.10.1",
  "unicode-xid",
 ]
@@ -4554,12 +4583,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cae14b91c7d11c9a851d3fbc80a963198998c2a64eec840477fa92d8ce9b70bb"
 
 [[package]]
+name = "strum"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96acfc1b70604b8b2f1ffa4c57e59176c7dbb05d556c71ecd2f5498a1dee7f8"
+dependencies = [
+ "strum_macros 0.24.0",
+]
+
+[[package]]
 name = "strum_macros"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5bb0dc7ee9c15cea6199cde9a127fa16a4c5819af85395457ad72d68edc85a38"
 dependencies = [
  "heck 0.3.3",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6878079b17446e4d3eba6192bb0a2950d5b14f0ed8424b852310e5a94345d0ef"
+dependencies = [
+ "heck 0.4.0",
  "proc-macro2",
  "quote",
  "rustversion",
@@ -4587,8 +4638,8 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.9"
-source = "git+https://github.com/roynalnaruto/svm-rs#1eb7f4e2ccb549096885ded598f6c05b2d96dccf"
+version = "0.2.10"
+source = "git+https://github.com/roynalnaruto/svm-rs#70fe9d9c43689e311753ce7a94f4618dd219bfda"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -4617,7 +4668,7 @@ dependencies = [
 [[package]]
 name = "svm-rs-builds"
 version = "0.1.0"
-source = "git+https://github.com/roynalnaruto/svm-rs#1eb7f4e2ccb549096885ded598f6c05b2d96dccf"
+source = "git+https://github.com/roynalnaruto/svm-rs#70fe9d9c43689e311753ce7a94f4618dd219bfda"
 dependencies = [
  "build_const",
  "hex",
@@ -4628,13 +4679,13 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.92"
+version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ff7c592601f11445996a06f8ad0c27f094a58857c2f89e97974ab9235b92c52"
+checksum = "fbaf6116ab8924f39d52792136fb74fd60a80194cf1b1c6ffa6453eef1c3f942"
 dependencies = [
  "proc-macro2",
  "quote",
- "unicode-xid",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -4768,6 +4819,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "time"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2702e08a7a860f005826c6815dcac101b19b5eb330c27fe4a5928fec1d20ddd"
+dependencies = [
+ "itoa",
+ "libc",
+ "num_threads",
+]
+
+[[package]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4893,6 +4955,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d82e1a7758622a465f8cee077614c73484dac5b836c02ff6a40d5d1010324d7"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba98375fd631b83696f87c64e4ed8e29e6a1f3404d6aed95fa95163bad38e705"
+dependencies = [
+ "combine",
+ "indexmap",
+ "itertools",
 ]
 
 [[package]]
@@ -5155,6 +5228,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63ec69f541d875b783ca40184d655f2927c95f0bffd486faa83cd3ac3529ec32"
 
 [[package]]
+name = "unicode-ident"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d22af068fba1eb5edcb4aea19d382b2a3deb4c8f9d475c589b6ada9e0fd493ee"
+
+[[package]]
 name = "unicode-normalization"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5177,9 +5256,9 @@ checksum = "3ed742d4ea2bd1176e236172c8429aaf54486e7ac098db29ffe6529e0ce50973"
 
 [[package]]
 name = "unicode-xid"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+checksum = "957e51f3646910546462e67d5f7599b9e4fb8acdd304b087a6494730f9eebf04"
 
 [[package]]
 name = "untrusted"
@@ -5229,19 +5308,19 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vergen"
-version = "6.0.2"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3893329bee75c101278e0234b646fa72221547d63f97fb66ac112a0569acd110"
+checksum = "4db743914c971db162f35bf46601c5a63ec4452e61461937b4c1ab817a60c12e"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
- "chrono 0.4.19",
  "enum-iterator",
  "getset",
  "git2",
  "rustc_version",
  "rustversion",
  "thiserror",
+ "time 0.3.9",
 ]
 
 [[package]]

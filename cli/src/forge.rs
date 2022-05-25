@@ -53,6 +53,9 @@ fn main() -> eyre::Result<()> {
             CacheSubcommands::Clean(cmd) => {
                 cmd.run()?;
             }
+            CacheSubcommands::Ls(cmd) => {
+                cmd.run()?;
+            }
         },
         Subcommands::Create(cmd) => {
             cmd.run()?;
@@ -96,9 +99,9 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        // Subcommands::Fmt(cmd) => {
-        //     cmd.run()?;
-        // }
+        Subcommands::Fmt(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }
@@ -107,6 +110,9 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Inspect(cmd) => {
             cmd.run()?;
+        }
+        Subcommands::UploadSelectors(args) => {
+            utils::block_on(args.run())?;
         }
         Subcommands::Tree(cmd) => {
             cmd.run()?;

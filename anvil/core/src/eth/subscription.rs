@@ -10,7 +10,7 @@ use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 /// Result of a subscription
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum SubscriptionResult {
     /// New block header
@@ -31,7 +31,7 @@ pub struct SyncStatus {
 }
 
 /// Params for a subscription request
-#[derive(Debug, PartialEq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum SubscriptionParams {
     /// no `params`
     None,

@@ -61,7 +61,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
     }
 }
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct CoreBuildArgs {
     #[clap(
         help_heading = "CACHE OPTIONS",
@@ -75,7 +75,8 @@ pub struct CoreBuildArgs {
         help_heading = "LINKER OPTIONS",
         help = "Set pre-linked libraries.",
         long,
-        env = "DAPP_LIBRARIES"
+        env = "DAPP_LIBRARIES",
+        value_name = "LIBRARIES"
     )]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
@@ -84,7 +85,12 @@ pub struct CoreBuildArgs {
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
-    #[clap(help_heading = "COMPILER OPTIONS", help = "Ignore solc warnings by error code.", long)]
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "Ignore solc warnings by error code.",
+        long,
+        value_name = "ERROR_CODES"
+    )]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
@@ -95,7 +101,7 @@ pub struct CoreBuildArgs {
     /// Specify the solc version, or a path to a local solc, to build with.
     ///
     /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[clap(help_heading = "COMPILER OPTIONS", value_name = "use", long = "use")]
+    #[clap(help_heading = "COMPILER OPTIONS", value_name = "SOLC_VERSION", long = "use")]
     #[serde(skip)]
     pub use_solc: Option<String>,
 
@@ -125,7 +131,8 @@ pub struct CoreBuildArgs {
         help = "The path to the contract artifacts folder.",
         long = "out",
         short,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
     pub out_path: Option<PathBuf>,
@@ -134,7 +141,7 @@ pub struct CoreBuildArgs {
         help_heading = "PROJECT OPTIONS",
         help = r#"Revert string configuration. Possible values are "default", "strip" (remove), "debug" (Solidity-generated revert strings) and "verboseDebug""#,
         long = "revert-strings",
-        value_name = "revert"
+        value_name = "REVERT"
     )]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
@@ -192,13 +199,15 @@ impl Provider for CoreBuildArgs {
             dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }
 
-        if let Some(ref extra) = self.compiler.extra_output {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+        if !self.compiler.extra_output.is_empty() {
+            let selection: Vec<_> =
+                self.compiler.extra_output.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output".to_string(), selection.into());
         }
 
-        if let Some(ref extra) = self.compiler.extra_output_files {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+        if !self.compiler.extra_output_files.is_empty() {
+            let selection: Vec<_> =
+                self.compiler.extra_output_files.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output_files".to_string(), selection.into());
         }
 
@@ -308,13 +317,14 @@ impl Provider for BuildArgs {
 
 impl_figment_convert!(BuildArgs, args);
 
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct ProjectPathsArgs {
     #[clap(
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(skip)]
     pub root: Option<PathBuf>,
@@ -324,23 +334,29 @@ pub struct ProjectPathsArgs {
         help = "The contracts source directory.",
         long,
         short,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
-    #[clap(help = "The project's remappings.", long, short)]
+    #[clap(help = "The project's remappings.", long, short, value_name = "REMAPPINGS")]
     #[serde(skip)]
     pub remappings: Vec<Remapping>,
 
-    #[clap(help = "The project's remappings from the environment.", long = "remappings-env")]
+    #[clap(
+        help = "The project's remappings from the environment.",
+        long = "remappings-env",
+        value_name = "ENV"
+    )]
     #[serde(skip)]
     pub remappings_env: Option<String>,
 
     #[clap(
         help = "The path to the compiler cache.",
         long = "cache-path",
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_path: Option<PathBuf>,
@@ -348,7 +364,8 @@ pub struct ProjectPathsArgs {
     #[clap(
         help = "The path to the library folder.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
     pub lib_paths: Vec<PathBuf>,
@@ -366,7 +383,8 @@ pub struct ProjectPathsArgs {
     #[clap(
         help = "Path to the config file.",
         long = "config-path",
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE"
     )]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,

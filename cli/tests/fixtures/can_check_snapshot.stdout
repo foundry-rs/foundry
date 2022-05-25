@@ -1,0 +1,11 @@
+Compiling 3 files with 0.8.10
+Solc 0.8.10 finished in 424.55ms
+Compiler run successful
+
+Running 1 test for src/ATest.t.sol:ATest
+[32m[PASS][0m testExample() (gas: 168)
+Test result: [32mok[0m. 1 passed; 0 failed; finished in 4.42ms
+
+Running 1 test for src/BTest.t.sol:BTest
+[32m[PASS][0m testExample() (gas: 168)
+Test result: [32mok[0m. 1 passed; 0 failed; finished in 4.42ms

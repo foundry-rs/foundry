@@ -36,7 +36,11 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use ethers::types::{TxHash, U64};
+use anvil_core::eth::transaction::PendingTransaction;
+use ethers::{
+    prelude::TxpoolStatus,
+    types::{TxHash, U64},
+};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -59,6 +63,24 @@ impl Pool {
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator {
         self.inner.read().ready_transactions()
+    }
+
+    /// Returns all transactions that are not ready to be included in a block yet
+    pub fn pending_transactions(&self) -> Vec<Arc<PoolTransaction>> {
+        self.inner.read().pending_transactions.transactions().collect()
+    }
+
+    /// Returns the _pending_ transaction for that `hash` if it exists in the mempool
+    pub fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        self.inner.read().get_transaction(hash)
+    }
+
+    /// Returns the number of tx that are ready and queued for further execution
+    pub fn txpool_status(&self) -> TxpoolStatus {
+        // Note: naming differs here compared to geth's `TxpoolStatus`
+        let pending = self.ready_transactions().count().into();
+        let queued = self.inner.read().pending_transactions.len().into();
+        TxpoolStatus { pending, queued }
     }
 
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
@@ -183,13 +205,26 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
+    /// checks both pools for the matching transaction
+    ///
+    /// Returns `None` if the transaction does not exist in the pool
+    fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        if let Some(pending) = self.pending_transactions.get(&hash) {
+            return Some(pending.transaction.pending_transaction.clone())
+        }
+        Some(
+            self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
+        )
+    }
+
     /// Returns true if this pool already contains the transaction
-    pub fn contains(&self, tx_hash: &TxHash) -> bool {
+    fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(tx.hash()) {
+            warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
 

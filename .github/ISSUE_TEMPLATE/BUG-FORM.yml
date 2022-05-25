@@ -44,8 +44,8 @@ body:
       description: What operating system are you on?
       options:
         - Windows
-        - macOS (amd)
-        - macOS (M1)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
         - Linux
   - type: textarea
     attributes:
