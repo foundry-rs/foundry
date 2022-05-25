@@ -9,7 +9,7 @@ pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::test_runner::{TestError, TestRunner};
 use revm::{db::DatabaseRef, DatabaseCommit};
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, BorrowMut},
     cell::{Cell, RefCell, RefMut},
     collections::BTreeMap,
 };
@@ -113,23 +113,17 @@ where
                     sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
 
                     if !reverted {
-                        if let Err((func, result)) = assert_invariants(
+                        if assert_invariants(
                             self.sender,
+                            abi,
                             executor.borrow_mut(),
                             invariant_address,
                             &invariants,
-                        ) {
-                            invariant_doesnt_hold.borrow_mut().insert(
-                                func.name.clone(),
-                                Some(InvariantFuzzError::new(
-                                    invariant_address,
-                                    Some(func),
-                                    abi,
-                                    &result,
-                                    inputs.split_at(index + 1).0,
-                                )),
-                            );
-
+                            invariant_doesnt_hold.borrow_mut(),
+                            inputs.split_at(index + 1).0,
+                        )
+                        .is_err()
+                        {
                             break 'all
                         }
                     } else {
@@ -144,9 +138,12 @@ where
                             );
                             *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
 
-                            invariant_doesnt_hold
-                                .borrow_mut()
-                                .insert("Revert".to_string(), Some(error));
+                            for invariant in invariants.iter() {
+                                invariant_doesnt_hold
+                                    .borrow_mut()
+                                    .insert(invariant.name.clone(), Some(error.clone()));
+                            }
+
                             break 'all
                         }
                     }
@@ -300,13 +297,18 @@ where
 
 fn assert_invariants<'a, DB>(
     sender: Address,
+    abi: &Abi,
     executor: RefMut<&mut &mut Executor<DB>>,
     invariant_address: Address,
     invariants: &'a [&Function],
-) -> Result<(), (&'a Function, bytes::Bytes)>
+    mut invariant_doesnt_hold: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
+    inputs: &[(Address, (Address, Bytes))],
+) -> eyre::Result<()>
 where
     DB: DatabaseRef,
 {
+    let before = invariant_doesnt_hold.len();
+
     for func in invariants {
         let RawCallResult { reverted, state_changeset, result, .. } = executor
             .borrow()
@@ -317,8 +319,9 @@ where
                 U256::zero(),
             )
             .expect("EVM error");
-        if reverted {
-            return Err((*func, result))
+
+        let err = if reverted {
+            Some((*func, result))
         } else {
             // This will panic and get caught by the executor
             if !executor.borrow().is_success(
@@ -327,9 +330,22 @@ where
                 state_changeset.expect("we should have a state changeset"),
                 false,
             ) {
-                return Err((*func, result))
+                Some((*func, result))
+            } else {
+                None
             }
+        };
+
+        if let Some((func, result)) = err {
+            invariant_doesnt_hold.borrow_mut().insert(
+                func.name.clone(),
+                Some(InvariantFuzzError::new(invariant_address, Some(func), abi, &result, inputs)),
+            );
         }
+    }
+
+    if invariant_doesnt_hold.len() > before {
+        eyre::bail!("");
     }
     Ok(())
 }
@@ -344,7 +360,7 @@ pub struct InvariantFuzzTestResult {
     pub reverts: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
     /// The proptest error occurred as a result of a test case
     pub test_error: TestError<Vec<(Address, (Address, Bytes))>>,

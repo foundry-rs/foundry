@@ -579,7 +579,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         test_options: TestOptions,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
     ) -> Result<Vec<TestResult>> {
-        let TestSetup { address, mut logs, mut traces, labeled_addresses, .. } = setup;
+        let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         let start = Instant::now();
         let prev_db = self.executor.db.clone();
@@ -597,6 +597,8 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 .iter()
                 .map(|(_k, test_error)| {
                     let mut counterexample_sequence = vec![];
+                    let mut logs = logs.clone();
+                    let mut traces = traces.clone();
 
                     if let Some(ref error) = test_error {
                         // we want traces for a failed fuzz
@@ -663,9 +665,9 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                         reason,
                         counterexample: None,
                         counterexample_sequence: sequence,
-                        logs: logs.clone(),
+                        logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
-                        traces: traces.clone(),
+                        traces,
                         labeled_addresses: labeled_addresses.clone(),
                     }
                 })
