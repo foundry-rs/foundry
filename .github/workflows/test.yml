@@ -71,7 +71,11 @@ jobs:
         uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
-
+      # required for forge commands
+      - name: setup git config
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
       - name: cargo test
         run: cargo test --locked --workspace -- --skip fork
 
