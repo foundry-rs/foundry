@@ -328,6 +328,8 @@ async fn test_fork_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
+    let start = std::time::Instant::now();
+
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
 
@@ -339,13 +341,12 @@ async fn test_fork_timestamp() {
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
 
-    // ensure the diff between the new mined block and the original block is within a small window
-    // to account for network delays, timestamp rounding: 3 secs and the http provider's
-    // interval, just to be safe
-    let expected_timestamp_offset = provider.get_interval().as_secs() + 3;
+    // ensure the diff between the new mined block and the original block is within the elapsed time
+    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= expected_timestamp_offset.into());
+    assert!(diff <= elapsed.into());
 
+    let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
@@ -357,8 +358,7 @@ async fn test_fork_timestamp() {
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    // ensure the diff between the new mined block and the original block is within 2secs, just to
-    // be safe
+    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= expected_timestamp_offset.into());
+    assert!(diff <= elapsed.into());
 }
