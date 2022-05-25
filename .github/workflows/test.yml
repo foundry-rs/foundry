@@ -74,8 +74,8 @@ jobs:
       # required for forge commands that use git
       - name: setup git config
         run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "<>"
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
       - name: cargo test
         run: cargo test --locked --workspace -- --skip fork
 
