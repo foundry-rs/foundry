@@ -9,9 +9,9 @@ use futures::{future::BoxFuture, join};
 
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
-    #[clap(help = "The UNIX timestamp to search for (in seconds)")]
+    #[clap(help = "The UNIX timestamp to search for (in seconds)", value_name = "TIMESTAMP")]
     timestamp: u64,
-    #[clap(long, env = "ETH_RPC_URL")]
+    #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
     rpc_url: Option<String>,
 }
 

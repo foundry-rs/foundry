@@ -44,14 +44,16 @@ pub struct Wallet {
     #[clap(
         long = "private-key",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the provided private key."
+        help = "Use the provided private key.",
+        value_name = "RAW_PRIVATE_KEY"
     )]
     pub private_key: Option<String>,
 
     #[clap(
         long = "mnemonic-path",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path."
+        help = "Use the mnemonic file at the specified path.",
+        value_name = "PATH"
     )]
     pub mnemonic_path: Option<String>,
 
@@ -59,7 +61,8 @@ pub struct Wallet {
         long = "mnemonic-index",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
-        default_value = "0"
+        default_value = "0",
+        value_name = "INDEX"
     )]
     pub mnemonic_index: u32,
 
@@ -67,7 +70,8 @@ pub struct Wallet {
         env = "ETH_KEYSTORE",
         long = "keystore",
         help_heading = "WALLET OPTIONS - KEYSTORE",
-        help = "Use the keystore in the given folder or file."
+        help = "Use the keystore in the given folder or file.",
+        value_name = "PATH"
     )]
     pub keystore_path: Option<String>,
 
@@ -75,7 +79,8 @@ pub struct Wallet {
         long = "password",
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "The keystore password. Used with --keystore.",
-        requires = "keystore-path"
+        requires = "keystore-path",
+        value_name = "PASSWORD"
     )]
     pub keystore_password: Option<String>,
 
@@ -98,7 +103,8 @@ pub struct Wallet {
     #[clap(
         long = "hd-path",
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets."
+        help = "The derivation path to use with hardware wallets.",
+        value_name = "PATH"
     )]
     pub hd_path: Option<String>,
 
@@ -107,7 +113,8 @@ pub struct Wallet {
         short,
         long = "from",
         help_heading = "WALLET OPTIONS - REMOTE",
-        help = "The sender account."
+        help = "The sender account.",
+        value_name = "ADDRESS"
     )]
     pub from: Option<Address>,
 }

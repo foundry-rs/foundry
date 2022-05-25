@@ -43,23 +43,38 @@ pub struct Filter {
     pub pattern: Option<regex::Regex>,
 
     /// Only run test functions matching the specified regex pattern.
-    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern")]
+    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern", value_name = "REGEX")]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
-    #[clap(long = "no-match-test", alias = "nmt", conflicts_with = "pattern")]
+    #[clap(
+        long = "no-match-test",
+        alias = "nmt",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub test_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(long = "match-contract", alias = "mc", conflicts_with = "pattern")]
+    #[clap(
+        long = "match-contract",
+        alias = "mc",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub contract_pattern: Option<regex::Regex>,
 
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(long = "no-match-contract", alias = "nmc", conflicts_with = "pattern")]
+    #[clap(
+        long = "no-match-contract",
+        alias = "nmc",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern")]
+    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern", value_name = "GLOB")]
     pub path_pattern: Option<globset::Glob>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
@@ -67,7 +82,8 @@ pub struct Filter {
         name = "no-match-path",
         long = "no-match-path",
         alias = "nmp",
-        conflicts_with = "pattern"
+        conflicts_with = "pattern",
+        value_name = "GLOB"
     )]
     pub path_pattern_inverse: Option<globset::Glob>,
 }
@@ -210,7 +226,7 @@ pub struct TestArgs {
     /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     ///
     /// For more fine-grained control of which fuzz case is run, see forge run.
-    #[clap(long, value_name = "TEST FUNCTION")]
+    #[clap(long, value_name = "TEST_FUNCTION")]
     debug: Option<Regex>,
 
     /// Print a gas report.
@@ -231,7 +247,8 @@ pub struct TestArgs {
     #[clap(
         long,
         env = "ETHERSCAN_API_KEY",
-        help = "Set etherscan api key to better decode traces"
+        help = "Set etherscan api key to better decode traces",
+        value_name = "KEY"
     )]
     etherscan_api_key: Option<String>,
 

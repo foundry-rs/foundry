@@ -41,7 +41,8 @@ pub struct ClapChain {
         env = "CHAIN",
         default_value = "mainnet",
         // if Chain implemented ArgEnum, we'd get this for free
-        possible_values = Chain::VARIANTS
+        possible_values = Chain::VARIANTS,
+        value_name = "CHAIN"
     )]
     pub inner: Chain,
 }
@@ -49,17 +50,17 @@ pub struct ClapChain {
 impl_figment_convert_cast!(EthereumOpts);
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct EthereumOpts {
-    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.")]
+    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]
     pub rpc_url: Option<String>,
 
     #[clap(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
     pub flashbots: bool,
 
-    #[clap(long, env = "ETHERSCAN_API_KEY")]
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub etherscan_api_key: Option<String>,
 
-    #[clap(long, env = "CHAIN", default_value = "mainnet")]
+    #[clap(long, env = "CHAIN", default_value = "mainnet", value_name = "CHAIN_NAME")]
     #[serde(skip)]
     pub chain: Chain,
 
