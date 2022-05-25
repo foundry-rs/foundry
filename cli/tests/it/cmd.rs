@@ -6,11 +6,11 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
-    util::{pretty_err, read_string, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::fs;
+use std::{fs, path::PathBuf};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -556,16 +556,8 @@ contract BTest is DSTest {
 
     cmd.arg("snapshot");
 
-    let out = cmd.stdout();
-
-    assert!(
-        out.contains(&format!(
-            "Running 1 test for {}/src/BTest.t.sol:BTest",
-            prj.root().to_string_lossy()
-        )) && out.contains(&format!(
-            "Running 1 test for {}/src/ATest.t.sol:ATest",
-            prj.root().to_string_lossy()
-        ))
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
     );
 
     cmd.arg("--check");
