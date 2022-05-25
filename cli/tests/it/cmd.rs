@@ -11,7 +11,7 @@ use ethers::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_async, forgetest_ignore, forgetest_init,
-    util::{pretty_err, read_string, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
