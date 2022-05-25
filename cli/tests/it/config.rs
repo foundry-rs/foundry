@@ -475,7 +475,7 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
     prj.write_config(init.clone());
 
-    cmd.args(["install", "foundry-rs/forge-std"]);
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
@@ -484,7 +484,7 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test"]);
+    cmd.forge_fuse().args(["install", "dapphub/ds-test", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
