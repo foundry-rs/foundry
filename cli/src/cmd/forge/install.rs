@@ -114,6 +114,9 @@ pub(crate) fn install(
         if no_git {
             install_as_folder(&dep, &libs, target_dir)?;
         } else {
+            if !no_commit && !git_status_clean(root)? {
+                eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
+            }
             install_as_submodule(&dep, &libs, target_dir, no_commit)?;
         }
 
@@ -143,10 +146,6 @@ fn install_as_submodule(
     target_dir: &str,
     no_commit: bool,
 ) -> eyre::Result<()> {
-    if !no_commit && !git_status_clean()? {
-        eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
-    }
-
     // install the dep
     git_submodule(dep, libs, target_dir)?;
 
@@ -175,9 +174,10 @@ fn install_as_submodule(
 }
 
 // check that there are no modification in git working/staging area
-fn git_status_clean() -> eyre::Result<bool> {
+fn git_status_clean<P: AsRef<Path>>(root: P) -> eyre::Result<bool> {
     let output = Command::new("git")
         .args(&["status", "--short"])
+        .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
