@@ -12,7 +12,7 @@ use ethers::{
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, SpecId,
+    opcode, spec_opcode_gas, Filth, SpecId,
 };
 use std::{
     cell::RefCell,
@@ -169,7 +169,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
 
 /// Collects all created contracts from a StateChangeset which haven't been discovered yet.
 pub fn collect_created_contracts(
-    state_changeset: &StateChangeset,
+    state_changeset: StateChangeset,
     project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     setup_contracts: &BTreeMap<Address, (String, Abi)>,
     targeted_contracts: &RefCell<TargetedContracts>,
@@ -178,9 +178,9 @@ pub fn collect_created_contracts(
     let mut targeted = targeted_contracts.borrow_mut();
     let before = created.len();
 
-    for (address, account) in state_changeset {
-        if setup_contracts.get(address).is_none() {
-            if let Some(code) = &account.info.code {
+    for (address, account) in &state_changeset {
+        if !setup_contracts.contains_key(address) {
+            if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts
                         .iter()

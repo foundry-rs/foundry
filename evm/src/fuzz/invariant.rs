@@ -76,12 +76,12 @@ where
         let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.db);
         let targeted_contracts: FuzzRunIdentifiedContracts =
             Rc::new(RefCell::new(targeted_contracts));
+        let targeted_senders = Rc::new(targeted_senders);
 
         // Creates strategy
         let strat = invariant_strat(
             fuzz_state.clone(),
             invariant_depth as usize,
-            // todo senders ref
             targeted_senders.clone(),
             targeted_contracts.clone(),
         );
@@ -117,7 +117,7 @@ where
                 let mut new_inputs: Option<Vec<(Address, (Address, Bytes))>> = None;
                 let mut current_depth = 0;
 
-                'all: while current_depth < depth {
+                'outer: while current_depth < depth {
                     if let Some(mut inp) = new_inputs {
                         for input in inputs.iter_mut().skip(current_depth).rev() {
                             *input = inp.pop().unwrap();
@@ -145,26 +145,8 @@ where
                             state_changeset.to_owned().expect("we should have a state changeset");
                         collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
 
-                        if collect_created_contracts(
-                            &state_changeset,
-                            self.project_contracts,
-                            self.setup_contracts,
-                            targeted_contracts.borrow(),
-                            &mut created,
-                        ) {
-                            // new branch
-                            let strat = invariant_strat(
-                                fuzz_state.clone(),
-                                depth - (current_depth + 1),
-                                targeted_senders.clone(),
-                                targeted_contracts.clone(),
-                            );
-                            new_inputs =
-                                Some(strat.new_tree(&mut second_runner.clone()).unwrap().current());
-                        }
-
                         // Commit changes
-                        executor.borrow_mut().db.commit(state_changeset);
+                        executor.borrow_mut().db.commit(state_changeset.clone());
                         sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
 
                         if !reverted {
@@ -179,7 +161,7 @@ where
                             )
                             .is_err()
                             {
-                                break 'all
+                                break 'outer
                             }
                         } else {
                             reverts.set(reverts.get() + 1);
@@ -199,13 +181,28 @@ where
                                         .insert(invariant.name.clone(), Some(error.clone()));
                                 }
 
-                                break 'all
+                                break 'outer
                             }
                         }
 
                         current_depth += 1;
 
-                        if new_inputs.is_some() {
+                        if collect_created_contracts(
+                            state_changeset,
+                            self.project_contracts,
+                            self.setup_contracts,
+                            targeted_contracts.borrow(),
+                            &mut created,
+                        ) {
+                            // new branch
+                            let strat = invariant_strat(
+                                fuzz_state.clone(),
+                                depth - current_depth,
+                                targeted_senders.clone(),
+                                targeted_contracts.clone(),
+                            );
+                            new_inputs =
+                                Some(strat.new_tree(&mut second_runner.clone()).unwrap().current());
                             break 'inner
                         }
                     }

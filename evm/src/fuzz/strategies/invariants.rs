@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, cell::RefCell};
+use std::{borrow::Borrow, cell::RefCell, rc::Rc};
 
 use ethers::{
     abi::{Abi, Function, ParamType},
@@ -18,7 +18,7 @@ use crate::fuzz::{
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     depth: usize,
-    senders: Vec<Address>,
+    senders: Rc<Vec<Address>>,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
     vec![gen_call(fuzz_state, senders, contracts); depth].boxed()
@@ -26,7 +26,7 @@ pub fn invariant_strat(
 
 fn gen_call(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: Rc<Vec<Address>>,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<(Address, (Address, Bytes))> {
     let random_contract = select_random_contract(contracts);
@@ -43,13 +43,13 @@ fn gen_call(
         .boxed()
 }
 
-fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
+fn select_random_sender(senders: Rc<Vec<Address>>) -> impl Strategy<Value = Address> {
     let fuzz_strategy =
         fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
 
     if !senders.is_empty() {
         let selector =
-            any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&senders));
+            any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&*senders));
         proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
             .boxed()
     } else {
