@@ -167,7 +167,8 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     bytes
 }
 
-/// Collects all created contracts from a StateChangeset which haven't been discovered yet.
+/// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores
+/// them at `targeted_contracts` and `created`.
 pub fn collect_created_contracts(
     state_changeset: StateChangeset,
     project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,

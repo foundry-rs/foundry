@@ -1,10 +1,9 @@
-use std::{borrow::Borrow, cell::RefCell, rc::Rc};
+use std::{borrow::Borrow, cell::RefCell};
 
 use ethers::{
     abi::{Abi, Function, ParamType},
     types::{Address, Bytes},
 };
-
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
 
@@ -17,16 +16,17 @@ use crate::fuzz::{
 
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
-    depth: usize,
-    senders: Rc<Vec<Address>>,
+    senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
-    vec![generate_call(fuzz_state, senders, contracts); depth].boxed()
+    // We only want to seed the first value, since we want to generate the rest as we mutate the
+    // state
+    vec![generate_call(fuzz_state, senders, contracts); 1].boxed()
 }
 
 fn generate_call(
     fuzz_state: EvmFuzzState,
-    senders: Rc<Vec<Address>>,
+    senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<(Address, (Address, Bytes))> {
     let random_contract = select_random_contract(contracts);
@@ -43,7 +43,7 @@ fn generate_call(
         .boxed()
 }
 
-fn select_random_sender(senders: Rc<Vec<Address>>) -> impl Strategy<Value = Address> {
+fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
     let fuzz_strategy =
         fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
 

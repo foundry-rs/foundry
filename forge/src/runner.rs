@@ -596,7 +596,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             functions,
             address,
             self.contract,
-            test_options.invariant_depth,
+            test_options.invariant_depth as usize,
             test_options.invariant_fail_on_revert,
         )? {
             let results = invariants
