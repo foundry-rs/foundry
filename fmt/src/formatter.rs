@@ -281,7 +281,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 return false
             }
 
-            string.push_str(&format!(" {} ", comment.comment))
+            string = format!("{} {} ", string, comment.comment);
         }
         self.will_it_fit(string)
     }
