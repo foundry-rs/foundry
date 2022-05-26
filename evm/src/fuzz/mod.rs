@@ -146,8 +146,14 @@ where
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
                     .expect("could not decode fuzzer inputs");
-                result.counterexample =
-                    Some(CounterExample { sender: None, addr: None, calldata, args });
+                result.counterexample = Some(CounterExample {
+                    sender: None,
+                    addr: None,
+                    signature: None,
+                    contract_name: None,
+                    calldata,
+                    args,
+                });
             }
             _ => (),
         }
@@ -164,6 +170,10 @@ pub struct CounterExample {
     pub addr: Option<Address>,
     /// The data to provide
     pub calldata: Bytes,
+    /// Function signature if it exists
+    pub signature: Option<String>,
+    /// Contract name if it exists
+    pub contract_name: Option<String>,
     // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
@@ -176,7 +186,7 @@ impl CounterExample {
         bytes: &Bytes,
         contracts: &BTreeMap<Address, (String, Abi)>,
     ) -> Self {
-        let abi = &contracts.get(&addr).expect("Couldnt call unknown contract").1;
+        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
 
         let func = abi
             .functions()
@@ -186,7 +196,14 @@ impl CounterExample {
         // skip the function selector when decoding
         let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
 
-        CounterExample { sender: Some(sender), addr: Some(addr), calldata: bytes.clone(), args }
+        CounterExample {
+            sender: Some(sender),
+            addr: Some(addr),
+            calldata: bytes.clone(),
+            signature: Some(func.signature()),
+            contract_name: Some(name.clone()),
+            args,
+        }
     }
 }
 
@@ -197,13 +214,24 @@ impl fmt::Display for CounterExample {
         let mut msg = "".to_string();
 
         if let Some(sender) = self.sender {
-            msg += format!("sender={:?} ", sender).as_str();
-        }
-        if let Some(addr) = self.addr {
-            msg += format!("addr={:?}", addr).as_str();
+            msg += format!("sender={:?} addr=", sender).as_str();
         }
 
-        write!(f, "{msg} calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
+        if let Some(name) = &self.contract_name {
+            msg += format!("[{}]", name).as_str();
+        }
+
+        if let Some(addr) = &self.addr {
+            msg += format!("{:?} ", addr).as_str();
+        }
+
+        if let Some(sig) = &self.signature {
+            msg += format!("calldata={}", &sig).as_str();
+        } else {
+            msg += format!("calldata=0x{}", hex::encode(&self.calldata)).as_str();
+        }
+
+        write!(f, "{msg}, args=[{}]", args)
     }
 }
 

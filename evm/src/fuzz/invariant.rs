@@ -111,11 +111,11 @@ where
                     return Err(TestCaseError::fail("Revert occurred."))
                 }
                 let depth = inputs.len();
+                let mut current_depth = 0;
 
                 let mut sequence = vec![];
-                let mut created: Vec<Address> = vec![];
+                let mut created = vec![];
                 let mut new_inputs: Option<Vec<(Address, (Address, Bytes))>> = None;
-                let mut current_depth = 0;
 
                 'outer: while current_depth < depth {
                     if let Some(mut inp) = new_inputs {
