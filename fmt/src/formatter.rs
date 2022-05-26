@@ -258,59 +258,6 @@ impl<'a, W: Write> Formatter<'a, W> {
             .collect::<Result<Vec<_>, VError>>()
     }
 
-    // TODO:
-    // fn extend_chunks<T>(
-    //     &self,
-    //     chunks: &Vec<(usize, T)>,
-    //     other: &impl IntoIterator<Item = (usize, T)>,
-    // ) -> Vec<(usize, T)>
-    // where
-    //     T: std::fmt::Display + Clone,
-    // {
-    //     let chunks = chunks.to_vec();
-    //     chunks.extend(other.into_iter().cloned());
-    //     chunks
-    // }
-
-    // fn extend_chunks_with_tokens<T, E>(
-    //     &self,
-    //     chunks: &Vec<(usize, T)>,
-    //     other: impl IntoIterator<Item = E>,
-    // ) -> Vec<(usize, T)>
-    // where
-    //     T: std::fmt::Display + Clone,
-    //     E: Into<T>,
-    // {
-    //     if chunks.is_empty() {
-    //         return vec![]
-    //     }
-
-    //     let mut chunks = chunks.to_vec();
-    //     let mut offset = chunks.last().unwrap().0;
-    //     for item in other {
-    //         let item = item.into();
-    //         offset += format!("{}", item).len();
-    //         chunks.push((offset, item));
-    //     }
-    //     chunks
-    // }
-    // fn extend_chunks<T, P>(&self, chunks: Vec<(usize, T)>, prefix: P, postfix: P) -> Vec<(usize,
-    // T)> where
-    //     T: std::fmt::Display,
-    //     P: Into<T>,
-    // {
-    //     if chunks.is_empty() {
-    //         return chunks
-    //     }
-
-    //     let first = chunks.first().unwrap();
-    //     chunks.insert(0, (first.0 - prefix.len(), prefix.into()));
-    // }
-
-    // fn extend_chunks_with_paren<T>(&self, chunks: Vec<(usize, T)>) -> Vec<(usize, T)> {
-    //     chunks
-    // }
-
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         if text.as_ref().contains('\n') {
@@ -400,7 +347,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         separator: &str,
         multiline: bool,
     ) -> Result<(), VError> {
-        self.visit_opening_paren()?;
+        write!(self.buf(), "(")?;
         if multiline {
             writeln!(self.buf())?;
             self.indent(1);
@@ -410,7 +357,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             self.dedent(1);
             writeln!(self.buf())?;
         }
-        self.visit_closing_paren()?;
+        write!(self.buf(), ")")?;
         Ok(())
     }
 
@@ -881,84 +828,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => (None, ";".to_string()),
         };
 
-        // Compose one line string consisting of params, attributes, return params & first line
-        let params_string = params.iter().map(|a| &a.1).join(", ");
-        let attr_string = attributes.iter().map(|a| &a.1).join(" ");
-        let returns_string = if returns.is_empty() {
-            "".to_owned()
-        } else {
-            returns.iter().map(|r| &r.1).join(", ")
-        };
-        let fun_def_string =
-            format!("({params_string}){attr_string}{returns_string}{body_first_line}");
-
-        // if self.will_it_fit(&fun_def_string) {
-        //     write!(self.buf(), "{fun_def_string}")?;
-        // } else {
-        // }
-
-        // Compose one line string consisting of attributes and return parameters.
-        let attr_string = attributes.iter().map(|a| &a.1).join(" ");
-        let attributes_returns = if !func.returns.is_empty() {
-            let returns_string = returns.iter().map(|r| &r.1).join(", ");
-            format!("{} returns ({})", attr_string, returns_string).trim().to_owned()
-        } else {
-            attr_string
-        };
-
-        // let attr_returns = if !func.returns.is_empty() {
-        //     // TODO:
-        //     let mut i = self.extend_chunks_with_tokens(&attributes, [" returns ("]);
-        //     i.extend(returns.clone());
-        //     self.extend_chunks_with_tokens(&i, [")"])
-        // } else {
-        //     attributes.clone()
-        // };
-
-        let params_multiline = self.are_chunks_separated_multiline(&params, ", ");
+        let params_multiline =
+            !params.is_empty() && self.are_chunks_separated_multiline(&params, ", ");
         self.write_chunks_with_paren_separated(&params, ", ", params_multiline)?;
 
-        let returns_multiline =
-            self.are_chunks_separated_multiline(&returns, ", ") || params_multiline;
-        let returns_indent = !attributes.is_empty() || returns_multiline;
-
-        let attributes_returns_multiline = !self
-            .will_it_fit(&format!("{attributes_returns}{body_first_line}")) ||
-            (!returns.is_empty() && returns_multiline);
-
-        // Check that we can fit both attributes and return arguments in one line.
-        if !attributes_returns.is_empty() && !attributes_returns_multiline {
-            write!(self.buf(), " {attributes_returns}")?;
-        } else {
-            // If attributes and returns can't fit in one line, we write all attributes in
-            // multiple lines.
-            if !func.attributes.is_empty() {
+        let attributes_multiline = (!attributes.is_empty() &&
+            self.are_chunks_separated_multiline(&attributes, " ")) ||
+            (params_multiline && !returns.is_empty());
+        if !attributes.is_empty() {
+            if attributes_multiline {
                 writeln!(self.buf())?;
                 self.indent(1);
                 func.attributes.visit(self)?;
                 self.dedent(1);
+            } else {
+                write!(self.buf(), " ")?;
+                let mut list = func.attributes.iter_mut().attr_sorted().peekable();
+
+                while let Some(attribute) = list.next() {
+                    attribute.visit(self)?;
+                    if list.peek().is_some() {
+                        write!(self.buf(), " ")?;
+                    }
+                }
             }
+        }
 
-            if !returns.is_empty() {
-                if returns_indent {
-                    self.indent(1);
-                }
+        let returns_multiline = !returns.is_empty() &&
+            (params_multiline ||
+                (attributes_multiline && returns.len() > 1) ||
+                self.are_chunks_separated_multiline(&returns, ", "));
+        let should_indent = returns_multiline || attributes_multiline;
+        if !returns.is_empty() {
+            if should_indent {
+                self.indent(1);
+            }
+            if returns_multiline || should_indent {
                 writeln!(self.buf())?;
-                write!(self.buf(), "returns ")?;
-
-                self.write_chunks_with_paren_separated(&returns, ", ", returns_multiline)?;
-
-                if returns_indent {
-                    self.dedent(1);
-                }
+            } else {
+                write!(self.buf(), " ")?;
+            }
+            write!(self.buf(), "returns ")?;
+            self.write_chunks_with_paren_separated(&returns, ", ", returns_multiline)?;
+            if should_indent {
+                self.dedent(1);
             }
         }
 
         match body {
             Some(body) => {
-                if self.will_it_fit(format!(" {}", body_first_line)) &&
-                    !attributes_returns_multiline
-                {
+                let on_same_line = self.will_it_fit(format!(" {}", body_first_line)) &&
+                    !(returns_multiline || attributes_multiline);
+                if on_same_line {
                     write!(self.buf(), " ")?;
                 } else {
                     writeln!(self.buf())?;
