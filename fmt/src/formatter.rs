@@ -832,26 +832,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         };
 
         // Compose one line string consisting of params, attributes, return params & first line
-        // let params_string = format!("({})", params.iter().map(|a| &a.1).join(", "));
-        // let attr_string = if attributes.is_empty() {
-        //     "".to_owned()
-        // } else {
-        //     format!(" {}", attributes.iter().map(|a| &a.1).join(" "))
-        // };
-        // let returns_string = if returns.is_empty() {
-        //     "".to_owned()
-        // } else {
-        //     format!(" returns ({})", returns.iter().map(|r| &r.1).join(", "))
-        // };
-        // let fun_def_string = format!("{params_string}{attr_string}{returns_string}");
-        // TODO:
+        let params_string = format!("({})", params.iter().map(|a| &a.1).join(", "));
+        let attr_string = if attributes.is_empty() {
+            "".to_owned()
+        } else {
+            format!(" {}", attributes.iter().map(|a| &a.1).join(" "))
+        };
+        let returns_string = if returns.is_empty() {
+            "".to_owned()
+        } else {
+            format!(" returns ({})", returns.iter().map(|r| &r.1).join(", "))
+        };
+        let fun_def_string =
+            format!("{params_string}{attr_string}{returns_string} {body_first_line}");
+        let will_fun_def_fit = self.will_it_fit(format!("{fun_def_string} {body_first_line}"));
 
-        let params_multiline =
-            !params.is_empty() && self.are_chunks_separated_multiline(&params, ", ");
+        let params_multiline = !params.is_empty() &&
+            (self.are_chunks_separated_multiline(&params, ", ") ||
+                (!will_fun_def_fit && attributes.is_empty()));
         self.write_chunks_with_paren_separated(&params, ", ", params_multiline)?;
 
         let attributes_multiline = (!attributes.is_empty() &&
-            self.are_chunks_separated_multiline(&attributes, " ")) ||
+            (self.are_chunks_separated_multiline(&attributes, " ") ||
+                (!will_fun_def_fit && !params_multiline))) ||
             (params_multiline && !returns.is_empty());
         if !attributes.is_empty() {
             self.write_whitespace_separator(attributes_multiline)?;
@@ -873,7 +876,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         let returns_multiline = !returns.is_empty() &&
-            ((attributes_multiline && returns.len() > 1) ||
+            ((attributes_multiline && returns.len() > 2) ||
                 self.are_chunks_separated_multiline(&returns, ", "));
         let should_indent = returns_multiline || attributes_multiline;
         if !returns.is_empty() {
