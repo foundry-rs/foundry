@@ -56,7 +56,7 @@ impl TraceIdentifier for LocalTraceIdentifier {
 /// Very simple fuzzy matching of contract bytecode.
 ///
 /// Will fail for small contracts that are essentially all immutable variables.
-fn diff_score(a: &[u8], b: &[u8]) -> f64 {
+pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
     let cutoff_len = usize::min(a.len(), b.len());
     if cutoff_len == 0 {
         return 1.0

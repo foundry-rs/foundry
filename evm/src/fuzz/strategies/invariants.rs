@@ -1,3 +1,5 @@
+use std::{borrow::Borrow, cell::RefCell};
+
 use ethers::{
     abi::{Abi, Function, ParamType},
     types::{Address, Bytes},
@@ -7,7 +9,9 @@ use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
 
 use crate::fuzz::{
-    fuzz_calldata, fuzz_calldata_from_state, invariant::TargetedContracts, strategies::fuzz_param,
+    fuzz_calldata, fuzz_calldata_from_state,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
+    strategies::fuzz_param,
     EvmFuzzState,
 };
 
@@ -15,16 +19,15 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     depth: usize,
     senders: Vec<Address>,
-    contracts: TargetedContracts,
+    contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
-    let iters = 1..depth + 1;
-    proptest::collection::vec(gen_call(fuzz_state, senders, contracts), iters).boxed()
+    vec![gen_call(fuzz_state, senders, contracts); depth].boxed()
 }
 
 fn gen_call(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
-    contracts: TargetedContracts,
+    contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<(Address, (Address, Bytes))> {
     let random_contract = select_random_contract(contracts);
     random_contract
@@ -55,11 +58,14 @@ fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address>
 }
 
 fn select_random_contract(
-    contracts: TargetedContracts,
+    contracts: FuzzRunIdentifiedContracts,
 ) -> impl Strategy<Value = (Address, Abi, Vec<Function>)> {
     let selectors = any::<prop::sample::Selector>();
+
     selectors.prop_map(move |selector| {
-        let res = selector.select(&contracts);
+        let contracts: &RefCell<TargetedContracts> = contracts.borrow();
+        let contracts: &TargetedContracts = &contracts.borrow();
+        let res = selector.select(contracts);
         (*res.0, res.1 .1.clone(), res.1 .2.clone())
     })
 }

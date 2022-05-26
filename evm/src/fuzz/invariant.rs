@@ -2,6 +2,7 @@
 use crate::fuzz::{strategies::invariant_strat, *};
 use ethers::{
     abi::{Abi, FixedBytes, Function},
+    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
 use eyre::ContextCompat;
@@ -12,12 +13,17 @@ use std::{
     borrow::{Borrow, BorrowMut},
     cell::{Cell, RefCell, RefMut},
     collections::BTreeMap,
+    rc::Rc,
 };
 use tracing::warn;
 
 use crate::executor::{Executor, RawCallResult};
 
+use super::strategies::collect_created_contracts;
+use proptest::strategy::{Strategy, ValueTree};
+
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
+pub type FuzzRunIdentifiedContracts = Rc<RefCell<TargetedContracts>>;
 
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -30,7 +36,8 @@ pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
     pub evm: &'a mut Executor<DB>,
     runner: TestRunner,
     sender: Address,
-    contracts: &'a BTreeMap<Address, (String, Abi)>,
+    setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+    project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
 }
 
 impl<'a, DB> InvariantExecutor<'a, DB>
@@ -42,9 +49,10 @@ where
         evm: &'a mut Executor<DB>,
         runner: TestRunner,
         sender: Address,
-        contracts: &'a BTreeMap<Address, (String, Abi)>,
+        setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+        project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> Self {
-        Self { evm, runner, sender, contracts }
+        Self { evm, runner, sender, setup_contracts, project_contracts }
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`
@@ -58,17 +66,25 @@ where
         fail_on_revert: bool,
     ) -> eyre::Result<Option<InvariantFuzzTestResult>> {
         // Finds out the chosen deployed contracts and/or senders.
-        let (senders, contracts) = self.select_contracts_and_senders(invariant_address, abi)?;
+        let (targeted_senders, targeted_contracts) =
+            self.select_contracts_and_senders(invariant_address, abi)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.db);
+        let targeted_contracts: FuzzRunIdentifiedContracts =
+            Rc::new(RefCell::new(targeted_contracts));
 
         // Creates strategy
-        let strat =
-            invariant_strat(fuzz_state.clone(), invariant_depth as usize, senders, contracts);
+        let strat = invariant_strat(
+            fuzz_state.clone(),
+            invariant_depth as usize,
+            // todo senders ref
+            targeted_senders.clone(),
+            targeted_contracts.clone(),
+        );
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -79,79 +95,129 @@ where
         });
         let invariant_doesnt_hold = RefCell::new(all_invars);
 
+        //
         // Prepare executor
         self.evm.set_tracing(false);
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
         let reverts = Cell::new(0);
+
+        let second_runner = self.runner.clone();
+
         let _test_error = self
             .runner
-            .run(&strat, |inputs| {
+            .run(&strat, |mut inputs| {
                 if fail_on_revert && reverts.get() > 0 {
                     return Err(TestCaseError::fail("Revert occurred."))
                 }
+                let depth = inputs.len();
 
                 let mut sequence = vec![];
+                let mut created: Vec<Address> = vec![];
+                let mut new_inputs: Option<Vec<(Address, (Address, Bytes))>> = None;
+                let mut current_depth = 0;
 
-                'all: for (index, (sender, (address, calldata))) in inputs.iter().enumerate() {
-                    // Send nth randomly assigned sender + contract + input
-                    let RawCallResult {
-                        result, reverted, gas, stipend, state_changeset, logs, ..
-                    } = executor
-                        .borrow()
-                        .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
-                        .expect("could not make raw evm call");
-
-                    // Collect data for fuzzing
-                    let state_changeset =
-                        state_changeset.to_owned().expect("we should have a state changeset");
-                    collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
-
-                    // Commit changes
-                    executor.borrow_mut().db.commit(state_changeset);
-
-                    sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
-
-                    if !reverted {
-                        if assert_invariants(
-                            self.sender,
-                            abi,
-                            executor.borrow_mut(),
-                            invariant_address,
-                            &invariants,
-                            invariant_doesnt_hold.borrow_mut(),
-                            inputs.split_at(index + 1).0,
-                        )
-                        .is_err()
-                        {
-                            break 'all
+                'all: while current_depth < depth {
+                    if let Some(mut inp) = new_inputs {
+                        for input in inputs.iter_mut().skip(current_depth).rev() {
+                            *input = inp.pop().unwrap();
                         }
-                    } else {
-                        reverts.set(reverts.get() + 1);
-                        if fail_on_revert {
-                            let error = InvariantFuzzError::new(
-                                invariant_address,
-                                None,
-                                abi,
-                                &result,
-                                inputs.split_at(index + 1).0,
+                        new_inputs = None;
+                    }
+
+                    'inner: for (sender, (address, calldata)) in inputs.iter().skip(current_depth) {
+                        // Send nth randomly assigned sender + contract + input
+                        let RawCallResult {
+                            result,
+                            reverted,
+                            gas,
+                            stipend,
+                            state_changeset,
+                            logs,
+                            ..
+                        } = executor
+                            .borrow()
+                            .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
+                            .expect("could not make raw evm call");
+
+                        // Collect data for fuzzing
+                        let state_changeset =
+                            state_changeset.to_owned().expect("we should have a state changeset");
+                        collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
+
+                        if collect_created_contracts(
+                            &state_changeset,
+                            self.project_contracts,
+                            self.setup_contracts,
+                            targeted_contracts.borrow(),
+                            &mut created,
+                        ) {
+                            // new branch
+                            let strat = invariant_strat(
+                                fuzz_state.clone(),
+                                depth - (current_depth + 1),
+                                targeted_senders.clone(),
+                                targeted_contracts.clone(),
                             );
-                            *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
+                            new_inputs =
+                                Some(strat.new_tree(&mut second_runner.clone()).unwrap().current());
+                        }
 
-                            for invariant in invariants.iter() {
-                                invariant_doesnt_hold
-                                    .borrow_mut()
-                                    .insert(invariant.name.clone(), Some(error.clone()));
+                        // Commit changes
+                        executor.borrow_mut().db.commit(state_changeset);
+                        sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
+
+                        if !reverted {
+                            if assert_invariants(
+                                self.sender,
+                                abi,
+                                executor.borrow_mut(),
+                                invariant_address,
+                                &invariants,
+                                invariant_doesnt_hold.borrow_mut(),
+                                inputs.split_at(current_depth + 1).0,
+                            )
+                            .is_err()
+                            {
+                                break 'all
                             }
+                        } else {
+                            reverts.set(reverts.get() + 1);
+                            if fail_on_revert {
+                                let error = InvariantFuzzError::new(
+                                    invariant_address,
+                                    None,
+                                    abi,
+                                    &result,
+                                    inputs.split_at(current_depth + 1).0,
+                                );
+                                *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
 
-                            break 'all
+                                for invariant in invariants.iter() {
+                                    invariant_doesnt_hold
+                                        .borrow_mut()
+                                        .insert(invariant.name.clone(), Some(error.clone()));
+                                }
+
+                                break 'all
+                            }
+                        }
+
+                        current_depth += 1;
+
+                        if new_inputs.is_some() {
+                            break 'inner
                         }
                     }
                 }
-
                 // Before each test, we must reset to the initial state
                 executor.borrow_mut().db = clean_db.clone();
                 fuzz_cases.borrow_mut().push(FuzzedCases::new(sequence));
+
+                let targeted: &RefCell<TargetedContracts> = targeted_contracts.borrow();
+                for addr in created.iter() {
+                    targeted.borrow_mut().remove(addr);
+                }
 
                 Ok(())
             })
@@ -182,7 +248,7 @@ where
                 .map(|method| self.get_addresses(invariant_address, abi, method));
 
         let mut contracts: TargetedContracts = self
-            .contracts
+            .setup_contracts
             .clone()
             .into_iter()
             .filter(|(addr, _)| {
@@ -279,7 +345,7 @@ where
                     add_function(name, selector, abi, address_selectors)?;
                 }
             } else {
-                let (name, abi) = self.contracts.get(&address).wrap_err(format!(
+                let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
                     "[targetSelectors] address does not have an associated contract: {}",
                     address
                 ))?;

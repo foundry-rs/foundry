@@ -447,26 +447,24 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        if has_invariants && fuzzer.is_some() {
+        if has_invariants && test_options.include_fuzz_tests && fuzzer.is_some() {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
-
             let functions: Vec<&Function> = self
                 .contract
                 .functions()
                 .into_iter()
                 .filter(|func| {
-                    func.name.starts_with("invariant") &&
-                        filter.matches_test(func.signature()) &&
-                        test_options.include_fuzz_tests
+                    func.name.starts_with("invariant") && filter.matches_test(func.signature())
                 })
                 .collect();
 
             let results = self.run_invariant_test(
-                functions.clone(),
                 fuzzer.expect("no fuzzer"),
                 setup,
                 test_options,
-                &identified_contracts,
+                functions.clone(),
+                known_contracts,
+                identified_contracts,
             )?;
 
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
@@ -573,21 +571,29 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
     #[tracing::instrument(name = "invariant-test", skip_all)]
     pub fn run_invariant_test(
         &mut self,
-        funcs: Vec<&Function>,
         runner: TestRunner,
         setup: TestSetup,
         test_options: TestOptions,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        functions: Vec<&Function>,
+        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        identified_contracts: BTreeMap<Address, (String, Abi)>,
     ) -> Result<Vec<TestResult>> {
+        let empty = BTreeMap::new();
+        let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         let start = Instant::now();
         let prev_db = self.executor.db.clone();
-        let mut evm =
-            InvariantExecutor::new(&mut self.executor, runner, self.sender, identified_contracts);
+        let mut evm = InvariantExecutor::new(
+            &mut self.executor,
+            runner,
+            self.sender,
+            &identified_contracts,
+            project_contracts,
+        );
 
         if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
-            funcs,
+            functions,
             address,
             self.contract,
             test_options.invariant_depth,
@@ -602,6 +608,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
 
                     if let Some(ref error) = test_error {
                         // we want traces for a failed fuzz
+                        let mut ided_contracts = identified_contracts.clone();
                         if let TestError::Fail(_reason, vec_addr_bytes) = &error.test_error {
                             // Reset DB state
                             self.executor.db = prev_db.clone();
@@ -614,13 +621,21 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                                     .expect("bad call to evm");
 
                                 logs.extend(call_result.logs);
-                                traces.push((TraceKind::Execution, call_result.traces.unwrap()));
+                                traces.push((
+                                    TraceKind::Execution,
+                                    call_result.traces.clone().unwrap(),
+                                ));
 
+                                // In case the call created more.
+                                ided_contracts.extend(load_contracts(
+                                    vec![(TraceKind::Execution, call_result.traces.unwrap())],
+                                    known_contracts,
+                                ));
                                 counterexample_sequence.push(CounterExample::create(
                                     *sender,
                                     *addr,
                                     bytes,
-                                    identified_contracts,
+                                    &ided_contracts,
                                 ));
 
                                 if let Some(func) = &error.func {

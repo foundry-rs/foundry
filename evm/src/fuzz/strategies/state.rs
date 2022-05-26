@@ -1,8 +1,12 @@
 use super::fuzz_param_from_state;
-use crate::{executor::StateChangeset, utils};
+use crate::{
+    executor::StateChangeset, fuzz::invariant::TargetedContracts, trace::identifier::diff_score,
+    utils,
+};
 use bytes::Bytes;
 use ethers::{
-    abi::Function,
+    abi::{Abi, Function},
+    prelude::ArtifactId,
     types::{Address, Log, H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -10,7 +14,12 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, SpecId,
 };
-use std::{cell::RefCell, collections::HashSet, io::Write, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashSet},
+    io::Write,
+    rc::Rc,
+};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -156,4 +165,34 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     }
 
     bytes
+}
+
+/// Collects all created contracts from a StateChangeset which haven't been discovered yet.
+pub fn collect_created_contracts(
+    state_changeset: &StateChangeset,
+    project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    setup_contracts: &BTreeMap<Address, (String, Abi)>,
+    targeted_contracts: &RefCell<TargetedContracts>,
+    created: &mut Vec<Address>,
+) -> bool {
+    let mut targeted = targeted_contracts.borrow_mut();
+    let before = created.len();
+
+    for (address, account) in state_changeset {
+        if setup_contracts.get(address).is_none() {
+            if let Some(code) = &account.info.code {
+                if !code.is_empty() {
+                    if let Some((artifact, (abi, _))) = project_contracts
+                        .iter()
+                        .find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
+                    {
+                        created.push(*address);
+                        targeted.insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
+                    }
+                }
+            }
+        }
+    }
+
+    created.len() > before
 }
