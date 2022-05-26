@@ -193,7 +193,7 @@ Examples:
     #[clap(name = "--hex-to-rlp")]
     #[clap(about = "Encodes an array of hex data or hex data to RLP data")]
     HexToRlp { value: Option<String> },
-    #[clap(name = "--from-rlp-hex")]
+    #[clap(name = "--hex-from-rlp")]
     #[clap(about = "Decodes hex RLP encoded data ")]
     HexFromRlp { value: Option<String> },
     #[clap(name = "access-list")]

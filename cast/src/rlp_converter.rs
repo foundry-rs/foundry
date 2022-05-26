@@ -4,10 +4,9 @@ use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 
-//TODO ADD INT SUPPORT ?
 /// Arbitrarly nested data
-/// Iem::Array(vec![] }; is equivalent to []
-/// Iem::Array(vec![Item::Data(vec![])] }; is equivalent to [""] or [null]
+/// Iem::Array(vec![]); is equivalent to []
+/// Iem::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Item {
     Data(Vec<u8>),
