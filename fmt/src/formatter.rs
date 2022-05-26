@@ -240,6 +240,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), ";")
     }
 
+    fn write_whitespace_separator(&mut self, multiline: bool) -> std::fmt::Result {
+        write!(self.buf(), "{}", if multiline { "\n" } else { " " })
+    }
+
     fn items_to_chunks<T, F, V>(
         &mut self,
         items: &mut [T],
@@ -659,7 +663,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .iter()
             .map(|(ident, alias)| {
                 (
-                    ident.loc.end(), // TODO:
+                    alias.as_ref().unwrap_or(ident).loc.end(),
                     format!(
                         "{}{}",
                         ident.name,
@@ -810,10 +814,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok((*loc, param.as_mut().ok_or("no param")?))
         })?;
 
-        let attributes = self.items_to_chunks(
-            &mut func.attributes.clone(/* TODO: */).into_iter().attr_sorted().as_mut_slice(),
-            |attr| Ok((attr.loc().ok_or("no loc")?, attr)),
-        )?;
+        let attributes = self.items_to_chunks(&mut func.attributes, |attr| {
+            Ok((attr.loc().ok_or("no loc")?, attr))
+        })?;
 
         let returns = self.items_to_chunks(&mut func.returns, |(loc, param)| {
             Ok((*loc, param.as_mut().ok_or("no param")?))
@@ -828,6 +831,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => (None, ";".to_string()),
         };
 
+        // Compose one line string consisting of params, attributes, return params & first line
+        // let params_string = format!("({})", params.iter().map(|a| &a.1).join(", "));
+        // let attr_string = if attributes.is_empty() {
+        //     "".to_owned()
+        // } else {
+        //     format!(" {}", attributes.iter().map(|a| &a.1).join(" "))
+        // };
+        // let returns_string = if returns.is_empty() {
+        //     "".to_owned()
+        // } else {
+        //     format!(" returns ({})", returns.iter().map(|r| &r.1).join(", "))
+        // };
+        // let fun_def_string = format!("{params_string}{attr_string}{returns_string}");
+        // TODO:
+
         let params_multiline =
             !params.is_empty() && self.are_chunks_separated_multiline(&params, ", ");
         self.write_chunks_with_paren_separated(&params, ", ", params_multiline)?;
@@ -836,38 +854,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.are_chunks_separated_multiline(&attributes, " ")) ||
             (params_multiline && !returns.is_empty());
         if !attributes.is_empty() {
+            self.write_whitespace_separator(attributes_multiline)?;
             if attributes_multiline {
-                writeln!(self.buf())?;
                 self.indent(1);
-                func.attributes.visit(self)?;
-                self.dedent(1);
-            } else {
-                write!(self.buf(), " ")?;
-                let mut list = func.attributes.iter_mut().attr_sorted().peekable();
+            }
+            let mut attributes = func.attributes.iter_mut().attr_sorted().peekable();
 
-                while let Some(attribute) = list.next() {
-                    attribute.visit(self)?;
-                    if list.peek().is_some() {
-                        write!(self.buf(), " ")?;
-                    }
+            while let Some(attribute) = attributes.next() {
+                attribute.visit(self)?;
+                if attributes.peek().is_some() {
+                    self.write_whitespace_separator(attributes_multiline)?;
                 }
+            }
+
+            if attributes_multiline {
+                self.dedent(1);
             }
         }
 
         let returns_multiline = !returns.is_empty() &&
-            (params_multiline ||
-                (attributes_multiline && returns.len() > 1) ||
+            ((attributes_multiline && returns.len() > 1) ||
                 self.are_chunks_separated_multiline(&returns, ", "));
         let should_indent = returns_multiline || attributes_multiline;
         if !returns.is_empty() {
             if should_indent {
                 self.indent(1);
             }
-            if returns_multiline || should_indent {
-                writeln!(self.buf())?;
-            } else {
-                write!(self.buf(), " ")?;
-            }
+            self.write_whitespace_separator(returns_multiline || should_indent)?;
             write!(self.buf(), "returns ")?;
             self.write_chunks_with_paren_separated(&returns, ", ", returns_multiline)?;
             if should_indent {
@@ -896,29 +909,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    /// Write each function attribute on a new line because we don't have enough information in
-    /// visit function regarding one line/multiline cases. We can transform it into one line later
-    /// by `.split("\n").join(" ")`.
-    // TODO:
-    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        let mut attributes = list.iter_mut().attr_sorted().peekable();
-
-        while let Some(attribute) = attributes.next() {
-            attribute.visit(self)?;
-            if attributes.peek().is_some() {
-                writeln!(self.buf())?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
         match attribute {
             FunctionAttribute::Mutability(mutability) => {
                 write_chunk!(self, mutability.loc().end(), "{mutability}")?
             }
-            FunctionAttribute::Visibility(visibility) => write!(self.buf(), "{visibility}")?, /* TODO: */
+            FunctionAttribute::Visibility(visibility) => {
+                if let Some(loc) = visibility.loc() {
+                    write_chunk!(self, loc.end(), "{visibility}")?
+                } else {
+                    write!(self.buf(), "{visibility}")?
+                }
+            }
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(_, args) => {
@@ -1131,11 +1133,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let params = self.items_to_chunks(&mut event.fields, |param| Ok((param.loc, param)))?;
 
         // TODO:
-        let multiline = !self.will_it_fit(format!(
+        let formatted = format!(
             "({}){};",
             params.iter().map(|p| p.1.to_owned()).join(", "),
             if event.anonymous { " anonymous" } else { "" }
-        ));
+        );
+        let multiline = !self.will_it_fit(formatted);
 
         self.write_chunks_with_paren_separated(&params, ", ", multiline)?;
 
