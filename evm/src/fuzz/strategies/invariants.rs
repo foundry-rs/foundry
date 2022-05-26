@@ -21,10 +21,10 @@ pub fn invariant_strat(
     senders: Rc<Vec<Address>>,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
-    vec![gen_call(fuzz_state, senders, contracts); depth].boxed()
+    vec![generate_call(fuzz_state, senders, contracts); depth].boxed()
 }
 
-fn gen_call(
+fn generate_call(
     fuzz_state: EvmFuzzState,
     senders: Rc<Vec<Address>>,
     contracts: FuzzRunIdentifiedContracts,
@@ -65,8 +65,8 @@ fn select_random_contract(
     selectors.prop_map(move |selector| {
         let contracts: &RefCell<TargetedContracts> = contracts.borrow();
         let contracts: &TargetedContracts = &contracts.borrow();
-        let res = selector.select(contracts);
-        (*res.0, res.1 .1.clone(), res.1 .2.clone())
+        let (addr, (_, abi, functions)) = selector.select(contracts);
+        (*addr, abi.clone(), functions.clone())
     })
 }
 

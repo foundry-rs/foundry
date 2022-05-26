@@ -95,14 +95,14 @@ where
         });
         let invariant_doesnt_hold = RefCell::new(all_invars);
 
-        //
         // Prepare executor
         self.evm.set_tracing(false);
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
         let reverts = Cell::new(0);
 
-        let second_runner = self.runner.clone();
+        // If a new contract is created, we need another runner to create new inputs
+        let branch_runner = RefCell::new(self.runner.clone());
 
         let _test_error = self
             .runner
@@ -117,16 +117,21 @@ where
                 let mut created = vec![];
                 let mut new_inputs: Option<Vec<(Address, (Address, Bytes))>> = None;
 
+                // Sequences are proactively generated. However, if a new contract is
+                // created, we generate a new sequence of events from the current
+                // depth until the end.
                 'outer: while current_depth < depth {
-                    if let Some(mut inp) = new_inputs {
+                    // A new contract has been found and new events are ready to
+                    // replace the old remaining ones.
+                    if let Some(mut calls) = new_inputs {
                         for input in inputs.iter_mut().skip(current_depth).rev() {
-                            *input = inp.pop().unwrap();
+                            *input = calls.pop().unwrap();
                         }
                         new_inputs = None;
                     }
 
+                    // Executes sequence of events.
                     'inner: for (sender, (address, calldata)) in inputs.iter().skip(current_depth) {
-                        // Send nth randomly assigned sender + contract + input
                         let RawCallResult {
                             result,
                             reverted,
@@ -194,27 +199,33 @@ where
                             targeted_contracts.borrow(),
                             &mut created,
                         ) {
-                            // new branch
+                            // Create new branch/sequence of events to replace our sequence from
+                            // `current_depth` to the end.
                             let strat = invariant_strat(
                                 fuzz_state.clone(),
                                 depth - current_depth,
                                 targeted_senders.clone(),
                                 targeted_contracts.clone(),
                             );
-                            new_inputs =
-                                Some(strat.new_tree(&mut second_runner.clone()).unwrap().current());
+                            new_inputs = Some(
+                                strat.new_tree(&mut branch_runner.borrow_mut()).unwrap().current(),
+                            );
                             break 'inner
                         }
                     }
                 }
                 // Before each test, we must reset to the initial state
                 executor.borrow_mut().db = clean_db.clone();
-                fuzz_cases.borrow_mut().push(FuzzedCases::new(sequence));
 
-                let targeted: &RefCell<TargetedContracts> = targeted_contracts.borrow();
-                for addr in created.iter() {
-                    targeted.borrow_mut().remove(addr);
+                // We clear all the contracts created during this run
+                if !created.is_empty() {
+                    let targeted: &RefCell<TargetedContracts> = targeted_contracts.borrow();
+                    for addr in created.iter() {
+                        targeted.borrow_mut().remove(addr);
+                    }
                 }
+
+                fuzz_cases.borrow_mut().push(FuzzedCases::new(sequence));
 
                 Ok(())
             })
@@ -235,6 +246,8 @@ where
         }))
     }
 
+    /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
+    /// `targetContracts() -> address[]` and `excludeContracts() -> address[]`.
     fn select_contracts_and_senders(
         &self,
         invariant_address: Address,
@@ -264,11 +277,12 @@ where
             .map(|(addr, (name, abi))| (addr, (name, abi, vec![])))
             .collect();
 
-        self.get_selectors(invariant_address, abi, &mut contracts)?;
+        self.select_selectors(invariant_address, abi, &mut contracts)?;
 
         Ok((senders, contracts))
     }
 
+    /// Gets list of addresses by calling the contract `method_name` function.
     fn get_addresses(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<Address> {
         let mut addresses = vec![];
 
@@ -293,7 +307,9 @@ where
         addresses
     }
 
-    fn get_selectors(
+    /// Selects the functions to fuzz based on the contract method `targetSelectors() -> (address,
+    /// bytes4)[]`.
+    fn select_selectors(
         &self,
         address: Address,
         abi: &Abi,
@@ -358,6 +374,8 @@ where
     }
 }
 
+/// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
+/// external `invariant_doesnt_hold` map and returns `Err(())`
 fn assert_invariants<'a, DB>(
     sender: Address,
     abi: &Abi,
