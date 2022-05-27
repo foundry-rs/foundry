@@ -5,9 +5,12 @@ mod suggestions;
 mod term;
 mod utils;
 
-use crate::cmd::{
-    forge::{cache::CacheSubcommands, watch},
-    Cmd,
+use crate::{
+    cmd::{
+        forge::{cache::CacheSubcommands, watch},
+        Cmd,
+    },
+    utils::CommandUtils,
 };
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
@@ -70,7 +73,7 @@ fn main() -> eyre::Result<()> {
                 cmd.args(&["--", lib.display().to_string().as_str()]);
             }
 
-            cmd.spawn()?.wait()?;
+            cmd.exec()?;
         }
         // TODO: Make it work with updates?
         Subcommands::Install(cmd) => {
@@ -136,22 +139,19 @@ fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> e
         Command::new("git")
             .args(&["submodule", "deinit", "-f", &path.display().to_string()])
             .current_dir(&root)
-            .spawn()?
-            .wait()?;
+            .exec()?;
 
         // remove the submodule repository from .git/modules directory
         Command::new("rm")
             .args(&["-rf", &git_mod_path.display().to_string()])
             .current_dir(&root)
-            .spawn()?
-            .wait()?;
+            .exec()?;
 
         // remove the leftover submodule directory
         Command::new("git")
             .args(&["rm", "-f", &path.display().to_string()])
             .current_dir(&root)
-            .spawn()?
-            .wait()?;
+            .exec()?;
 
         Ok(())
     })

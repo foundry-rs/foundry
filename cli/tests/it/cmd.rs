@@ -176,6 +176,25 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
 });
 
+// checks that forge can init with template
+forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "foundry-rs/forge-template"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("test").exists());
+});
+
+// checks that init fails when the provided template doesn't exist
+forgetest!(fail_init_nonexistent_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "a"]).arg(prj.root());
+    cmd.assert_non_empty_stderr();
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
