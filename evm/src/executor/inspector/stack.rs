@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
 use crate::{debug::DebugArena, trace::CallTraceArena};
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
@@ -35,6 +35,7 @@ pub struct InspectorStack {
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub debugger: Option<Debugger>,
+    pub fuzzer: Option<Fuzzer>,
 }
 
 impl InspectorStack {
@@ -87,7 +88,13 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let status = inspector.step(interpreter, data, is_static);
 
@@ -144,7 +151,13 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
@@ -169,7 +182,13 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.fuzzer,
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (new_status, new_gas, new_retdata) = inspector.call_end(
                     data,

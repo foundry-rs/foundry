@@ -26,8 +26,13 @@ pub use revm::db::DatabaseRef;
 
 pub use revm::Env;
 
-use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use self::inspector::{Fuzzer, InspectorData, InspectorStackConfig};
+use crate::{
+    debug::DebugArena,
+    fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
+    trace::CallTraceArena,
+    CALLER,
+};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, Tokenize},
@@ -230,6 +235,15 @@ where
 
     pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
         self.gas_limit = gas_limit;
+        self
+    }
+
+    pub fn set_fuzzer(
+        &mut self,
+        generator: RandomCallGenerator,
+        fuzz_state: EvmFuzzState,
+    ) -> &mut Self {
+        self.inspector_config.fuzzer = Some(Fuzzer { generator, fuzz_state, collect: false });
         self
     }
 

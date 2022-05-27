@@ -1,5 +1,3 @@
-use std::{borrow::Borrow, cell::RefCell};
-
 use ethers::{
     abi::{Abi, Function, ParamType},
     types::{Address, Bytes},
@@ -9,7 +7,7 @@ pub use proptest::test_runner::Config as FuzzConfig;
 
 use crate::fuzz::{
     fuzz_calldata, fuzz_calldata_from_state,
-    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
+    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
     strategies::fuzz_param,
     EvmFuzzState,
 };
@@ -18,17 +16,17 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
-) -> BoxedStrategy<Vec<(Address, (Address, Bytes))>> {
+) -> SBoxedStrategy<Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    vec![generate_call(fuzz_state, senders, contracts); 1].boxed()
+    vec![generate_call(fuzz_state, senders, contracts); 1].sboxed()
 }
 
 fn generate_call(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
-) -> BoxedStrategy<(Address, (Address, Bytes))> {
+) -> SBoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
     random_contract
         .prop_flat_map(move |(contract, abi, functions)| {
@@ -40,18 +38,18 @@ fn generate_call(
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
-        .boxed()
+        .sboxed()
 }
 
 fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
     let fuzz_strategy =
-        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
+        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).sboxed();
 
     if !senders.is_empty() {
         let selector =
             any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&*senders));
-        proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
-            .boxed()
+        proptest::strategy::Union::new_weighted(vec![(80, selector.sboxed()), (20, fuzz_strategy)])
+            .sboxed()
     } else {
         fuzz_strategy
     }
@@ -63,9 +61,8 @@ fn select_random_contract(
     let selectors = any::<prop::sample::Selector>();
 
     selectors.prop_map(move |selector| {
-        let contracts: &RefCell<TargetedContracts> = contracts.borrow();
-        let contracts: &TargetedContracts = &contracts.borrow();
-        let (addr, (_, abi, functions)) = selector.select(contracts);
+        let contracts = contracts.read().unwrap();
+        let (addr, (_, abi, functions)) = selector.select(contracts.iter());
         (*addr, abi.clone(), functions.clone())
     })
 }
@@ -95,15 +92,15 @@ fn select_random_function(
         let selector = any::<prop::sample::Selector>()
             .prop_map(move |selector| selector.select(targeted_functions.clone()));
 
-        selector.boxed()
+        selector.sboxed()
         // todo make it an union too?
         // proptest::strategy::Union::new_weighted(vec![
-        //     (100, selector.boxed()),
-        //     (0, total_random.boxed()),
+        //     (100, selector.sboxed()),
+        //     (0, total_random.sboxed()),
         // ])
-        // .boxed()
+        // .sboxed()
     } else {
-        total_random.boxed()
+        total_random.sboxed()
     }
 }
 

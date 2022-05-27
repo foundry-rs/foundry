@@ -1,0 +1,3 @@
+[default]
+fuzz_runs = 100
+invariant_fail_on_revert = false

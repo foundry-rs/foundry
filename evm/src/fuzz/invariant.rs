@@ -7,13 +7,16 @@ use ethers::{
 };
 use eyre::ContextCompat;
 pub use proptest::test_runner::Config as FuzzConfig;
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::{
+    strategy::SBoxedStrategy,
+    test_runner::{TestError, TestRunner},
+};
 use revm::{db::DatabaseRef, DatabaseCommit};
 use std::{
     borrow::{Borrow, BorrowMut},
     cell::{Cell, RefCell, RefMut},
     collections::BTreeMap,
-    rc::Rc,
+    sync::{Arc, RwLock},
 };
 use tracing::warn;
 
@@ -23,7 +26,23 @@ use super::strategies::collect_created_contracts;
 use proptest::strategy::{Strategy, ValueTree};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
-pub type FuzzRunIdentifiedContracts = Rc<RefCell<TargetedContracts>>;
+pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
+pub type BasicTxDetails = (Address, (Address, Bytes));
+
+#[derive(Debug, Clone)]
+pub struct RandomCallGenerator {
+    pub runner: Arc<RwLock<TestRunner>>,
+    pub strat: SBoxedStrategy<Vec<BasicTxDetails>>,
+    pub used: bool,
+    pub replay: bool,
+    pub last_sequence: Arc<RwLock<Vec<BasicTxDetails>>>,
+}
+
+impl RandomCallGenerator {
+    pub fn set_replay(&mut self, status: bool) {
+        self.replay = status;
+    }
+}
 
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -75,12 +94,11 @@ where
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.db);
         let targeted_contracts: FuzzRunIdentifiedContracts =
-            Rc::new(RefCell::new(targeted_contracts));
+            Arc::new(RwLock::new(targeted_contracts));
 
         // Creates strategy
         let strat =
-            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone())
-                .no_shrink();
+            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone());
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -93,8 +111,19 @@ where
 
         // Prepare executor
         self.evm.set_tracing(false);
+        let inner_sequence = Arc::new(RwLock::new(vec![]));
+        let generator = RandomCallGenerator {
+            runner: Arc::new(RwLock::new(self.runner.clone())),
+            strat: strat.clone(),
+            used: false,
+            last_sequence: inner_sequence,
+            replay: false,
+        };
+        self.evm.set_fuzzer(generator, fuzz_state.clone());
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
+
+        let strat = strat.no_shrink();
         let reverts = Cell::new(0);
         let num_broken = Cell::new(0);
 
@@ -168,6 +197,7 @@ where
                                 abi,
                                 &result,
                                 &inputs,
+                                &[],
                             );
                             *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
 
@@ -187,7 +217,7 @@ where
                         state_changeset,
                         self.project_contracts,
                         self.setup_contracts,
-                        targeted_contracts.borrow(),
+                        targeted_contracts.clone(),
                         &mut created,
                     );
 
@@ -205,9 +235,9 @@ where
 
                 // We clear all the targeted contracts created during this run
                 if !created.is_empty() {
-                    let targeted: &RefCell<TargetedContracts> = targeted_contracts.borrow();
+                    let mut targeted = targeted_contracts.write().unwrap();
                     for addr in created.iter() {
-                        targeted.borrow_mut().remove(addr);
+                        targeted.remove(addr);
                     }
                 }
 
@@ -224,6 +254,7 @@ where
                                            * string must be set"), */
                 addr: invariant_address,
                 func: Some(ethers::prelude::Bytes::default()),
+                inner_sequence: vec![],
             });
 
         // TODO only saving one sequence case per invariant failure. Do we want more?
@@ -367,20 +398,26 @@ where
 fn assert_invariants<'a, DB>(
     sender: Address,
     abi: &Abi,
-    executor: RefMut<&mut &mut Executor<DB>>,
+    mut executor: RefMut<&mut &mut Executor<DB>>,
     invariant_address: Address,
     invariants: &'a [&Function],
     mut invariant_doesnt_hold: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
-    inputs: &[(Address, (Address, Bytes))],
+    inputs: &[BasicTxDetails],
 ) -> eyre::Result<()>
 where
     DB: DatabaseRef,
 {
     let mut found_case = false;
+    let inner_sequence = {
+        let generator = &mut executor.inspector_config.fuzzer.as_mut().unwrap().generator;
+
+        // // will need the exact depth and all to replay
+        let sequence = generator.last_sequence.read().unwrap().clone();
+        sequence
+    };
 
     for func in invariants {
         let RawCallResult { reverted, state_changeset, result, .. } = executor
-            .borrow()
             .call_raw(
                 sender,
                 invariant_address,
@@ -408,7 +445,14 @@ where
         if let Some((func, result)) = err {
             invariant_doesnt_hold.borrow_mut().insert(
                 func.name.clone(),
-                Some(InvariantFuzzError::new(invariant_address, Some(func), abi, &result, inputs)),
+                Some(InvariantFuzzError::new(
+                    invariant_address,
+                    Some(func),
+                    abi,
+                    &result,
+                    inputs,
+                    &inner_sequence,
+                )),
             );
             found_case = true;
         }
@@ -433,7 +477,7 @@ pub struct InvariantFuzzTestResult {
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
     /// The proptest error occurred as a result of a test case
-    pub test_error: TestError<Vec<(Address, (Address, Bytes))>>,
+    pub test_error: TestError<Vec<BasicTxDetails>>,
     /// The return reason of the offending call
     pub return_reason: Reason,
     /// The revert string of the offending call
@@ -442,6 +486,8 @@ pub struct InvariantFuzzError {
     pub addr: Address,
     /// Function data for invariant check
     pub func: Option<ethers::prelude::Bytes>,
+    /// Inner Fuzzing Sequence
+    pub inner_sequence: Vec<BasicTxDetails>,
 }
 
 impl InvariantFuzzError {
@@ -450,7 +496,8 @@ impl InvariantFuzzError {
         error_func: Option<&Function>,
         abi: &Abi,
         result: &bytes::Bytes,
-        inputs: &[(Address, (Address, Bytes))],
+        inputs: &[BasicTxDetails],
+        inner_sequence: &[BasicTxDetails],
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -481,6 +528,7 @@ impl InvariantFuzzError {
                 .unwrap_or_default(),
             addr: invariant_address,
             func,
+            inner_sequence: inner_sequence.to_vec(),
         }
     }
 }

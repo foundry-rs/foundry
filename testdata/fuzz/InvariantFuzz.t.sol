@@ -3,6 +3,13 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 
+
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
 contract UnbreakableMockToken {
     uint256 public totalSupply = 0;
 
@@ -74,11 +81,6 @@ contract InvariantFuzzTest is DSTest {
     UnbreakableMockToken unbreakable;
     BreakableMockToken breakable;
 
-    struct FuzzSelector {
-        address addr;
-        bytes4[] selectors;
-    }
-
     function setUp() public {
         unbreakable = new UnbreakableMockToken();
         ignore = new UnbreakableMockToken();
@@ -127,5 +129,75 @@ contract InvariantFuzzTest is DSTest {
     function invariantTestFail() public {
         emit log("invariantTestFailLog");
         require(breakable.totalSupply() < 10, "should revert");
+    }
+}
+
+
+contract C1 {
+    address fren;
+
+    function create_fren() public returns (address) {
+        require(fren == address(0), "");
+        fren = address(new C2());
+        return fren;
+    }
+
+    function kiss() public {
+    }
+}
+
+contract C2 {
+    C1 jesus;
+    bool public betraying = false;
+    bool public payback = false;
+
+    constructor() {
+        jesus = C1(msg.sender);
+    }
+
+    function betray() public {
+        betraying = true;
+        jesus.kiss();
+        betraying = false;
+    }
+    event e(string);
+    function revenge() public returns (string memory) {
+        require(betraying, "");
+        emit e("rere)");
+        payback = true;
+        return "oi";
+    }
+}
+
+contract InvariantReentrancy is DSTest {
+    C1 jesus;
+    C2 fren;
+
+
+    function excludeContracts() public returns (address[] memory) {
+        address[] memory addrs = new address[](2);
+        addrs[0] = address(jesus);
+        addrs[1] = address(fren);
+        return addrs;
+    }
+
+    function targetSelectors() public returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[1] = C2.betray.selector;
+        selectors[0] = C2.revenge.selector;
+        targets[0] = FuzzSelector(address(fren), selectors);
+        return targets;
+    }
+
+
+    function setUp() public {
+        jesus = new C1();
+        fren = C2(jesus.create_fren());
+    }
+
+    function invariantPayback() public {
+        emit log("invariantTestFailLog");
+        require(fren.payback() == false, "payback.");
     }
 }

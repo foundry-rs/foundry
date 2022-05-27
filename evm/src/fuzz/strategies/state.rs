@@ -1,7 +1,7 @@
 use super::fuzz_param_from_state;
 use crate::{
-    executor::StateChangeset, fuzz::invariant::TargetedContracts, trace::identifier::diff_score,
-    utils,
+    executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts,
+    trace::identifier::diff_score, utils,
 };
 use bytes::Bytes;
 use ethers::{
@@ -15,16 +15,15 @@ use revm::{
     opcode, spec_opcode_gas, Filth, SpecId,
 };
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, HashSet},
     io::Write,
-    rc::Rc,
+    sync::{Arc, RwLock},
 };
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Rc<RefCell<HashSet<[u8; 32]>>>;
+pub type EvmFuzzState = Arc<RwLock<HashSet<[u8; 32]>>>;
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
@@ -80,7 +79,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         state.insert(H256::from(Address::random()).into());
     }
 
-    Rc::new(RefCell::new(state))
+    Arc::new(RwLock::new(state))
 }
 
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
@@ -89,7 +88,7 @@ pub fn collect_state_from_call(
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
 ) {
-    let state = &mut *state.borrow_mut();
+    let mut state = state.write().unwrap();
 
     for (address, account) in state_changeset {
         // Insert basic account information
@@ -173,10 +172,10 @@ pub fn collect_created_contracts(
     state_changeset: StateChangeset,
     project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     setup_contracts: &BTreeMap<Address, (String, Abi)>,
-    targeted_contracts: &RefCell<TargetedContracts>,
+    targeted_contracts: FuzzRunIdentifiedContracts,
     created: &mut Vec<Address>,
 ) -> bool {
-    let mut targeted = targeted_contracts.borrow_mut();
+    let mut targeted = targeted_contracts.write().unwrap();
     let before = created.len();
 
     for (address, account) in &state_changeset {

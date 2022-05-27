@@ -7,13 +7,16 @@ use std::{path::PathBuf, sync::Arc};
 
 use super::{
     fork::SharedBackend,
-    inspector::{Cheatcodes, InspectorStackConfig},
+    inspector::{Cheatcodes, Fuzzer, InspectorStackConfig},
     Executor,
 };
 
 use ethers::types::{H160, H256, U256};
 
-use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
+use crate::{
+    executor::fork::{BlockchainDb, BlockchainDbMeta},
+    fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
+};
 
 use revm::AccountInfo;
 
@@ -149,6 +152,13 @@ impl ExecutorBuilder {
     #[must_use]
     pub fn with_debugger(mut self) -> Self {
         self.inspector_config.debugger = true;
+        self
+    }
+
+    /// Enables the fuzzer
+    #[must_use]
+    pub fn with_fuzzer(mut self, generator: RandomCallGenerator, fuzz_state: EvmFuzzState) -> Self {
+        self.inspector_config.fuzzer = Some(Fuzzer { generator, fuzz_state, collect: false });
         self
     }
 

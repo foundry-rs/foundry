@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fmt,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -170,8 +171,8 @@ impl TestKind {
                 runs: fuzzed.len(),
                 calls: fuzzed.iter().map(|sequence| sequence.cases().len()).sum(),
                 // todo
-                median: fuzzed.get(0).unwrap().median_gas(false),
-                mean: fuzzed.get(0).unwrap().mean_gas(false),
+                median: 0, //fuzzed.get(0).unwrap_or(FuzzCase::default()).median_gas(false),
+                mean: 0,   //fuzzed.get(0).unwrap_or(FuzzCase::default()).mean_gas(false),
                 reverts: *reverts,
             },
         }
@@ -613,6 +614,16 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                             // Reset DB state
                             self.executor.db = prev_db.clone();
                             self.executor.set_tracing(true);
+                            let mut generator = &mut self
+                                .executor
+                                .inspector_config
+                                .fuzzer
+                                .as_mut()
+                                .unwrap()
+                                .generator;
+                            generator.set_replay(true);
+                            generator.last_sequence =
+                                Arc::new(RwLock::new(error.inner_sequence.clone()));
 
                             for (sender, (addr, bytes)) in vec_addr_bytes.iter() {
                                 let call_result = self
