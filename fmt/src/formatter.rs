@@ -1,5 +1,6 @@
 //! A Solidity formatter
 
+use core::fmt;
 use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
@@ -416,6 +417,31 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         write!(self.buf(), "{chunk}")
     }
+
+    // TODO:
+    fn indented(
+        &mut self,
+        delta: usize,
+        fun: impl FnMut(&mut Self) -> Result<(), VError>,
+    ) -> Result<(), VError> {
+        self.indented_if(true, delta, fun)
+    }
+
+    fn indented_if(
+        &mut self,
+        condition: bool,
+        delta: usize,
+        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
+    ) -> Result<(), VError> {
+        if condition {
+            self.indent(delta);
+        }
+        fun(self)?;
+        if condition {
+            self.dedent(delta);
+        }
+        Ok(())
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -564,15 +590,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             if multiline {
                 writeln!(self.buf())?;
-                self.indent(1);
             } else {
                 write!(self.buf(), " ")?;
             }
 
-            self.write_chunks_separated(&bases, ", ", multiline)?;
+            self.indented_if(multiline, 1, |fmt| {
+                fmt.write_chunks_separated(&bases, ", ", multiline)?;
+                Ok(())
+            })?;
 
             if multiline {
-                self.dedent(1);
                 writeln!(self.buf())?;
             } else {
                 write!(self.buf(), " ")?;
@@ -584,38 +611,39 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         } else {
             writeln!(self.buf(), "{{")?;
 
-            self.indent(1);
-            let mut contract_parts_iter = contract.parts.iter_mut().peekable();
-            while let Some(part) = contract_parts_iter.next() {
-                part.visit(self)?;
-                writeln!(self.buf())?;
+            self.indented(1, |fmt| {
+                let mut contract_parts_iter = contract.parts.iter_mut().peekable();
+                while let Some(part) = contract_parts_iter.next() {
+                    part.visit(fmt)?;
+                    writeln!(fmt.buf())?;
 
-                // If source has zero blank lines between parts and the current part is not a
-                // function, leave it as is. If it has one or more blank lines or
-                // the current part is a function, separate parts with one blank
-                // line.
-                if let Some(next_part) = contract_parts_iter.peek() {
-                    let blank_lines = self.blank_lines(part.loc(), next_part.loc());
-                    let is_function =
-                        if let ContractPart::FunctionDefinition(function_definition) = part {
-                            matches!(
-                                **function_definition,
-                                FunctionDefinition {
-                                    ty: FunctionTy::Function |
-                                        FunctionTy::Receive |
-                                        FunctionTy::Fallback,
-                                    ..
-                                }
-                            )
-                        } else {
-                            false
-                        };
-                    if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln!(self.buf())?;
+                    // If source has zero blank lines between parts and the current part is not a
+                    // function, leave it as is. If it has one or more blank lines or
+                    // the current part is a function, separate parts with one blank
+                    // line.
+                    if let Some(next_part) = contract_parts_iter.peek() {
+                        let blank_lines = fmt.blank_lines(part.loc(), next_part.loc());
+                        let is_function =
+                            if let ContractPart::FunctionDefinition(function_definition) = part {
+                                matches!(
+                                    **function_definition,
+                                    FunctionDefinition {
+                                        ty: FunctionTy::Function |
+                                            FunctionTy::Receive |
+                                            FunctionTy::Fallback,
+                                        ..
+                                    }
+                                )
+                            } else {
+                                false
+                            };
+                        if is_function && blank_lines > 0 || blank_lines > 1 {
+                            writeln!(fmt.buf())?;
+                        }
                     }
                 }
-            }
-            self.dedent(1);
+                Ok(())
+            })?;
 
             write!(self.buf(), "}}")?;
         }
@@ -684,15 +712,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if multiline {
             writeln!(self.buf(), "{{")?;
-            self.indent(1);
         } else {
             self.write_opening_bracket()?;
         }
 
-        self.write_chunks_separated(&imports, ", ", multiline)?;
+        self.indented_if(multiline, 1, |fmt| {
+            fmt.write_chunks_separated(&imports, ", ", multiline)?;
+            Ok(())
+        })?;
 
         if multiline {
-            self.dedent(1);
             write!(self.buf(), "\n}}")?;
         } else {
             self.write_closing_bracket()?;
@@ -712,16 +741,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // TODO rewrite with some enumeration
             write!(self.buf(), "{{")?;
 
-            self.indent(1);
-            for (i, value) in enumeration.values.iter().enumerate() {
-                writeln_chunk!(self, value.loc.start())?;
-                write_chunk!(self, value.loc.end(), "{}", &value.name)?;
+            self.indented(1, |fmt| {
+                let mut enum_values = enumeration.values.iter().peekable();
+                while let Some(value) = enum_values.next() {
+                    writeln_chunk!(fmt, value.loc.start())?;
+                    write_chunk!(fmt, value.loc.end(), "{}", &value.name)?;
 
-                if i != enumeration.values.len() - 1 {
-                    write!(self.buf(), ",")?;
+                    if enum_values.peek().is_some() {
+                        write!(fmt.buf(), ",")?;
+                    }
                 }
-            }
-            self.dedent(1);
+                Ok(())
+            })?;
 
             self.write_postfix_comments_before(enumeration.loc.end())?;
             self.write_prefix_comments_before(enumeration.loc.end())?;
@@ -862,21 +893,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             (params_multiline && !returns.is_empty());
         if !attributes.is_empty() {
             self.write_whitespace_separator(attributes_multiline)?;
-            if attributes_multiline {
-                self.indent(1);
-            }
-            let mut attributes = func.attributes.iter_mut().attr_sorted().peekable();
+            self.indented_if(attributes_multiline, 1, |fmt| {
+                let mut attributes = func.attributes.iter_mut().attr_sorted().peekable();
 
-            while let Some(attribute) = attributes.next() {
-                attribute.visit(self)?;
-                if attributes.peek().is_some() {
-                    self.write_whitespace_separator(attributes_multiline)?;
+                while let Some(attribute) = attributes.next() {
+                    attribute.visit(fmt)?;
+                    if attributes.peek().is_some() {
+                        fmt.write_whitespace_separator(attributes_multiline)?;
+                    }
                 }
-            }
 
-            if attributes_multiline {
-                self.dedent(1);
-            }
+                Ok(())
+            })?;
         }
 
         let returns_multiline = !returns.is_empty() &&
@@ -884,15 +912,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.are_chunks_separated_multiline(&returns, ", "));
         let should_indent = returns_multiline || attributes_multiline;
         if !returns.is_empty() {
-            if should_indent {
-                self.indent(1);
-            }
-            self.write_whitespace_separator(returns_multiline || should_indent)?;
-            write!(self.buf(), "returns ")?;
-            self.write_chunks_with_paren_separated(&returns, ", ", returns_multiline)?;
-            if should_indent {
-                self.dedent(1);
-            }
+            self.indented_if(should_indent, 1, |fmt| {
+                fmt.write_whitespace_separator(returns_multiline || should_indent)?;
+                write!(fmt.buf(), "returns ")?;
+                fmt.write_chunks_with_paren_separated(&returns, ", ", returns_multiline)?;
+                Ok(())
+            })?;
         }
 
         match body {
@@ -976,13 +1001,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             if multiline {
                 writeln!(self.buf())?;
-                self.indent(1);
             }
 
-            self.write_chunks_separated(&args, ", ", multiline)?;
+            self.indented_if(multiline, 1, |fmt| {
+                fmt.write_chunks_separated(&args, ", ", multiline)?;
+                Ok(())
+            })?;
 
             if multiline {
-                self.dedent(1);
                 writeln!(self.buf())?;
             }
         }
@@ -1039,12 +1065,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         } else {
             writeln!(self.buf(), "{{")?;
 
-            self.indent(1);
-            for field in structure.fields.iter_mut() {
-                field.visit(self)?;
-                writeln!(self.buf(), ";")?;
-            }
-            self.dedent(1);
+            self.indented(1, |fmt| {
+                for field in structure.fields.iter_mut() {
+                    field.visit(fmt)?;
+                    writeln!(fmt.buf(), ";")?;
+                }
+                Ok(())
+            })?;
 
             write!(self.buf(), "}}")?;
         }
@@ -1085,29 +1112,30 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         if multiline {
             writeln!(self.buf(), "{{")?;
-            self.indent(1);
         } else {
             self.write_opening_bracket()?;
         }
 
-        let mut statements_iter = statements.iter_mut().peekable();
-        while let Some(stmt) = statements_iter.next() {
-            stmt.visit(self)?;
-            if multiline {
-                writeln!(self.buf())?;
-            }
+        self.indented_if(multiline, 1, |fmt| {
+            let mut statements_iter = statements.iter_mut().peekable();
+            while let Some(stmt) = statements_iter.next() {
+                stmt.visit(fmt)?;
+                if multiline {
+                    writeln!(fmt.buf())?;
+                }
 
-            // If source has zero blank lines between statements, leave it as is. If one
-            //  or more, separate statements with one blank line.
-            if let Some(next_stmt) = statements_iter.peek() {
-                if self.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
-                    writeln!(self.buf())?;
+                // If source has zero blank lines between statements, leave it as is. If one
+                //  or more, separate statements with one blank line.
+                if let Some(next_stmt) = statements_iter.peek() {
+                    if fmt.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
+                        writeln!(fmt.buf())?;
+                    }
                 }
             }
-        }
+            Ok(())
+        })?;
 
         if multiline {
-            self.dedent(1);
             write!(self.buf(), "}}")?;
         } else {
             self.write_closing_bracket()?;
@@ -1286,13 +1314,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write!(self.buf(), " {}", formatted_init)?;
             } else {
                 writeln!(self.buf())?;
-                if !multiline {
-                    self.indent(1);
-                }
-                write!(self.buf(), "{}", formatted_init)?;
-                if !multiline {
-                    self.dedent(1);
-                }
+                self.indented_if(!multiline, 1, |fmt| {
+                    write!(fmt.buf(), "{}", formatted_init)?;
+                    Ok(())
+                })?;
             }
         }
 
