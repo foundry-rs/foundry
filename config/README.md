@@ -82,6 +82,7 @@ optimizer = true
 optimizer_runs = 200
 via_ir = false
 verbosity = 0
+# ignore solc warnings for missing license and exceeded contract size
 ignored_error_codes = [1878, 5574]
 fuzz_runs = 256
 ffi = false
