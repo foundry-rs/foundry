@@ -236,14 +236,18 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), "{}", brackets)
     }
 
+    /// Write semicolon to the buffer
     fn write_semicolon(&mut self) -> std::fmt::Result {
         write!(self.buf(), ";")
     }
 
+    /// Write whitespace separator to the buffer
+    /// `"\n"` if `multiline` is `true`, `" "` if `false`
     fn write_whitespace_separator(&mut self, multiline: bool) -> std::fmt::Result {
         write!(self.buf(), "{}", if multiline { "\n" } else { " " })
     }
 
+    /// Transform [Visitable] items to the list of chunks
     fn items_to_chunks<T, F, V>(
         &mut self,
         items: &mut [T],
@@ -551,7 +555,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write_chunk!(self, contract.name.loc.end(), "{} ", contract.name.name)?;
 
         if !contract.base.is_empty() {
-            // TODO check if chunk fits?
+            // TODO: check if chunk fits?
             write_chunk!(self, contract.base.first().unwrap().loc.start(), "is")?;
 
             let bases = self.items_to_chunks(&mut contract.base, |base| Ok((base.loc, base)))?;
