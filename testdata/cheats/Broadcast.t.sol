@@ -225,6 +225,14 @@ contract BroadcastTestNoLinking is DSTest {
 
         more();
     }
+
+    function errorStaticCall() public {
+        cheats.broadcast();
+        NoLink test11 = new NoLink();
+
+        cheats.broadcast();
+        test11.view_me();
+    }
 }
 
 

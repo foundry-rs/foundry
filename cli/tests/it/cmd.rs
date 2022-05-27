@@ -927,3 +927,18 @@ forgetest_async!(
             .await;
     })
 );
+
+forgetest_async!(
+    fail_broadcast_staticcall,
+    (|prj: TestProject, cmd: TestCommand| async move {
+        let port = next_port();
+        spawn(NodeConfig::test().with_port(port)).await;
+        let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tester
+            .load_private_keys(vec![0])
+            .await
+            .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
+            .simulate(ScriptOutcome::FailedScript);
+    })
+);

@@ -214,6 +214,15 @@ where
 
                         // call_inner does not increase nonces, so we have to do it ourselves
                         account.info.nonce += 1;
+                    } else if broadcast.single_call {
+                        return (
+                            Return::Revert,
+                            Gas::new(0),
+                            "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
+                            .to_string()
+                            .encode()
+                            .into()
+                        )
                     }
                 }
             }
