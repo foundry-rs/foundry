@@ -77,6 +77,21 @@ impl Db for MemDb {
         self.inner.insert_cache_storage(address, slot, val)
     }
 
+    fn dump_state(&mut self) -> Map<Address, AccountRecord> {
+        self.inner.cache().map {
+            AccountRecord {
+                nonce: it.nonce,
+                balance: it.balance,
+                code: it.code,
+                storage: self.inner.storage().get(it)
+            }
+        }
+    }
+
+    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool {
+        false
+    }
+
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256 {
         let id = self.snapshots.insert(self.inner.clone());

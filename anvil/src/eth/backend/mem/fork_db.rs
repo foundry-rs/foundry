@@ -28,6 +28,14 @@ impl Db for ForkedDatabase {
         self.cache_db.set_storage_at(address, slot, val)
     }
 
+    fn dump_state(&mut self) -> Bytes {
+        Bytes::new()
+    }
+
+    fn load_state(&mut self, buf: Bytes) -> {
+        false
+    }
+
     fn snapshot(&mut self) -> U256 {
         let snapshot = self.create_snapshot();
         let mut snapshots = self.snapshots.lock();

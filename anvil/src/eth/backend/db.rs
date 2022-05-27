@@ -10,6 +10,19 @@ use foundry_evm::{
     revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
 };
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializableState {
+    accounts: Map<Address, AccountRecord>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AccountRecord {
+    nonce: u64,
+    balance: U256,
+    code: Bytes,
+    storage: Map<U256, U256>
+}
+
 /// This bundles all required revm traits
 pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Inserts an account
@@ -39,6 +52,12 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Sets the balance of the given address
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
 
+    /// Write all chain data to serialized bytes buffer
+    fn dump_state(&mut self) -> Map<Address, AccountRecord>;
+
+    /// Deserialize and add all chain data to the backend storage
+    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool;
+
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256;
 
@@ -67,6 +86,14 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
         self.insert_cache_storage(address, slot, val)
+    }
+
+    fn dump_state(&mut self) -> Map<Address, AccountRecord> {
+        Map::new()
+    }
+
+    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool {
+        false
     }
 
     fn snapshot(&mut self) -> U256 {
