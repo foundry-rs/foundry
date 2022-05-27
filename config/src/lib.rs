@@ -1272,7 +1272,10 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
-            ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+            ignored_error_codes: vec![
+                SolidityErrorCode::SpdxLicenseNotProvided,
+                SolidityErrorCode::CotractExceeds24576Bytes,
+            ],
             __non_exhaustive: (),
             via_ir: false,
             rpc_storage_caching: Default::default(),
@@ -1359,6 +1362,9 @@ impl<'de> Deserialize<'de> for GasLimit {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// Warning that contract code size exceeds 24576 bytes (a limit introduced in Spurious
+    /// Dragon).
+    CotractExceeds24576Bytes,
     /// All other error codes
     Other(u64),
 }
@@ -1367,6 +1373,7 @@ impl From<SolidityErrorCode> for u64 {
     fn from(code: SolidityErrorCode) -> u64 {
         match code {
             SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::CotractExceeds24576Bytes => 5574,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -1376,6 +1383,7 @@ impl From<u64> for SolidityErrorCode {
     fn from(code: u64) -> Self {
         match code {
             1878 => SolidityErrorCode::SpdxLicenseNotProvided,
+            5574 => SolidityErrorCode::CotractExceeds24576Bytes,
             other => SolidityErrorCode::Other(other),
         }
     }
