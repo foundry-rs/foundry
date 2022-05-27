@@ -417,7 +417,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), "{chunk}")
     }
 
-    // TODO:
     fn indented(
         &mut self,
         delta: usize,
@@ -838,7 +837,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
 
-        write!(self.buf(), "{}", func.ty)?; // TODO:
+        write!(self.buf(), "{}", func.ty)?;
 
         if let Some(Identifier { name, loc }) = &func.name {
             write_chunk!(self, loc.end(), " {name}")?;
@@ -1166,7 +1165,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let params = self.items_to_chunks(&mut event.fields, |param| Ok((param.loc, param)))?;
 
-        // TODO:
         let formatted = format!(
             "({}){};",
             params.iter().map(|p| p.1.to_owned()).join(", "),
