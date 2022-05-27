@@ -1,6 +1,5 @@
 //! A Solidity formatter
 
-use core::fmt;
 use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
