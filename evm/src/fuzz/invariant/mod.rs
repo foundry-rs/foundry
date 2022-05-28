@@ -1,5 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::fuzz::{strategies::invariant_strat, *};
+use crate::fuzz::*;
 
 mod executor;
 mod filters;
@@ -14,17 +14,16 @@ use proptest::{
     strategy::SBoxedStrategy,
     test_runner::{TestError, TestRunner},
 };
-use revm::{db::DatabaseRef, DatabaseCommit};
+use revm::db::DatabaseRef;
 use std::{
     borrow::{Borrow, BorrowMut},
-    cell::{Cell, RefCell, RefMut},
+    cell::RefMut,
     collections::BTreeMap,
     sync::{Arc, RwLock},
 };
 
 use crate::executor::{Executor, RawCallResult};
 
-use super::strategies::collect_created_contracts;
 use proptest::strategy::{Strategy, ValueTree};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
@@ -206,10 +205,12 @@ impl RandomCallGenerator {
     pub fn set_replay(&mut self, status: bool) {
         self.replay = status;
         if status {
+            // So it can later be popped.
             self.last_sequence.write().unwrap().reverse()
         }
     }
 
+    /// Gets the next call. Random if replay is not set. Otherwise, it pops from `last_sequence`.
     pub fn next(&mut self, original_caller: Address, original_target: Address) -> BasicTxDetails {
         if self.replay {
             self.last_sequence.write().unwrap().pop().unwrap()

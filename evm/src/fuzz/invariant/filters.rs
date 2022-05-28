@@ -1,5 +1,5 @@
 use ethers::{
-    abi::{Abi, Address, FixedBytes, Function},
+    abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
     prelude::U256,
 };
 use eyre::ContextCompat;
@@ -21,7 +21,7 @@ where
     ) -> eyre::Result<(Vec<Address>, TargetedContracts)> {
         let [senders, selected, excluded] =
             ["targetSenders", "targetContracts", "excludeContracts"]
-                .map(|method| self.get_addresses(invariant_address, abi, method));
+                .map(|method| self.get_list::<Address>(invariant_address, abi, method));
 
         let mut contracts: TargetedContracts = self
             .setup_contracts
@@ -56,26 +56,8 @@ where
         abi: &Abi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        let mut selectors: Vec<(Address, Vec<FixedBytes>)> = vec![];
-
-        if let Some(func) = abi.functions().into_iter().find(|func| func.name == "targetSelectors")
-        {
-            if let Ok(call_result) = self.evm.call::<Vec<(Address, Vec<FixedBytes>)>, _, _>(
-                self.sender,
-                address,
-                func.clone(),
-                (),
-                U256::zero(),
-                Some(abi),
-            ) {
-                selectors = call_result.result;
-            } else {
-                warn!(
-                    "The function {} was found but there was an error querying addresses.",
-                    "targetSelectors"
-                );
-            }
-        };
+        let selectors =
+            self.get_list::<(Address, Vec<FixedBytes>)>(address, abi, "targetSelectors");
 
         fn add_function(
             name: &str,
@@ -114,12 +96,15 @@ where
         Ok(())
     }
 
-    /// Gets list of addresses by calling the contract `method_name` function.
-    fn get_addresses(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<Address> {
-        let mut addresses = vec![];
+    /// Gets list of `T` by calling the contract `method_name` function.
+    fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
+    where
+        T: Tokenizable + Detokenize + TokenizableItem,
+    {
+        let mut list: Vec<T> = vec![];
 
         if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.evm.call::<Vec<Address>, _, _>(
+            if let Ok(call_result) = self.evm.call::<Vec<T>, _, _>(
                 self.sender,
                 address,
                 func.clone(),
@@ -127,15 +112,15 @@ where
                 U256::zero(),
                 Some(abi),
             ) {
-                addresses = call_result.result;
+                list = call_result.result;
             } else {
                 warn!(
-                    "The function {} was found but there was an error querying addresses.",
+                    "The function {} was found but there was an error querying its data.",
                     method_name
                 );
             }
         };
 
-        addresses
+        list
     }
 }

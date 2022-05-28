@@ -90,7 +90,11 @@ where
             replay: false,
             used: false,
         };
+
+        // fuzz_state will collect `stack` and `memory` values for use with
+        // [fuzz_calldata_from_state]
         self.evm.set_fuzzer(generator, fuzz_state.clone());
+
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
 
@@ -98,7 +102,7 @@ where
         let reverts = Cell::new(0);
         let broken_invariants = Cell::new(0);
 
-        // If a new contract is created, we need another runner to create new inputs
+        // If a new contract is created, we need another runner to create newly generated inputs
         let branch_runner = RefCell::new(self.runner.clone());
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs` until
@@ -106,8 +110,8 @@ where
         let _test_error = self
             .runner
             .run(&strat, |mut inputs| {
-                // Scenarios where we want to fail as soon as possible.
                 {
+                    // Scenarios where we want to fail as soon as possible.
                     if fail_on_revert && reverts.get() == 1 {
                         return Err(TestCaseError::fail("Revert occurred."))
                     }
@@ -185,8 +189,6 @@ where
                         }
                     }
 
-                    current_depth += 1;
-
                     collect_created_contracts(
                         state_changeset,
                         self.project_contracts,
@@ -195,13 +197,15 @@ where
                         &mut created,
                     );
 
-                    // Generates the next call with the changed state.
+                    // Generates the next call with an updated `EvmFuzzState`
                     inputs.extend(
                         strat
                             .new_tree(&mut branch_runner.borrow_mut())
                             .map_err(|_| TestCaseError::Fail("Could not generate case".into()))?
                             .current(),
                     );
+
+                    current_depth += 1;
                 }
 
                 // Before each test, we must reset to the initial state
