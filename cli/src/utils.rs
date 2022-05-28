@@ -8,6 +8,7 @@ use foundry_config::{cache::StorageCachingConfig, Config};
 use std::{
     future::Future,
     path::{Path, PathBuf},
+    process::{Command, Output},
     str::FromStr,
     time::Duration,
 };
@@ -244,6 +245,32 @@ pub fn enable_paint() {
     let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
     if is_windows || env_colour_disabled {
         Paint::disable();
+    }
+}
+
+/// Useful extensions to [`std::process::Command`].
+pub trait CommandUtils {
+    /// Returns the command's output if execution is successful, otherwise, throws an error.
+    fn exec(&mut self) -> eyre::Result<Output>;
+
+    /// Returns the command's stdout if execution is successful, otherwise, throws an error.
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+}
+
+impl CommandUtils for Command {
+    fn exec(&mut self) -> eyre::Result<Output> {
+        let output = self.output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        Ok(output)
+    }
+
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+        let output = self.exec()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().into())
     }
 }
 
