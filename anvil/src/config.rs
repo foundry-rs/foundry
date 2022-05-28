@@ -14,7 +14,6 @@ use crate::{
     FeeManager,
 };
 use anvil_server::ServerConfig;
-use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
@@ -34,6 +33,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use yansi::Paint;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -329,9 +329,9 @@ impl NodeConfig {
         if self.silent {
             return
         }
-        println!("{}", BANNER.green());
+        println!("{}", Paint::green(BANNER));
         println!("    {}", VERSION_MESSAGE);
-        println!("    {}", "https://github.com/foundry-rs/foundry".green());
+        println!("    {}", Paint::green("https://github.com/foundry-rs/foundry"));
 
         print!(
             r#"
@@ -375,7 +375,7 @@ Base Fee
 ==================
 {}
 "#,
-            format!("{}", self.base_fee).green()
+            Paint::green(format!("{}", self.base_fee))
         );
         print!(
             r#"
@@ -383,7 +383,7 @@ Gas Price
 ==================
 {}
 "#,
-            format!("{}", self.gas_price).green()
+            Paint::green(format!("{}", self.gas_price))
         );
 
         print!(
@@ -392,7 +392,7 @@ Gas Limit
 ==================
 {}
 "#,
-            format!("{}", self.gas_limit).green()
+            Paint::green(format!("{}", self.gas_limit))
         );
 
         if let Some(fork) = fork {
@@ -485,14 +485,13 @@ Chain ID:       {}
 
             let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
 
-            // This will spawn the background service that will use the provider to fetch blockchain
+            // This will spawn the background thread that will use the provider to fetch blockchain
             // data from the other client
-            let backend = SharedBackend::spawn_backend(
+            let backend = SharedBackend::spawn_backend_thread(
                 Arc::clone(&provider),
                 block_chain_db.clone(),
                 Some(fork_block_number.into()),
-            )
-            .await;
+            );
 
             let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, block_chain_db)));
             let fork = ClientFork::new(

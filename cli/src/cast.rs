@@ -8,41 +8,37 @@ mod utils;
 use cast::{Cast, SimpleCast, TxBuilder};
 use foundry_config::Config;
 mod opts;
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::InterfacePath;
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 use ethers::{
     core::{
         abi::AbiParser,
-        rand::thread_rng,
         types::{BlockId, BlockNumber::Latest, H256},
     },
     providers::{Middleware, Provider},
-    signers::{LocalWallet, Signer},
-    types::{Address, Chain, NameOrAddress, Signature, U256},
-    utils::get_contract_address,
+    types::{Address, Chain, NameOrAddress, U256},
+};
+use eyre::WrapErr;
+use foundry_utils::{
+    format_tokens,
+    selectors::{
+        decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
+        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
+    },
 };
 use opts::{
-    cast::{Opts, Subcommands, WalletSubcommands},
-    EthereumOpts, WalletType,
+    cast::{Opts, Subcommands},
+    WalletType,
 };
-use rayon::prelude::*;
-use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Read, Write},
     path::Path,
     str::FromStr,
-    time::Instant,
 };
-
-use clap::{IntoApp, Parser};
-use clap_complete::generate;
-
-use crate::{
-    cmd::Cmd,
-    utils::{consume_config_rpc_url, read_secret},
-};
-use eyre::WrapErr;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -414,12 +410,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
@@ -430,11 +426,11 @@ async fn main() -> eyre::Result<()> {
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::fourbyte(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_function_selector(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
         }
-        Subcommands::FourByteDecode { calldata, id } => {
-            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+        Subcommands::FourByteDecode { calldata } => {
+            let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -451,13 +447,23 @@ async fn main() -> eyre::Result<()> {
             }?;
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::fourbyte_event(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_event_topic(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
+        }
+
+        Subcommands::UploadSignature { signatures } => {
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {
@@ -465,7 +471,7 @@ async fn main() -> eyre::Result<()> {
                 eprintln!("Expected calldata hex string, received \"{calldata}\"");
                 std::process::exit(0)
             }
-            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
+            let pretty_data = pretty_calldata(&calldata, offline).await?;
             println!("{pretty_data}");
         }
         Subcommands::Age { block, rpc_url } => {
@@ -646,143 +652,7 @@ async fn main() -> eyre::Result<()> {
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
-        Subcommands::Wallet { command } => match command {
-            WalletSubcommands::New { path, password, unsafe_password } => {
-                let mut rng = thread_rng();
-
-                match path {
-                    Some(path) => {
-                        let password = read_secret(password, unsafe_password)?;
-                        let (key, uuid) =
-                            LocalWallet::new_keystore(&path, &mut rng, password, None)?;
-                        let address = SimpleCast::checksum_address(&key.address())?;
-                        let filepath = format!(
-                            "{}/{}",
-                            dunce::canonicalize(path)?
-                                .into_os_string()
-                                .into_string()
-                                .expect("failed to canonicalize file path"),
-                            uuid
-                        );
-                        println!(
-                            "Successfully created new keypair at `{}`.\nAddress: {}.",
-                            filepath, address
-                        );
-                    }
-                    None => {
-                        let wallet = LocalWallet::new(&mut rng);
-                        println!(
-                            "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
-                            SimpleCast::checksum_address(&wallet.address())?,
-                            hex::encode(wallet.signer().to_bytes()),
-                        );
-                    }
-                }
-            }
-            WalletSubcommands::Vanity { starts_with, ends_with, nonce } => {
-                let mut regexs = vec![];
-                if let Some(prefix) = starts_with {
-                    let pad_width = prefix.len() + prefix.len() % 2;
-                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
-                        .expect("invalid prefix hex provided");
-                    regexs.push(format!(r"^{}", prefix));
-                }
-                if let Some(suffix) = ends_with {
-                    let pad_width = suffix.len() + suffix.len() % 2;
-                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
-                        .expect("invalid suffix hex provided");
-                    regexs.push(format!(r"{}$", suffix));
-                }
-
-                assert!(
-                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
-                    "vanity patterns length exceeded. cannot be more than 40 characters",
-                );
-
-                let regex = RegexSet::new(regexs)?;
-                let match_contract = nonce.is_some();
-
-                println!("Starting to generate vanity address...");
-                let timer = Instant::now();
-                let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
-                    .par_bridge()
-                    .find_any(|wallet| {
-                        let addr = if match_contract {
-                            // looking for contract address created by wallet with CREATE + nonce
-                            let contract_addr =
-                                get_contract_address(wallet.address(), nonce.unwrap());
-                            hex::encode(contract_addr.to_fixed_bytes())
-                        } else {
-                            // looking for wallet address
-                            hex::encode(wallet.address().to_fixed_bytes())
-                        };
-                        regex.matches(&addr).into_iter().count() == regex.patterns().len()
-                    })
-                    .expect("failed to generate vanity wallet");
-
-                println!(
-                    "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-                    timer.elapsed().as_secs(),
-                    if match_contract {"\nContract address: "} else {""},
-                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
-                    SimpleCast::checksum_address(&wallet.address())?,
-                    hex::encode(wallet.signer().to_bytes()),
-                );
-            }
-            WalletSubcommands::Address { wallet } => {
-                // TODO: Figure out better way to get wallet only.
-                let wallet = EthereumOpts {
-                    wallet,
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Chain::Mainnet,
-                    etherscan_api_key: None,
-                }
-                .signer(0.into())
-                .await?
-                .unwrap();
-
-                let addr = match wallet {
-                    WalletType::Ledger(signer) => signer.address(),
-                    WalletType::Local(signer) => signer.address(),
-                    WalletType::Trezor(signer) => signer.address(),
-                };
-                println!("Address: {}", SimpleCast::checksum_address(&addr)?);
-            }
-            WalletSubcommands::Sign { message, wallet } => {
-                // TODO: Figure out better way to get wallet only.
-                let wallet = EthereumOpts {
-                    wallet,
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Chain::Mainnet,
-                    etherscan_api_key: None,
-                }
-                .signer(0.into())
-                .await?
-                .unwrap();
-
-                let sig = match wallet {
-                    WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
-                };
-                println!("Signature: 0x{sig}");
-            }
-            WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
-                let signature = Signature::from_str(&signature)?;
-                match signature.verify(message, pubkey) {
-                    Ok(_) => {
-                        println!("Validation success. Address {address} signed this message.")
-                    }
-                    Err(_) => println!(
-                        "Validation failed. Address {} did not sign this message.",
-                        address
-                    ),
-                }
-            }
-        },
+        Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }

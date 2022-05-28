@@ -150,9 +150,17 @@ struct SnapshotConfig {
     asc: bool,
     #[clap(help = "Sort results by gas used (descending).", conflicts_with = "asc", long)]
     desc: bool,
-    #[clap(help = "Only include tests that used more gas that the given amount.", long)]
+    #[clap(
+        help = "Only include tests that used more gas that the given amount.",
+        long,
+        value_name = "MIN_GAS"
+    )]
     min: Option<u64>,
-    #[clap(help = "Only include tests that used less gas that the given amount.", long)]
+    #[clap(
+        help = "Only include tests that used less gas that the given amount.",
+        long,
+        value_name = "MAX_GAS"
+    )]
     max: Option<u64>,
 }
 

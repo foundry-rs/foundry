@@ -24,7 +24,8 @@ pub struct BindArgs {
     #[clap(
         help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(skip)]
     pub root: Option<PathBuf>,
@@ -33,7 +34,8 @@ pub struct BindArgs {
         help = "Path to where the contract artifacts are stored",
         long = "bindings-path",
         short,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     #[serde(skip)]
     pub bindings: Option<PathBuf>,
@@ -50,6 +52,7 @@ pub struct BindArgs {
         long = "crate-version",
         help = "The version of the Rust crate to generate. This should be a standard semver version string. However, it is not currently validated by this command.",
         default_value = DEFAULT_CRATE_VERSION,
+        value_name = "NAME"
     )]
     #[serde(skip)]
     crate_version: String,
@@ -67,6 +70,10 @@ pub struct BindArgs {
     #[clap(long = "single-file", help = "Generate bindings as a single file.")]
     #[serde(skip)]
     single_file: bool,
+
+    #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml consistency checks.")]
+    #[serde(skip)]
+    skip_cargo_toml: bool,
 }
 
 impl BindArgs {
@@ -109,6 +116,7 @@ No contract artifacts found. Hint: Have you built your contracts yet? `forge bin
                 &self.crate_version,
                 self.bindings_root(),
                 self.single_file,
+                !self.skip_cargo_toml,
             )?;
         } else {
             bindings.ensure_consistent_module(self.bindings_root(), self.single_file)?;

@@ -15,7 +15,9 @@ pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
 ///
 /// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
-    fn visit_source(&mut self, _loc: Loc) -> VResult;
+    fn visit_source(&mut self, _loc: Loc) -> VResult {
+        Ok(())
+    }
 
     fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
         Ok(())
@@ -226,20 +228,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        if let (Some(first), Some(last)) = (list.first(), list.last()) {
-            if let (Some(first_loc), Some(last_loc)) = (first.loc(), last.loc()) {
-                self.visit_source(Loc::File(
-                    first_loc.file_no(),
-                    first_loc.start(),
-                    last_loc.end(),
-                ))?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn visit_base(&mut self, base: &mut Base) -> VResult {
         self.visit_source(base.loc)
     }
@@ -292,13 +280,21 @@ pub trait Visitor {
         self.visit_source(def.loc)
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult;
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_opening_paren(&mut self) -> VResult;
+    fn visit_opening_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_closing_paren(&mut self) -> VResult;
+    fn visit_closing_paren(&mut self) -> VResult {
+        Ok(())
+    }
 
-    fn visit_newline(&mut self) -> VResult;
+    fn visit_newline(&mut self) -> VResult {
+        Ok(())
+    }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
@@ -437,7 +433,6 @@ impl_visitable!(Vec<DocComment>, visit_doc_comments);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
-impl_visitable!(Vec<FunctionAttribute>, visit_function_attribute_list);
 impl_visitable!(Parameter, visit_parameter);
 impl_visitable!(ParameterList, visit_parameter_list);
 impl_visitable!(Base, visit_base);
