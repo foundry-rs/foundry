@@ -68,13 +68,13 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_number: 10,
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
-        gas_limit: 99_000_000.into(),
+        gas_limit: 99_000_000u64.into(),
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
-        block_gas_limit: Some(100.into()),
+        block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
@@ -93,6 +93,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         bytecode_hash: Default::default(),
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
+        allow_paths: vec![],
         __non_exhaustive: (),
     };
     prj.write_config(input.clone());
