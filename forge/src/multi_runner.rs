@@ -312,6 +312,7 @@ impl MultiContractRunner {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use super::*;
     use crate::{
         decode::decode_console_logs,
@@ -1012,9 +1013,25 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
+
+        // test `setEnv` first, so that we can use it in subsequent `env*` tests
+        // runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, true).unwrap();
+        // let env_var_key = "_foundryCheatcodeSetEnvTestKey";
+        // let env_var_val = "_foundryCheatcodeSetEnvTestVal";
+        // let res = env::var(env_var_key);
+//         assert!(
+//             res.is_ok() && res.unwrap() == env_var_val,
+//             "Test `testSetEnv` did not pass as expected.
+// Reason: `setEnv` failed to set an environment variable `{}={}`",
+//             env_var_key,
+//             env_var_val
+//         );
+
+        // assert!(false);
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
+            assert!(false);
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
                 assert!(

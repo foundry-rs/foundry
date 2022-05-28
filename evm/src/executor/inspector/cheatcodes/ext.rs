@@ -4,6 +4,7 @@ use ethers::{
     abi::{self, AbiEncode, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, I256, U256},
+    utils::hex::FromHex,
 };
 use serde::Deserialize;
 use std::{env, fs::File, io::Read, path::Path, process::Command, str::FromStr};
@@ -85,49 +86,107 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
 //     }
 // }
 
-fn env_bool(key: &str) -> Result<Bytes, Bytes> {
-    key.to_lowercase()
-        .parse::<bool>()
-        .map(|v| v.encode().into())
-        .map_err(|e| e.to_string().encode().into())
+fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
+    // `std::env::set_var` may panic in the following situations
+    // ref: https://doc.rust-lang.org/std/env/fn.set_var.html
+    if key.is_empty() {
+        Err("Environment variable key can't be empty".to_string().encode().into())
+    } else if key.contains('=') {
+        Err("Environment variable key can't contain equal sign `=`".to_string().encode().into())
+    } else if key.contains('\0') {
+        Err("Environment variable key can't contain NUL character `\0`".to_string().encode().into())
+    } else if val.contains('\0') {
+        Err("Environment variable value can't contain NUL character `\0`"
+            .to_string()
+            .encode()
+            .into())
+    } else {
+        env::set_var(key, val);
+        Ok(Bytes::new())
+    }
 }
 
-fn env_uint(key: &str) -> Result<Bytes, Bytes> {
+fn get_env(key: &str, _type: &str, is_array: bool) -> Result<Bytes, Bytes> {
+    // TODO: does it make sense to have `_type == "bytes" && is_array == true`?
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    U256::from_dec_str(val.as_str())
-        .map(|v| v.encode().into())
-        .map_err(|e| e.to_string().encode().into())
+    let val = if is_array { val.split(',').collect() } else { vec![val.as_str()] };
+
+    let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
+    let parse_uint = |v: &str| U256::from_dec_str(v);
+    let parse_int = |v: &str| I256::from_dec_str(v).map(|v| v.into_raw());
+    let parse_address = |v: &str| Address::from_str(v);
+    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(&v));
+    let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
+
+    val.iter()
+        .map(|v| match _type {
+            "bool" => parse_bool(v).map(|v| Token::Bool(v)).map_err(|e| e.to_string()),
+            "uint" => parse_uint(v).map(|v| Token::Uint(v)).map_err(|e| e.to_string()),
+            "int" => parse_int(v).map(|v| Token::Int(v)).map_err(|e| e.to_string()),
+            "address" => parse_address(v).map(|v| Token::Address(v)).map_err(|e| e.to_string()),
+            // TODO: check bytes32 encoding
+            "bytes32" => parse_bytes(v).map(|v| Token::FixedBytes(v)).map_err(|e| e.to_string()),
+            "string" => {
+                parse_string(v).map(|v| Token::String(v)).map_err(|_| "can't reach".to_string())
+            }
+            "bytes" => parse_bytes(v).map(|v| Token::Bytes(v)).map_err(|e| e.to_string()),
+            _ => Err(format!("{} is not a supported type", _type)),
+        })
+        .collect::<Result<Vec<Token>, String>>()
+        .map(|tokens| {
+            if is_array {
+                [Token::Array(tokens)].encode().into()
+            } else {
+                [tokens[0].clone()].encode().into()
+            }
+        })
+        .map_err(|e| e.into())
 }
 
-fn env_int(key: &str) -> Result<Bytes, Bytes> {
-    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    I256::from_dec_str(val.as_str())
-        .map(|v| v.into_raw().encode().into())
-        .map_err(|e| e.to_string().encode().into())
-}
+// fn env_bool(key: &str) -> Result<Bytes, Bytes> {
+//     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     val.to_lowercase()
+//         .parse::<bool>()
+//         .map(|v| v.encode().into())
+//         .map_err(|e| e.to_string().encode().into())
+// }
 
-fn env_address(key: &str) -> Result<Bytes, Bytes> {
-    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    Address::from_str(val.as_str())
-        .map(|v| v.encode().into())
-        .map_err(|e| e.to_string().encode().into())
-}
+// fn env_uint(key: &str) -> Result<Bytes, Bytes> {
+//     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     U256::from_dec_str(val.as_str())
+//         .map(|v| v.encode().into())
+//         .map_err(|e| e.to_string().encode().into())
+// }
 
-fn env_string(key: &str) -> Result<Bytes, Bytes> {
-    env::var(key).map(|v| v.encode().into()).map_err(|e| e.to_string().encode().into())
-}
+// fn env_int(key: &str) -> Result<Bytes, Bytes> {
+//     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     I256::from_dec_str(val.as_str())
+//         .map(|v| v.into_raw().encode().into())
+//         .map_err(|e| e.to_string().encode().into())
+// }
 
-fn env_bytes(key: &str) -> Result<Bytes, Bytes> {
-    let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    val = val.strip_prefix("0x").unwrap_or(&val).to_string();
-    Ok([Token::Bytes(val.into())].encode().into())
-}
+// fn env_address(key: &str) -> Result<Bytes, Bytes> {
+//     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     Address::from_str(val.as_str())
+//         .map(|v| v.encode().into())
+//         .map_err(|e| e.to_string().encode().into())
+// }
 
-fn env_bytes32(key: &str) -> Result<Bytes, Bytes> {
-    let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    val = val.strip_prefix("0x").unwrap_or(&val).to_string();
-    Ok([Token::FixedBytes(val.into())].encode().into())
-}
+// fn env_string(key: &str) -> Result<Bytes, Bytes> {
+//     env::var(key).map(|v| v.encode().into()).map_err(|e| e.to_string().encode().into())
+// }
+
+// fn env_bytes32(key: &str) -> Result<Bytes, Bytes> {
+//     let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     val = val.strip_prefix("0x").unwrap_or(&val).to_string();
+//     Ok([Token::FixedBytes(val.into())].encode().into())
+// }
+
+// fn env_bytes(key: &str) -> Result<Bytes, Bytes> {
+//     let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+//     val = val.strip_prefix("0x").unwrap_or(&val).to_string();
+//     Ok([Token::Bytes(val.into())].encode().into())
+// }
 
 pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
@@ -139,13 +198,21 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
             }
         }
         HEVMCalls::GetCode(inner) => get_code(&inner.0),
-        HEVMCalls::EnvBool(inner) => env_bool(&inner.0),
-        HEVMCalls::EnvUint(inner) => env_uint(&inner.0),
-        HEVMCalls::EnvInt(inner) => env_int(&inner.0),
-        HEVMCalls::EnvAddress(inner) => env_address(&inner.0),
-        HEVMCalls::EnvString(inner) => env_string(&inner.0),
-        HEVMCalls::EnvBytes(inner) => env_bytes(&inner.0),
-        HEVMCalls::EnvBytes32(inner) => env_bytes32(&inner.0),
+        HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
+        HEVMCalls::EnvBool(inner) => get_env(&inner.0, "bool", false),
+        HEVMCalls::EnvUint(inner) => get_env(&inner.0, "uint", false),
+        HEVMCalls::EnvInt(inner) => get_env(&inner.0, "int", false),
+        HEVMCalls::EnvAddress(inner) => get_env(&inner.0, "address", false),
+        HEVMCalls::EnvBytes32(inner) => get_env(&inner.0, "bytes32", false),
+        HEVMCalls::EnvString(inner) => get_env(&inner.0, "string", false),
+        HEVMCalls::EnvBytes(inner) => get_env(&inner.0, "bytes", false),
+        HEVMCalls::EnvBoolArr(inner) => get_env(&inner.0, "bool", true),
+        HEVMCalls::EnvUintArr(inner) => get_env(&inner.0, "uint", true),
+        HEVMCalls::EnvIntArr(inner) => get_env(&inner.0, "int", true),
+        HEVMCalls::EnvAddressArr(inner) => get_env(&inner.0, "address", true),
+        HEVMCalls::EnvBytes32Arr(inner) => get_env(&inner.0, "bytes32", true),
+        HEVMCalls::EnvStringArr(inner) => get_env(&inner.0, "string", true),
+        HEVMCalls::EnvBytesArr(inner) => get_env(&inner.0, "bytes", true),
         _ => return None,
     })
 }

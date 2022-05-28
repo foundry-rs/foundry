@@ -20,6 +20,24 @@ interface Cheats {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
+    // Set environment variables, (name, value)
+    function setEnv(string,string);
+    // Read environment variables, (name) => (value)
+    function envBool(string) external returns (bool);
+    function envUint(string) external returns (uint256);
+    function envInt(string) external returns (int256);
+    function envAddress(string) external returns (address);
+    function envBytes32(string) external returns (bytes32);
+    function envString(string) external returns (string);
+    function envBytes(string) external returns (bytes);
+    // Read environment variables as arrays, (name) => (value[])
+    function envBoolArr(string) external returns (bool[]);
+    function envUintArr(string) external returns (uint256[]);
+    function envIntArr(string) external returns (int256[]);
+    function envAddressArr(string) external returns (address[]);
+    function envBytes32Arr(string) external returns (bytes32[]);
+    function envStringArr(string) external returns (string[]);
+    function envBytesArr(string) external returns (bytes[]);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
