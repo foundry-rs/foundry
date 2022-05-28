@@ -8,8 +8,7 @@ use crate::{
 use ethers::{
     prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, TxHash, Wallet},
     providers::Middleware,
-    signers::Signer,
-    types::{transaction::eip2718::TypedTransaction, Address, Chain, TransactionReceipt},
+    types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
 };
 
 use super::*;
@@ -23,7 +22,13 @@ impl ScriptArgs {
         let provider = get_http_provider(fork_url);
         let chain = provider.get_chainid().await?.as_u64();
 
-        let local_wallets = self.wallets.all(chain)?;
+        let required_addresses = deployment_sequence
+            .transactions
+            .iter()
+            .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
+            .collect();
+
+        let local_wallets = self.wallets.find_all(chain, required_addresses)?;
         if local_wallets.is_empty() {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
@@ -33,30 +38,11 @@ impl ScriptArgs {
         // Iterate through transactions, matching the `from` field with the associated
         // wallet. Then send the transaction. Panics if we find a unknown `from`
         let sequence =
-        transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
+            transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
-                if let Some(wallet) =
-                    local_wallets.iter().find(|wallet| (**wallet).address() == from)
-                {
-                    let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
-                    Ok((tx, signer))
-                } else {
-                    let mut err_msg = format!(
-                        "No associated wallet for address: {:?}. Unlocked wallets: {:?}",
-                        from,
-                        local_wallets
-                            .iter()
-                            .map(|wallet| wallet.address())
-                            .collect::<Vec<Address>>()
-                    );
-
-                    // This is an actual used address
-                    if from == Config::DEFAULT_SENDER {
-                        err_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender."
-                    }
-
-                    eyre::bail!(err_msg)
-                }
+                let wallet = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+                let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
+                (tx, signer)
             });
 
         let pending_txes = get_pending_txes(&deployment_sequence.pending, fork_url).await;
@@ -66,7 +52,7 @@ impl ScriptArgs {
         // more than one signer. There would be no way of assuring their order otherwise.
         let sequential_broadcast = local_wallets.len() != 1 || self.slow;
         for payload in sequence {
-            let (tx, signer) = payload?;
+            let (tx, signer) = payload;
 
             // pending transactions from a previous failed run can be retrieve when passing
             // `--resume`

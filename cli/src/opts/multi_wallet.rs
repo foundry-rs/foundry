@@ -1,13 +1,23 @@
+use std::collections::{HashMap, HashSet};
+
 use clap::Parser;
-use ethers::{
-    signers::{LocalWallet, Signer},
-    types::Address,
-};
+use ethers::{prelude::Signer, signers::LocalWallet, types::Address};
 use eyre::Result;
 
+use foundry_config::Config;
 use serde::Serialize;
 
 use super::wallet::WalletTrait;
+
+macro_rules! get_wallets {
+    ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
+        $(
+            if let Some($id) = $wallets {
+                $call;
+            }
+        )+
+    };
+}
 
 #[derive(Parser, Debug, Clone, Serialize, Default)]
 #[cfg_attr(not(doc), allow(missing_docs))]
@@ -118,23 +128,59 @@ impl MultiWallet {
     // TODO: Add trezor and ledger support (supported in multiwallet, just need to
     // add derivation + SignerMiddleware creation logic)
     // foundry/cli/src/opts/mod.rs:110
+    pub fn find_all(
+        &self,
+        chain: u64,
+        mut addresses: HashSet<Address>,
+    ) -> Result<HashMap<Address, LocalWallet>> {
+        println!("\n###\nFinding wallets for all the necessary addresses...");
+
+        let mut local_wallets = HashMap::new();
+        let mut unused_wallets = vec![];
+
+        get_wallets!(
+            wallets,
+            [self.private_keys()?, self.interactives()?, self.mnemonics()?, self.keystores()?],
+            for wallet in wallets.into_iter() {
+                let address = &wallet.address();
+
+                if addresses.contains(address) {
+                    addresses.remove(address);
+
+                    local_wallets.insert(*address, wallet.with_chain_id(chain));
+
+                    if addresses.is_empty() {
+                        return Ok(local_wallets)
+                    }
+                } else {
+                    // This is an actual used address
+                    if *address == Config::DEFAULT_SENDER {
+                        println!("\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.");
+                    }
+
+                    // Just to show on error.
+                    unused_wallets.push(wallet);
+                }
+            }
+        );
+
+        unused_wallets.extend(local_wallets.into_values());
+        eyre::bail!(
+            "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+            addresses,
+            unused_wallets.into_iter().map(|wallet| wallet.address()).collect::<Vec<Address>>()
+        )
+    }
+
     pub fn all(&self, chain: u64) -> Result<Vec<LocalWallet>> {
         let mut local_wallets = vec![];
-        if let Some(wallets) = self.private_keys()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
-        }
 
-        if let Some(wallets) = self.interactives()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
-        }
+        get_wallets!(
+            wallets,
+            [self.private_keys()?, self.interactives()?, self.mnemonics()?, self.keystores()?],
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)))
+        );
 
-        if let Some(wallets) = self.mnemonics()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
-        }
-
-        if let Some(wallets) = self.keystores()? {
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)));
-        }
         Ok(local_wallets)
     }
 
