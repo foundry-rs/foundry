@@ -23,26 +23,44 @@ pub struct NodeArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
-    #[clap(long, short, help = "Port number to listen on.", default_value = "8545")]
+    #[clap(
+        long,
+        short,
+        help = "Port number to listen on.",
+        default_value = "8545",
+        value_name = "NUM"
+    )]
     pub port: u16,
 
     #[clap(
         long,
         short,
         help = "Number of dev accounts to generate and configure.",
-        default_value = "10"
+        default_value = "10",
+        value_name = "NUM"
     )]
     pub accounts: u64,
 
-    #[clap(long, help = "The balance of every dev account in Ether.", default_value = "10000")]
+    #[clap(
+        long,
+        help = "The balance of every dev account in Ether.",
+        default_value = "10000",
+        value_name = "NUM"
+    )]
     pub balance: u64,
 
-    #[clap(long, short, help = "BIP39 mnemonic phrase used for generating accounts")]
+    #[clap(
+        long,
+        short,
+        help = "BIP39 mnemonic phrase used for generating accounts",
+        value_name = "MNEMONIC"
+    )]
     pub mnemonic: Option<String>,
 
     #[clap(
         long,
-        help = "Sets the derivation path of the child key to be derived. [default: m/44'/60'/0'/0/]"
+        help = "Sets the derivation path of the child key to be derived. [default: m/44'/60'/0'/0/]",
+        value_name = "DERIVATION_PATH"
     )]
     pub derivation_path: Option<String>,
 
@@ -52,7 +70,12 @@ pub struct NodeArgs {
     #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(long, help = "The EVM hardfork to use.", default_value = "latest")]
+    #[clap(
+        long,
+        help = "The EVM hardfork to use.",
+        default_value = "latest",
+        value_name = "HARDFORK"
+    )]
     pub hardfork: Hardfork,
 
     #[clap(
@@ -60,7 +83,8 @@ pub struct NodeArgs {
         long,
         alias = "blockTime",
         help = "Block time in seconds for interval mining.",
-        name = "block-time"
+        name = "block-time",
+        value_name = "SECONDS"
     )]
     pub block_time: Option<u64>,
 
@@ -72,12 +96,20 @@ pub struct NodeArgs {
     )]
     pub no_mining: bool,
 
-    #[cfg_attr(feature = "clap", clap(long, help = "The host the server will listen on"))]
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, help = "The host the server will listen on", value_name = "IP_ADDR")
+    )]
     pub host: Option<IpAddr>,
 
     #[cfg_attr(
         feature = "clap",
-        clap(long, help = "How transactions are sorted in the mempool", default_value = "fees")
+        clap(
+            long,
+            help = "How transactions are sorted in the mempool",
+            default_value = "fees",
+            value_name = "ORDER"
+        )
     )]
     pub order: TransactionOrder,
 }

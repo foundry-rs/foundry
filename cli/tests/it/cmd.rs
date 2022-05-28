@@ -6,11 +6,11 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
-    util::{pretty_err, read_string, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::fs;
+use std::{fs, path::PathBuf};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -174,6 +174,25 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
     assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
+});
+
+// checks that forge can init with template
+forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "foundry-rs/forge-template"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("test").exists());
+});
+
+// checks that init fails when the provided template doesn't exist
+forgetest!(fail_init_nonexistent_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "a"]).arg(prj.root());
+    cmd.assert_non_empty_stderr();
 });
 
 // checks that `clean` removes dapptools style paths
@@ -538,34 +557,11 @@ contract ATest is DSTest {
    "#,
         )
         .unwrap();
-    prj.inner()
-        .add_source(
-            "BTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-import "./test.sol";
-contract BTest is DSTest {
-    function testExample() public {
-        assertTrue(true);
-    }
-}
-   "#,
-        )
-        .unwrap();
 
     cmd.arg("snapshot");
 
-    let out = cmd.stdout();
-
-    assert!(
-        out.contains(&format!(
-            "Running 1 test for {}/src/BTest.t.sol:BTest",
-            prj.root().to_string_lossy()
-        )) && out.contains(&format!(
-            "Running 1 test for {}/src/ATest.t.sol:ATest",
-            prj.root().to_string_lossy()
-        ))
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
     );
 
     cmd.arg("--check");

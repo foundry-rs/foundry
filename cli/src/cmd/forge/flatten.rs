@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
-    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath)]
+    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath, value_name = "TARGET_PATH")]
     pub target_path: PathBuf,
 
     #[clap(
@@ -14,7 +14,8 @@ pub struct FlattenArgs {
         short,
         help = "The path to output the flattened contract.",
         long_help = "The path to output the flattened contract. If not specified, the flattened contract will be output to stdout.",
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE"
     )]
     pub output: Option<PathBuf>,
 
