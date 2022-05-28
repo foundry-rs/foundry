@@ -153,20 +153,23 @@ impl MultiWallet {
                         return Ok(local_wallets)
                     }
                 } else {
-                    // This is an actual used address
-                    if *address == Config::DEFAULT_SENDER {
-                        println!("\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.");
-                    }
-
                     // Just to show on error.
                     unused_wallets.push(wallet);
                 }
             }
         );
 
+        let mut error_msg = "".to_string();
+
+        // This is an actual used address
+        if addresses.contains(&Config::DEFAULT_SENDER) {
+            error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
+        }
+
         unused_wallets.extend(local_wallets.into_values());
         eyre::bail!(
-            "No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+            "{}No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
+            error_msg,
             addresses,
             unused_wallets.into_iter().map(|wallet| wallet.address()).collect::<Vec<Address>>()
         )
