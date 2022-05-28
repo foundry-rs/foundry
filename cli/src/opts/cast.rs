@@ -1,11 +1,18 @@
-use super::{ClapChain, EthereumOpts, Wallet};
+use super::{ClapChain, EthereumOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, run::RunArgs},
+    cmd::cast::{find_block::FindBlockArgs, run::RunArgs, wallet::WalletSubcommands},
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
 use std::{path::PathBuf, str::FromStr};
+
+#[derive(Debug, Parser)]
+#[clap(name = "cast", version = crate::utils::VERSION_MESSAGE)]
+pub struct Opts {
+    #[clap(subcommand)]
+    pub sub: Subcommands,
+}
 
 #[derive(Debug, Subcommand)]
 #[clap(
@@ -811,73 +818,6 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     Run(RunArgs),
 }
 
-#[derive(Debug, Parser)]
-pub enum WalletSubcommands {
-    #[clap(name = "new", alias = "n", about = "Create a new random keypair.")]
-    New {
-        #[clap(
-            help = "If provided, then keypair will be written to an encrypted JSON keystore.",
-            value_name = "PATH"
-        )]
-        path: Option<String>,
-        #[clap(
-            long,
-            short,
-            help = "Triggers a hidden password prompt for the JSON keystore.",
-            conflicts_with = "unsafe-password",
-            requires = "path"
-        )]
-        password: bool,
-        #[clap(
-            long,
-            help = "Password for the JSON keystore in cleartext. This is UNSAFE to use and we recommend using the --password.",
-            requires = "path",
-            env = "CAST_PASSWORD",
-            value_name = "PASSWORD"
-        )]
-        unsafe_password: Option<String>,
-    },
-    #[clap(name = "vanity", alias = "va", about = "Generate a vanity address.")]
-    Vanity {
-        #[clap(
-            long,
-            help = "Prefix for the vanity address.",
-            required_unless_present = "ends-with",
-            value_name = "HEX"
-        )]
-        starts_with: Option<String>,
-        #[clap(long, help = "Suffix for the vanity address.", value_name = "HEX")]
-        ends_with: Option<String>,
-        #[clap(
-            long,
-            help = "Generate a vanity contract address created by the generated keypair with the specified nonce.",
-            value_name = "NONCE"
-        )]
-        nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
-    },
-    #[clap(name = "address", aliases = &["a", "addr"], about = "Convert a private key to an address.")]
-    Address {
-        #[clap(flatten)]
-        wallet: Wallet,
-    },
-    #[clap(name = "sign", alias = "s", about = "Sign a message.")]
-    Sign {
-        #[clap(help = "message to sign", value_name = "MESSAGE")]
-        message: String,
-        #[clap(flatten)]
-        wallet: Wallet,
-    },
-    #[clap(name = "verify", alias = "v", about = "Verify the signature of a message.")]
-    Verify {
-        #[clap(help = "The original message.", value_name = "MESSAGE")]
-        message: String,
-        #[clap(help = "The signature to verify.", value_name = "SIGNATURE")]
-        signature: String,
-        #[clap(long, short, help = "The address of the message signer.", value_name = "ADDRESS")]
-        address: String,
-    },
-}
-
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
         NameOrAddress::Address(s.parse::<Address>()?)
@@ -903,11 +843,4 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
     })
-}
-
-#[derive(Debug, Parser)]
-#[clap(name = "cast", version = crate::utils::VERSION_MESSAGE)]
-pub struct Opts {
-    #[clap(subcommand)]
-    pub sub: Subcommands,
 }
