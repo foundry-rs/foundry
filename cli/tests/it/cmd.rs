@@ -538,21 +538,6 @@ contract ATest is DSTest {
    "#,
         )
         .unwrap();
-    prj.inner()
-        .add_source(
-            "BTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-import "./test.sol";
-contract BTest is DSTest {
-    function testExample() public {
-        assertTrue(true);
-    }
-}
-   "#,
-        )
-        .unwrap();
 
     cmd.arg("snapshot");
 
