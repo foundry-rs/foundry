@@ -1,6 +1,4 @@
-extern crate rlp;
-
-use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use ethers_core::utils::rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 
@@ -122,7 +120,7 @@ impl Display for Item {
 #[cfg(test)]
 mod test {
     use crate::rlp_converter::Item;
-    use rlp::DecoderError;
+    use ethers_core::utils::{rlp, rlp::DecoderError};
     use serde_json::Result as JsonResult;
 
     // https://en.wikipedia.org/wiki/Set-theoretic_definition_of_natural_numbers

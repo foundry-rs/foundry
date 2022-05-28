@@ -9,7 +9,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units},
+    utils::{self, get_contract_address, keccak256, parse_units, rlp},
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -1099,7 +1099,7 @@ impl SimpleCast {
     /// ```
     pub fn to_rlp(value: String) -> Result<String> {
         let val = serde_json::from_str(&value)?;
-        let item = rlp_converter::Item::value_to_item(&val, false)?;
+        let item = Item::value_to_item(&val, false)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 
