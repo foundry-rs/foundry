@@ -18,10 +18,10 @@ pub enum WalletSubcommands {
     #[clap(name = "new", alias = "n", about = "Create a new random keypair.")]
     New {
         #[clap(
-            help = "The directory where the encrypted keystore file should be created.",
-            value_name = "DIR"
+            help = "If provided, then keypair will be written to an encrypted JSON keystore.",
+            value_name = "PATH"
         )]
-        path: Option<PathBuf>,
+        path: Option<String>,
         #[clap(
             long,
             short,
@@ -35,7 +35,8 @@ pub enum WalletSubcommands {
             long,
             help = "Password for the JSON keystore in cleartext. This is UNSAFE to use and we recommend using the --password.",
             requires = "path",
-            env = "CAST_PASSWORD"
+            env = "CAST_PASSWORD",
+            value_name = "PASSWORD"
         )]
         unsafe_password: Option<String>,
     },
@@ -44,14 +45,16 @@ pub enum WalletSubcommands {
         #[clap(
             long,
             help = "Prefix for the vanity address.",
-            required_unless_present = "ends-with"
+            required_unless_present = "ends-with",
+            value_name = "HEX"
         )]
         starts_with: Option<String>,
-        #[clap(long, help = "Suffix for the vanity address.")]
+        #[clap(long, help = "Suffix for the vanity address.", value_name = "HEX")]
         ends_with: Option<String>,
         #[clap(
             long,
-            help = "Generate a vanity contract address created by the generated keypair with the specified nonce."
+            help = "Generate a vanity contract address created by the generated keypair with the specified nonce.",
+            value_name = "NONCE"
         )]
         nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
@@ -62,18 +65,18 @@ pub enum WalletSubcommands {
     },
     #[clap(name = "sign", alias = "s", about = "Sign a message.")]
     Sign {
-        #[clap(help = "message to sign")]
+        #[clap(help = "message to sign", value_name = "MESSAGE")]
         message: String,
         #[clap(flatten)]
         wallet: Wallet,
     },
     #[clap(name = "verify", alias = "v", about = "Verify the signature of a message.")]
     Verify {
-        #[clap(help = "The original message.")]
+        #[clap(help = "The original message.", value_name = "MESSAGE")]
         message: String,
-        #[clap(help = "The signature to verify.")]
+        #[clap(help = "The signature to verify.", value_name = "SIGNATURE")]
         signature: String,
-        #[clap(long, short, help = "The address of the message signer.")]
+        #[clap(long, short, help = "The address of the message signer.", value_name = "ADDRESS")]
         address: String,
     },
 }
