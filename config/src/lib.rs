@@ -104,6 +104,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// additional solc allow paths
+    pub allow_paths: Vec<PathBuf>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -414,6 +416,8 @@ impl Config {
 
         self.cache_path = p(&root, &self.cache_path);
 
+        self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
+
         if let Some(ref mut model_checker) = self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
                 .into_iter()
@@ -473,6 +477,7 @@ impl Config {
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
+            .allowed_paths(&self.allow_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
@@ -1229,6 +1234,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             cache_path: "cache".into(),
+            allow_paths: vec![],
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
@@ -1272,7 +1278,10 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
-            ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+            ignored_error_codes: vec![
+                SolidityErrorCode::SpdxLicenseNotProvided,
+                SolidityErrorCode::CotractExceeds24576Bytes,
+            ],
             __non_exhaustive: (),
             via_ir: false,
             rpc_storage_caching: Default::default(),
@@ -1359,6 +1368,9 @@ impl<'de> Deserialize<'de> for GasLimit {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// Warning that contract code size exceeds 24576 bytes (a limit introduced in Spurious
+    /// Dragon).
+    CotractExceeds24576Bytes,
     /// All other error codes
     Other(u64),
 }
@@ -1367,6 +1379,7 @@ impl From<SolidityErrorCode> for u64 {
     fn from(code: SolidityErrorCode) -> u64 {
         match code {
             SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::CotractExceeds24576Bytes => 5574,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -1376,6 +1389,7 @@ impl From<u64> for SolidityErrorCode {
     fn from(code: u64) -> Self {
         match code {
             1878 => SolidityErrorCode::SpdxLicenseNotProvided,
+            5574 => SolidityErrorCode::CotractExceeds24576Bytes,
             other => SolidityErrorCode::Other(other),
         }
     }
@@ -2209,6 +2223,7 @@ mod tests {
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
+                allow_paths = ["allow", "paths"]
             "#,
             )?;
 
@@ -2233,6 +2248,7 @@ mod tests {
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
                     revert_strings: Some(RevertStrings::Strip),
+                    allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     ..Config::default()
                 }
             );

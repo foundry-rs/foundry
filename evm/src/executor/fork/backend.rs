@@ -422,7 +422,7 @@ impl SharedBackend {
             .name("fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_io()
+                    .enable_all()
                     .build()
                     .expect("failed to create fork-backend-thread tokio runtime");
 
