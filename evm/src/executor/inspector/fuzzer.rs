@@ -4,7 +4,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::prelude::H160;
-use proptest::strategy::Strategy;
 use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
 
 /// An inspector that can fuzz and collect data for that effect.
@@ -90,30 +89,8 @@ impl Fuzzer {
             call.context.scheme == CallScheme::Call &&
             !self.generator.used
         {
-            let (sender, (contract, input)) = if !self.generator.replay {
-                let mut testrunner = self.generator.runner.write().unwrap();
-                let mut random_call;
-                loop {
-                    let mut reentrant_call =
-                        self.generator.strat.new_tree(&mut testrunner).unwrap().current();
-                    random_call = reentrant_call.pop().unwrap().1;
-
-                    // Only accepting calls made to the one who called us.
-                    if random_call.0 == call.context.caller {
-                        break
-                    }
-                }
-
-                self.generator
-                    .last_sequence
-                    .write()
-                    .unwrap()
-                    .push((call.context.caller, (random_call.0, random_call.1.clone())));
-
-                (call.contract, random_call)
-            } else {
-                self.generator.last_sequence.write().unwrap().pop().unwrap()
-            };
+            let (sender, (contract, input)) =
+                self.generator.next(call.context.caller, call.contract);
 
             call.input = input.0;
             call.context.caller = sender;
