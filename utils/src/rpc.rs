@@ -47,7 +47,8 @@ pub fn next_http_rpc_endpoint() -> String {
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_rinkeby_http_rpc_endpoint() -> String {
-    next_rpc_endpoint("rinkeby")
+    // infura keys don't have access to archive state
+    "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W".to_string()
 }
 
 pub fn next_rpc_endpoint(network: &str) -> String {
