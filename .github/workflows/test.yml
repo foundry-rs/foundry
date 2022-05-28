@@ -10,6 +10,26 @@ jobs:
   unit:
     name: unit tests
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --locked --workspace --all-features --lib --bins -- --skip fork
+
+  fork-unit:
+    name: fork unit tests
+    runs-on: ubuntu-latest
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -29,32 +49,38 @@ jobs:
         uses: actions/cache@v3
         with:
           path: "$HOME/.foundry/cache"
-          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
+          key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
 
       - name: cargo test
-        run: cargo test --locked --workspace --all-features --lib --bins
+        run: cargo test --locked --workspace --all-features --lib --bins fork
 
-  doc:
-    name: doc tests
+  integration:
+    name: integration tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
-
+      # required for forge commands that use git
+      - name: setup git config
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
       - name: cargo test
-        run: cargo test --locked --workspace --all-features --doc
+        run: cargo test --locked --workspace -- --skip fork
 
-  integration:
-    name: integration tests
+  fork-integration:
+    name: fork integration tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -74,13 +100,36 @@ jobs:
         uses: actions/cache@v3
         with:
           path: "$HOME/.foundry/cache"
-          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
+          key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
 
       - name: cargo test
-        run: cargo test --locked --workspace --test '*'
+        run: cargo test --locked --workspace -- fork
 
   external-integration:
     name: external integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: Force use of HTTPS for submodules
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: cargo test
+        run: cargo test --locked -p foundry-cli --features external-integration-tests -- --skip fork
+
+  external-fork-integration:
+    name: external fork integration tests
     runs-on: ubuntu-latest
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
@@ -101,13 +150,32 @@ jobs:
         uses: actions/cache@v3
         with:
           path: "$HOME/.foundry/cache"
-          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
+          key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
 
       - name: Force use of HTTPS for submodules
         run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
       - name: cargo test
-        run: cargo test --locked --workspace --features external-integration-tests --test '*'
+        run: cargo test --locked -p foundry-cli --features external-integration-tests fork_integration
+
+  doc:
+    name: doc tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --locked --workspace --all-features --doc
 
   lint:
     runs-on: ubuntu-latest

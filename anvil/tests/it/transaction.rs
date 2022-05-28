@@ -514,8 +514,15 @@ async fn call_past_state() {
     assert_eq!(value, "initial value");
 
     // make a call with `client`
-    let _tx_hash =
-        *contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap().send().await.unwrap();
+    let _tx_hash = contract
+        .method::<_, H256>("setValue", "hi".to_owned())
+        .unwrap()
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
 
     // assert new value
     let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();

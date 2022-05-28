@@ -7,3 +7,4 @@
 
 pub mod find_block;
 pub mod run;
+pub mod wallet;
