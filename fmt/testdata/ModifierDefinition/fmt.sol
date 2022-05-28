@@ -1,3 +1,4 @@
+// config: line-length=60
 contract ModifierDefinitions {
     modifier noParams() {}
     modifier oneParam(uint256 a) {}

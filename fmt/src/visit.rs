@@ -228,20 +228,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        if let (Some(first), Some(last)) = (list.first(), list.last()) {
-            if let (Some(first_loc), Some(last_loc)) = (first.loc(), last.loc()) {
-                self.visit_source(Loc::File(
-                    first_loc.file_no(),
-                    first_loc.start(),
-                    last_loc.end(),
-                ))?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn visit_base(&mut self, base: &mut Base) -> VResult {
         self.visit_source(base.loc)
     }
@@ -447,7 +433,6 @@ impl_visitable!(Vec<DocComment>, visit_doc_comments);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
-impl_visitable!(Vec<FunctionAttribute>, visit_function_attribute_list);
 impl_visitable!(Parameter, visit_parameter);
 impl_visitable!(ParameterList, visit_parameter_list);
 impl_visitable!(Base, visit_base);
