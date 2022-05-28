@@ -75,10 +75,6 @@ contract BroadcastTest is DSTest {
         Test tmptest2 = new Test();
 
         cheats.broadcast(ACCOUNT_B);
-        // won't trigger a transaction: staticcall
-        require(test.echoSender() == ACCOUNT_B);
-
-        cheats.broadcast(ACCOUNT_B);
         // will trigger a transaction
         test.t(2);
 
