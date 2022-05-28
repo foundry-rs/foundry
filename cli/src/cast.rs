@@ -8,10 +8,7 @@ mod utils;
 use cast::{Cast, SimpleCast, TxBuilder};
 use foundry_config::Config;
 mod opts;
-use crate::{
-    cmd::Cmd,
-    utils::{consume_config_rpc_url, read_secret},
-};
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;

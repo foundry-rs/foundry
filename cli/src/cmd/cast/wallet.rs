@@ -11,7 +11,7 @@ use ethers::{
 };
 use rayon::prelude::*;
 use regex::RegexSet;
-use std::{path::PathBuf, str::FromStr, time::Instant};
+use std::{str::FromStr, time::Instant};
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
