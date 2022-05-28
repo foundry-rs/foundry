@@ -1119,8 +1119,8 @@ impl SimpleCast {
     /// ```
     pub fn from_rlp(value: String) -> Result<String> {
         let striped_value = strip_0x(&value);
-        let bytes = hex::decode(striped_value).expect("could not decode hex");
-        Ok(format!("{}", rlp::decode::<Item>(&bytes).expect("rlp decoding failed")))
+        let bytes = hex::decode(striped_value).expect("Could not decode hex");
+        Ok(format!("{}", rlp::decode::<Item>(&bytes).expect("RLP decoding failed")))
     }
 
     /// Encodes hex data or list of hex data to hexadecimal rlp
@@ -1158,7 +1158,7 @@ impl SimpleCast {
     /// ```
     pub fn hex_from_rlp(value: String) -> Result<String> {
         let striped_value = strip_0x(&value);
-        let bytes = hex::decode(striped_value).expect("could not decode hex");
+        let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes)?;
         Ok(format!("{:x}", item))
     }

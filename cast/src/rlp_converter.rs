@@ -5,8 +5,8 @@ use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 
 /// Arbitrarly nested data
-/// Iem::Array(vec![]); is equivalent to []
-/// Iem::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
+/// Item::Array(vec![]); is equivalent to []
+/// Item::Array(vec![Item::Data(vec![])]); is equivalent to [""] or [null]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Item {
     Data(Vec<u8>),
@@ -47,10 +47,10 @@ pub(crate) fn value_to_item(value: &Value, is_hex: bool) -> Item {
     return match value {
         Value::Null => Item::Data(vec![]),
         Value::Bool(_) => {
-            panic!("rlp input should not contains bool")
+            panic!("RLP input should not contain booleans")
         }
         Value::Number(_) => {
-            panic!("rlp input should be in quotes")
+            panic!("RLP inputs should be in quotes")
         }
         Value::String(s) => {
             if is_hex {
@@ -62,7 +62,7 @@ pub(crate) fn value_to_item(value: &Value, is_hex: bool) -> Item {
         }
         Value::Array(values) => values.iter().map(|val| value_to_item(val, is_hex)).collect(),
         Value::Object(_) => {
-            panic!("rlp input should not contains objects")
+            panic!("RLP input can not contain objects")
         }
     }
 }
