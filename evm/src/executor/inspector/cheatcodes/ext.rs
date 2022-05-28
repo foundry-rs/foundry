@@ -3,10 +3,10 @@ use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
-    types::{I256, U256},
+    types::{Address, I256, U256},
 };
 use serde::Deserialize;
-use std::{env, fs::File, io::Read, path::Path, process::Command};
+use std::{env, fs::File, io::Read, path::Path, process::Command, str::FromStr};
 
 fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
     let output = Command::new(&args[0])
@@ -102,13 +102,31 @@ fn env_uint(key: &str) -> Result<Bytes, Bytes> {
 fn env_int(key: &str) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
     I256::from_dec_str(val.as_str())
-        .map(|v| v.into_raw())
+        .map(|v| v.into_raw().encode().into())
+        .map_err(|e| e.to_string().encode().into())
+}
+
+fn env_address(key: &str) -> Result<Bytes, Bytes> {
+    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    Address::from_str(val.as_str())
         .map(|v| v.encode().into())
         .map_err(|e| e.to_string().encode().into())
 }
 
 fn env_string(key: &str) -> Result<Bytes, Bytes> {
     env::var(key).map(|v| v.encode().into()).map_err(|e| e.to_string().encode().into())
+}
+
+fn env_bytes(key: &str) -> Result<Bytes, Bytes> {
+    let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    val = val.strip_prefix("0x").unwrap_or(&val).to_string();
+    Ok([Token::Bytes(val.into())].encode().into())
+}
+
+fn env_bytes32(key: &str) -> Result<Bytes, Bytes> {
+    let mut val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    val = val.strip_prefix("0x").unwrap_or(&val).to_string();
+    Ok([Token::FixedBytes(val.into())].encode().into())
 }
 
 pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
@@ -124,7 +142,10 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
         HEVMCalls::EnvBool(inner) => env_bool(&inner.0),
         HEVMCalls::EnvUint(inner) => env_uint(&inner.0),
         HEVMCalls::EnvInt(inner) => env_int(&inner.0),
+        HEVMCalls::EnvAddress(inner) => env_address(&inner.0),
         HEVMCalls::EnvString(inner) => env_string(&inner.0),
+        HEVMCalls::EnvBytes(inner) => env_bytes(&inner.0),
+        HEVMCalls::EnvBytes32(inner) => env_bytes32(&inner.0),
         _ => return None,
     })
 }
