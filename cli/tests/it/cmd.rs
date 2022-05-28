@@ -9,7 +9,6 @@ use foundry_cli_test_utils::{
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{fs, path::PathBuf};
 use yansi::Paint;
 
@@ -615,7 +614,7 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
         .to_string();
     println!("project root: \"{root}\"");
 
-    let eth_rpc_url = next_http_rpc_endpoint();
+    let eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
     cmd.args([
