@@ -101,7 +101,9 @@ Types of tests include:
 
 - **Unit tests**: Functions which have very specific tasks should be unit tested.
 - **Integration tests**: For general purpose, far reaching functionality, integration tests should be added.
-  The best way to add a new integration test is to look at existing ones and follow the style.
+  The best way to add a new integration test is to look at existing ones and follow the style. 
+
+Tests that use forking must contain "fork" in their name. 
 
 #### Commits
 

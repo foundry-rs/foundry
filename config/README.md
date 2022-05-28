@@ -66,6 +66,8 @@ test = 'test'
 out = 'out'
 libs = ['lib']
 remappings = []
+# additional solc allow paths
+allow_paths = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings 
 libraries = []
@@ -82,7 +84,8 @@ optimizer = true
 optimizer_runs = 200
 via_ir = false
 verbosity = 0
-ignored_error_codes = []
+# ignore solc warnings for missing license and exceeded contract size
+ignored_error_codes = [1878, 5574]
 fuzz_runs = 256
 ffi = false
 sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'

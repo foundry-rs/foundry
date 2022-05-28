@@ -12,6 +12,7 @@ use std::{
     future::Future,
     ops::Mul,
     path::{Path, PathBuf},
+    process::{Command, Output},
     str::FromStr,
     time::Duration,
 };
@@ -81,19 +82,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
         EvmVersion::London => SpecId::LONDON,
         _ => panic!("Unsupported EVM version"),
     }
-}
-
-/// Securely reads a secret from stdin, or proceeds to return a fallback value
-/// which was provided in cleartext via CLI or env var
-#[allow(dead_code)]
-pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
-    Ok(if secret {
-        println!("Insert secret:");
-        rpassword::read_password()?
-    } else {
-        // guaranteed to be Some(..)
-        unsafe_secret.unwrap()
-    })
 }
 
 /// Artifact/Contract identifier can take the following form:
@@ -304,6 +292,32 @@ pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<
         format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
     );
     Ok(())
+}
+
+/// Useful extensions to [`std::process::Command`].
+pub trait CommandUtils {
+    /// Returns the command's output if execution is successful, otherwise, throws an error.
+    fn exec(&mut self) -> eyre::Result<Output>;
+
+    /// Returns the command's stdout if execution is successful, otherwise, throws an error.
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+}
+
+impl CommandUtils for Command {
+    fn exec(&mut self) -> eyre::Result<Output> {
+        let output = self.output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        Ok(output)
+    }
+
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+        let output = self.exec()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().into())
+    }
 }
 
 #[cfg(test)]

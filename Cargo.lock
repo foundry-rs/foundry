@@ -81,7 +81,6 @@ dependencies = [
  "bytes",
  "chrono 0.4.19",
  "clap",
- "colored",
  "ctrlc",
  "ethers",
  "ethers-solc",
@@ -104,6 +103,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vergen",
+ "yansi",
 ]
 
 [[package]]
