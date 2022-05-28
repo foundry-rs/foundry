@@ -35,7 +35,7 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(short = 'd', long = "delay", forbid_empty_values = true)]
+    #[clap(short = 'd', long = "delay", forbid_empty_values = true, value_name = "DELAY")]
     pub delay: Option<String>,
 
     #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
@@ -78,8 +78,8 @@ impl WatchArgs {
         let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
 
         if !has_paths {
-            // use alternative pathset
-            runtime.pathset(f());
+            // use alternative pathset, but only those that exists
+            runtime.pathset(f().into_iter().filter(|p| p.exists()));
         }
         Ok((init, runtime))
     }

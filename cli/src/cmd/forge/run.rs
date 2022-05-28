@@ -4,14 +4,14 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, Function, RawLog},
+    abi::{Abi, Function},
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
         utils::RuntimeOrHandle,
         Project,
     },
-    types::{Address, Bytes, U256},
+    types::{Address, Bytes, Log, U256},
 };
 use forge::{
     debug::DebugArena,
@@ -39,10 +39,11 @@ pub struct RunArgs {
     ///
     /// If multiple contracts exist in the same file you must specify the target contract with
     /// --target-contract.
-    #[clap(value_hint = ValueHint::FilePath)]
+    #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub path: PathBuf,
 
     /// Arguments to pass to the script function.
+    #[clap(value_name = "ARGS")]
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
@@ -396,7 +397,7 @@ impl RunArgs {
 struct RunResult {
     pub success: bool,
     pub returned: bytes::Bytes,
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
     pub gas: u64,

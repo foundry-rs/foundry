@@ -1,7 +1,7 @@
 use crate::TestFilter;
 use ethers::{
-    abi::{Abi, Function, RawLog},
-    types::{Address, Bytes, U256},
+    abi::{Abi, Function},
+    types::{Address, Bytes, Log, U256},
 };
 use eyre::Result;
 use foundry_evm::{
@@ -66,7 +66,7 @@ pub struct TestResult {
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     #[serde(skip)]
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
 
     /// What kind of test this was
     pub kind: TestKind,
@@ -146,7 +146,7 @@ pub struct TestSetup {
     /// The address at which the test contract was deployed
     pub address: Address,
     /// The logs emitted during setup
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
     /// Call traces of the setup
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     /// Addresses labeled during setup

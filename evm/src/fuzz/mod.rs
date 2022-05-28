@@ -7,8 +7,8 @@ use crate::{
     trace::CallTraceArena,
 };
 use ethers::{
-    abi::{Abi, Function, RawLog, Token},
-    types::{Address, Bytes},
+    abi::{Abi, Function, Token},
+    types::{Address, Bytes, Log},
 };
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use revm::db::DatabaseRef;
@@ -187,7 +187,7 @@ pub struct FuzzTestResult {
 
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
 
     /// Traces
     pub traces: Option<CallTraceArena>,

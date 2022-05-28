@@ -37,22 +37,30 @@ pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[clap(help = "The address of the contract to verify.")]
+    #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
     pub address: Address,
 
-    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
+    #[clap(
+        help = "The contract identifier in the form `<path>:<contractname>`.",
+        value_name = "CONTRACT"
+    )]
     pub contract: ContractInfo,
 
-    #[clap(long, help = "the encoded constructor arguments")]
+    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
     pub constructor_args: Option<String>,
 
-    #[clap(long, help = "The compiler version used to build the smart contract.")]
+    #[clap(
+        long,
+        help = "The compiler version used to build the smart contract.",
+        value_name = "VERSION"
+    )]
     pub compiler_version: Option<String>,
 
     #[clap(
         alias = "optimizer-runs",
         long,
-        help = "The number of optimization runs used to build the smart contract."
+        help = "The number of optimization runs used to build the smart contract.",
+        value_name = "NUM"
     )]
     pub num_of_optimizations: Option<usize>,
 
@@ -61,11 +69,16 @@ pub struct VerifyArgs {
         alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet"
+        default_value = "mainnet",
+        value_name = "CHAIN"
     )]
     pub chain: Chain,
 
-    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
+    #[clap(
+        help = "Your Etherscan API key.",
+        env = "ETHERSCAN_API_KEY",
+        value_name = "ETHERSCAN_KEY"
+    )]
     pub etherscan_key: String,
 
     #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
@@ -420,7 +433,7 @@ async fn ensure_solc_build_metadata(version: Version) -> eyre::Result<Version> {
 /// Check verification status arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyCheckArgs {
-    #[clap(help = "The verification GUID.")]
+    #[clap(help = "The verification GUID.", value_name = "GUID")]
     guid: String,
 
     #[clap(
@@ -428,14 +441,19 @@ pub struct VerifyCheckArgs {
         alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet"
+        default_value = "mainnet",
+        value_name = "CHAIN"
     )]
     chain: Chain,
 
     #[clap(flatten)]
     retry: RetryArgs,
 
-    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
+    #[clap(
+        help = "Your Etherscan API key.",
+        env = "ETHERSCAN_API_KEY",
+        value_name = "ETHERSCAN_KEY"
+    )]
     etherscan_key: String,
 }
 

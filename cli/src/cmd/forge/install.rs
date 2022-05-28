@@ -41,6 +41,7 @@ pub struct InstallArgs {
     ///
     /// Target installation directory can be added via `<alias>=` suffix.
     /// The dependency will installed to `lib/<alias>`.
+    #[clap(value_name = "DEPENDENCIES")]
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
@@ -48,7 +49,8 @@ pub struct InstallArgs {
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     pub root: Option<PathBuf>,
 }
@@ -112,6 +114,9 @@ pub(crate) fn install(
         if no_git {
             install_as_folder(&dep, &libs, target_dir)?;
         } else {
+            if !no_commit && !git_status_clean(root)? {
+                eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
+            }
             install_as_submodule(&dep, &libs, target_dir, no_commit)?;
         }
 
@@ -166,6 +171,22 @@ fn install_as_submodule(
     }
 
     Ok(())
+}
+
+// check that there are no modification in git working/staging area
+fn git_status_clean<P: AsRef<Path>>(root: P) -> eyre::Result<bool> {
+    let output = Command::new("git")
+        .args(&["status", "--short"])
+        .current_dir(root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !&output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eyre::bail!("{}", stderr.trim())
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.trim().is_empty())
 }
 
 fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {

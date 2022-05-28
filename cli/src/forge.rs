@@ -111,6 +111,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Inspect(cmd) => {
             cmd.run()?;
         }
+        Subcommands::UploadSelectors(args) => {
+            utils::block_on(args.run())?;
+        }
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }

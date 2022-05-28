@@ -3,8 +3,8 @@ use crate::executor::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiDecode, RawLog, Token},
-    types::{Address, H256},
+    abi::{AbiDecode, Token},
+    types::{Address, Log, H256},
 };
 use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 
@@ -13,7 +13,7 @@ use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 /// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
 #[derive(Default)]
 pub struct LogCollector {
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<Log>,
 }
 
 impl LogCollector {
@@ -41,8 +41,13 @@ impl<DB> Inspector<DB> for LogCollector
 where
     DB: Database,
 {
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        self.logs.push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+        self.logs.push(Log {
+            address: *address,
+            topics: topics.to_vec(),
+            data: data.clone().into(),
+            ..Default::default()
+        });
     }
 
     fn call(
@@ -61,14 +66,15 @@ where
 }
 
 /// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
-fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> RawLog {
-    RawLog {
+fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> Log {
+    Log {
         // This is topic 0 of DSTest's `log(string)`
         topics: vec![H256::from_slice(
             &hex::decode("41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50")
                 .unwrap(),
         )],
         // Convert the parameters of the call to their string representation for the log
-        data: ethers::abi::encode(&[Token::String(call.to_string())]),
+        data: ethers::abi::encode(&[Token::String(call.to_string())]).into(),
+        ..Default::default()
     }
 }

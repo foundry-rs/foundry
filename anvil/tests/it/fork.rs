@@ -11,13 +11,9 @@ use ethers::{
 };
 use std::sync::Arc;
 
+use foundry_utils::rpc;
+
 abigen!(Greeter, "test-data/greeter.json");
-
-const MAINNET_RPC_URL: &str =
-    "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
-
-const RINKEBY_RPC_URL: &str =
-    "https://eth-rinkeby.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W";
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
@@ -57,7 +53,7 @@ impl LocalFork {
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_port(next_port())
-        .with_eth_rpc_url(Some(MAINNET_RPC_URL))
+        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
 }
@@ -262,16 +258,13 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
     let (_api, handle) = spawn(
         NodeConfig::test()
             .with_port(next_port())
-            .with_eth_rpc_url(Some(RINKEBY_RPC_URL))
-            .silent()
-            .with_fork_block_number(Some(10074295u64)),
+            .with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint()))
+            .silent(),
     )
     .await;
     let provider = handle.http_provider();
     let wallet = handle.dev_wallets().next().unwrap();
-    let from = wallet.address();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 5845u64.into());
 
     let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
         .unwrap()
@@ -335,6 +328,8 @@ async fn test_fork_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
+    let start = std::time::Instant::now();
+
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
 
@@ -346,13 +341,12 @@ async fn test_fork_timestamp() {
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
 
-    // ensure the diff between the new mined block and the original block is within a small window
-    // to account for network delays, timestamp rounding: 3 secs and the http provider's
-    // interval, just to be safe
-    let expected_timestamp_offset = provider.get_interval().as_secs() + 3;
+    // ensure the diff between the new mined block and the original block is within the elapsed time
+    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= expected_timestamp_offset.into());
+    assert!(diff <= elapsed.into());
 
+    let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
@@ -364,8 +358,7 @@ async fn test_fork_timestamp() {
     let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
-    // ensure the diff between the new mined block and the original block is within 2secs, just to
-    // be safe
+    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= expected_timestamp_offset.into());
+    assert!(diff <= elapsed.into());
 }

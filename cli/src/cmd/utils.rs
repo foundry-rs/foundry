@@ -95,14 +95,16 @@ pub struct RetryArgs {
         long,
         help = "Number of attempts for retrying",
         default_value = "1",
-        validator = u32_validator(1, 10)
+        validator = u32_validator(1, 10),
+        value_name = "RETRIES"
     )]
     pub retries: u32,
 
     #[clap(
         long,
         help = "Optional timeout to apply inbetween attempts in seconds.",
-        validator = u32_validator(0, 30)
+        validator = u32_validator(0, 30),
+        value_name = "DELAY"
     )]
     pub delay: Option<u32>,
 }
