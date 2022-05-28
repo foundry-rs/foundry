@@ -1099,7 +1099,7 @@ impl SimpleCast {
     /// ```
     pub fn to_rlp(value: String) -> Result<String> {
         let val = serde_json::from_str(&value)?;
-        let item = rlp_converter::value_to_item(&val, false);
+        let item = rlp_converter::Item::value_to_item(&val, false)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 
@@ -1138,7 +1138,7 @@ impl SimpleCast {
     /// ```
     pub fn hex_to_rlp(value: &str) -> Result<String> {
         let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
-        let item = rlp_converter::value_to_item(&val, true);
+        let item = rlp_converter::Item::value_to_item(&val, true)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 

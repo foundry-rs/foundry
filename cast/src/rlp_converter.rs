@@ -35,45 +35,40 @@ impl Decodable for Item {
         if rlp.is_data() {
             return Ok(Item::Data(Vec::from(rlp.data()?)))
         }
-        let mut content = vec![];
-        for item in rlp.as_list()? {
-            content.push(item);
-        }
-        Ok(Item::Array(content))
+        Ok(Item::Array(rlp.as_list()?))
     }
 }
-
-pub(crate) fn value_to_item(value: &Value, is_hex: bool) -> Item {
-    return match value {
-        Value::Null => Item::Data(vec![]),
-        Value::Bool(_) => {
-            panic!("RLP input should not contain booleans")
-        }
-        Value::Number(_) => {
-            panic!("RLP inputs should be in quotes")
-        }
-        Value::String(s) => {
-            if is_hex {
-                let hex_string = s.strip_prefix("0x").unwrap_or(s);
-                Item::Data(hex::decode(hex_string).unwrap())
-            } else {
-                Item::Data(Vec::from(s.as_bytes()))
+impl Item {
+    pub(crate) fn value_to_item(value: &Value, is_hex: bool) -> eyre::Result<Item> {
+        return match value {
+            Value::Null => Ok(Item::Data(vec![])),
+            Value::Bool(_) => {
+                eyre::bail!("RLP input should not contain booleans")
             }
-        }
-        Value::Array(values) => values.iter().map(|val| value_to_item(val, is_hex)).collect(),
-        Value::Object(_) => {
-            panic!("RLP input can not contain objects")
+            Value::Number(_) => {
+                eyre::bail!("RLP inputs should be in quotes")
+            }
+            Value::String(s) => {
+                if is_hex {
+                    let hex_string = s.strip_prefix("0x").unwrap_or(s);
+                    Ok(Item::Data(hex::decode(hex_string).unwrap()))
+                } else {
+                    Ok(Item::Data(Vec::from(s.as_bytes())))
+                }
+            }
+            Value::Array(values) => {
+                values.iter().map(|val| Item::value_to_item(val, is_hex)).collect()
+            }
+            Value::Object(_) => {
+                eyre::bail!("RLP input can not contain objects")
+            }
         }
     }
 }
 
 impl FromIterator<Item> for Item {
     fn from_iter<T: IntoIterator<Item = Item>>(iter: T) -> Self {
-        let mut list = vec![];
-        for i in iter {
-            list.push(i);
-        }
-        Item::Array(list)
+        Item::Array(iter.into_iter().collect())
     }
 }
 
@@ -105,7 +100,7 @@ impl Display for Item {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Item::Data(dat) => {
-                write!(f, "\"{}\"", std::str::from_utf8(dat).unwrap())?;
+                write!(f, "\"{}\"", String::from_utf8_lossy(dat).into_owned())?;
             }
             Item::Array(arr) => {
                 write!(f, "[")?;
@@ -126,7 +121,7 @@ impl Display for Item {
 #[macro_use]
 #[cfg(test)]
 mod test {
-    use crate::rlp_converter::{value_to_item, Item};
+    use crate::rlp_converter::Item;
     use rlp::DecoderError;
     use serde_json::Result as JsonResult;
 
@@ -181,7 +176,7 @@ mod test {
     }
 
     #[test]
-    fn encode_from_str_test() -> JsonResult<()> {
+    fn deserialize_from_str_test() -> JsonResult<()> {
         let parameters = vec![
             (1, "[]", Item::Array(vec![])),
             (2, "[\"\"]", Item::Array(vec![Item::Data(vec![])])),
@@ -203,7 +198,7 @@ mod test {
         ];
         for params in parameters {
             let val = serde_json::from_str(params.1)?;
-            let item = value_to_item(&val, false);
+            let item = Item::value_to_item(&val, false).unwrap();
             assert_eq!(item, params.2);
             println!("case {} validated", params.0)
         }
@@ -212,7 +207,7 @@ mod test {
     }
 
     #[test]
-    fn encode_from_str_test_hex() -> JsonResult<()> {
+    fn deserialize_from_str_test_hex() -> JsonResult<()> {
         let parameters = vec![
             (1, "[\"\"]", Item::Array(vec![Item::Data(vec![])])),
             (2, "[\"0x646f67\"]", Item::Array(vec![Item::Data(vec![0x64, 0x6f, 0x67])])),
@@ -233,10 +228,9 @@ mod test {
         ];
         for params in parameters {
             let val = serde_json::from_str(params.1)?;
-            let item = value_to_item(&val, true);
+            let item = Item::value_to_item(&val, true).unwrap();
             assert_eq!(item, params.2);
             println!("case {} validated", params.0);
-            println!("{}", params.2);
         }
 
         Ok(())
