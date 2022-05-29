@@ -5180,6 +5180,7 @@ dependencies = [
  "ethers",
  "eyre",
  "forge",
+ "foundry-evm",
  "hex",
  "revm",
  "tui",

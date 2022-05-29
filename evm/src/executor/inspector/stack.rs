@@ -65,7 +65,7 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 
@@ -87,7 +87,7 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let status = inspector.step(interpreter, data, is_static);
 
@@ -122,7 +122,7 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let status = inspector.step_end(interpreter, data, is_static, status);
 
@@ -144,7 +144,7 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
@@ -169,7 +169,7 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let (new_status, new_gas, new_retdata) = inspector.call_end(
                     data,
@@ -198,7 +198,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let (status, addr, gas, retdata) = inspector.create(data, call);
 
@@ -223,7 +223,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
                     data,
@@ -246,7 +246,7 @@ where
     fn selfdestruct(&mut self) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.debugger, &mut self.logs, &mut self.cheatcodes],
             {
                 Inspector::<DB>::selfdestruct(inspector);
             }

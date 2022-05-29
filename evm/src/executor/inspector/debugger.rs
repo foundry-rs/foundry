@@ -12,7 +12,7 @@ use revm::{
     opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
     Interpreter, Memory, Return, SpecId,
 };
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Default, Debug)]
@@ -45,6 +45,12 @@ pub struct Debugger {
     ///
     /// For more information on gas blocks, see [current_gas_block].
     pub previous_gas_block: u64,
+    /// Call Trace tracker
+    pub call_trace_tracker: Rc<RefCell<Vec<usize>>>,
+    /// Max trace index seen
+    pub max_trace_index_seen: usize,
+    /// Active trace index
+    pub active_trace_index: usize,
 }
 
 impl Debugger {
@@ -75,12 +81,18 @@ impl Debugger {
 
     /// Enters a new execution context.
     pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
+        self.active_trace_index = *(self.call_trace_tracker.borrow().iter().last().unwrap_or(&0));
+        if self.active_trace_index > self.max_trace_index_seen {
+            self.max_trace_index_seen = self.active_trace_index;
+        }
+
         self.context = address;
         self.head = self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
     }
 
     /// Exits the current execution context, replacing it with the previous one.
     pub fn exit(&mut self) {
+        self.active_trace_index = *(self.call_trace_tracker.borrow().iter().last().unwrap_or(&0));
         if let Some(parent_id) = self.arena.arena[self.head].parent {
             let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
             self.context = address;
@@ -111,6 +123,8 @@ where
                 instruction: Instruction::Cheatcode(
                     call.input[0..4].try_into().expect("malformed cheatcode call"),
                 ),
+                max_trace_index: self.max_trace_index_seen,
+                trace_index: self.active_trace_index,
                 ..Default::default()
             });
         }
@@ -182,6 +196,8 @@ where
                 .get(&pc)
                 .expect("unknown ic for pc"),
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
+            max_trace_index: self.max_trace_index_seen,
+            trace_index: self.active_trace_index,
         });
 
         Return::Continue
