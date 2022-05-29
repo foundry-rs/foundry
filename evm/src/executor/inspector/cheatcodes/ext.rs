@@ -112,7 +112,7 @@ fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
     };
     let parse_uint_dec = |v: &str| U256::from_dec_str(v);
     let parse_int = |v: &str| {
-        // hex string may start in "0x", "+0x", or "-0x"
+        // hex string may start with "0x", "+0x", or "-0x"
         if v.contains("0x") {
             I256::from_hex_str(&v.replace("0x", "")).map(|v| v.into_raw())
         } else {
