@@ -27,9 +27,11 @@ impl ScriptArgs {
         self.maybe_load_private_key(&mut script_config)?;
 
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
+            // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
                 foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
         } else {
+            // if not forking, then ignore any pre-deployed library addresses
             script_config.config.libraries = Default::default();
         }
 

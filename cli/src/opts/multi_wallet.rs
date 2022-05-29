@@ -1,13 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use clap::Parser;
-use ethers::{prelude::Signer, signers::LocalWallet, types::Address};
+use ethers::{
+    middleware::SignerMiddleware,
+    prelude::{Http, Middleware, Provider, Signer},
+    signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
+    types::Address,
+};
 use eyre::Result;
 
 use foundry_config::Config;
 use serde::Serialize;
 
-use super::wallet::WalletTrait;
+use super::{wallet::WalletTrait, WalletType};
 
 macro_rules! get_wallets {
     ($id:ident, [ $($wallets:expr),+ ], $call:expr) => {
@@ -16,6 +21,51 @@ macro_rules! get_wallets {
                 $call;
             }
         )+
+    };
+}
+
+macro_rules! collect_addresses {
+    ($local:expr, $unused:expr, $addresses:expr, $addr:expr, $wallet:expr) => {
+        if $addresses.contains(&$addr) {
+            $addresses.remove(&$addr);
+
+            $local.insert($addr, $wallet);
+
+            if $addresses.is_empty() {
+                return Ok($local)
+            }
+        } else {
+            // Just to show on error.
+            $unused.push($addr);
+        }
+    };
+}
+
+macro_rules! create_hw_wallets {
+    ($self:ident, $chain_id:ident ,$get_wallet:ident, $wallets:ident) => {
+        let mut $wallets = vec![];
+
+        if let Some(hd_paths) = &$self.hd_paths {
+            for path in hd_paths {
+                if let Some(hw) = $self.$get_wallet($chain_id, Some(path), None).await? {
+                    $wallets.push(hw);
+                }
+            }
+        }
+
+        if let Some(mnemonic_indexes) = &$self.mnemonic_indexes {
+            for index in mnemonic_indexes {
+                if let Some(hw) = $self.$get_wallet($chain_id, None, Some(*index as usize)).await? {
+                    $wallets.push(hw);
+                }
+            }
+        }
+
+        if $wallets.is_empty() {
+            if let Some(hw) = $self.$get_wallet($chain_id, None, Some(0)).await? {
+                $wallets.push(hw);
+            }
+        }
     };
 }
 
@@ -110,7 +160,7 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
         help = "The derivation path to use with hardware wallets."
     )]
-    pub hd_path: Option<String>,
+    pub hd_paths: Option<Vec<String>>,
 
     #[clap(
         env = "ETH_FROM",
@@ -125,37 +175,35 @@ pub struct MultiWallet {
 impl WalletTrait for MultiWallet {}
 
 impl MultiWallet {
-    // TODO: Add trezor and ledger support (supported in multiwallet, just need to
-    // add derivation + SignerMiddleware creation logic)
-    // foundry/cli/src/opts/mod.rs:110
-    pub fn find_all(
+    /// Given a list of addresses, it finds all the associated wallets if they exist. Throws an
+    /// error, if it can't find all.
+    pub async fn find_all(
         &self,
-        chain: u64,
+        provider: &Provider<Http>,
         mut addresses: HashSet<Address>,
-    ) -> Result<HashMap<Address, LocalWallet>> {
+    ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
+        let chain = provider.get_chainid().await?.as_u64();
 
         let mut local_wallets = HashMap::new();
         let mut unused_wallets = vec![];
 
         get_wallets!(
             wallets,
-            [self.private_keys()?, self.interactives()?, self.mnemonics()?, self.keystores()?],
+            [
+                self.trezors(chain).await?,
+                self.ledgers(chain).await?,
+                self.private_keys()?,
+                self.interactives()?,
+                self.mnemonics()?,
+                self.keystores()?
+            ],
             for wallet in wallets.into_iter() {
-                let address = &wallet.address();
+                let address = wallet.address();
+                let wallet = wallet.with_chain_id(chain);
+                let wallet: WalletType = SignerMiddleware::new(provider.clone(), wallet).into();
 
-                if addresses.contains(address) {
-                    addresses.remove(address);
-
-                    local_wallets.insert(*address, wallet.with_chain_id(chain));
-
-                    if addresses.is_empty() {
-                        return Ok(local_wallets)
-                    }
-                } else {
-                    // Just to show on error.
-                    unused_wallets.push(wallet);
-                }
+                collect_addresses!(local_wallets, unused_wallets, addresses, address, wallet);
             }
         );
 
@@ -166,25 +214,13 @@ impl MultiWallet {
             error_msg += "\nYou seem to be using Foundry's default sender. Be sure to set your own --sender.\n";
         }
 
-        unused_wallets.extend(local_wallets.into_values());
+        unused_wallets.extend(local_wallets.into_keys());
         eyre::bail!(
             "{}No associated wallet for addresses: {:?}. Unlocked wallets: {:?}",
             error_msg,
             addresses,
-            unused_wallets.into_iter().map(|wallet| wallet.address()).collect::<Vec<Address>>()
+            unused_wallets
         )
-    }
-
-    pub fn all(&self, chain: u64) -> Result<Vec<LocalWallet>> {
-        let mut local_wallets = vec![];
-
-        get_wallets!(
-            wallets,
-            [self.private_keys()?, self.interactives()?, self.mnemonics()?, self.keystores()?],
-            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet.with_chain_id(chain)))
-        );
-
-        Ok(local_wallets)
     }
 
     pub fn interactives(&self) -> Result<Option<Vec<LocalWallet>>> {
@@ -246,5 +282,49 @@ impl MultiWallet {
             return Ok(Some(wallets))
         }
         Ok(None)
+    }
+
+    pub async fn ledgers(&self, chain_id: u64) -> Result<Option<Vec<Ledger>>> {
+        if self.ledger {
+            create_hw_wallets!(self, chain_id, get_from_ledger, wallets);
+            return Ok(Some(wallets))
+        }
+        Ok(None)
+    }
+
+    pub async fn trezors(&self, chain_id: u64) -> Result<Option<Vec<Trezor>>> {
+        if self.trezor {
+            create_hw_wallets!(self, chain_id, get_from_trezor, wallets);
+            return Ok(Some(wallets))
+        }
+        Ok(None)
+    }
+
+    async fn get_from_trezor(
+        &self,
+        chain_id: u64,
+        hd_path: Option<&str>,
+        mnemonic_index: Option<usize>,
+    ) -> Result<Option<Trezor>> {
+        let derivation = match &hd_path {
+            Some(hd_path) => TrezorHDPath::Other(hd_path.to_string()),
+            None => TrezorHDPath::TrezorLive(mnemonic_index.unwrap_or(0)),
+        };
+
+        return Ok(Some(Trezor::new(derivation, chain_id, None).await?))
+    }
+
+    async fn get_from_ledger(
+        &self,
+        chain_id: u64,
+        hd_path: Option<&str>,
+        mnemonic_index: Option<usize>,
+    ) -> Result<Option<Ledger>> {
+        let derivation = match hd_path {
+            Some(hd_path) => LedgerHDPath::Other(hd_path.to_string()),
+            None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
+        };
+
+        return Ok(Some(Ledger::new(derivation, chain_id).await?))
     }
 }

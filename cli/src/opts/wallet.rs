@@ -8,7 +8,6 @@ use ethers::{
     types::Address,
 };
 use eyre::{eyre, Result};
-
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -16,6 +15,24 @@ pub enum WalletType {
     Local(SignerMiddleware<Provider<Http>, LocalWallet>),
     Ledger(SignerMiddleware<Provider<Http>, Ledger>),
     Trezor(SignerMiddleware<Provider<Http>, Trezor>),
+}
+
+impl From<SignerMiddleware<Provider<Http>, Ledger>> for WalletType {
+    fn from(hw: SignerMiddleware<Provider<Http>, Ledger>) -> WalletType {
+        WalletType::Ledger(hw)
+    }
+}
+
+impl From<SignerMiddleware<Provider<Http>, Trezor>> for WalletType {
+    fn from(hw: SignerMiddleware<Provider<Http>, Trezor>) -> WalletType {
+        WalletType::Trezor(hw)
+    }
+}
+
+impl From<SignerMiddleware<Provider<Http>, LocalWallet>> for WalletType {
+    fn from(wallet: SignerMiddleware<Provider<Http>, LocalWallet>) -> WalletType {
+        WalletType::Local(wallet)
+    }
 }
 
 #[derive(Parser, Debug, Clone, Serialize)]
