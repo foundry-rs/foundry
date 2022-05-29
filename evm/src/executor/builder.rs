@@ -1,4 +1,4 @@
-use ethers::prelude::Provider;
+use ethers::providers::{Http, Provider, RetryClient};
 use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
@@ -53,8 +53,10 @@ impl Fork {
     pub async fn spawn_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 
-        let provider =
-            Arc::new(Provider::try_from(url.clone()).expect("Failed to establish provider"));
+        let provider = Arc::new(
+            Provider::<RetryClient<Http>>::new_client(url.clone().as_str(), 10, 1000)
+                .expect("Failed to establish provider"),
+        );
 
         let mut meta = BlockchainDbMeta::new(env.clone(), url);
 
