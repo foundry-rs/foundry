@@ -9,8 +9,9 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
@@ -19,12 +20,33 @@ use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt::Write,
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
 
 pub mod rpc;
 pub mod selectors;
+
+/// Very simple fuzzy matching of contract bytecode.
+///
+/// Will fail for small contracts that are essentially all immutable variables.
+pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
+    let cutoff_len = usize::min(a.len(), b.len());
+    if cutoff_len == 0 {
+        return 1.0
+    }
+
+    let a = &a[..cutoff_len];
+    let b = &b[..cutoff_len];
+    let mut diff_chars = 0;
+    for i in 0..cutoff_len {
+        if a[i] != b[i] {
+            diff_chars += 1;
+        }
+    }
+    diff_chars as f64 / cutoff_len as f64
+}
 
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
@@ -35,19 +57,17 @@ pub struct PostLinkInput<'a, T, U> {
     pub dependencies: Vec<ethers_core::types::Bytes>,
 }
 
-pub fn link<T, U>(
+#[allow(clippy::too_many_arguments)]
+pub fn link_with_nonce_or_address<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
+    deployed_library_addresses: Libraries,
     sender: Address,
+    nonce: U256,
     extra: &mut U,
     link_key_construction: impl Fn(String, String) -> (String, String, String),
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
 ) -> eyre::Result<()> {
-    // we dont use mainnet state for evm_opts.sender so this will always be 1
-    // I am leaving this here so that in the future if this needs to change,
-    // its easy to find.
-    let nonce = U256::one();
-
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
         .iter()
@@ -99,6 +119,7 @@ pub fn link<T, U>(
                         &contracts_by_slug,
                         &link_tree,
                         &mut dependencies,
+                        &deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -130,6 +151,7 @@ pub fn link<T, U>(
 /// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
 /// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
 /// will be filled with the predeploy libraries, initial nonce, and the sender.
+#[allow(clippy::too_many_arguments)]
 pub fn recurse_link<'a>(
     // target name
     target: String,
@@ -141,6 +163,8 @@ pub fn recurse_link<'a>(
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
     // library deployment vector
     deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // deployed library addresses fname => adddress
+    deployed_library_addresses: &'a Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -169,23 +193,39 @@ pub fn recurse_link<'a>(
                         contracts,
                         dependency_tree,
                         deployment,
+                        deployed_library_addresses,
                         init_nonce,
                         sender,
                     );
                 }
             }
 
-            // calculate the address for linking this dependency
-            let addr =
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+            let mut deployed_address = None;
+
+            if let Some(library_file) = deployed_library_addresses
+                .libs
+                .get(&PathBuf::from_str(file).expect("Invalid library path."))
+            {
+                if let Some(address) = library_file.get(key) {
+                    deployed_address =
+                        Some(Address::from_str(address).expect("Invalid library address passed."));
+                }
+            }
+
+            let address = deployed_address.unwrap_or_else(|| {
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
+            });
 
             // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), addr);
-            target_bytecode.1.link(file, key, addr);
+            target_bytecode.0.link(file.clone(), key.clone(), address);
+            target_bytecode.1.link(file, key, address);
 
-            // push the dependency into the library deployment vector
-            deployment
-                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+            if deployed_address.is_none() {
+                // push the dependency into the library deployment vector
+                deployment.push(
+                    next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
+                );
+            }
         });
     }
 }
@@ -849,6 +889,15 @@ pub fn init_tracing_subscriber() {
         .ok();
 }
 
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block: Option<BlockId>,
+) -> Result<U256, ProviderError> {
+    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
+    provider.get_transaction_count(caller, block).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,10 +980,12 @@ mod tests {
             .expect("could not get bytecode as str")
             .to_string();
 
-        link(
+        link_with_nonce_or_address(
             contracts,
             &mut known_contracts,
+            Default::default(),
             Address::default(),
+            U256::one(),
             &mut deployable_contracts,
             |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {

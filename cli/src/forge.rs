@@ -33,6 +33,9 @@ fn main() -> eyre::Result<()> {
                 outcome.ensure_ok()?;
             }
         }
+        Subcommands::Script(cmd) => {
+            utils::block_on(cmd.run_script())?;
+        }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
         }
@@ -43,8 +46,8 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        Subcommands::Run(cmd) => {
-            cmd.run()?;
+        Subcommands::Debug(cmd) => {
+            utils::block_on(cmd.debug())?;
         }
         Subcommands::VerifyContract(args) => {
             utils::block_on(args.run())?;

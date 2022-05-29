@@ -1,7 +1,7 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, run::RunArgs, watch::WatchArgs},
+        forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
         Cmd,
     },
     compile::ProjectCompiler,
@@ -511,7 +511,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                     };
 
                     // Run the debugger
-                    let debugger = RunArgs {
+                    let debugger = DebugArgs {
                         path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
                         target_contract: Some(utils::get_contract_name(&id).to_string()),
                         sig,
@@ -520,7 +520,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         opts: args.opts,
                         evm_opts: args.evm_opts,
                     };
-                    debugger.run()?;
+                    utils::block_on(debugger.debug())?;
 
                     Ok(TestOutcome::new(results, args.allow_failure))
                 }

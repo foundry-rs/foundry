@@ -34,6 +34,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         libs: vec!["lib-test".into()],
         cache: true,
         cache_path: "test-cache".into(),
+        broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
