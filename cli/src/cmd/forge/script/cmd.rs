@@ -151,30 +151,19 @@ impl ScriptArgs {
                 nonce,
             )?;
 
-        first_run_result.transactions =
-            Some(self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries));
+        let mut txs = self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries);
 
         let result =
             self.execute(script_config, contract, new_sender, &predeploy_libraries).await?;
 
-        first_run_result.success &= result.success;
-        first_run_result.gas = result.gas;
-        first_run_result.logs = result.logs;
-        first_run_result.traces.extend(result.traces);
-        first_run_result.debug = result.debug;
-        first_run_result.labeled_addresses.extend(result.labeled_addresses);
-
-        match (&mut first_run_result.transactions, result.transactions) {
-            (Some(txs), Some(new_txs)) => {
-                for tx in new_txs.iter() {
-                    txs.push_back(TypedTransaction::Legacy(tx.clone().into()));
-                }
+        if let Some(new_txs) = &result.transactions {
+            for new_tx in new_txs.iter() {
+                txs.push_back(TypedTransaction::Legacy(new_tx.clone().into()));
             }
-            (None, Some(new_txs)) => {
-                first_run_result.transactions = Some(new_txs);
-            }
-            _ => {}
         }
+
+        *first_run_result = result;
+        first_run_result.transactions = Some(txs);
 
         Ok(unwrap_contracts(&highlevel_known_contracts))
     }
