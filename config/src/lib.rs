@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, U256};
+use ethers_core::types::{Address, H160, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -104,6 +104,8 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the broadcast logs are stored
+    pub broadcast: PathBuf,
     /// additional solc allow paths
     pub allow_paths: Vec<PathBuf>,
     /// whether to force a `project.clean()`
@@ -296,6 +298,11 @@ impl Config {
 
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
+
+    /// Default address for tx.origin
+    pub const DEFAULT_SENDER: H160 = H160([
+        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+    ]);
 
     /// Returns the current `Config`
     ///
@@ -1234,6 +1241,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             cache_path: "cache".into(),
+            broadcast: "broadcast".into(),
             allow_paths: vec![],
             force: false,
             evm_version: Default::default(),
@@ -1259,8 +1267,8 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             ffi: false,
-            sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
-            tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
+            sender: Config::DEFAULT_SENDER,
+            tx_origin: Config::DEFAULT_SENDER,
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,

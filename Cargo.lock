@@ -1878,6 +1878,7 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
+ "anvil",
  "atty",
  "bytes",
  "cast",
@@ -1930,6 +1931,7 @@ name = "foundry-cli-test-utils"
 version = "0.1.0"
 dependencies = [
  "atty",
+ "ethers",
  "ethers-solc",
  "eyre",
  "foundry-config",

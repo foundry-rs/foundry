@@ -10,8 +10,13 @@ mod ext;
 mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
+pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
-use self::expect::{handle_expect_emit, handle_expect_revert};
+use self::{
+    env::Broadcast,
+    expect::{handle_expect_emit, handle_expect_revert},
+    util::process_create,
+};
 use crate::{
     abi::HEVMCalls,
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
@@ -19,13 +24,16 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
-    types::{Address, H256, U256},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
+        U256,
+    },
 };
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -68,11 +76,26 @@ pub struct Cheatcodes {
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Current broadcasting information
+    pub broadcast: Option<Broadcast>,
+
+    /// Used to correct the nonce of --sender after the initiating call
+    pub corrected_nonce: bool,
+
+    /// Scripting based transactions
+    pub broadcastable_transactions: VecDeque<TypedTransaction>,
 }
 
 impl Cheatcodes {
     pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
-        Self { ffi, block: Some(block), gas_price: Some(gas_price), ..Default::default() }
+        Self {
+            ffi,
+            corrected_nonce: false,
+            block: Some(block),
+            gas_price: Some(gas_price),
+            ..Default::default()
+        }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -102,7 +125,7 @@ where
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
+        is_static: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
@@ -152,6 +175,54 @@ where
                     // At the target depth, or deeper, we set `tx.origin`
                     if let Some(new_origin) = prank.new_origin {
                         data.env.tx.caller = new_origin;
+                    }
+                }
+            }
+
+            // Apply our broadcast
+            if let Some(broadcast) = &self.broadcast {
+                // We only apply a broadcast *to a specific depth*.
+                //
+                // We do this because any subsequent contract calls *must* exist on chain and
+                // we only want to grab *this* call, not internal ones
+                if data.subroutine.depth() == broadcast.depth &&
+                    call.context.caller == broadcast.original_caller
+                {
+                    // At the target depth we set `msg.sender` & tx.origin.
+                    // We are simulating the caller as being an EOA, so *both* must be set to the
+                    // broadcast.origin.
+                    call.context.caller = broadcast.origin;
+                    call.transfer.source = broadcast.origin;
+                    // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
+                    // because we only need the from, to, value, and data. We can later change this
+                    // into 1559, in the cli package, relatively easily once we
+                    // know the target chain supports EIP-1559.
+                    if !is_static {
+                        data.subroutine.load_account(broadcast.origin, data.db);
+                        let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
+
+                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                            TransactionRequest {
+                                from: Some(broadcast.origin),
+                                to: Some(NameOrAddress::Address(call.contract)),
+                                value: Some(call.transfer.value),
+                                data: Some(call.input.clone().into()),
+                                nonce: Some(account.info.nonce.into()),
+                                ..Default::default()
+                            },
+                        ));
+
+                        // call_inner does not increase nonces, so we have to do it ourselves
+                        account.info.nonce += 1;
+                    } else if broadcast.single_call {
+                        return (
+                            Return::Revert,
+                            Gas::new(0),
+                            "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
+                            .to_string()
+                            .encode()
+                            .into()
+                        )
                     }
                 }
             }
@@ -248,6 +319,13 @@ where
             }
         }
 
+        // Clean up broadcast
+        if let Some(broadcast) = &self.broadcast {
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.subroutine.depth() <= expected_revert.depth {
@@ -332,6 +410,29 @@ where
             }
         }
 
+        // Apply our broadcast
+        if let Some(broadcast) = &self.broadcast {
+            if data.subroutine.depth() == broadcast.depth &&
+                call.caller == broadcast.original_caller
+            {
+                data.subroutine.load_account(broadcast.origin, data.db);
+
+                let (bytecode, to, nonce) =
+                    process_create(broadcast.origin, call.init_code.clone(), data, call);
+
+                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                    TransactionRequest {
+                        from: Some(broadcast.origin),
+                        to,
+                        value: Some(call.value),
+                        data: Some(bytecode.into()),
+                        nonce: Some(nonce.into()),
+                        ..Default::default()
+                    },
+                ));
+            }
+        }
+
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
@@ -351,6 +452,13 @@ where
             }
             if prank.single_call {
                 std::mem::take(&mut self.prank);
+            }
+        }
+
+        // Clean up broadcasts
+        if let Some(broadcast) = &self.broadcast {
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
             }
         }
 

@@ -46,6 +46,20 @@ macro_rules! forgetest {
 }
 
 #[macro_export]
+macro_rules! forgetest_async {
+    ($test:ident, $fun:expr) => {
+        $crate::forgetest_async!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
+        #[tokio::test(flavor = "multi_thread")]
+        async fn $test() {
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $fun(prj, cmd).await;
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! casttest {
     ($test:ident, $fun:expr) => {
         $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);

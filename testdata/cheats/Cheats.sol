@@ -75,4 +75,14 @@ interface Cheats {
     function getNonce(address) external returns(uint64);
     // Set block.chainid (newChainId)
     function chainId(uint256) external;
+    // Using the address that calls the test contract, has the next call (at this call depth only) create a transaction that can later be signed and sent onchain
+    function broadcast() external;
+    // Has the next call (at this call depth only) create a transaction with the address provided as the sender that can later be signed and sent onchain
+    function broadcast(address) external;
+    // Using the address that calls the test contract, has the all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain
+    function startBroadcast() external;
+    // Has the all subsequent calls (at this call depth only) create transactions that can later be signed and sent onchain
+    function startBroadcast(address) external;
+    // Stops collecting onchain transactions
+    function stopBroadcast() external;
 }
