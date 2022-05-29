@@ -201,7 +201,7 @@ impl MultiWallet {
             for wallet in wallets.into_iter() {
                 let address = wallet.address();
                 let wallet = wallet.with_chain_id(chain);
-                let wallet = SignerMiddleware::new(provider.clone(), wallet).into();
+                let wallet: WalletType = SignerMiddleware::new(provider.clone(), wallet).into();
 
                 collect_addresses!(local_wallets, unused_wallets, addresses, address, wallet);
             }
