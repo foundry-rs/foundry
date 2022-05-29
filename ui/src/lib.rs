@@ -618,10 +618,10 @@ impl Tui {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from(format!("Unknown contract at address {address}")));
+                text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
+            text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
         }
 
         let paragraph =
@@ -641,7 +641,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                "Address: {} | PC: {} | Gas used in call: {}",
+                "Address: {:?} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
