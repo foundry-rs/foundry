@@ -112,22 +112,23 @@ fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
     };
     let parse_uint_dec = |v: &str| U256::from_dec_str(v);
     let parse_int = |v: &str| {
-        if v.starts_with("0x") {
-            I256::from_hex_str(v).map(|v| v.into_raw())
+        // hex string may start in "0x", "+0x", or "-0x"
+        if v.contains("0x") {
+            I256::from_hex_str(&v.replace("0x", "")).map(|v| v.into_raw())
         } else {
             I256::from_dec_str(v).map(|v| v.into_raw())
         }
     };
     let parse_address = |v: &str| Address::from_str(v);
-    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(&v));
     let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
+    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(&v));
 
     val.iter()
         .map(|v| match r#type {
             "bool" => parse_bool(v).map(|v| Token::Bool(v)).map_err(|e| e.to_string()),
             "uint" => {
                 let token = if v.starts_with("0x") {
-                    parse_uint_hex(v).map_err(|e| e.to_string())
+                    parse_uint_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())
                 } else {
                     parse_uint_dec(v).map_err(|e| e.to_string())
                 };

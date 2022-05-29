@@ -314,7 +314,6 @@ impl MultiContractRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
     use super::*;
     use crate::{
         decode::decode_console_logs,
@@ -323,6 +322,7 @@ mod tests {
         },
     };
     use foundry_evm::trace::TraceKind;
+    use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
