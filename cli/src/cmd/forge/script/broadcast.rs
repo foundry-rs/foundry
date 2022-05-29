@@ -3,10 +3,11 @@ use crate::{
         forge::script::receipts::{get_pending_txes, maybe_has_receipt, wait_for_receipts},
         ScriptSequence,
     },
+    opts::WalletType,
     utils::{get_http_provider, print_receipt},
 };
 use ethers::{
-    prelude::{k256::ecdsa::SigningKey, Http, Provider, SignerMiddleware, TxHash, Wallet},
+    prelude::{SignerMiddleware, TxHash},
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
 };
@@ -20,7 +21,6 @@ impl ScriptArgs {
         fork_url: &str,
     ) -> eyre::Result<()> {
         let provider = get_http_provider(fork_url);
-        let chain = provider.get_chainid().await?.as_u64();
 
         let required_addresses = deployment_sequence
             .transactions
@@ -28,7 +28,7 @@ impl ScriptArgs {
             .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
             .collect();
 
-        let local_wallets = self.wallets.find_all(chain, required_addresses)?;
+        let local_wallets = self.wallets.find_all(&provider, required_addresses).await?;
         if local_wallets.is_empty() {
             eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
         }
@@ -40,8 +40,7 @@ impl ScriptArgs {
         let sequence =
             transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
-                let wallet = local_wallets.get(&from).expect("`find_all` returned incomplete.");
-                let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
+                let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
                 (tx, signer)
             });
 
@@ -89,7 +88,7 @@ impl ScriptArgs {
     pub async fn send_transaction(
         &self,
         tx: TypedTransaction,
-        signer: SignerMiddleware<Provider<Http>, Wallet<SigningKey>>,
+        signer: &WalletType,
         sequential_broadcast: bool,
         fork_url: &str,
     ) -> Result<(TransactionReceipt, U256), BroadcastError> {
@@ -109,7 +108,11 @@ impl ScriptArgs {
             }
         }
 
-        broadcast(signer, tx).await
+        match signer {
+            WalletType::Local(signer) => broadcast(signer, tx).await,
+            WalletType::Ledger(signer) => broadcast(signer, tx).await,
+            WalletType::Trezor(signer) => broadcast(signer, tx).await,
+        }
     }
 
     /// Executes the passed transactions in sequence, and if no error has occurred, it broadcasts
@@ -174,7 +177,7 @@ pub enum BroadcastError {
 /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
-    signer: SignerMiddleware<T, U>,
+    signer: &SignerMiddleware<T, U>,
     legacy_or_1559: TypedTransaction,
 ) -> Result<(TransactionReceipt, U256), BroadcastError>
 where
