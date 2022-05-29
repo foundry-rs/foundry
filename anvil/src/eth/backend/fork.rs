@@ -4,7 +4,7 @@ use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
 use anvil_core::eth::call::CallRequest;
 use ethers::{
     prelude::{BlockNumber, Http, Provider},
-    providers::{Middleware, ProviderError},
+    providers::{Middleware, ProviderError, RetryClient},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, Filter, Log,
         Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
@@ -105,7 +105,7 @@ impl ClientFork {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<Provider<Http>> {
+    fn provider(&self) -> Arc<Provider<RetryClient<Http>>> {
         self.config.read().provider.clone()
     }
 
@@ -374,7 +374,7 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     pub block_hash: H256,
     // TODO make provider agnostic
-    pub provider: Arc<Provider<Http>>,
+    pub provider: Arc<Provider<RetryClient<Http>>>,
     pub chain_id: u64,
     /// The timestamp for the forked block
     pub timestamp: u64,
@@ -390,7 +390,8 @@ impl ClientForkConfig {
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
         self.provider = Arc::new(
-            Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+            Provider::<RetryClient<Http>>::new_client(url.as_str(), 10, 1000)
+                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;
