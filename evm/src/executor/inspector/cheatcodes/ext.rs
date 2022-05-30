@@ -1,7 +1,7 @@
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, Token},
+    abi::{self, AbiEncode, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, I256, U256},
     utils::hex::FromHex,
@@ -101,7 +101,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     }
 }
 
-fn get_env(key: &str, r#type: &str, delim: Option<&str>) -> Result<Bytes, Bytes> {
+fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim()).collect()
@@ -120,8 +120,8 @@ fn get_env(key: &str, r#type: &str, delim: Option<&str>) -> Result<Bytes, Bytes>
     };
     let parse_int = |v: &str| {
         // hex string may start with "0x", "+0x", or "-0x"
-        if v.contains("0x") {
-            I256::from_hex_str(&v.replace("0x", "")).map(|v| v.into_raw())
+        if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
+            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
         } else {
             I256::from_dec_str(v).map(|v| v.into_raw())
         }
@@ -132,19 +132,21 @@ fn get_env(key: &str, r#type: &str, delim: Option<&str>) -> Result<Bytes, Bytes>
 
     val.iter()
         .map(|v| match r#type {
-            "bool" => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
-            "uint" => parse_uint(v).map(Token::Uint),
-            "int" => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
-            "address" => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
-            "bytes32" => parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string()),
-            "string" => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
-            "bytes" => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
+            ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
+            ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
+            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
+            ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
+            ParamType::FixedBytes(32) => {
+                parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
+            }
+            ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
+            ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
             _ => Err(format!("{} is not a supported type", r#type)),
         })
         .collect::<Result<Vec<Token>, String>>()
-        .map(|tokens| {
+        .map(|mut tokens| {
             if delim.is_none() {
-                abi::encode(&[tokens[0].clone()]).into()
+                abi::encode(&[tokens.remove(0)]).into()
             } else {
                 abi::encode(&[Token::Array(tokens)]).into()
             }
@@ -163,20 +165,22 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
         }
         HEVMCalls::GetCode(inner) => get_code(&inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
-        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, "bool", None),
-        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, "uint", None),
-        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, "int", None),
-        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, "address", None),
-        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, "bytes32", None),
-        HEVMCalls::EnvString0(inner) => get_env(&inner.0, "string", None),
-        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, "bytes", None),
-        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, "bool", Some(&inner.1)),
-        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, "uint", Some(&inner.1)),
-        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, "int", Some(&inner.1)),
-        HEVMCalls::EnvAddress1(inner) => get_env(&inner.0, "address", Some(&inner.1)),
-        HEVMCalls::EnvBytes321(inner) => get_env(&inner.0, "bytes32", Some(&inner.1)),
-        HEVMCalls::EnvString1(inner) => get_env(&inner.0, "string", Some(&inner.1)),
-        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, "bytes", Some(&inner.1)),
+        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None),
+        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None),
+        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, ParamType::Int(256), None),
+        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, ParamType::Address, None),
+        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, ParamType::FixedBytes(32), None),
+        HEVMCalls::EnvString0(inner) => get_env(&inner.0, ParamType::String, None),
+        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, ParamType::Bytes, None),
+        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, ParamType::Bool, Some(&inner.1)),
+        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, ParamType::Uint(256), Some(&inner.1)),
+        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, ParamType::Int(256), Some(&inner.1)),
+        HEVMCalls::EnvAddress1(inner) => get_env(&inner.0, ParamType::Address, Some(&inner.1)),
+        HEVMCalls::EnvBytes321(inner) => {
+            get_env(&inner.0, ParamType::FixedBytes(32), Some(&inner.1))
+        }
+        HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
+        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
         _ => return None,
     })
 }
