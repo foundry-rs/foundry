@@ -20,9 +20,9 @@ interface Cheats {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
-    // // Set environment variables, (name, value)
+    // Set environment variables, (name, value)
     function setEnv(string calldata, string calldata) external;
-    // // Read environment variables, (name) => (value)
+    // Read environment variables, (name) => (value)
     function envBool(string calldata) external returns (bool);
     function envUint(string calldata) external returns (uint256);
     function envInt(string calldata) external returns (int256);
@@ -30,14 +30,14 @@ interface Cheats {
     function envBytes32(string calldata) external returns (bytes32);
     function envString(string calldata) external returns (string memory);
     function envBytes(string calldata) external returns (bytes memory);
-    // // Read environment variables as arrays, (name) => (value[])
-    function envBoolArr(string calldata) external returns (bool[] memory);
-    function envUintArr(string calldata) external returns (uint256[] memory);
-    function envIntArr(string calldata) external returns (int256[] memory);
-    function envAddressArr(string calldata) external returns (address[] memory);
-    function envBytes32Arr(string calldata) external returns (bytes32[] memory);
-    function envStringArr(string calldata) external returns (string[] memory);
-    function envBytesArr(string calldata) external returns (bytes[] memory);
+    // Read environment variables as arrays, (name, delim) => (value[])
+    function envBool(string calldata, string calldata) external returns (bool[] memory);
+    function envUint(string calldata, string calldata) external returns (uint256[] memory);
+    function envInt(string calldata, string calldata) external returns (int256[] memory);
+    function envAddress(string calldata, string calldata) external returns (address[] memory);
+    function envBytes32(string calldata, string calldata) external returns (bytes32[] memory);
+    function envString(string calldata, string calldata) external returns (string[] memory);
+    function envBytes(string calldata, string calldata) external returns (bytes[] memory);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called

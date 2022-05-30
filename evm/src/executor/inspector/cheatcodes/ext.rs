@@ -101,10 +101,13 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     }
 }
 
-fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
+fn get_env(key: &str, r#type: &str, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    let val =
-        if is_array { val.split(',').map(|v| v.trim()).collect() } else { vec![val.as_str()] };
+    let val = if let Some(d) = delim {
+        val.split(d).map(|v| v.trim()).collect()
+    } else {
+        vec![val.as_str()]
+    };
 
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
@@ -140,10 +143,10 @@ fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
         })
         .collect::<Result<Vec<Token>, String>>()
         .map(|tokens| {
-            if is_array {
-                abi::encode(&[Token::Array(tokens)]).into()
-            } else {
+            if delim.is_none() {
                 abi::encode(&[tokens[0].clone()]).into()
+            } else {
+                abi::encode(&[Token::Array(tokens)]).into()
             }
         })
         .map_err(|e| e.into())
@@ -160,20 +163,20 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
         }
         HEVMCalls::GetCode(inner) => get_code(&inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
-        HEVMCalls::EnvBool(inner) => get_env(&inner.0, "bool", false),
-        HEVMCalls::EnvUint(inner) => get_env(&inner.0, "uint", false),
-        HEVMCalls::EnvInt(inner) => get_env(&inner.0, "int", false),
-        HEVMCalls::EnvAddress(inner) => get_env(&inner.0, "address", false),
-        HEVMCalls::EnvBytes32(inner) => get_env(&inner.0, "bytes32", false),
-        HEVMCalls::EnvString(inner) => get_env(&inner.0, "string", false),
-        HEVMCalls::EnvBytes(inner) => get_env(&inner.0, "bytes", false),
-        HEVMCalls::EnvBoolArr(inner) => get_env(&inner.0, "bool", true),
-        HEVMCalls::EnvUintArr(inner) => get_env(&inner.0, "uint", true),
-        HEVMCalls::EnvIntArr(inner) => get_env(&inner.0, "int", true),
-        HEVMCalls::EnvAddressArr(inner) => get_env(&inner.0, "address", true),
-        HEVMCalls::EnvBytes32Arr(inner) => get_env(&inner.0, "bytes32", true),
-        HEVMCalls::EnvStringArr(inner) => get_env(&inner.0, "string", true),
-        HEVMCalls::EnvBytesArr(inner) => get_env(&inner.0, "bytes", true),
+        HEVMCalls::EnvBool0(inner) => get_env(&inner.0, "bool", None),
+        HEVMCalls::EnvUint0(inner) => get_env(&inner.0, "uint", None),
+        HEVMCalls::EnvInt0(inner) => get_env(&inner.0, "int", None),
+        HEVMCalls::EnvAddress0(inner) => get_env(&inner.0, "address", None),
+        HEVMCalls::EnvBytes320(inner) => get_env(&inner.0, "bytes32", None),
+        HEVMCalls::EnvString0(inner) => get_env(&inner.0, "string", None),
+        HEVMCalls::EnvBytes0(inner) => get_env(&inner.0, "bytes", None),
+        HEVMCalls::EnvBool1(inner) => get_env(&inner.0, "bool", Some(&inner.1)),
+        HEVMCalls::EnvUint1(inner) => get_env(&inner.0, "uint", Some(&inner.1)),
+        HEVMCalls::EnvInt1(inner) => get_env(&inner.0, "int", Some(&inner.1)),
+        HEVMCalls::EnvAddress1(inner) => get_env(&inner.0, "address", Some(&inner.1)),
+        HEVMCalls::EnvBytes321(inner) => get_env(&inner.0, "bytes32", Some(&inner.1)),
+        HEVMCalls::EnvString1(inner) => get_env(&inner.0, "string", Some(&inner.1)),
+        HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, "bytes", Some(&inner.1)),
         _ => return None,
     })
 }

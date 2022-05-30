@@ -69,14 +69,16 @@ contract EnvTest is DSTest {
         }
     }
 
-    uint constant numEnvAddressTests = 1;
+    uint constant numEnvAddressTests = 2;
     function testEnvAddress() public {
         string memory key = "_foundryCheatcodeEnvAddressTestKey";
         string[numEnvAddressTests] memory values = [
-            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D",
+            "0x0000000000000000000000000000000000000000"
         ];
         address[numEnvAddressTests] memory expected = [
-            0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
+            0x7109709ECfa91a80626fF3989D68f67F5b1DD12D,
+            0x0000000000000000000000000000000000000000
         ];
         for(uint i = 0; i < numEnvAddressTests; ++i){
             cheats.setEnv(key, values[i]);
@@ -85,14 +87,16 @@ contract EnvTest is DSTest {
         }
     }
 
-    uint constant numEnvBytes32Tests = 1;
+    uint constant numEnvBytes32Tests = 2;
     function testEnvBytes32() public {
         string memory key = "_foundryCheatcodeEnvBytes32TestKey";
         string[numEnvBytes32Tests] memory values = [
-            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D",
+            "0x00"
         ];
         bytes32[numEnvBytes32Tests] memory expected = [
-            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000)
+            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
         ];
         for(uint i = 0; i < numEnvBytes32Tests; ++i){
             cheats.setEnv(key, values[i]);
@@ -119,14 +123,16 @@ contract EnvTest is DSTest {
         }
     }
 
-    uint constant numEnvBytesTests = 1;
+    uint constant numEnvBytesTests = 2;
     function testEnvBytes() public {
         string memory key = "_foundryCheatcodeEnvBytesTestKey";
         string[numEnvBytesTests] memory values = [
-            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D",
+            "0x00"
         ];
         bytes[] memory expected = new bytes[](numEnvBytesTests);
         expected[0] = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
+        expected[1] = hex"00";
         for(uint i = 0; i < numEnvBytesTests; ++i){
             cheats.setEnv(key, values[i]);
             bytes memory output = cheats.envBytes(key);
@@ -143,7 +149,8 @@ contract EnvTest is DSTest {
         bool[4] memory expected = [true, false, true, false];
 
         cheats.setEnv(key, value);
-        bool[] memory output = cheats.envBoolArr(key);
+        string memory delimiter = ",";
+        bool[] memory output = cheats.envBool(key, delimiter);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envBoolArr failed"
@@ -165,7 +172,8 @@ contract EnvTest is DSTest {
         ];
 
         cheats.setEnv(key, value);
-        uint[] memory output = cheats.envUintArr(key);
+        string memory delimiter = ",";
+        uint[] memory output = cheats.envUint(key, delimiter);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envUintArr failed"
@@ -187,7 +195,8 @@ contract EnvTest is DSTest {
         ];
 
         cheats.setEnv(key, value);
-        int[] memory output = cheats.envIntArr(key);
+        string memory delimiter = ",";
+        int[] memory output = cheats.envInt(key, delimiter);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envIntArr failed"
@@ -205,10 +214,71 @@ contract EnvTest is DSTest {
         ];
 
         cheats.setEnv(key, value);
-        address[] memory output = cheats.envAddressArr(key);
+        string memory delimiter = ",";
+        address[] memory output = cheats.envAddress(key, delimiter);
         require(
             keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
             "envAddressArr failed"
         );
+    }
+
+    function testEnvBytes32Arr() public {
+        string memory key = "_foundryCheatcodeEnvBytes32ArrTestKey";
+        string memory value =
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D,"
+            "0x00";
+        bytes32[2] memory expected = [
+            bytes32(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D000000000000000000000000),
+            bytes32(0x0000000000000000000000000000000000000000000000000000000000000000)
+        ];
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes32[] memory output = cheats.envBytes32(key, delimiter);
+        require(
+            keccak256(abi.encodePacked((output))) == keccak256(abi.encodePacked((expected))),
+            "envBytes32Arr failed"
+        );
+    }
+
+    function testEnvStringArr() public {
+        string memory key = "_foundryCheatcodeEnvStringArrTestKey";
+        string memory value =
+            "hello, world!|"
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D";
+        string[2] memory expected = [
+            "hello, world!",
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D"
+        ];
+
+        cheats.setEnv(key, value);
+        string memory delimiter = "|";
+        string[] memory output = cheats.envString(key, delimiter);
+        for (uint i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envStringArr failed"
+            );
+        }
+    }
+
+    function testEnvBytesArr() public {
+        string memory key = "_foundryCheatcodeEnvBytesArrTestKey";
+        string memory value =
+            "0x7109709ECfa91a80626fF3989D68f67F5b1DD12D,"
+            "0x00";
+        bytes[] memory expected = new bytes[](numEnvBytesTests);
+        expected[0] = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
+        expected[1] = hex"00";
+
+        cheats.setEnv(key, value);
+        string memory delimiter = ",";
+        bytes[] memory output = cheats.envBytes(key, delimiter);
+        for (uint i = 0; i < expected.length; ++i) {
+            require(
+                keccak256(abi.encodePacked((output[i]))) == keccak256(abi.encodePacked((expected[i]))),
+                "envBytesArr failed"
+            );
+        }
     }
 }
