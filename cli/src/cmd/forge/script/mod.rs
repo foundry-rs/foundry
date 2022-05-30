@@ -59,11 +59,11 @@ pub struct ScriptArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, alias = "tc")]
+    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     #[clap(
