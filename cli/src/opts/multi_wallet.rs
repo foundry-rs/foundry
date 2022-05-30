@@ -89,14 +89,16 @@ pub struct MultiWallet {
         short,
         help_heading = "WALLET OPTIONS - RAW",
         help = "Open an interactive prompt to enter your private key. Takes a value for the number of keys to enter",
-        default_value = "0"
+        default_value = "0",
+        value_name = "NUM"
     )]
     pub interactives: u32,
 
     #[clap(
         long = "private-keys",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the provided private key."
+        help = "Use the provided private key.",
+        value_name = "RAW_PRIVATE_KEYS"
     )]
     pub private_keys: Option<Vec<String>>,
 
@@ -104,14 +106,16 @@ pub struct MultiWallet {
         long = "private-key",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private key.",
-        conflicts_with = "private-keys"
+        conflicts_with = "private-keys",
+        value_name = "RAW_PRIVATE_KEY"
     )]
     pub private_key: Option<String>,
 
     #[clap(
         long = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path."
+        help = "Use the mnemonic file at the specified path.",
+        value_name = "PATHS"
     )]
     pub mnemonic_paths: Option<Vec<String>>,
 
@@ -119,7 +123,8 @@ pub struct MultiWallet {
         long = "mnemonic-indexes",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
-        default_value = "0"
+        default_value = "0",
+        value_name = "INDEXES"
     )]
     pub mnemonic_indexes: Option<Vec<u32>>,
 
@@ -127,7 +132,8 @@ pub struct MultiWallet {
         env = "ETH_KEYSTORE",
         long = "keystores",
         help_heading = "WALLET OPTIONS - KEYSTORE",
-        help = "Use the keystore in the given folder or file."
+        help = "Use the keystore in the given folder or file.",
+        value_name = "PATHS"
     )]
     pub keystore_paths: Option<Vec<String>>,
 
@@ -135,7 +141,8 @@ pub struct MultiWallet {
         long = "password",
         help_heading = "WALLET OPTIONS - KEYSTORE",
         help = "The keystore password. Used with --keystore.",
-        requires = "keystore-paths"
+        requires = "keystore-paths",
+        value_name = "PASSWORDS"
     )]
     pub keystore_passwords: Option<Vec<String>>,
 
@@ -158,7 +165,8 @@ pub struct MultiWallet {
     #[clap(
         long = "hd-paths",
         help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets."
+        help = "The derivation path to use with hardware wallets.",
+        value_name = "PATHS"
     )]
     pub hd_paths: Option<Vec<String>>,
 
@@ -167,7 +175,8 @@ pub struct MultiWallet {
         short = 'a',
         long = "froms",
         help_heading = "WALLET OPTIONS - REMOTE",
-        help = "The sender account."
+        help = "The sender account.",
+        value_name = "ADDRESSES"
     )]
     pub froms: Option<Vec<Address>>,
 }
