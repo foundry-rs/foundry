@@ -15,7 +15,7 @@ use std::{str::FromStr, time::Instant};
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[clap(name = "new", alias = "n", about = "Create a new random keypair.")]
+    #[clap(name = "new", visible_alias = "n", about = "Create a new random keypair.")]
     New {
         #[clap(
             help = "If provided, then keypair will be written to an encrypted JSON keystore.",
@@ -40,7 +40,7 @@ pub enum WalletSubcommands {
         )]
         unsafe_password: Option<String>,
     },
-    #[clap(name = "vanity", alias = "va", about = "Generate a vanity address.")]
+    #[clap(name = "vanity", visible_alias = "va", about = "Generate a vanity address.")]
     Vanity {
         #[clap(
             long,
@@ -58,19 +58,19 @@ pub enum WalletSubcommands {
         )]
         nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
-    #[clap(name = "address", aliases = &["a", "addr"], about = "Convert a private key to an address.")]
+    #[clap(name = "address", visible_aliases = &["a", "addr"], about = "Convert a private key to an address.")]
     Address {
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", alias = "s", about = "Sign a message.")]
+    #[clap(name = "sign", visible_alias = "s", about = "Sign a message.")]
     Sign {
         #[clap(help = "message to sign", value_name = "MESSAGE")]
         message: String,
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "verify", alias = "v", about = "Verify the signature of a message.")]
+    #[clap(name = "verify", visible_alias = "v", about = "Verify the signature of a message.")]
     Verify {
         #[clap(help = "The original message.", value_name = "MESSAGE")]
         message: String,

@@ -43,13 +43,18 @@ pub struct Filter {
     pub pattern: Option<regex::Regex>,
 
     /// Only run test functions matching the specified regex pattern.
-    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern", value_name = "REGEX")]
+    #[clap(
+        long = "match-test",
+        visible_alias = "mt",
+        conflicts_with = "pattern",
+        value_name = "REGEX"
+    )]
     pub test_pattern: Option<regex::Regex>,
 
     /// Only run test functions that do not match the specified regex pattern.
     #[clap(
         long = "no-match-test",
-        alias = "nmt",
+        visible_alias = "nmt",
         conflicts_with = "pattern",
         value_name = "REGEX"
     )]
@@ -58,7 +63,7 @@ pub struct Filter {
     /// Only run tests in contracts matching the specified regex pattern.
     #[clap(
         long = "match-contract",
-        alias = "mc",
+        visible_alias = "mc",
         conflicts_with = "pattern",
         value_name = "REGEX"
     )]
@@ -67,21 +72,26 @@ pub struct Filter {
     /// Only run tests in contracts that do not match the specified regex pattern.
     #[clap(
         long = "no-match-contract",
-        alias = "nmc",
+        visible_alias = "nmc",
         conflicts_with = "pattern",
         value_name = "REGEX"
     )]
     pub contract_pattern_inverse: Option<regex::Regex>,
 
     /// Only run tests in source files matching the specified glob pattern.
-    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern", value_name = "GLOB")]
+    #[clap(
+        long = "match-path",
+        visible_alias = "mp",
+        conflicts_with = "pattern",
+        value_name = "GLOB"
+    )]
     pub path_pattern: Option<globset::Glob>,
 
     /// Only run tests in source files that do not match the specified glob pattern.
     #[clap(
         name = "no-match-path",
         long = "no-match-path",
-        alias = "nmp",
+        visible_alias = "nmp",
         conflicts_with = "pattern",
         value_name = "GLOB"
     )]
