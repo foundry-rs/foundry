@@ -59,6 +59,8 @@ impl DebugArgs {
             resume: false,
             debug: true,
             slow: false,
+            etherscan_api_key: None,
+            verify: false,
         };
         script.run_script().await
     }

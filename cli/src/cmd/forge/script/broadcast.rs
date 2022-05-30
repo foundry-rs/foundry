@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         forge::script::receipts::{get_pending_txes, maybe_has_receipt, wait_for_receipts},
-        ScriptSequence,
+        ScriptSequence, VerifyBundle,
     },
     opts::WalletType,
     utils::{get_http_provider, print_receipt},
@@ -74,7 +74,7 @@ impl ScriptArgs {
         }
 
         if !sequential_broadcast {
-            wait_for_receipts(future_receipts, deployment_sequence).await.unwrap();
+            wait_for_receipts(future_receipts, deployment_sequence).await?;
         }
 
         println!("\n\n==========================");
@@ -123,10 +123,11 @@ impl ScriptArgs {
         transactions: Option<VecDeque<TypedTransaction>>,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
+        verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let gas_filled_txs =
+                let (gas_filled_txs, create2_contracts) =
                     self.execute_transactions(txs, script_config, decoder)
                     .await
                     .map_err(|_| eyre::eyre!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`"))?;
@@ -153,8 +154,15 @@ impl ScriptArgs {
                 let mut deployment_sequence =
                     ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
 
+                create2_contracts
+                    .into_iter()
+                    .for_each(|addr| deployment_sequence.add_create2(addr));
+
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    if self.verify {
+                        deployment_sequence.verify_contracts(verify, chain).await?;
+                    }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                 }

@@ -101,6 +101,16 @@ pub struct ScriptArgs {
         help = "Makes sure a transaction is sent, only after its previous one has been confirmed and succeeded."
     )]
     pub slow: bool,
+
+    #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+    pub etherscan_api_key: Option<String>,
+
+    #[clap(
+        long,
+        help = "If it finds a matching broadcast log, it tries to verify every contract found in the receipts.",
+        requires = "etherscan-api-key"
+    )]
+    pub verify: bool,
 }
 
 pub struct ScriptResult {
