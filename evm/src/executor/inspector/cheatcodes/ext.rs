@@ -103,7 +103,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
 
 fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    let val = if is_array { val.split(',').collect() } else { vec![val.as_str()] };
+    let val = if is_array { val.split(',').map(|v| v.trim()).collect() } else { vec![val.as_str()] };
 
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
@@ -140,9 +140,9 @@ fn get_env(key: &str, r#type: &str, is_array: bool) -> Result<Bytes, Bytes> {
         .collect::<Result<Vec<Token>, String>>()
         .map(|tokens| {
             if is_array {
-                [Token::Array(tokens)].encode().into()
+                abi::encode(&[Token::Array(tokens)]).into()
             } else {
-                [tokens[0].clone()].encode().into()
+                abi::encode(&[tokens[0].clone()]).into()
             }
         })
         .map_err(|e| e.into())
