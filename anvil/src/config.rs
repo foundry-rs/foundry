@@ -17,7 +17,7 @@ use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
-    providers::{Middleware, Provider},
+    providers::{Http, Middleware, Provider, RetryClient},
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
@@ -456,7 +456,8 @@ Chain ID:       {}
         {
             // TODO make provider agnostic
             let provider = Arc::new(
-                Provider::try_from(&eth_rpc_url).expect("Failed to establish provider to fork url"),
+                Provider::<RetryClient<Http>>::new_client(&eth_rpc_url, 10, 1000)
+                    .expect("Failed to establish provider to fork url"),
             );
 
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {

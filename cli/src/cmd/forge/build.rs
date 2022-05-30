@@ -375,7 +375,7 @@ pub struct ProjectPathsArgs {
         long_help = "This a convenience flag and is the same as passing `--contracts contracts --lib-paths node_modules`.",
         long,
         conflicts_with = "contracts",
-        alias = "hh"
+        visible_alias = "hh"
     )]
     #[serde(skip)]
     pub hardhat: bool,

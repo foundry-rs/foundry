@@ -38,7 +38,7 @@ pub struct InitArgs {
         help = "Do not install dependencies from the network.",
         conflicts_with = "template",
         long,
-        alias = "no-deps"
+        visible_alias = "no-deps"
     )]
     offline: bool,
     #[clap(
