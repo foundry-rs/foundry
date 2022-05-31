@@ -1093,7 +1093,7 @@ impl SimpleCast {
     ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
     ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
     ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc2f1f2".to_string());
+    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
     ///     Ok(())
     /// }
     /// ```

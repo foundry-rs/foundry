@@ -50,7 +50,7 @@ impl Item {
                 let hex_string = s.strip_prefix("0x").unwrap_or(s);
                 Ok(Item::Data(hex::decode(hex_string).expect("Could not decode hex")))
             }
-            Value::Array(values) => values.iter().map(|val| Item::value_to_item(val)).collect(),
+            Value::Array(values) => values.iter().map(Item::value_to_item).collect(),
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")
             }
