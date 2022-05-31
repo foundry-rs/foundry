@@ -11,6 +11,7 @@ use ethers::{
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
 };
+use std::fmt;
 
 use super::*;
 
@@ -55,8 +56,7 @@ impl ScriptArgs {
             let mut future_receipts = vec![];
 
             println!("##\nSending transactions.");
-            for payload in sequence {
-                let (tx, signer) = payload;
+            for (tx, signer) in sequence {
                 let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                 if sequential_broadcast {
@@ -162,10 +162,21 @@ impl ScriptArgs {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum BroadcastError {
     Simple(String),
     ErrorWithTxHash(String, TxHash),
+}
+
+impl fmt::Display for BroadcastError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BroadcastError::Simple(err) => write!(f, "{err}"),
+            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
+                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
+            }
+        }
+    }
 }
 
 /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the

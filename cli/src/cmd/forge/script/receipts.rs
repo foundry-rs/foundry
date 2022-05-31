@@ -11,12 +11,11 @@ pub async fn wait_for_pending(
 ) -> eyre::Result<()> {
     if !deployment_sequence.pending.is_empty() {
         println!("##\nChecking previously pending transactions.");
-        let mut future_receipts = vec![];
-
-        for tx_hash in &deployment_sequence.pending {
-            future_receipts.push(pending_receipt(provider, *tx_hash));
-        }
-
+        let future_receipts = deployment_sequence
+            .pending
+            .iter()
+            .map(|tx_hash| pending_receipt(provider, *tx_hash))
+            .collect();
         wait_for_receipts(future_receipts, deployment_sequence).await?;
     }
     Ok(())
@@ -28,17 +27,20 @@ async fn pending_receipt(
     tx_hash: H256,
 ) -> Result<(TransactionReceipt, U256), BroadcastError> {
     let pending_err =
-        BroadcastError::Simple(format!("Failed to get pending transaction {tx_hash}"));
+        || BroadcastError::Simple(format!("Failed to get pending transaction {tx_hash:?}."));
+
     let receipt = provider
         .get_transaction_receipt(tx_hash)
         .await
-        .map_err(|_| pending_err.clone())?
-        .ok_or_else(|| pending_err.clone())?;
+        .map_err(|_| pending_err())?
+        .ok_or_else(pending_err)?;
+
     let tx = provider
         .get_transaction(tx_hash)
         .await
-        .map_err(|_| pending_err.clone())?
-        .ok_or(pending_err)?;
+        .map_err(|_| pending_err())?
+        .ok_or_else(pending_err)?;
+
     Ok((receipt, tx.nonce))
 }
 
@@ -51,7 +53,7 @@ pub async fn wait_for_receipts(
     let res = join_all(tasks).await;
 
     let mut receipts = vec![];
-    let mut errors = vec![];
+    let mut errors: Vec<String> = vec![];
 
     for receipt in res {
         match receipt {
@@ -66,14 +68,10 @@ pub async fn wait_for_receipts(
                 receipts.push(ret)
             }
             Err(e) => {
-                let err = match e {
-                    BroadcastError::Simple(err) => err,
-                    BroadcastError::ErrorWithTxHash(err, tx_hash) => {
-                        deployment_sequence.add_pending(tx_hash);
-                        format!("\nFailed to wait for transaction:{tx_hash}:\n{err}")
-                    }
-                };
-                errors.push(err)
+                if let BroadcastError::ErrorWithTxHash(_, tx_hash) = e {
+                    deployment_sequence.add_pending(tx_hash);
+                }
+                errors.push(format!("{e}"));
             }
         };
     }
