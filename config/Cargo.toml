@@ -26,6 +26,9 @@ globset = "0.4.8"
 walkdir = "2.3.2"
 toml_edit = "0.14.3"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+path-slash = "0.1.4"
+
 [dev-dependencies]
 pretty_assertions = "1.0.0"
 figment = { version = "0.10", features = ["test"] }

@@ -1966,6 +1966,7 @@ dependencies = [
  "figment",
  "globset",
  "number_prefix",
+ "path-slash",
  "pretty_assertions",
  "regex",
  "semver",
