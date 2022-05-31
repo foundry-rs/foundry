@@ -222,7 +222,7 @@ pub struct ScriptSequence {
     pub transactions: VecDeque<TypedTransaction>,
     pub receipts: Vec<TransactionReceipt>,
     pub pending: Vec<TxHash>,
-    pub create2_contracts: Option<Vec<Address>>,
+    pub create2_contracts: Vec<Address>,
     pub path: PathBuf,
     pub timestamp: u64,
 }
@@ -241,7 +241,7 @@ impl ScriptSequence {
             transactions,
             receipts: vec![],
             pending: vec![],
-            create2_contracts: None,
+            create2_contracts: vec![],
             path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -310,11 +310,7 @@ impl ScriptSequence {
     }
 
     pub fn add_create2(&mut self, address: Address) {
-        if let Some(addresses) = &mut self.create2_contracts {
-            addresses.push(address);
-        } else {
-            self.create2_contracts = Some(vec![address]);
-        }
+        self.create2_contracts.push(address);
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
@@ -340,10 +336,10 @@ impl ScriptSequence {
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
-        let mut future_verifications = vec![];
-        let mut create2 = self.create2_contracts.clone().unwrap_or_default().into_iter();
-
         if let Some(etherscan_key) = &verify.etherscan_key {
+            let mut future_verifications = vec![];
+            let mut create2 = self.create2_contracts.clone().into_iter();
+
             for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
                 let mut create2_offset = 0;
 
