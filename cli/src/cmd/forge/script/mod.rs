@@ -224,6 +224,13 @@ impl ScriptArgs {
         decoder: &CallTraceDecoder,
         result: &mut ScriptResult,
     ) -> eyre::Result<()> {
+        let console_logs = decode_console_logs(&result.logs);
+        if !console_logs.is_empty() {
+            println!("\n== Logs ==");
+            let j = serde_json::to_string(&console_logs)?;
+            println!("{}", j);
+        }
+
         Ok(())
     }
 
