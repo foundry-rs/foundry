@@ -1,49 +1,45 @@
-use std::collections::BTreeMap;
-
-use crate::{
-    cmd::ScriptSequence,
-    utils::{get_http_provider, print_receipt},
-};
-use ethers::{
-    abi::Address,
-    prelude::{Bytes, Middleware, TransactionReceipt, TxHash, U256},
-    types::transaction::eip2718::TypedTransaction,
-};
+use crate::{cmd::ScriptSequence, utils::print_receipt};
+use ethers::prelude::{Http, Middleware, Provider, TransactionReceipt, H256, U256};
 use futures::future::join_all;
 
 use super::broadcast::BroadcastError;
 
-// Get all transactions in the `tx_hashes` list.
-pub async fn get_pending_txes(
-    tx_hashes: &Vec<TxHash>,
-    fork_url: &str,
-) -> BTreeMap<(Address, U256), (Bytes, TxHash)> {
-    let provider = get_http_provider(fork_url);
-    let mut pending_txes = BTreeMap::new();
-    for pending in tx_hashes {
-        if let Ok(Some(tx)) = provider.get_transaction(*pending).await {
-            pending_txes.insert((tx.from, tx.nonce), (tx.input, *pending));
+/// Gets the receipts of previously pending transactions.
+pub async fn wait_for_pending(
+    provider: &Provider<Http>,
+    deployment_sequence: &mut ScriptSequence,
+) -> eyre::Result<()> {
+    if !deployment_sequence.pending.is_empty() {
+        println!("##\nChecking previously pending transactions.");
+        let mut future_receipts = vec![];
+
+        for tx_hash in &deployment_sequence.pending {
+            future_receipts.push(pending_receipt(provider, *tx_hash));
         }
+
+        wait_for_receipts(future_receipts, deployment_sequence).await?;
     }
-    pending_txes
+    Ok(())
 }
 
-/// Given a tx, it checks if there is already a receipt for it. Compares `from`, `nonce` and `data`.
-pub async fn maybe_has_receipt(
-    tx: &TypedTransaction,
-    pending_txes: &BTreeMap<(Address, U256), (Bytes, TxHash)>,
-    fork_url: &str,
-) -> Option<TransactionReceipt> {
-    let mut receipt = None;
-    if let Some((data, tx_hash)) = pending_txes.get(&(*tx.from().unwrap(), *tx.nonce().unwrap())) {
-        if tx.data().unwrap().eq(data) {
-            let provider = get_http_provider(fork_url);
-            if let Ok(ret) = provider.get_transaction_receipt(*tx_hash).await {
-                receipt = ret
-            }
-        }
-    }
-    receipt
+/// Waits for a pending receipt, and gets its nonce to return (receipt, nonce).
+async fn pending_receipt(
+    provider: &Provider<Http>,
+    tx_hash: H256,
+) -> Result<(TransactionReceipt, U256), BroadcastError> {
+    let pending_err =
+        BroadcastError::Simple(format!("Failed to get pending transaction {tx_hash}"));
+    let receipt = provider
+        .get_transaction_receipt(tx_hash)
+        .await
+        .map_err(|_| pending_err.clone())?
+        .ok_or_else(|| pending_err.clone())?;
+    let tx = provider
+        .get_transaction(tx_hash)
+        .await
+        .map_err(|_| pending_err.clone())?
+        .ok_or(pending_err)?;
+    Ok((receipt, tx.nonce))
 }
 
 /// Waits for a list of receipts. If it fails, it tries to retrieve the transaction hash that can be
@@ -65,6 +61,8 @@ pub async fn wait_for_receipts(
                         errors.push(format!("Transaction Failure: {}", ret.0.transaction_hash));
                     }
                 }
+                deployment_sequence.remove_pending(ret.0.transaction_hash);
+                let _ = print_receipt(&ret.0, ret.1);
                 receipts.push(ret)
             }
             Err(e) => {
@@ -82,13 +80,16 @@ pub async fn wait_for_receipts(
 
     // Receipts may have arrived out of order
     receipts.sort_by(|a, b| a.1.cmp(&b.1));
-    for (receipt, nonce) in receipts {
-        print_receipt(&receipt, nonce)?;
+    for (receipt, _) in receipts {
         deployment_sequence.add_receipt(receipt);
     }
 
     if !errors.is_empty() {
-        eyre::bail!(format!("{:?}", errors));
+        let mut error_msg = format!("{:?}", errors);
+        if !deployment_sequence.pending.is_empty() {
+            error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting the transactions."
+        }
+        eyre::bail!(error_msg);
     }
 
     Ok(())
