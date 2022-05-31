@@ -9,7 +9,13 @@ pub struct ServerConfig {
     /// The cors `allow_origin` header
     #[cfg_attr(
         feature = "clap",
-        clap(long, help = "Set the CORS allow_origin", default_value = "*", name = "allow-origin")
+        clap(
+            long,
+            help = "Set the CORS allow_origin",
+            default_value = "*",
+            name = "allow-origin",
+            value_name = "ALLOW_ORIGIN"
+        )
     )]
     pub allow_origin: HeaderValueWrapper,
     /// Whether to enable CORS

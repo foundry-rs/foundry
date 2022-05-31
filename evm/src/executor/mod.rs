@@ -37,7 +37,7 @@ use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
-    types::Log,
+    types::{transaction::eip2718::TypedTransaction, Log},
 };
 use eyre::Result;
 use foundry_utils::IntoFunction;
@@ -46,7 +46,7 @@ use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
@@ -64,6 +64,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
+        transactions: Option<VecDeque<TypedTransaction>>,
         state_changeset: Option<StateChangeset>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -108,6 +109,8 @@ pub struct CallResult<D: Detokenize> {
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -136,6 +139,8 @@ pub struct RawCallResult {
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -155,6 +160,7 @@ impl Default for RawCallResult {
             labels: BTreeMap::new(),
             traces: None,
             debug: None,
+            transactions: None,
             state_changeset: None,
         }
     }
@@ -248,8 +254,13 @@ where
     }
 
     /// Calls the `setUp()` function on a contract.
-    pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
-        self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)
+    pub fn setup(
+        &mut self,
+        from: Option<Address>,
+        address: Address,
+    ) -> std::result::Result<CallResult<()>, EvmError> {
+        let from = from.unwrap_or(*CALLER);
+        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -276,6 +287,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset,
         } = self.call_raw_committing(from, to, calldata, value)?;
         match status {
@@ -290,6 +302,7 @@ where
                     labels,
                     traces,
                     debug,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -305,6 +318,7 @@ where
                     traces,
                     debug,
                     labels,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -336,11 +350,27 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes } =
+        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
+
+        let transactions = if let Some(ref mut cheatcodes) = cheatcodes {
+            if !cheatcodes.broadcastable_transactions.is_empty() {
+                let transactions = Some(cheatcodes.broadcastable_transactions.clone());
+
+                // Clear broadcast state from cheatcode state
+                cheatcodes.broadcastable_transactions.clear();
+                cheatcodes.corrected_nonce = false;
+
+                transactions
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
@@ -355,6 +385,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset: None,
         })
     }
@@ -383,6 +414,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset,
         } = self.call_raw(from, to, calldata, value)?;
         match status {
@@ -397,6 +429,7 @@ where
                     labels,
                     traces,
                     debug,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -412,6 +445,7 @@ where
                     traces,
                     debug,
                     labels,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -443,8 +477,19 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, .. } =
+        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
             inspector.collect_inspector_states();
+
+        let transactions = if let Some(cheats) = cheatcodes {
+            if !cheats.broadcastable_transactions.is_empty() {
+                Some(cheats.broadcastable_transactions)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -455,6 +500,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset: Some(state_changeset),
         })
     }
@@ -496,6 +542,7 @@ where
                         debug,
                         labels,
                         state_changeset: None,
+                        transactions: None
                     });
                 }
             }
@@ -512,6 +559,7 @@ where
                     debug,
                     labels,
                     state_changeset: None,
+                    transactions: None,
                 })
             }
         };

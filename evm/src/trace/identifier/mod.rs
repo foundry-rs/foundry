@@ -1,5 +1,5 @@
 mod local;
-pub use local::{diff_score, LocalTraceIdentifier};
+pub use local::LocalTraceIdentifier;
 
 mod etherscan;
 pub use etherscan::EtherscanIdentifier;

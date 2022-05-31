@@ -1,13 +1,18 @@
+use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
+    prelude::{Http, Provider, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
+    utils::format_units,
 };
 use forge::executor::{opts::EvmOpts, Fork, SpecId};
 use foundry_config::{cache::StorageCachingConfig, Config};
 use std::{
     future::Future,
+    ops::Mul,
     path::{Path, PathBuf},
+    process::{Command, Output},
     str::FromStr,
     time::Duration,
 };
@@ -77,19 +82,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
         EvmVersion::London => SpecId::LONDON,
         _ => panic!("Unsupported EVM version"),
     }
-}
-
-/// Securely reads a secret from stdin, or proceeds to return a fallback value
-/// which was provided in cleartext via CLI or env var
-#[allow(dead_code)]
-pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
-    Ok(if secret {
-        println!("Insert secret:");
-        rpassword::read_password()?
-    } else {
-        // guaranteed to be Some(..)
-        unsafe_secret.unwrap()
-    })
 }
 
 /// Artifact/Contract identifier can take the following form:
@@ -257,6 +249,74 @@ pub fn enable_paint() {
     let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
     if is_windows || env_colour_disabled {
         Paint::disable();
+    }
+}
+
+/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
+/// node) and with the default, `7s` if otherwise.
+pub fn get_http_provider(url: &str) -> Provider<Http> {
+    let provider = Provider::try_from(url).expect("Bad fork provider.");
+
+    if url.contains("127.0.0.1") || url.contains("localhost") {
+        provider.interval(Duration::from_millis(100))
+    } else {
+        provider
+    }
+}
+
+pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<()> {
+    let mut contract_address = "".to_string();
+    if let Some(addr) = receipt.contract_address {
+        contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
+    }
+
+    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_price = receipt.effective_gas_price.expect("no gas price");
+    let paid = format_units(gas_used.mul(gas_price), 18)?;
+
+    let check = if receipt.status.unwrap().is_zero() {
+        Emoji("❌ ", " [Failed] ")
+    } else {
+        Emoji("✅ ", " [Success] ")
+    };
+
+    println!(
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {} ETH ({} gas * {} gwei)",
+        check,
+        hex::encode(receipt.transaction_hash.as_bytes()),
+        contract_address,
+        receipt.block_number.expect("no block_number"),
+        nonce,
+        paid.trim_end_matches('0'),
+        gas_used,
+        format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
+    );
+    Ok(())
+}
+
+/// Useful extensions to [`std::process::Command`].
+pub trait CommandUtils {
+    /// Returns the command's output if execution is successful, otherwise, throws an error.
+    fn exec(&mut self) -> eyre::Result<Output>;
+
+    /// Returns the command's stdout if execution is successful, otherwise, throws an error.
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+}
+
+impl CommandUtils for Command {
+    fn exec(&mut self) -> eyre::Result<Output> {
+        let output = self.output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        Ok(output)
+    }
+
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+        let output = self.exec()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().into())
     }
 }
 

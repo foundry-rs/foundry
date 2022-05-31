@@ -14,7 +14,7 @@ mod stack;
 pub use stack::{InspectorData, InspectorStack};
 
 mod cheatcodes;
-pub use cheatcodes::Cheatcodes;
+pub use cheatcodes::{Cheatcodes, DEFAULT_CREATE2_DEPLOYER};
 
 use ethers::types::U256;
 use revm::BlockEnv;

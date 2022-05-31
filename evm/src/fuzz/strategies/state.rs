@@ -1,14 +1,12 @@
 use super::fuzz_param_from_state;
-use crate::{
-    executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts,
-    trace::identifier::diff_score, utils,
-};
+use crate::{executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts, utils};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Function},
     prelude::ArtifactId,
     types::{Address, Log, H256, U256},
 };
+use foundry_utils::diff_score;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},

@@ -57,7 +57,7 @@ pub struct VerifyArgs {
     pub compiler_version: Option<String>,
 
     #[clap(
-        alias = "optimizer-runs",
+        visible_alias = "optimizer-runs",
         long,
         help = "The number of optimization runs used to build the smart contract.",
         value_name = "NUM"
@@ -66,7 +66,7 @@ pub struct VerifyArgs {
 
     #[clap(
         long,
-        alias = "chain-id",
+        visible_alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
         default_value = "mainnet",
@@ -438,7 +438,7 @@ pub struct VerifyCheckArgs {
 
     #[clap(
         long,
-        alias = "chain-id",
+        visible_alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
         default_value = "mainnet",

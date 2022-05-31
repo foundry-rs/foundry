@@ -102,7 +102,8 @@ where
                         Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
                         Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
                         // print as decimal
-                        Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
+                        Token::Uint(inner) => inner.to_string(),
+                        Token::Int(inner) => format!("{}", I256::from_raw(*inner)),
                         _ => format!("{item}"),
                     }
                 })

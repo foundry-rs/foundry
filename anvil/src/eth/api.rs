@@ -40,7 +40,7 @@ use anvil_rpc::response::ResponseResult;
 use ethers::{
     abi::ethereum_types::H64,
     prelude::TxpoolInspect,
-    providers::ProviderError,
+    providers::{Http, ProviderError, RetryClient},
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
@@ -1431,9 +1431,10 @@ impl EthApi {
     pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
-            let new_provider = Arc::new(Provider::try_from(&url).map_err(|_| {
-                ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
-            })?);
+            let new_provider =
+                Arc::new(Provider::<RetryClient<Http>>::new_client(&url, 10, 1000).map_err(
+                    |_| ProviderError::CustomError(format!("Failed to parse invalid url {}", url)),
+                )?);
             let mut config = fork.config.write();
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
             config.eth_rpc_url = url;
@@ -1500,11 +1501,11 @@ impl EthApi {
     pub async fn txpool_inspect(&self) -> Result<TxpoolInspect> {
         node_info!("txpool_inspect");
         let mut inspect = TxpoolInspect::default();
-        let gas_price = self.backend.gas_price();
 
-        fn convert(tx: Arc<PoolTransaction>, gas_price: U256) -> TxpoolInspectSummary {
+        fn convert(tx: Arc<PoolTransaction>) -> TxpoolInspectSummary {
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to().copied();
+            let gas_price = tx.gas_price();
             let value = tx.value();
             let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
@@ -1519,12 +1520,12 @@ impl EthApi {
         for pending in self.pool.ready_transactions() {
             let entry = inspect.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(pending, gas_price));
+            entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
             let entry = inspect.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(queued, gas_price));
+            entry.insert(key, convert(queued));
         }
         Ok(inspect)
     }
@@ -1538,16 +1539,17 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        let gas_price = self.backend.gas_price();
-        fn convert(tx: Arc<PoolTransaction>, gas_price: U256) -> EthersTransactionRequest {
+        fn convert(tx: Arc<PoolTransaction>) -> EthersTransactionRequest {
             let from = *tx.pending_transaction.sender();
             let tx = &tx.pending_transaction.transaction;
             let to = tx.to().copied();
             let gas = tx.gas_limit();
             let value = tx.value();
-            let data = tx.data().clone();
+            let data = tx.data();
+            let data = if data.as_ref().is_empty() { None } else { Some(data.clone()) };
             let nonce = *tx.nonce();
             let chain_id = tx.chain_id();
+            let gas_price = tx.gas_price();
 
             TransactionRequest {
                 from: Some(from),
@@ -1555,7 +1557,7 @@ impl EthApi {
                 gas: Some(gas),
                 gas_price: Some(gas_price),
                 value: Some(value),
-                data: Some(data),
+                data,
                 nonce: Some(nonce),
                 chain_id: chain_id.map(Into::into),
             }
@@ -1564,12 +1566,12 @@ impl EthApi {
         for pending in self.pool.ready_transactions() {
             let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
             let key = pending.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(pending, gas_price));
+            entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
             let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
-            entry.insert(key, convert(queued, gas_price));
+            entry.insert(key, convert(queued));
         }
 
         Ok(content)

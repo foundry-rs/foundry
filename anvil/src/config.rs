@@ -14,11 +14,10 @@ use crate::{
     FeeManager,
 };
 use anvil_server::ServerConfig;
-use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
-    providers::{Middleware, Provider},
+    providers::{Http, Middleware, Provider, RetryClient},
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
@@ -34,6 +33,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use yansi::Paint;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -329,9 +329,9 @@ impl NodeConfig {
         if self.silent {
             return
         }
-        println!("{}", BANNER.green());
+        println!("{}", Paint::green(BANNER));
         println!("    {}", VERSION_MESSAGE);
-        println!("    {}", "https://github.com/foundry-rs/foundry".green());
+        println!("    {}", Paint::green("https://github.com/foundry-rs/foundry"));
 
         print!(
             r#"
@@ -375,7 +375,7 @@ Base Fee
 ==================
 {}
 "#,
-            format!("{}", self.base_fee).green()
+            Paint::green(format!("{}", self.base_fee))
         );
         print!(
             r#"
@@ -383,7 +383,7 @@ Gas Price
 ==================
 {}
 "#,
-            format!("{}", self.gas_price).green()
+            Paint::green(format!("{}", self.gas_price))
         );
 
         print!(
@@ -392,7 +392,7 @@ Gas Limit
 ==================
 {}
 "#,
-            format!("{}", self.gas_limit).green()
+            Paint::green(format!("{}", self.gas_limit))
         );
 
         if let Some(fork) = fork {
@@ -456,7 +456,8 @@ Chain ID:       {}
         {
             // TODO make provider agnostic
             let provider = Arc::new(
-                Provider::try_from(&eth_rpc_url).expect("Failed to establish provider to fork url"),
+                Provider::<RetryClient<Http>>::new_client(&eth_rpc_url, 10, 1000)
+                    .expect("Failed to establish provider to fork url"),
             );
 
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {

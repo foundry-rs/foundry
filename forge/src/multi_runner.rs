@@ -61,10 +61,12 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        foundry_utils::link(
+        foundry_utils::link_with_nonce_or_address(
             BTreeMap::from_iter(contracts),
             &mut known_contracts,
+            Default::default(),
             evm_opts.sender,
+            U256::one(),
             &mut deployable_contracts,
             |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
@@ -322,6 +324,7 @@ mod tests {
         },
     };
     use foundry_evm::trace::TraceKind;
+    use std::env;
 
     static TEST_OPTS: TestOptions = TestOptions {
         include_fuzz_tests: true,
@@ -1020,9 +1023,24 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
+
+        // test `setEnv` first, and confirm that it can correctly set environment variables,
+        // so that we can use it in subsequent `env*` tests
+        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, TEST_OPTS).unwrap();
+        let env_var_key = "_foundryCheatcodeSetEnvTestKey";
+        let env_var_val = "_foundryCheatcodeSetEnvTestVal";
+        let res = env::var(env_var_key);
+        assert!(
+            res.is_ok() && res.unwrap() == env_var_val,
+            "Test `testSetEnv` did not pass as expected.
+Reason: `setEnv` failed to set an environment variable `{}={}`",
+            env_var_key,
+            env_var_val
+        );
+
         let suite_result =
             runner.test(&Filter::new(".*", ".*", ".*cheats"), None, TEST_OPTS).unwrap();
-
+        assert!(suite_result.len() > 0);
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);

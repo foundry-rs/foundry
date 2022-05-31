@@ -8,6 +8,7 @@ mod ganache;
 mod pubsub;
 mod traces;
 mod transaction;
+mod txpool;
 pub mod utils;
 mod wsapi;
 

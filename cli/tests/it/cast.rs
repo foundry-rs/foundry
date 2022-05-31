@@ -25,6 +25,14 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("14428082"), "{}", output);
 });
 
+// tests that we can create a new wallet with keystore
+casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args(["wallet", "new", ".", "--unsafe-password", "test"]);
+    let out = cmd.stdout_lossy();
+    assert!(out.contains("Created new encrypted keystore file"));
+    assert!(out.contains("Public Address of the key"));
+});
+
 // tests that the `cast upload-signatures` command works correctly
 casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     // test no prefix is accepted as function

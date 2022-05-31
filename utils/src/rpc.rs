@@ -22,6 +22,7 @@ const ALCHEMY_MAINNET_KEYS: &[&str] = &[
     "QC55XC151AgkS3FNtWvz9VZGeu9Xd9lb",
     "pwc5rmJhrdoaSEfimoKEmsvOjKSmPDrP",
     "A5sZ85MIr4SzCMkT0zXh2eeamGIq3vGL",
+    "9VWGraLx0tMiSWx05WH-ywgSVmMxs66W",
 ];
 
 /// counts how many times a rpc endpoint was requested for _mainnet_
@@ -47,7 +48,8 @@ pub fn next_http_rpc_endpoint() -> String {
 ///
 /// This will rotate all available rpc endpoints
 pub fn next_rinkeby_http_rpc_endpoint() -> String {
-    next_rpc_endpoint("rinkeby")
+    let idx = next() % ALCHEMY_MAINNET_KEYS.len();
+    format!("https://eth-rinkeby.alchemyapi.io/v2/{}", ALCHEMY_MAINNET_KEYS[idx])
 }
 
 pub fn next_rpc_endpoint(network: &str) -> String {

@@ -34,6 +34,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         libs: vec!["lib-test".into()],
         cache: true,
         cache_path: "test-cache".into(),
+        broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
@@ -70,13 +71,13 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         block_number: 10,
         fork_block_number: Some(200),
         chain_id: Some(9999.into()),
-        gas_limit: 99_000_000.into(),
+        gas_limit: 99_000_000u64.into(),
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
         block_timestamp: 10,
         block_difficulty: 10,
-        block_gas_limit: Some(100.into()),
+        block_gas_limit: Some(100u64.into()),
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
@@ -95,6 +96,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         bytecode_hash: Default::default(),
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
+        allow_paths: vec![],
         __non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -477,7 +479,7 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
     prj.write_config(init.clone());
 
-    cmd.args(["install", "foundry-rs/forge-std"]);
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
@@ -486,7 +488,7 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test"]);
+    cmd.forge_fuse().args(["install", "dapphub/ds-test", "--no-commit"]);
     cmd.assert_non_empty_stdout();
 
     let config = cmd.forge_fuse().config();
