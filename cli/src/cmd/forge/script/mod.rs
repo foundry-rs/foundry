@@ -93,7 +93,7 @@ pub struct ScriptArgs {
     #[clap(long)]
     pub resume: bool,
 
-    #[clap(long, help = "Takes precedence over broadcast")]
+    #[clap(long, help = "Open the script in the debugger. Takes precedence over broadcast.")]
     pub debug: bool,
 
     #[clap(
