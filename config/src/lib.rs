@@ -1016,6 +1016,30 @@ impl Config {
         Ok(())
     }
 
+    /// Clears the foundry etherscan cache
+    pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_etherscan_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_etherscan_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry etherscan cache for `chain`
+    pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_etherscan_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_etherscan_cache_dir for chain: {}", chain);
+        }
+
+        Ok(())
+    }
+
     /// List the data in the foundry cache
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
         if let Some(cache_dir) = Config::foundry_rpc_cache_dir() {
