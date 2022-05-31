@@ -77,6 +77,8 @@ impl ScriptArgs {
             wait_for_receipts(future_receipts, deployment_sequence).await?;
         }
 
+        deployment_sequence.sort_receipts();
+
         println!("\n\n==========================");
         println!(
             "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",

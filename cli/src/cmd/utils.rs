@@ -297,8 +297,16 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    pub fn add_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
-        self.receipts.extend(receipts.into_iter());
+    pub fn sort_receipts(&mut self) {
+        self.receipts.sort_by(|a, b| {
+            let ablock = a.block_number.unwrap();
+            let bblock = b.block_number.unwrap();
+            if ablock == bblock {
+                a.transaction_index.cmp(&b.transaction_index)
+            } else {
+                ablock.cmp(&bblock)
+            }
+        });
     }
 
     pub fn add_pending(&mut self, tx_hash: TxHash) {
