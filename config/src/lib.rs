@@ -907,24 +907,34 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
-    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    /// Returns the path to foundry rpc cache dir `~/.foundry/cache/rpc`
+    pub fn foundry_rpc_cache_dir() -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join("rpc"))
+    }
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/rpc/<chain>`
     pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+        Some(Self::foundry_rpc_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
-    pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/etherscan`
+    pub fn foundry_etherscan_cache_dir() -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join("etherscan"))
+    }
+
+    /// Returns the path to foundry's etherscan cache dir for `chain_id`
+    /// `~/.foundry/cache/etherscan/<chain>`
+    pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_etherscan_cache_dir()?.join(chain_id.into().to_string()))
     }
 
     /// Returns the path to the cache dir of the `block` on the `chain`
-    /// `~/.foundry/cache/<chain>/<block>
+    /// `~/.foundry/cache/rpc/<chain>/<block>
     pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
-    /// `~/.foundry/cache/<chain>/<block>/storage.json`
+    /// `~/.foundry/cache/rpc/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
@@ -1008,7 +1018,7 @@ impl Config {
 
     /// List the data in the foundry cache
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
-        if let Some(cache_dir) = Config::foundry_cache_dir() {
+        if let Some(cache_dir) = Config::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
             if !cache_dir.exists() {
                 return Ok(cache)
