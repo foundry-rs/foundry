@@ -412,6 +412,7 @@ impl ScriptSequence {
 
 impl Drop for ScriptSequence {
     fn drop(&mut self) {
+        self.sort_receipts();
         self.save().expect("not able to save deployment sequence");
     }
 }
