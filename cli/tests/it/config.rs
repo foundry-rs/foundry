@@ -30,6 +30,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         __root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
+        script: "test-script".into(),
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
@@ -377,7 +378,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         vec![
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
+            "src/=src/".parse().unwrap()
         ]
     );
     // create a new lib directly in the `lib` folder
@@ -398,6 +399,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "src/=src/".parse().unwrap(),
+            "test/=test/".parse().unwrap(),
         ]
     );
 
@@ -421,6 +423,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "src/=src/".parse().unwrap(),
+            "test/=test/".parse().unwrap(),
         ]
     );
 
@@ -438,6 +441,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
             "src/=src/".parse().unwrap(),
+            "test/=test/".parse().unwrap(),
         ]
     );
 });
@@ -463,7 +467,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd
             "dep1/=lib/dep1/src/".parse().unwrap(),
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
+            "src/=src/".parse().unwrap()
         ]
     );
 });

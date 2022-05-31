@@ -15,7 +15,6 @@ use foundry_cli_test_utils::{
     ScriptOutcome, ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use foundry_utils::rpc::next_http_rpc_endpoint;
 use std::{env, fs, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
