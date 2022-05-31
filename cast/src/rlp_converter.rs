@@ -1,6 +1,6 @@
 use ethers_core::utils::rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde_json::Value;
-use std::fmt::{Debug, Display, Formatter, LowerHex};
+use std::fmt::{Debug, Display, Formatter};
 
 /// Arbitrarly nested data
 /// Item::Array(vec![]); is equivalent to []
@@ -65,7 +65,7 @@ impl FromIterator<Item> for Item {
 }
 
 // Display as hex values
-impl LowerHex for Item {
+impl Display for Item {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Item::Data(dat) => {
@@ -75,33 +75,10 @@ impl LowerHex for Item {
                 write!(f, "[")?;
                 for item in arr {
                     if arr.last() == Some(item) {
-                        write!(f, "{item:x}")?;
+                        write!(f, "{item}")?;
                     } else {
-                        write!(f, "{item:x},")?;
+                        write!(f, "{item},")?;
                     }
-                }
-                write!(f, "]")?;
-            }
-        };
-        Ok(())
-    }
-}
-
-// Tries to display as string values
-impl Display for Item {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Item::Data(dat) => {
-                write!(f, "\"{}\"", String::from_utf8_lossy(dat).into_owned())?;
-            }
-            Item::Array(arr) => {
-                write!(f, "[")?;
-                for item in arr {
-                    if arr.last() == Some(item) {
-                        write!(f, "{}", item)?;
-                    } else {
-                        write!(f, "{},", item)?;
-                    };
                 }
                 write!(f, "]")?;
             }

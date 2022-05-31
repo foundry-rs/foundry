@@ -1121,7 +1121,7 @@ impl SimpleCast {
         let striped_value = strip_0x(&value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
-        Ok(format!("{:x}", item))
+        Ok(format!("{}", item))
     }
 
     /// Converts an Ethereum address to its checksum format
