@@ -104,7 +104,11 @@ impl ScriptArgs {
                     }
                 }
 
-                self.show_traces(&script_config, &decoder, &mut result)?;
+                if self.json {
+                    self.show_json(&script_config, &decoder, &mut result)?;
+                } else {
+                    self.show_traces(&script_config, &decoder, &mut result)?;
+                }
 
                 self.handle_broadcastable_transactions(
                     &target,

@@ -101,6 +101,9 @@ pub struct ScriptArgs {
         help = "Makes sure a transaction is sent, only after its previous one has been confirmed and succeeded."
     )]
     pub slow: bool,
+
+    #[clap(long, help = "Output results in JSON format.")]
+    pub json: bool,
 }
 
 pub struct ScriptResult {
@@ -212,6 +215,15 @@ impl ScriptArgs {
             eyre::bail!("{}", Paint::red("Script failed."));
         }
 
+        Ok(())
+    }
+
+    pub fn show_json(
+        &self,
+        script_config: &ScriptConfig,
+        decoder: &CallTraceDecoder,
+        result: &mut ScriptResult,
+    ) -> eyre::Result<()> {
         Ok(())
     }
 

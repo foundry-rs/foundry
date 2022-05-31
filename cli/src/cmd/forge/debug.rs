@@ -59,6 +59,7 @@ impl DebugArgs {
             resume: false,
             debug: true,
             slow: false,
+            json: false,
         };
         script.run_script().await
     }
