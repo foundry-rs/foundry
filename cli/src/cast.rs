@@ -164,19 +164,11 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToRlp { value } => {
             let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_rlp(val)?);
+            println!("{}", SimpleCast::to_rlp(&val)?);
         }
         Subcommands::FromRlp { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::from_rlp(val)?);
-        }
-        Subcommands::HexToRlp { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::hex_to_rlp(&val)?);
-        }
-        Subcommands::HexFromRlp { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::hex_from_rlp(val)?);
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let config = Config::from(&eth);

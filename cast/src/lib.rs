@@ -1084,61 +1084,22 @@ impl SimpleCast {
         }?)
     }
 
-    /// Encodes a string or list to hexadecimal rlp
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///    assert_eq!(Cast::to_rlp("\"foundry\"".to_string()).unwrap(), "0x87666f756e647279" );
-    ///    assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
-    ///    assert_eq!(Cast::to_rlp("[\"a\"]".to_string()).unwrap(), "0xc161");
-    ///    assert_eq!(Cast::to_rlp("[\"a\",\"b\"]".to_string()).unwrap(), "0xc26162");
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn to_rlp(value: String) -> Result<String> {
-        let val = serde_json::from_str(&value)?;
-        let item = Item::value_to_item(&val, false)?;
-        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
-    }
-
-    /// Decodes rlp encoded hexadecimal string
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string()).unwrap(), "\"foundry\"");
-    ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "\"foundry\"");
-    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
-    ///     assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[\"a\"]");
-    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"a\",\"b\"]");
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn from_rlp(value: String) -> Result<String> {
-        let striped_value = strip_0x(&value);
-        let bytes = hex::decode(striped_value).expect("Could not decode hex");
-        Ok(format!("{}", rlp::decode::<Item>(&bytes).expect("RLP decoding failed")))
-    }
-
     /// Encodes hex data or list of hex data to hexadecimal rlp
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::hex_to_rlp("[]").unwrap(),"0xc0".to_string());
-    ///     assert_eq!(Cast::hex_to_rlp("0x22").unwrap(),"0x22".to_string());
-    ///     assert_eq!(Cast::hex_to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    ///     assert_eq!(Cast::hex_to_rlp( "[\"0x61\",\"62\"]").unwrap(), "0xc26162".to_string());
+    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
+    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
+    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc2f1f2".to_string());
     ///     Ok(())
     /// }
     /// ```
-    pub fn hex_to_rlp(value: &str) -> Result<String> {
+    pub fn to_rlp(value: &str) -> Result<String> {
         let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
-        let item = rlp_converter::Item::value_to_item(&val, true)?;
+        let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 
@@ -1148,18 +1109,18 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::hex_from_rlp("0xc0".to_string()).unwrap(), "[]");
-    ///     assert_eq!(Cast::hex_from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
-    ///     assert_eq!(Cast::hex_from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
-    ///     assert_eq!(Cast::hex_from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
-    ///     assert_eq!(Cast::hex_from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
+    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
+    ///     assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
+    ///     assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
+    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
     ///     Ok(())
     /// }
     /// ```
-    pub fn hex_from_rlp(value: String) -> Result<String> {
+    pub fn from_rlp(value: String) -> Result<String> {
         let striped_value = strip_0x(&value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
-        let item = rlp::decode::<Item>(&bytes)?;
+        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
         Ok(format!("{:x}", item))
     }
 

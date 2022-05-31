@@ -36,27 +36,21 @@ impl Decodable for Item {
         Ok(Item::Array(rlp.as_list()?))
     }
 }
+
 impl Item {
-    pub(crate) fn value_to_item(value: &Value, is_hex: bool) -> eyre::Result<Item> {
+    pub(crate) fn value_to_item(value: &Value) -> eyre::Result<Item> {
         return match value {
             Value::Null => Ok(Item::Data(vec![])),
             Value::Bool(_) => {
                 eyre::bail!("RLP input should not contain booleans")
             }
-            Value::Number(_) => {
-                eyre::bail!("RLP inputs should be in quotes")
-            }
+            // If a value is passed without quotes we cast it to string
+            Value::Number(n) => Ok(Item::value_to_item(&Value::String(n.to_string()))?),
             Value::String(s) => {
-                if is_hex {
-                    let hex_string = s.strip_prefix("0x").unwrap_or(s);
-                    Ok(Item::Data(hex::decode(hex_string).unwrap()))
-                } else {
-                    Ok(Item::Data(Vec::from(s.as_bytes())))
-                }
+                let hex_string = s.strip_prefix("0x").unwrap_or(s);
+                Ok(Item::Data(hex::decode(hex_string).expect("Could not decode hex")))
             }
-            Value::Array(values) => {
-                values.iter().map(|val| Item::value_to_item(val, is_hex)).collect()
-            }
+            Value::Array(values) => values.iter().map(|val| Item::value_to_item(val)).collect(),
             Value::Object(_) => {
                 eyre::bail!("RLP input can not contain objects")
             }
@@ -174,37 +168,6 @@ mod test {
     }
 
     #[test]
-    fn deserialize_from_str_test() -> JsonResult<()> {
-        let parameters = vec![
-            (1, "[]", Item::Array(vec![])),
-            (2, "[\"\"]", Item::Array(vec![Item::Data(vec![])])),
-            (3, "[\"dog\"]", Item::Array(vec![Item::Data(vec![0x64, 0x6f, 0x67])])),
-            (
-                4,
-                "[[\"dog\"]]",
-                Item::Array(vec![Item::Array(vec![Item::Data(vec![0x64, 0x6f, 0x67])])]),
-            ),
-            (
-                5,
-                "[\"dog\",\"cat\"]",
-                Item::Array(vec![
-                    Item::Data(vec![0x64, 0x6f, 0x67]),
-                    Item::Data(vec![0x63, 0x61, 0x74]),
-                ]),
-            ),
-            (6, "[[],[[]],[[],[[]]]]", array_von_neuman()),
-        ];
-        for params in parameters {
-            let val = serde_json::from_str(params.1)?;
-            let item = Item::value_to_item(&val, false).unwrap();
-            assert_eq!(item, params.2);
-            println!("case {} validated", params.0)
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn deserialize_from_str_test_hex() -> JsonResult<()> {
         let parameters = vec![
             (1, "[\"\"]", Item::Array(vec![Item::Data(vec![])])),
@@ -226,7 +189,7 @@ mod test {
         ];
         for params in parameters {
             let val = serde_json::from_str(params.1)?;
-            let item = Item::value_to_item(&val, true).unwrap();
+            let item = Item::value_to_item(&val).unwrap();
             assert_eq!(item, params.2);
             println!("case {} validated", params.0);
         }
