@@ -1,12 +1,16 @@
+use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
+    prelude::{Http, Provider, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
+    utils::format_units,
 };
 use forge::executor::{opts::EvmOpts, Fork, SpecId};
 use foundry_config::{cache::StorageCachingConfig, Config};
 use std::{
     future::Future,
+    ops::Mul,
     path::{Path, PathBuf},
     process::{Command, Output},
     str::FromStr,
@@ -246,6 +250,48 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
+}
+
+/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
+/// node) and with the default, `7s` if otherwise.
+pub fn get_http_provider(url: &str) -> Provider<Http> {
+    let provider = Provider::try_from(url).expect("Bad fork provider.");
+
+    if url.contains("127.0.0.1") || url.contains("localhost") {
+        provider.interval(Duration::from_millis(100))
+    } else {
+        provider
+    }
+}
+
+pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<()> {
+    let mut contract_address = "".to_string();
+    if let Some(addr) = receipt.contract_address {
+        contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
+    }
+
+    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_price = receipt.effective_gas_price.expect("no gas price");
+    let paid = format_units(gas_used.mul(gas_price), 18)?;
+
+    let check = if receipt.status.unwrap().is_zero() {
+        Emoji("❌ ", " [Failed] ")
+    } else {
+        Emoji("✅ ", " [Success] ")
+    };
+
+    println!(
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {} ETH ({} gas * {} gwei)",
+        check,
+        hex::encode(receipt.transaction_hash.as_bytes()),
+        contract_address,
+        receipt.block_number.expect("no block_number"),
+        nonce,
+        paid.trim_end_matches('0'),
+        gas_used,
+        format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
+    );
+    Ok(())
 }
 
 /// Useful extensions to [`std::process::Command`].

@@ -1,4 +1,4 @@
-use crate::TestFilter;
+use crate::{deploy_create2_deployer, TestFilter};
 use ethers::{
     abi::{Abi, Function},
     types::{Address, Bytes, Log, U256},
@@ -273,12 +273,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_balance(address, self.initial_balance);
         self.executor.set_balance(self.sender, self.initial_balance);
 
+        deploy_create2_deployer(&mut self.executor)?;
+
         // Optionally call the `setUp` function
         Ok(if setup {
             tracing::trace!("setting up");
             let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
                 .executor
-                .setup(address)
+                .setup(None, address)
             {
                 Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
                 Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {

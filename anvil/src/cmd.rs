@@ -81,7 +81,7 @@ pub struct NodeArgs {
     #[clap(
         short,
         long,
-        alias = "blockTime",
+        visible_alias = "blockTime",
         help = "Block time in seconds for interval mining.",
         name = "block-time",
         value_name = "SECONDS"
@@ -90,7 +90,7 @@ pub struct NodeArgs {
 
     #[clap(
         long,
-        alias = "no-mine",
+        visible_alias = "no-mine",
         help = "Disable auto and interval mining, and mine on demand instead.",
         conflicts_with = "block-time"
     )]

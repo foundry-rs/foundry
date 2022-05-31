@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
 };
 use ethers::{
@@ -162,6 +163,7 @@ impl CallTraceDecoder {
             labels: [
                 (CHEATCODE_ADDRESS, "VM".to_string()),
                 (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+                (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
             ]
             .into(),
             functions,
@@ -241,6 +243,8 @@ impl CallTraceDecoder {
                 if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[0..4]) {
                         node.decode_function(funcs, &self.labels, &self.errors);
+                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
+                        node.trace.data = RawOrDecodedCall::Decoded("create2".to_string(), vec![]);
                     }
                 } else {
                     node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());

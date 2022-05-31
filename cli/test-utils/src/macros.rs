@@ -46,6 +46,20 @@ macro_rules! forgetest {
 }
 
 #[macro_export]
+macro_rules! forgetest_async {
+    ($test:ident, $fun:expr) => {
+        $crate::forgetest_async!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
+        #[tokio::test(flavor = "multi_thread")]
+        async fn $test() {
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $fun(prj, cmd).await;
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! casttest {
     ($test:ident, $fun:expr) => {
         $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
@@ -170,7 +184,7 @@ macro_rules! forgetest_external {
             ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
 
-            let next_eth_rpc_url = foundry_utils::rpc::next_http_rpc_endpoint();
+            let next_eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
             if $fork_block > 0 {
                 cmd.set_env("FOUNDRY_ETH_RPC_URL", next_eth_rpc_url);
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));

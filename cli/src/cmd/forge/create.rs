@@ -71,7 +71,16 @@ This is automatically enabled for common networks without EIP1559."#
     gas_price: Option<U256>,
 
     #[clap(
-        long = "gas-limit",
+        long,
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Nonce for the transaction.",
+        parse(try_from_str = parse_u256),
+        value_name = "NONCE"
+    )]
+    nonce: Option<U256>,
+
+    #[clap(
+    long = "gas-limit",
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas limit for the transaction.",
         env = "ETH_GAS_LIMIT",
@@ -232,6 +241,11 @@ impl CreateArgs {
         // set gas limit if specified
         if let Some(gas_limit) = self.gas_limit {
             deployer.tx.set_gas(gas_limit);
+        }
+
+        // set nonce if specified
+        if let Some(nonce) = self.nonce {
+            deployer.tx.set_nonce(nonce);
         }
 
         // set priority fee if specified
