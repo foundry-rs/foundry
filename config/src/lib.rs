@@ -1771,6 +1771,10 @@ impl<'a> RemappingsProvider<'a> {
         // use auto detection for all libs
         for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
         {
+            // this is an additional safety check for weird auto-detected remappings
+            if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                continue
+            }
             insert_closest(&mut lib_remappings, r.name, r.path.into());
         }
 
