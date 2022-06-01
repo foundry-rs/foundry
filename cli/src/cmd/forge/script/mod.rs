@@ -40,6 +40,7 @@ use std::{
     time::Duration,
 };
 
+use cast::revm::Return;
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
@@ -122,6 +123,14 @@ pub struct ScriptResult {
 pub struct JsonResult {
     pub logs: Vec<String>,
     pub gas_used: u64,
+    // pub returned_result: Vec<ReturnedResult>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ReturnedResult {
+    pub label: String,
+    pub internal_type: String,
+    pub value: String,
 }
 
 impl ScriptArgs {
@@ -230,8 +239,36 @@ impl ScriptArgs {
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
     ) -> eyre::Result<()> {
+        let func = script_config.called_function.as_ref().expect("There should be a function.");
+
+        match func.decode_output(&result.returned) {
+            Ok(decoded) => {
+                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+
+                    let label = if !output.name.is_empty() {
+                        output.name.to_string()
+                    } else {
+                        index.to_string()
+                    };
+                    // println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+                }
+            }
+            Err(_) => {
+                println!("{:x?}", (&result.returned));
+            }
+        }
+
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas };
+        let output = JsonResult {
+            logs: console_logs,
+            gas_used: result.gas,
+            // returned_result: ReturnedResult {
+            //     label: label.trim_end().to_string(),
+            //     internal_type: internal_type.to_string(),
+            //     value: format_token(token).to_string(),
+            // },
+        };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
