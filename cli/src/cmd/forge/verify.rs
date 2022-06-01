@@ -114,13 +114,14 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err("Failed to submit contract verification")?;
 
                 if resp.status == "0" {
-                    if resp.message == "Contract source code already verified" {
+                    if resp.result == "Contract source code already verified" {
                         return Ok(None)
                     }
 
@@ -159,6 +160,8 @@ impl VerifyArgs {
                 };
                 return check_args.run().await
             }
+        } else {
+            println!("Contract source code already verified");
         }
 
         Ok(())
