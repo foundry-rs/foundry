@@ -1,8 +1,5 @@
 use crate::{
-    cmd::{
-        forge::script::receipts::{wait_for_pending, wait_for_receipts},
-        ScriptSequence, VerifyBundle,
-    },
+    cmd::{forge::script::receipts::wait_for_receipts, ScriptSequence, VerifyBundle},
     opts::WalletType,
     utils::get_http_provider,
 };
@@ -22,8 +19,6 @@ impl ScriptArgs {
         fork_url: &str,
     ) -> eyre::Result<()> {
         let provider = get_http_provider(fork_url);
-
-        wait_for_pending(&provider, deployment_sequence).await?;
 
         if deployment_sequence.receipts.len() < deployment_sequence.transactions.len() {
             let required_addresses = deployment_sequence
