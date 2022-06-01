@@ -36,7 +36,7 @@ use anvil_core::{
     },
     types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
 };
-use anvil_rpc::response::ResponseResult;
+use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
     prelude::TxpoolInspect,
@@ -1143,7 +1143,8 @@ impl EthApi {
         _opts: GethDebugTracingOptions,
     ) -> Result<Vec<Trace>> {
         node_info!("debug_traceTransaction");
-        Err(BlockchainError::RpcUnimplemented)
+        // return `MethodNotFound` until implemented <https://github.com/foundry-rs/foundry/issues/1737>
+        Err(RpcError::method_not_found().into())
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

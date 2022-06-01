@@ -322,6 +322,7 @@ mod tests {
         },
     };
     use foundry_evm::trace::TraceKind;
+    use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
@@ -1014,8 +1015,23 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
 
+        // test `setEnv` first, and confirm that it can correctly set environment variables,
+        // so that we can use it in subsequent `env*` tests
+        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, true).unwrap();
+        let env_var_key = "_foundryCheatcodeSetEnvTestKey";
+        let env_var_val = "_foundryCheatcodeSetEnvTestVal";
+        let res = env::var(env_var_key);
+        assert!(
+            res.is_ok() && res.unwrap() == env_var_val,
+            "Test `testSetEnv` did not pass as expected.
+Reason: `setEnv` failed to set an environment variable `{}={}`",
+            env_var_key,
+            env_var_val
+        );
+
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
+        assert!(suite_result.len() > 0);
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);

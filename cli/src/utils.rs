@@ -304,6 +304,7 @@ pub trait CommandUtils {
 }
 
 impl CommandUtils for Command {
+    #[track_caller]
     fn exec(&mut self) -> eyre::Result<Output> {
         let output = self.output()?;
         if !&output.status.success() {
@@ -313,6 +314,7 @@ impl CommandUtils for Command {
         Ok(output)
     }
 
+    #[track_caller]
     fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
         let output = self.exec()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
