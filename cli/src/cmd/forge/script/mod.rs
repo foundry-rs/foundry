@@ -40,7 +40,6 @@ use std::{
     time::Duration,
 };
 
-use cast::revm::Return;
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
