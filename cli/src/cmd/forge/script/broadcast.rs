@@ -1,16 +1,17 @@
 use crate::{
     cmd::{
-        forge::script::receipts::{get_pending_txes, maybe_has_receipt, wait_for_receipts},
+        forge::script::receipts::{wait_for_pending, wait_for_receipts},
         ScriptSequence,
     },
     opts::WalletType,
-    utils::{get_http_provider, print_receipt},
+    utils::get_http_provider,
 };
 use ethers::{
     prelude::{SignerMiddleware, TxHash},
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
 };
+use std::fmt;
 
 use super::*;
 
@@ -22,59 +23,52 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         let provider = get_http_provider(fork_url);
 
-        let required_addresses = deployment_sequence
-            .transactions
-            .iter()
-            .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
-            .collect();
+        wait_for_pending(&provider, deployment_sequence).await?;
 
-        let local_wallets = self.wallets.find_all(&provider, required_addresses).await?;
-        if local_wallets.is_empty() {
-            eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
-        }
+        if deployment_sequence.receipts.len() < deployment_sequence.transactions.len() {
+            let required_addresses = deployment_sequence
+                .transactions
+                .iter()
+                .skip(deployment_sequence.receipts.len())
+                .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
+                .collect();
 
-        let transactions = deployment_sequence.transactions.clone();
+            let local_wallets = self.wallets.find_all(&provider, required_addresses).await?;
+            if local_wallets.is_empty() {
+                eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
+            }
 
-        // Iterate through transactions, matching the `from` field with the associated
-        // wallet. Then send the transaction. Panics if we find a unknown `from`
-        let sequence =
-            transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
+            // We only wait for a transaction receipt before sending the next transaction, if there
+            // is more than one signer. There would be no way of assuring their order
+            // otherwise.
+            let sequential_broadcast = local_wallets.len() != 1 || self.slow;
+
+            let transactions = deployment_sequence.transactions.clone();
+
+            // Iterate through transactions, matching the `from` field with the associated
+            // wallet. Then send the transaction. Panics if we find a unknown `from`
+            let sequence = transactions.into_iter().map(|tx| {
                 let from = *tx.from().expect("No sender for onchain transaction!");
                 let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
                 (tx, signer)
             });
 
-        let pending_txes = get_pending_txes(&deployment_sequence.pending, fork_url).await;
-        let mut future_receipts = vec![];
+            let mut future_receipts = vec![];
 
-        // We only wait for a transaction receipt before sending the next transaction, if there is
-        // more than one signer. There would be no way of assuring their order otherwise.
-        let sequential_broadcast = local_wallets.len() != 1 || self.slow;
-        for payload in sequence {
-            let (tx, signer) = payload;
+            println!("##\nSending transactions.");
+            for (tx, signer) in sequence {
+                let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
-            // pending transactions from a previous failed run can be retrieve when passing
-            // `--resume`
-            match maybe_has_receipt(&tx, &pending_txes, fork_url).await {
-                Some(receipt) => {
-                    print_receipt(&receipt, *tx.nonce().unwrap())?;
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
-                    deployment_sequence.add_receipt(receipt);
-                }
-                None => {
-                    let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
-
-                    if sequential_broadcast {
-                        wait_for_receipts(vec![receipt], deployment_sequence).await?;
-                    } else {
-                        future_receipts.push(receipt);
-                    }
+                if sequential_broadcast {
+                    wait_for_receipts(vec![receipt], deployment_sequence).await?;
+                } else {
+                    future_receipts.push(receipt);
                 }
             }
-        }
 
-        if !sequential_broadcast {
-            wait_for_receipts(future_receipts, deployment_sequence).await.unwrap();
+            if !sequential_broadcast {
+                wait_for_receipts(future_receipts, deployment_sequence).await?;
+            }
         }
 
         println!("\n\n==========================");
@@ -168,10 +162,21 @@ impl ScriptArgs {
     }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum BroadcastError {
     Simple(String),
     ErrorWithTxHash(String, TxHash),
+}
+
+impl fmt::Display for BroadcastError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BroadcastError::Simple(err) => write!(f, "{err}"),
+            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
+                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
+            }
+        }
+    }
 }
 
 /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the

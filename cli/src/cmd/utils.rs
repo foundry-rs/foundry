@@ -256,7 +256,9 @@ impl ScriptSequence {
     }
 
     pub fn add_pending(&mut self, tx_hash: TxHash) {
-        self.pending.push(tx_hash);
+        if !self.pending.contains(&tx_hash) {
+            self.pending.push(tx_hash);
+        }
     }
 
     pub fn remove_pending(&mut self, tx_hash: TxHash) {
