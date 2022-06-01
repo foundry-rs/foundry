@@ -1597,14 +1597,24 @@ impl<'a> Provider for DappHardhatDirProvider<'a> {
                 .to_string()
                 .into(),
         );
-        dict.insert(
-            "libs".to_string(),
-            ProjectPathsConfig::find_libs(self.0)
-                .into_iter()
-                .map(|lib| lib.file_name().unwrap().to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .into(),
-        );
+
+        // detect libs folders:
+        //   if `lib` _and_ `node_modules` exists: include both
+        //   if only `node_modules` exists: include `node_modules`
+        //   include `lib` otherwise
+        let mut libs = vec![];
+        let node_modules = self.0.join("node_modules");
+        let lib = self.0.join("lib");
+        if node_modules.exists() {
+            if lib.exists() {
+                libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+            }
+            libs.push(node_modules.file_name().unwrap().to_string_lossy().to_string());
+        } else {
+            libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+        }
+
+        dict.insert("libs".to_string(), libs.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -1981,6 +1991,24 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_default_libs() {
+        figment::Jail::expect_with(|jail| {
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib")]);
+
+            fs::create_dir_all(jail.directory().join("node_modules")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules")]);
+
+            fs::create_dir_all(jail.directory().join("lib")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
             Ok(())
         });
     }
