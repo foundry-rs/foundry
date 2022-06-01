@@ -40,6 +40,7 @@ use std::{
     time::Duration,
 };
 
+use serde::{Deserialize, Serialize};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -115,6 +116,12 @@ pub struct ScriptResult {
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsonResult {
+    pub logs: Vec<String>,
+    pub gas_used: u64,
 }
 
 impl ScriptArgs {
@@ -221,15 +228,12 @@ impl ScriptArgs {
     pub fn show_json(
         &self,
         script_config: &ScriptConfig,
-        decoder: &CallTraceDecoder,
         result: &mut ScriptResult,
     ) -> eyre::Result<()> {
         let console_logs = decode_console_logs(&result.logs);
-        if !console_logs.is_empty() {
-            println!("\n== Logs ==");
-            let j = serde_json::to_string(&console_logs)?;
-            println!("{}", j);
-        }
+        let output = JsonResult { logs: console_logs, gas_used: result.gas };
+        let j = serde_json::to_string(&output)?;
+        println!("{}", j);
 
         Ok(())
     }

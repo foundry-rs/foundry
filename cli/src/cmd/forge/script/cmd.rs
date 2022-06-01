@@ -105,7 +105,7 @@ impl ScriptArgs {
                 }
 
                 if self.json {
-                    self.show_json(&script_config, &decoder, &mut result)?;
+                    self.show_json(&script_config, &mut result)?;
                 } else {
                     self.show_traces(&script_config, &decoder, &mut result)?;
                 }
