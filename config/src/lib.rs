@@ -1049,10 +1049,10 @@ impl Config {
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    cache.chains.push(ChainCache {
-                        name: entry.file_name().to_string_lossy().into_owned(),
-                        blocks: Self::get_cached_blocks(&entry.path())?,
-                    })
+                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
+                        Err(_) => continue,
+                    }
                 }
                 Ok(cache)
             } else {
@@ -1065,9 +1065,18 @@ impl Config {
 
     /// List the cached data for `chain`
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
+            Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
+            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+        };
+
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
             let blocks = Self::get_cached_blocks(&cache_dir)?;
-            Ok(ChainCache { name: chain.to_string(), blocks })
+            Ok(ChainCache {
+                name: chain.to_string(),
+                blocks,
+                block_explorer: block_explorer_data_size,
+            })
         } else {
             eyre::bail!("failed to get foundry_chain_cache_dir");
         }
@@ -1079,11 +1088,7 @@ impl Config {
         if !chain_path.exists() {
             return Ok(blocks)
         }
-        for block in chain_path
-            .read_dir()?
-            .flatten()
-            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
-        {
+        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
             let filepath = block.path().join("storage.json");
             blocks.push((
                 block.file_name().to_string_lossy().into_owned(),
@@ -1091,6 +1096,26 @@ impl Config {
             ));
         }
         Ok(blocks)
+    }
+
+    //The path provided to this function should point to the etherscan cache for a chain
+    fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
+        if !chain_path.exists() {
+            return Ok(0)
+        }
+
+        fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
+            dir.try_fold(0, |acc, file| {
+                let file = file?;
+                let size = match file.metadata()? {
+                    data if data.is_dir() => dir_size_recursive(fs::read_dir(file.path())?)?,
+                    data => data.len(),
+                };
+                Ok(acc + size)
+            })
+        }
+
+        dir_size_recursive(fs::read_dir(chain_path)?)
     }
 }
 
@@ -2940,6 +2965,41 @@ mod tests {
         assert_eq!(block1.1, 100);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn list_etherscan_cache() -> eyre::Result<()> {
+        fn fake_etherscan_cache(chain_path: &Path, address: &str, size_bytes: usize) {
+            let metadata_path = chain_path.join("sources");
+            let abi_path = chain_path.join("abi");
+            match fs::create_dir(metadata_path.as_path()) {
+                _ => {}
+            }
+            match fs::create_dir(abi_path.as_path()) {
+                _ => {}
+            }
+            let metadata_file_path = metadata_path.join(address);
+            let mut metadata_file = File::create(metadata_file_path).unwrap();
+            writeln!(metadata_file, "{}", vec![' '; size_bytes / 2 - 1].iter().collect::<String>())
+                .unwrap();
+
+            let abi_file_path = abi_path.join(address);
+            let mut abi_file = File::create(abi_file_path).unwrap();
+            writeln!(abi_file, "{}", vec![' '; size_bytes / 2 - 1].iter().collect::<String>())
+                .unwrap();
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_etherscan_cache(chain_dir.path(), "1", 100);
+        fake_etherscan_cache(chain_dir.path(), "2", 500);
+
+        let result = Config::get_cached_block_explorer_data(chain_dir.path())?;
+
+        assert_eq!(result, 600);
 
         chain_dir.close()?;
         Ok(())

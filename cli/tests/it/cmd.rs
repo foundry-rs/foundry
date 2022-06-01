@@ -37,6 +37,39 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_cleaned();
 });
 
+// checks that `cache ls` can be invoked and displays the foundry cache
+forgetest_ignore!(can_cache_ls, |_: TestProject, mut cmd: TestCommand| {
+    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+    let block1 = 100;
+    let block2 = 101;
+
+    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+    let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
+    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+    let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+    fs::create_dir_all(block1_cache_dir).unwrap();
+    fs::write(block1_file, "{}").unwrap();
+    fs::create_dir_all(block2_cache_dir).unwrap();
+    fs::write(block2_file, "{}").unwrap();
+    fs::create_dir_all(etherscan_cache_dir).unwrap();
+
+    cmd.args(["cache", "ls"]);
+    let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
+    let output_lines = output_string.split("\n").collect::<Vec<_>>();
+    println!("{output_string}");
+
+    assert_eq!(output_lines.len(), 6);
+    assert!(output_lines[0].starts_with("-️ mainnet ("));
+    assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
+    assert_eq!(output_lines[2], "");
+    assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
+    assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
+    assert_eq!(output_lines[5], "");
+
+    Config::clean_foundry_cache().unwrap();
+});
+
 // checks that `cache clean` can be invoked and cleans the foundry cache
 // this test is not isolated and modifies ~ so it is ignored
 forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
