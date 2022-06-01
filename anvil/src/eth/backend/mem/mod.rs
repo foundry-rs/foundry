@@ -22,7 +22,7 @@ use crate::{
         in_memory_db::MemDb,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::AccountInfo,
+    revm::{db::DatabaseRef, AccountInfo},
 };
 use anvil_core::{
     eth::{
@@ -947,15 +947,36 @@ impl Backend {
         }
     }
 
+    /// Helper function to execute a closure with the database at a specific block
+    pub fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
+    where
+        F: FnOnce(Box<dyn DatabaseRef + '_>) -> T,
+    {
+        let block_number: U256 = self.convert_block_number(block_number).into();
+
+        if block_number < self.env.read().block.number {
+            let states = self.states.read();
+            if let Some(state) =
+                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            {
+                return f(Box::new(state))
+            }
+        }
+        let db = self.db.read();
+        f(Box::new(&*db))
+    }
+
     pub async fn storage_at(
         &self,
         address: Address,
         index: U256,
-        _number: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<H256, BlockchainError> {
-        trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-        let val = self.db.read().storage(address, index);
-        Ok(u256_to_h256_be(val))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
+            let val = db.storage(address, index);
+            Ok(u256_to_h256_be(val))
+        })
     }
 
     /// Returns the code of the address
@@ -965,16 +986,18 @@ impl Backend {
     pub async fn get_code(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
-        trace!(target: "backend", "get code for {:?}", address);
-        let account = self.db.read().basic(address);
-        let code = if let Some(code) = account.code {
-            code.into()
-        } else {
-            self.db.read().code_by_hash(account.code_hash).into()
-        };
-        Ok(code)
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get code for {:?}", address);
+            let account = db.basic(address);
+            let code = if let Some(code) = account.code {
+                code.into()
+            } else {
+                db.code_by_hash(account.code_hash).into()
+            };
+            Ok(code)
+        })
     }
 
     /// Returns the balance of the address
@@ -983,10 +1006,12 @@ impl Backend {
     pub async fn get_balance(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        trace!(target: "backend", "get balance for {:?}", address);
-        Ok(self.current_balance(address))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get balance for {:?}", address);
+            Ok(db.basic(address).balance)
+        })
     }
 
     /// Returns the nonce of the address
@@ -995,10 +1020,12 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        trace!(target: "backend", "get nonce for {:?}", address);
-        Ok(self.current_nonce(address))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get nonce for {:?}", address);
+            Ok(db.basic(address).nonce.into())
+        })
     }
 
     /// Returns the traces for the given transaction

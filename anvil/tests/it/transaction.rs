@@ -752,3 +752,37 @@ async fn includes_pending_tx_for_transaction_count() {
         .unwrap();
     assert_eq!(nonce, tx_count.into());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_historic_info() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let nonce_pre = provider
+        .get_transaction_count(from, Some(BlockNumber::Number(0.into()).into()))
+        .await
+        .unwrap();
+
+    let nonce_post =
+        provider.get_transaction_count(from, Some(BlockNumber::Latest.into())).await.unwrap();
+
+    assert!(nonce_pre < nonce_post);
+
+    let balance_pre =
+        provider.get_balance(from, Some(BlockNumber::Number(0.into()).into())).await.unwrap();
+
+    let balance_post = provider.get_balance(from, Some(BlockNumber::Latest.into())).await.unwrap();
+
+    assert!(balance_post < balance_pre);
+
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance_pre.saturating_add(amount), to_balance);
+}
