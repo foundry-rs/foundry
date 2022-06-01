@@ -166,15 +166,6 @@ macro_rules! writeln_chunk {
     }};
 }
 
-macro_rules! format_chunk {
-    ($self:ident, $loc:expr) => {{
-        format_chunk!($self, $loc, "")
-    }};
-    ($self:ident, $loc:expr, $($arg:tt)*) => {{
-        $self.format_chunk($loc, format_args!($($arg)*))
-    }};
-}
-
 macro_rules! buf_fn {
     ($vis:vis fn $name:ident(&self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
         $vis fn $name(&self, $($arg_name : $arg_ty),*) $(-> $ret)? {
@@ -426,17 +417,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), "{chunk}")
     }
 
-    fn format_chunk(
-        &mut self,
-        byte_end: usize,
-        chunk: impl std::fmt::Display,
-    ) -> Result<String, VError> {
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
-        self.write_chunk(byte_end, chunk)?;
-        let buf = self.temp_bufs.pop().unwrap();
-        Ok(buf.w)
-    }
-
     fn indented(
         &mut self,
         delta: usize,
@@ -461,77 +441,124 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn write_operator_expr(
+    // TODO probably just replace with chunk groups
+    fn write_spaced_chunk(
+        &mut self,
+        byte_end: usize,
+        chunk: impl std::fmt::Display,
+    ) -> Result<(), VError> {
+        let chunk = chunk.to_string();
+        let indented = if !self.is_beginning_of_line() {
+            if self.will_it_fit(format!(" {chunk}")) {
+                write_chunk!(self, byte_end, " ")?;
+                false
+            } else {
+                writeln_chunk!(self, byte_end)?;
+                self.indent(1);
+                true
+            }
+        } else {
+            false
+        };
+        write!(self.buf(), "{chunk}")?;
+        if indented {
+            self.dedent(1);
+        }
+        Ok(())
+    }
+
+    fn visit_operator_expr(
         &mut self,
         expr: &mut (impl Operator + Visitable + CodeLocation),
     ) -> Result<(), VError> {
         let op = expr.operator().unwrap();
         let has_space_around = expr.has_space_around();
-        let space = if has_space_around { " " } else { "" };
-        let loc = expr.loc();
+        let op_precedence = expr.precedence();
 
+        // check if there is a left side of the expression
         if let Some(left) = expr.left_mut() {
-            self.write_postfix_comments_before(left.loc().start())?;
-            let left_side =
-                format!("{}{}{}", self.visit_to_string(left)?, space, expr.operator().unwrap());
-            // we don't need to use write_chunk! from now on because of the call to visit_to_string
-            // which should collect missing tokens
-            if !self.is_beginning_of_line() {
-                if self.will_it_fit(&left_side) {
-                    write!(self.buf(), " ")?;
+            let left_loc = left.loc();
+            self.write_postfix_comments_before(left_loc.start())?;
+
+            let left_expr = self.visit_to_string(left)?;
+            // check if the expression needs parentheses
+            if !left.precedence().is_evaluated_first(op_precedence) {
+                if self.will_it_fit(format!("({left_expr}) {op}")) {
+                    write!(self.buf(), "(")?;
+                    write_chunk!(self, left_loc.end(), "{left_expr}")?;
+                    write!(self.buf(), ")")?;
                 } else {
-                    writeln!(self.buf())?;
+                    writeln!(self.buf(), "(")?;
+                    self.indented(1, |fmt| {
+                        writeln_chunk!(fmt, left_loc.end(), "{left_expr}")?;
+                        Ok(())
+                    })?;
+                    write!(self.buf(), ")")?;
                 }
-            }
-            write!(self.buf(), "{}", left_side)?;
-
-            if let Some(right) = expr.right_mut() {
-                self.write_postfix_comments_before(right.loc().start())?;
-                let right_side = self.visit_to_string(right)?;
-                if !self.is_beginning_of_line() {
-                    if self.will_it_fit(&right_side) {
-                        write!(self.buf(), " ")?;
-                    } else {
-                        writeln!(self.buf())?;
-                    }
+                if has_space_around {
+                    write!(self.buf(), " ")?;
                 }
-                write!(self.buf(), "{}", right_side)?;
-            }
-        } else if let Some(right) = expr.right_mut() {
-            self.write_postfix_comments_before(right.loc().start())?;
-            if has_space_around {
-                if !self.is_beginning_of_line() {
-                    if self.will_chunk_fit(loc.start(), op) {
-                        write_chunk!(self, loc.start(), " ")?;
-                    } else {
-                        writeln_chunk!(self, loc.start())?;
-                    }
-                }
-                write!(self.buf(), "{}", op)?;
-
-                let right_side = self.visit_to_string(right)?;
-                if !self.is_beginning_of_line() {
-                    if self.will_it_fit(&right_side) {
-                        write!(self.buf(), " ")?;
-                    } else {
-                        writeln!(self.buf())?;
-                    }
-                }
-                write!(self.buf(), "{}", right_side)?;
+                write!(self.buf(), "{op}")?;
+            } else if has_space_around {
+                write_chunk!(self, left_loc.end(), "{left_expr}")?;
+                self.write_spaced_chunk(left_loc.end(), op)?;
             } else {
-                let right_side = format!(
-                    "{}{}",
-                    format_chunk!(self, right.loc().start(), "{}", op)?,
-                    self.visit_to_string(right)?
-                );
-                if !self.is_beginning_of_line() {
-                    if self.will_it_fit(&right_side) {
-                        write!(self.buf(), " ")?;
+                write_chunk!(self, left_loc.end(), "{left_expr}{op}")?;
+            }
+
+            // check if this is a binary operation
+            if let Some(right) = expr.right_mut() {
+                assert!(has_space_around, "Only unary operators don't have spacing");
+
+                let right_loc = right.loc();
+                self.write_postfix_comments_before(right_loc.start())?;
+
+                let right_expr = self.visit_to_string(right)?;
+                // check if the right side of the expression needs parentheses
+                if op_precedence.is_evaluated_first(right.precedence()) {
+                    if self.will_it_fit(format!(" ({right_expr})")) {
+                        write!(self.buf(), " (")?;
+                        write_chunk!(self, right_loc.end(), "{right_expr}")?;
+                        write!(self.buf(), ")")?;
                     } else {
-                        writeln!(self.buf())?;
+                        writeln!(self.buf(), " (")?;
+                        self.indented(1, |fmt| {
+                            writeln_chunk!(fmt, right_loc.end(), "{right_expr}")?;
+                            Ok(())
+                        })?;
+                        write!(self.buf(), ")")?;
                     }
+                } else {
+                    self.write_spaced_chunk(right_loc.end(), right_expr)?;
                 }
-                write!(self.buf(), "{}", right_side)?;
+            }
+        // check if this is a unary prefix operation
+        } else if let Some(right) = expr.right_mut() {
+            let right_loc = right.loc();
+            self.write_postfix_comments_before(right.loc().start())?;
+
+            write_chunk!(self, right_loc.start(), "{op}")?;
+
+            let right_expr = self.visit_to_string(right)?;
+            // check if the expression needs parentheses
+            if op_precedence.is_evaluated_first(right.precedence()) {
+                let space = if has_space_around { " " } else { "" };
+                if self.will_it_fit(format!("{space}({right_expr})")) {
+                    write!(self.buf(), "{space}(")?;
+                    write_chunk!(self, right_loc.end(), "{right_expr}")?;
+                    write!(self.buf(), ")")?;
+                } else {
+                    writeln!(self.buf(), "{space}(")?;
+                    self.indented(1, |fmt| {
+                        writeln_chunk!(fmt, right_loc.end(), "{right_expr}")?;
+                        Ok(())
+                    })?;
+                    write!(self.buf(), ")")?;
+                }
+            } else if has_space_around {
+                self.write_spaced_chunk(right_loc.end(), right_expr)?;
+            } else {
+                write_chunk!(self, right_loc.end(), "{right_expr}")?;
             }
         }
         Ok(())
@@ -887,6 +914,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 write!(self.buf(), "]")?;
             }
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::Complement(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::UnaryMinus(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => self.visit_operator_expr(expr)?,
             _ => self.visit_source(loc)?,
         };
 
@@ -1580,4 +1634,5 @@ mod tests {
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
     test_directory! { SimpleComments }
+    test_directory! { ExpressionPrecedence }
 }

@@ -1,6 +1,6 @@
 use solang_parser::pt::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Precedence {
     Literal,
@@ -22,8 +22,16 @@ pub enum Precedence {
 }
 
 impl Precedence {
-    pub fn is_left_to_right(self) -> bool {
+    fn is_left_to_right(self) -> bool {
         !matches!(self, Self::P03)
+    }
+
+    pub fn is_evaluated_first(self, rhs: Precedence) -> bool {
+        if self == rhs {
+            self.is_left_to_right()
+        } else {
+            self < rhs
+        }
     }
 }
 
