@@ -92,6 +92,8 @@ pub struct Config {
     pub src: PathBuf,
     /// path of the test dir
     pub test: PathBuf,
+    /// path of the script dir
+    pub script: PathBuf,
     /// path to where artifacts shut be written to
     pub out: PathBuf,
     /// all library folders to include, `lib`, `node_modules`
@@ -603,6 +605,8 @@ impl Config {
             .iter()
             .map(|m| m.clone().into())
             .chain(self.get_source_dir_remapping())
+            .chain(self.get_test_dir_remapping())
+            .chain(self.get_script_dir_remapping())
             .collect()
     }
 
@@ -613,17 +617,22 @@ impl Config {
     ///
     /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
     pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
-        if let Some(src_dir_name) =
-            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
-        {
-            let mut src_remapping = Remapping {
-                name: format!("{src_dir_name}/"),
-                path: format!("{}", self.src.display()),
-            };
-            if !src_remapping.path.ends_with('/') {
-                src_remapping.path.push('/')
-            }
-            Some(src_remapping)
+        get_dir_remapping(&self.src)
+    }
+
+    /// Returns the remapping for the project's _test_ directory, but only if it exists
+    pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.test).exists() {
+            get_dir_remapping(&self.test)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the remapping for the project's _script_ directory, but only if it exists
+    pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.script).exists() {
+            get_dir_remapping(&self.script)
         } else {
             None
         }
@@ -1245,6 +1254,7 @@ impl Default for Config {
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
+            script: "script".into(),
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
