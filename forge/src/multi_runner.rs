@@ -1154,4 +1154,47 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
         assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
     }
+
+    #[test]
+    fn test_invariant() {
+        let mut runner = runner();
+        runner.fuzzer = Some(TestRunner::new(proptest::test_runner::Config::default()));
+
+        let results =
+            runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, TEST_OPTS).unwrap();
+
+        assert_multiple(
+            &results,
+            BTreeMap::from([
+                (
+                    "fuzz/invariant/InvariantInnerContract.t.sol:InvariantInnerContract",
+                    vec![("invariantHideJesus", false, Some("jesus betrayed.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/InvariantReentrancy.t.sol:InvariantReentrancy",
+                    vec![("invariantNotStolen", false, Some("stolen.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/InvariantTest1.t.sol:InvariantTest",
+                    vec![("invariant_neverFalse", false, Some("false.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetContracts.t.sol:TargetContracts",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
+                    vec![("invariantTrueWorld", false, Some("false world.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+            ]),
+        );
+    }
 }

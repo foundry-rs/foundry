@@ -59,6 +59,10 @@ where
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_address, abi)?;
 
+        if targeted_contracts.is_empty() {
+            eyre::bail!("No contracts to fuzz!");
+        }
+
         // Stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 

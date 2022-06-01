@@ -64,6 +64,7 @@ where
 }
 
 impl Fuzzer {
+    /// Collects `state` and `memory` values into the fuzz dictionary.
     fn collect_data(&mut self, interpreter: &mut Interpreter) {
         let mut state = self.fuzz_state.write().unwrap();
 
@@ -79,6 +80,7 @@ impl Fuzzer {
         }
     }
 
+    /// Overrides an external call and tries to call any method of msg.sender.
     fn reentrancy(&mut self, call: &mut CallInputs) {
         // We only override external calls which are not coming from the test contract
         if call.context.caller !=
