@@ -445,6 +445,14 @@ impl Config {
     pub fn sanitized(self) -> Self {
         let mut config = self.canonic();
 
+        #[cfg(target_os = "windows")]
+        {
+            // force `/` in remappings on windows
+            use path_slash::PathBufExt;
+            config.remappings.iter_mut().for_each(|r| {
+                r.path.path = r.path.path.to_slash_lossy().into();
+            });
+        }
         // remove any potential duplicates
         config.remappings.sort_unstable();
         config.remappings.dedup();
