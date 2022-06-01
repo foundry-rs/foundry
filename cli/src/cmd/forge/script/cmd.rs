@@ -1,9 +1,9 @@
 use crate::{
-    cmd::{unwrap_contracts, ScriptSequence},
+    cmd::{unwrap_contracts, ScriptSequence, VerifyBundle},
     utils::get_http_provider,
 };
+
 use ethers::{
-    abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
@@ -39,13 +39,18 @@ impl ScriptArgs {
             project,
             target,
             contract,
-            highlevel_known_contracts,
+            mut highlevel_known_contracts,
             predeploy_libraries,
             known_contracts: default_known_contracts,
             sources,
         } = self.build(&script_config)?;
 
-        if self.resume {
+        let mut verify = VerifyBundle::new(
+            &script_config.config,
+            unwrap_contracts(&highlevel_known_contracts, false),
+        );
+
+        if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
                 .evm_opts
                 .fork_url
@@ -58,9 +63,18 @@ impl ScriptArgs {
 
             let mut deployment_sequence =
                 ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
-            self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+
+            receipts::wait_for_pending(&provider, &mut deployment_sequence).await?;
+
+            if self.resume {
+                self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+            }
+
+            if self.verify {
+                deployment_sequence.verify_contracts(verify, chain).await?;
+            }
         } else {
-            let mut known_contracts = unwrap_contracts(&highlevel_known_contracts);
+            let known_contracts = unwrap_contracts(&highlevel_known_contracts, true);
 
             // execute once with default sender
             let sender = script_config.evm_opts.sender;
@@ -77,7 +91,7 @@ impl ScriptArgs {
                     result.transactions.as_ref(),
                     &predeploy_libraries,
                 )? {
-                    known_contracts = self
+                    highlevel_known_contracts = self
                         .rerun_with_new_deployer(
                             project,
                             &mut script_config,
@@ -87,7 +101,11 @@ impl ScriptArgs {
                         )
                         .await?;
                     // redo traces
-                    decoder = self.decode_traces(&script_config, &mut result, &known_contracts)?;
+                    decoder = self.decode_traces(
+                        &script_config,
+                        &mut result,
+                        &unwrap_contracts(&highlevel_known_contracts, true),
+                    )?;
                 } else {
                     // prepend predeploy libraries
                     let mut lib_deploy = self.create_deploy_transactions(
@@ -106,11 +124,13 @@ impl ScriptArgs {
 
                 self.show_traces(&script_config, &decoder, &mut result)?;
 
+                verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
                 self.handle_broadcastable_transactions(
                     &target,
                     result.transactions,
                     &mut decoder,
                     &script_config,
+                    verify,
                 )
                 .await?;
             }
@@ -127,7 +147,7 @@ impl ScriptArgs {
         new_sender: Address,
         first_run_result: &mut ScriptResult,
         default_known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    ) -> eyre::Result<BTreeMap<ArtifactId, (Abi, Vec<u8>)>> {
+    ) -> eyre::Result<BTreeMap<ArtifactId, ContractBytecodeSome>> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(
@@ -165,7 +185,7 @@ impl ScriptArgs {
         *first_run_result = result;
         first_run_result.transactions = Some(txs);
 
-        Ok(unwrap_contracts(&highlevel_known_contracts))
+        Ok(highlevel_known_contracts)
     }
 
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the

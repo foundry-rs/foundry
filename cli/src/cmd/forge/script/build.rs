@@ -148,7 +148,7 @@ impl ScriptArgs {
         &mut self,
         script_config: &ScriptConfig,
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
-        let project = script_config.config.ephemeral_no_artifacts_project()?;
+        let project = script_config.config.project()?;
 
         let output = match dunce::canonicalize(&self.path) {
             // We got passed an existing path to the contract
@@ -162,7 +162,6 @@ impl ScriptArgs {
 
                     (path, output)
                 } else {
-                    let project = script_config.config.project()?;
                     let output = compile::compile(&project, false, false)?;
                     let cache = SolFilesCache::read_joined(&project.paths)?;
 
