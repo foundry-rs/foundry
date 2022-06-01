@@ -6,7 +6,7 @@ use ethers::{
         abigen, signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
-    types::{Address, BlockNumber, H256, U256},
+    types::{Address, BlockNumber, Filter, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
 use futures::{future::join_all, StreamExt};
@@ -465,6 +465,38 @@ async fn get_past_events() {
         contract.event().at_block_hash(hash).topic1(address).query().await.unwrap();
     assert_eq!(logs[0].new_value, "initial value");
     assert_eq!(logs.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_all_events() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let pre_logs = client.get_logs(&Filter::new().from_block(BlockNumber::Earliest)).await.unwrap();
+
+    // spread logs across several blocks
+    let num_tx = 10;
+    for _ in 0..num_tx {
+        let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
+        let tx = func.send().await.unwrap();
+        api.mine_one();
+        let _receipt = tx.await.unwrap();
+    }
+    let logs = client.get_logs(&Filter::new().from_block(BlockNumber::Earliest)).await.unwrap();
+
+    let num_logs = num_tx + pre_logs.len();
+    assert_eq!(logs.len(), num_logs);
 }
 
 #[tokio::test(flavor = "multi_thread")]

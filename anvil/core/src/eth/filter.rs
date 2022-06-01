@@ -49,6 +49,7 @@ impl Filter {
     pub fn get_from_block_number(&self) -> Option<u64> {
         self.from_block.and_then(|block| match block {
             BlockNumber::Number(num) => Some(num.as_u64()),
+            BlockNumber::Earliest => Some(0),
             _ => None,
         })
     }
