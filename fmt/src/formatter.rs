@@ -166,6 +166,15 @@ macro_rules! writeln_chunk {
     }};
 }
 
+macro_rules! format_chunk {
+    ($self:ident, $loc:expr) => {{
+        format_chunk!($self, $loc, "")
+    }};
+    ($self:ident, $loc:expr, $($arg:tt)*) => {{
+        $self.format_chunk($loc, format_args!($($arg)*))
+    }};
+}
+
 macro_rules! buf_fn {
     ($vis:vis fn $name:ident(&self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
         $vis fn $name(&self, $($arg_name : $arg_ty),*) $(-> $ret)? {
@@ -417,6 +426,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self.buf(), "{chunk}")
     }
 
+    fn format_chunk(
+        &mut self,
+        byte_end: usize,
+        chunk: impl std::fmt::Display,
+    ) -> Result<String, VError> {
+        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.write_chunk(byte_end, chunk)?;
+        let buf = self.temp_bufs.pop().unwrap();
+        Ok(buf.w)
+    }
+
     fn indented(
         &mut self,
         delta: usize,
@@ -437,6 +457,82 @@ impl<'a, W: Write> Formatter<'a, W> {
         fun(self)?;
         if condition {
             self.dedent(delta);
+        }
+        Ok(())
+    }
+
+    fn write_operator_expr(
+        &mut self,
+        expr: &mut (impl Operator + Visitable + CodeLocation),
+    ) -> Result<(), VError> {
+        let op = expr.operator().unwrap();
+        let has_space_around = expr.has_space_around();
+        let space = if has_space_around { " " } else { "" };
+        let loc = expr.loc();
+
+        if let Some(left) = expr.left_mut() {
+            self.write_postfix_comments_before(left.loc().start())?;
+            let left_side =
+                format!("{}{}{}", self.visit_to_string(left)?, space, expr.operator().unwrap());
+            // we don't need to use write_chunk! from now on because of the call to visit_to_string
+            // which should collect missing tokens
+            if !self.is_beginning_of_line() {
+                if self.will_it_fit(&left_side) {
+                    write!(self.buf(), " ")?;
+                } else {
+                    writeln!(self.buf())?;
+                }
+            }
+            write!(self.buf(), "{}", left_side)?;
+
+            if let Some(right) = expr.right_mut() {
+                self.write_postfix_comments_before(right.loc().start())?;
+                let right_side = self.visit_to_string(right)?;
+                if !self.is_beginning_of_line() {
+                    if self.will_it_fit(&right_side) {
+                        write!(self.buf(), " ")?;
+                    } else {
+                        writeln!(self.buf())?;
+                    }
+                }
+                write!(self.buf(), "{}", right_side)?;
+            }
+        } else if let Some(right) = expr.right_mut() {
+            self.write_postfix_comments_before(right.loc().start())?;
+            if has_space_around {
+                if !self.is_beginning_of_line() {
+                    if self.will_chunk_fit(loc.start(), op) {
+                        write_chunk!(self, loc.start(), " ")?;
+                    } else {
+                        writeln_chunk!(self, loc.start())?;
+                    }
+                }
+                write!(self.buf(), "{}", op)?;
+
+                let right_side = self.visit_to_string(right)?;
+                if !self.is_beginning_of_line() {
+                    if self.will_it_fit(&right_side) {
+                        write!(self.buf(), " ")?;
+                    } else {
+                        writeln!(self.buf())?;
+                    }
+                }
+                write!(self.buf(), "{}", right_side)?;
+            } else {
+                let right_side = format!(
+                    "{}{}",
+                    format_chunk!(self, right.loc().start(), "{}", op)?,
+                    self.visit_to_string(right)?
+                );
+                if !self.is_beginning_of_line() {
+                    if self.will_it_fit(&right_side) {
+                        write!(self.buf(), " ")?;
+                    } else {
+                        writeln!(self.buf())?;
+                    }
+                }
+                write!(self.buf(), "{}", right_side)?;
+            }
         }
         Ok(())
     }

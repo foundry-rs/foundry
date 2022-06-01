@@ -31,8 +31,8 @@ pub trait Operator {
     fn precedence(&self) -> Precedence;
     fn operator(&self) -> Option<&'static str>;
     fn has_space_around(&self) -> bool;
-    fn left_mut(&mut self) -> Option<&mut Box<Expression>>;
-    fn right_mut(&mut self) -> Option<&mut Box<Expression>>;
+    fn left_mut(&mut self) -> Option<&mut Self>;
+    fn right_mut(&mut self) -> Option<&mut Self>;
 }
 
 impl Operator for Expression {
@@ -156,7 +156,7 @@ impl Operator for Expression {
                 UnaryMinus(..)
         )
     }
-    fn left_mut(&mut self) -> Option<&mut Box<Expression>> {
+    fn left_mut(&mut self) -> Option<&mut Self> {
         use Expression::*;
         match self {
             PostDecrement(_, expr) |
@@ -190,7 +190,7 @@ impl Operator for Expression {
             AssignSubtract(_, expr, _) |
             AssignMultiply(_, expr, _) |
             AssignDivide(_, expr, _) |
-            AssignModulo(_, expr, _) => Some(expr),
+            AssignModulo(_, expr, _) => Some(expr.as_mut()),
             MemberAccess(..) |
             Not(..) |
             Complement(..) |
@@ -221,7 +221,7 @@ impl Operator for Expression {
             This(..) => None,
         }
     }
-    fn right_mut(&mut self) -> Option<&mut Box<Expression>> {
+    fn right_mut(&mut self) -> Option<&mut Self> {
         use Expression::*;
         match self {
             Not(_, expr) |
@@ -261,7 +261,7 @@ impl Operator for Expression {
             AssignSubtract(_, _, expr) |
             AssignMultiply(_, _, expr) |
             AssignDivide(_, _, expr) |
-            AssignModulo(_, _, expr) => Some(expr),
+            AssignModulo(_, _, expr) => Some(expr.as_mut()),
             MemberAccess(..) |
             PostDecrement(..) |
             PostIncrement(..) |
