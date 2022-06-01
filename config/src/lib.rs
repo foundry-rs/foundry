@@ -92,6 +92,8 @@ pub struct Config {
     pub src: PathBuf,
     /// path of the test dir
     pub test: PathBuf,
+    /// path of the script dir
+    pub script: PathBuf,
     /// path to where artifacts shut be written to
     pub out: PathBuf,
     /// all library folders to include, `lib`, `node_modules`
@@ -445,6 +447,14 @@ impl Config {
     pub fn sanitized(self) -> Self {
         let mut config = self.canonic();
 
+        #[cfg(target_os = "windows")]
+        {
+            // force `/` in remappings on windows
+            use path_slash::PathBufExt;
+            config.remappings.iter_mut().for_each(|r| {
+                r.path.path = r.path.path.to_slash_lossy().into();
+            });
+        }
         // remove any potential duplicates
         config.remappings.sort_unstable();
         config.remappings.dedup();
@@ -595,6 +605,8 @@ impl Config {
             .iter()
             .map(|m| m.clone().into())
             .chain(self.get_source_dir_remapping())
+            .chain(self.get_test_dir_remapping())
+            .chain(self.get_script_dir_remapping())
             .collect()
     }
 
@@ -605,17 +617,22 @@ impl Config {
     ///
     /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
     pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
-        if let Some(src_dir_name) =
-            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
-        {
-            let mut src_remapping = Remapping {
-                name: format!("{src_dir_name}/"),
-                path: format!("{}", self.src.display()),
-            };
-            if !src_remapping.path.ends_with('/') {
-                src_remapping.path.push('/')
-            }
-            Some(src_remapping)
+        get_dir_remapping(&self.src)
+    }
+
+    /// Returns the remapping for the project's _test_ directory, but only if it exists
+    pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.test).exists() {
+            get_dir_remapping(&self.test)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the remapping for the project's _script_ directory, but only if it exists
+    pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.script).exists() {
+            get_dir_remapping(&self.script)
         } else {
             None
         }
@@ -1237,6 +1254,7 @@ impl Default for Config {
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
+            script: "script".into(),
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
@@ -1589,14 +1607,24 @@ impl<'a> Provider for DappHardhatDirProvider<'a> {
                 .to_string()
                 .into(),
         );
-        dict.insert(
-            "libs".to_string(),
-            ProjectPathsConfig::find_libs(self.0)
-                .into_iter()
-                .map(|lib| lib.file_name().unwrap().to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .into(),
-        );
+
+        // detect libs folders:
+        //   if `lib` _and_ `node_modules` exists: include both
+        //   if only `node_modules` exists: include `node_modules`
+        //   include `lib` otherwise
+        let mut libs = vec![];
+        let node_modules = self.0.join("node_modules");
+        let lib = self.0.join("lib");
+        if node_modules.exists() {
+            if lib.exists() {
+                libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+            }
+            libs.push(node_modules.file_name().unwrap().to_string_lossy().to_string());
+        } else {
+            libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+        }
+
+        dict.insert("libs".to_string(), libs.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -1973,6 +2001,24 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_default_libs() {
+        figment::Jail::expect_with(|jail| {
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib")]);
+
+            fs::create_dir_all(jail.directory().join("node_modules")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules")]);
+
+            fs::create_dir_all(jail.directory().join("lib")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
             Ok(())
         });
     }

@@ -1,21 +1,22 @@
 //! init command
 
 use crate::{
-    cmd::{forge::install::install, Cmd},
+    cmd::{
+        forge::install::{install, DependencyInstallOpts},
+        Cmd,
+    },
     opts::forge::Dependency,
     utils::{p_println, CommandUtils},
 };
 use clap::{Parser, ValueHint};
+use ethers::solc::remappings::Remapping;
 use foundry_config::Config;
-
-use crate::cmd::forge::{install::DependencyInstallOpts, remappings};
-use yansi::Paint;
-
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
+use yansi::Paint;
 
 /// Command to initialize a new forge project
 #[derive(Debug, Clone, Parser)]
@@ -181,7 +182,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 fn init_vscode(root: &Path) -> eyre::Result<()> {
     let remappings_file = root.join("remappings.txt");
     if !remappings_file.exists() {
-        let mut remappings = remappings::relative_remappings(&root.join("lib"), root)
+        let mut remappings = relative_remappings(&root.join("lib"), root)
             .into_iter()
             .map(|r| r.to_string())
             .collect::<Vec<_>>();
@@ -218,4 +219,13 @@ fn init_vscode(root: &Path) -> eyre::Result<()> {
     std::fs::write(settings_file, content)?;
 
     Ok(())
+}
+
+/// Returns all remappings found in the `lib` path relative to `root`
+fn relative_remappings(lib: &Path, root: &Path) -> Vec<Remapping> {
+    Remapping::find_many(lib)
+        .into_iter()
+        .map(|r| r.into_relative(root).to_relative_remapping())
+        .map(Into::into)
+        .collect()
 }

@@ -2,52 +2,28 @@
 
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use ethers::solc::{remappings::Remapping, ProjectPathsConfig};
-use std::path::{Path, PathBuf};
+use foundry_config::{find_project_root_path, Config};
+use std::path::PathBuf;
 
 /// Command to list remappings
 #[derive(Debug, Clone, Parser)]
 pub struct RemappingArgs {
     #[clap(
-        help = "The project's root path. Defaults to the current working directory.",
+        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long,
         value_hint = ValueHint::DirPath,
         value_name = "PATH"
     )]
     root: Option<PathBuf>,
-    #[clap(
-        help = "The path to the library folder.",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    lib_path: Vec<PathBuf>,
 }
 
 impl Cmd for RemappingArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let root = self.root.unwrap_or_else(|| std::env::current_dir().unwrap());
-        let root = dunce::canonicalize(root)?;
-
-        let lib_path = if self.lib_path.is_empty() {
-            ProjectPathsConfig::find_libs(&root)
-        } else {
-            self.lib_path
-        };
-        let remappings: Vec<_> =
-            lib_path.iter().flat_map(|lib| relative_remappings(lib, &root)).collect();
-        remappings.iter().for_each(|x| println!("{x}"));
+        let root = self.root.unwrap_or_else(|| find_project_root_path().unwrap());
+        let config = Config::load_with_root(root);
+        config.remappings.iter().for_each(|x| println!("{x}"));
         Ok(())
     }
-}
-
-/// Returns all remappings found in the `lib` path relative to `root`
-pub fn relative_remappings(lib: &Path, root: &Path) -> Vec<Remapping> {
-    Remapping::find_many(lib)
-        .into_iter()
-        .map(|r| r.into_relative(root).to_relative_remapping())
-        .map(Into::into)
-        .collect()
 }

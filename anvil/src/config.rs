@@ -470,7 +470,7 @@ Chain ID:       {}
                 .get_block(BlockNumber::Number(fork_block_number.into()))
                 .await
                 .expect("Failed to get fork block")
-                .unwrap();
+                .unwrap_or_else(|| panic!("Failed to get fork block"));
 
             env.block.number = fork_block_number.into();
             fork_timestamp = Some(block.timestamp);
