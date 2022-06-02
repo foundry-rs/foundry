@@ -122,7 +122,11 @@ impl ScriptArgs {
                     }
                 }
 
-                self.show_traces(&script_config, &decoder, &mut result)?;
+                if self.json {
+                    self.show_json(&script_config, &mut result)?;
+                } else {
+                    self.show_traces(&script_config, &decoder, &mut result)?;
+                }
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
                 self.handle_broadcastable_transactions(
