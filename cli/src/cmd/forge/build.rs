@@ -145,6 +145,9 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
+
+    #[clap(help_heading = "COMPILER OPTIONS", long, help = "Don't print anything on startup.")]
+    pub silent: bool,
 }
 
 impl CoreBuildArgs {
@@ -213,6 +216,10 @@ impl Provider for CoreBuildArgs {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
+        }
+
+        if self.silent {
+            dict.insert("silent".to_string(), self.silent.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
