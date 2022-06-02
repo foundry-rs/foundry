@@ -129,14 +129,14 @@ pub struct ScriptResult {
     pub returned: bytes::Bytes,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct JsonResult {
     pub logs: Vec<String>,
     pub gas_used: u64,
     pub results: HashMap<String, NestedValue>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct NestedValue {
     pub internal_type: String,
     pub value: String,
