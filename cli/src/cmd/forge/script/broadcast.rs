@@ -1,8 +1,5 @@
 use crate::{
-    cmd::{
-        forge::script::receipts::{wait_for_pending, wait_for_receipts},
-        ScriptSequence,
-    },
+    cmd::{forge::script::receipts::wait_for_receipts, ScriptSequence, VerifyBundle},
     opts::WalletType,
     utils::get_http_provider,
 };
@@ -22,8 +19,6 @@ impl ScriptArgs {
         fork_url: &str,
     ) -> eyre::Result<()> {
         let provider = get_http_provider(fork_url);
-
-        wait_for_pending(&provider, deployment_sequence).await?;
 
         if deployment_sequence.receipts.len() < deployment_sequence.transactions.len() {
             let required_addresses = deployment_sequence
@@ -117,10 +112,11 @@ impl ScriptArgs {
         transactions: Option<VecDeque<TypedTransaction>>,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
+        verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let gas_filled_txs =
+                let (gas_filled_txs, create2_contracts) =
                     self.execute_transactions(txs, script_config, decoder)
                     .await
                     .map_err(|_| eyre::eyre!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`"))?;
@@ -147,8 +143,15 @@ impl ScriptArgs {
                 let mut deployment_sequence =
                     ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
 
+                create2_contracts
+                    .into_iter()
+                    .for_each(|addr| deployment_sequence.add_create2(addr));
+
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    if self.verify {
+                        deployment_sequence.verify_contracts(verify, chain).await?;
+                    }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                 }

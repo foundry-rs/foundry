@@ -76,9 +76,8 @@ pub async fn wait_for_receipts(
         };
     }
 
-    // Receipts may have arrived out of order
-    receipts.sort_by(|a, b| a.1.cmp(&b.1));
-    for (receipt, _) in receipts {
+    for (receipt, nonce) in receipts {
+        print_receipt(&receipt, nonce)?;
         deployment_sequence.add_receipt(receipt);
     }
 

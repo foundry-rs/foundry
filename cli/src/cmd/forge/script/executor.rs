@@ -1,6 +1,8 @@
 use crate::{cmd::needs_setup, utils};
 
+use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
+    prelude::NameOrAddress,
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
@@ -64,18 +66,20 @@ impl ScriptArgs {
         Ok(result)
     }
 
-    /// Executes a list of transactions locally and persists their state.
+    /// Executes a list of transactions locally and persists their state. Returns the transactions
+    /// and any CREATE2 contract addresses created.
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<TypedTransaction>,
         script_config: &ScriptConfig,
         decoder: &mut CallTraceDecoder,
-    ) -> eyre::Result<VecDeque<TypedTransaction>> {
+    ) -> eyre::Result<(VecDeque<TypedTransaction>, Vec<Address>)> {
         let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
 
         let mut failed = false;
         let mut sum_gas = 0;
         let mut final_txs = transactions.clone();
+        let mut create2_contracts = vec![];
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -101,9 +105,17 @@ impl ScriptArgs {
             .enumerate()
             .for_each(|(i, mut result)| {
                 match &mut final_txs[i] {
-                    // We inflate the gas used by the transaction by x1.3 since the estimation might
-                    // be off
-                    TypedTransaction::Legacy(tx) => tx.gas = Some(U256::from(result.gas * 13 / 10)),
+                    TypedTransaction::Legacy(tx) => {
+                        // We store the CREATE2 address, since it's hard to get it otherwise
+                        if let Some(NameOrAddress::Address(to)) = tx.to {
+                            if to == DEFAULT_CREATE2_DEPLOYER {
+                                create2_contracts.push(Address::from_slice(&result.returned));
+                            }
+                        }
+                        // We inflate the gas used by the transaction by x1.3 since the estimation
+                        // might be off
+                        tx.gas = Some(U256::from(result.gas * 13 / 10))
+                    }
                     _ => unreachable!(),
                 }
 
@@ -126,7 +138,7 @@ impl ScriptArgs {
             println!("\n==========================\n");
             println!("Estimated total gas used for script: {}", sum_gas);
             println!("==========================");
-            Ok(final_txs)
+            Ok((final_txs, create2_contracts))
         }
     }
 

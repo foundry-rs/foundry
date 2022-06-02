@@ -1,8 +1,9 @@
 use crate::{opts::forge::ContractInfo, suggestions};
+use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use clap::Parser;
 use ethers::{
-    abi::Abi,
-    prelude::{ArtifactId, TransactionReceipt, TxHash},
+    abi::{Abi, Address},
+    prelude::{ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
             CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
@@ -22,6 +23,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use yansi::Paint;
+
+use super::forge::{
+    build::ProjectPathsArgs,
+    create::RETRY_VERIFY_ON_CREATE,
+    verify::{self},
+};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -156,21 +163,58 @@ pub fn needs_setup(abi: &Abi) -> bool {
 
 pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    deployed_code: bool,
 ) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
     contracts
         .iter()
         .map(|(id, c)| {
-            (
-                id.clone(),
-                (
-                    c.abi.clone(),
-                    c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
-                ),
-            )
+            let bytecode = if deployed_code {
+                c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec()
+            } else {
+                c.bytecode.clone().object.into_bytes().expect("not bytecode").to_vec()
+            };
+
+            (id.clone(), (c.abi.clone(), bytecode))
         })
         .collect()
 }
 
+/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
+pub struct VerifyBundle {
+    pub num_of_optimizations: Option<usize>,
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub etherscan_key: Option<String>,
+    pub project_paths: ProjectPathsArgs,
+}
+
+impl VerifyBundle {
+    pub fn new(config: &Config, known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>) -> Self {
+        let num_of_optimizations =
+            if config.optimizer { Some(config.optimizer_runs) } else { None };
+
+        let project_paths = ProjectPathsArgs {
+            root: Some(config.__root.0.clone()),
+            contracts: Some(config.src.clone()),
+            remappings: config
+                .remappings
+                .iter()
+                .map(|remap| remap.clone().to_remapping(config.__root.0.clone()))
+                .collect(),
+            remappings_env: None,
+            cache_path: Some(config.cache_path.clone()),
+            lib_paths: config.libs.clone(),
+            hardhat: config.profile == Config::HARDHAT_PROFILE,
+            config_path: Some(config.get_config_path()),
+        };
+
+        VerifyBundle {
+            num_of_optimizations,
+            known_contracts,
+            etherscan_key: config.etherscan_api_key.clone(),
+            project_paths,
+        }
+    }
+}
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
@@ -178,6 +222,7 @@ pub struct ScriptSequence {
     pub transactions: VecDeque<TypedTransaction>,
     pub receipts: Vec<TransactionReceipt>,
     pub pending: Vec<TxHash>,
+    pub create2_contracts: Vec<Address>,
     pub path: PathBuf,
     pub timestamp: u64,
 }
@@ -196,6 +241,7 @@ impl ScriptSequence {
             transactions,
             receipts: vec![],
             pending: vec![],
+            create2_contracts: vec![],
             path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -251,8 +297,16 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
-    pub fn add_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
-        self.receipts.extend(receipts.into_iter());
+    pub fn sort_receipts(&mut self) {
+        self.receipts.sort_by(|a, b| {
+            let ablock = a.block_number.unwrap();
+            let bblock = b.block_number.unwrap();
+            if ablock == bblock {
+                a.transaction_index.cmp(&b.transaction_index)
+            } else {
+                ablock.cmp(&bblock)
+            }
+        });
     }
 
     pub fn add_pending(&mut self, tx_hash: TxHash) {
@@ -263,6 +317,10 @@ impl ScriptSequence {
 
     pub fn remove_pending(&mut self, tx_hash: TxHash) {
         self.pending.retain(|element| element != &tx_hash);
+    }
+
+    pub fn add_create2(&mut self, address: Address) {
+        self.create2_contracts.push(address);
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
@@ -284,10 +342,79 @@ impl ScriptSequence {
         out.push(format!("{filename}-latest.json"));
         Ok(out)
     }
+
+    /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
+    /// created contract on etherscan.
+    pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
+        if let Some(etherscan_key) = &verify.etherscan_key {
+            let mut future_verifications = vec![];
+            let mut create2 = self.create2_contracts.clone().into_iter();
+
+            for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
+                let mut create2_offset = 0;
+
+                // CREATE2 contract addresses do not come in the receipt.
+                if let Some(&NameOrAddress::Address(to)) = tx.to() {
+                    if to == DEFAULT_CREATE2_DEPLOYER {
+                        receipt.contract_address = create2.next();
+                        create2_offset = 32;
+                    }
+                }
+
+                if let (Some(contract_address), Some(data)) = (receipt.contract_address, tx.data())
+                {
+                    for (artifact, (_contract, bytecode)) in &verify.known_contracts {
+                        // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
+                        // of the transaction
+                        if data.0.split_at(create2_offset).1.starts_with(bytecode) {
+                            let constructor_args =
+                                data.0.split_at(create2_offset + bytecode.len()).1.to_vec();
+
+                            let contract = ContractInfo {
+                                path: Some(
+                                    artifact
+                                        .source
+                                        .to_str()
+                                        .expect("There should be an artifact.")
+                                        .to_string(),
+                                ),
+                                name: artifact.name.clone(),
+                            };
+
+                            let verify = verify::VerifyArgs {
+                                address: contract_address,
+                                contract,
+                                compiler_version: None,
+                                constructor_args: Some(hex::encode(&constructor_args)),
+                                num_of_optimizations: verify.num_of_optimizations,
+                                chain: chain.into(),
+                                etherscan_key: etherscan_key.clone(),
+                                project_paths: verify.project_paths.clone(),
+                                flatten: false,
+                                force: false,
+                                watch: true,
+                                retry: RETRY_VERIFY_ON_CREATE,
+                            };
+
+                            future_verifications.push(verify.run());
+                        }
+                    }
+                }
+            }
+
+            println!("##\nStart Contract Verification");
+            for verification in future_verifications {
+                verification.await?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Drop for ScriptSequence {
     fn drop(&mut self) {
+        self.sort_receipts();
         self.save().expect("not able to save deployment sequence");
     }
 }
