@@ -6,8 +6,9 @@ use crate::{
 use ethers::{
     prelude::{SignerMiddleware, TxHash},
     providers::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
+    types::{transaction::eip2718::TypedTransaction, Chain},
 };
+use futures::StreamExt;
 use std::fmt;
 
 use super::*;
@@ -48,21 +49,30 @@ impl ScriptArgs {
                 (tx, signer)
             });
 
-            let mut future_receipts = vec![];
+            let mut pending_transactions = vec![];
 
             println!("##\nSending transactions.");
             for (tx, signer) in sequence {
-                let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+                let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                 if sequential_broadcast {
-                    wait_for_receipts(vec![receipt], deployment_sequence).await?;
+                    wait_for_receipts(&[tx_hash.await], deployment_sequence, &provider).await?;
                 } else {
-                    future_receipts.push(receipt);
+                    pending_transactions.push(tx_hash);
                 }
             }
 
             if !sequential_broadcast {
-                wait_for_receipts(future_receipts, deployment_sequence).await?;
+                println!("##\nCollecting Receipts.");
+                wait_for_receipts(
+                    &futures::stream::iter(pending_transactions)
+                        .buffered(20)
+                        .collect::<Vec<_>>()
+                        .await,
+                    deployment_sequence,
+                    &provider,
+                )
+                .await?;
             }
         }
 
@@ -80,7 +90,7 @@ impl ScriptArgs {
         signer: &WalletType,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> Result<(TransactionReceipt, U256), BroadcastError> {
+    ) -> Result<TxHash, BroadcastError> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
@@ -187,30 +197,16 @@ impl fmt::Display for BroadcastError {
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
     legacy_or_1559: TypedTransaction,
-) -> Result<(TransactionReceipt, U256), BroadcastError>
+) -> Result<TxHash, BroadcastError>
 where
     SignerMiddleware<T, U>: Middleware,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-    let nonce = *legacy_or_1559.nonce().unwrap();
+
     let pending = signer
         .send_transaction(legacy_or_1559, None)
         .await
         .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
-    let tx_hash = pending.tx_hash();
-
-    let receipt = match pending.await {
-        Ok(receipt) => match receipt {
-            Some(receipt) => receipt,
-            None => {
-                return Err(BroadcastError::ErrorWithTxHash(
-                    format!("Didn't receive a receipt for {}", tx_hash),
-                    tx_hash,
-                ))
-            }
-        },
-        Err(err) => return Err(BroadcastError::ErrorWithTxHash(err.to_string(), tx_hash)),
-    };
-    Ok((receipt, nonce))
+    Ok(pending.tx_hash())
 }

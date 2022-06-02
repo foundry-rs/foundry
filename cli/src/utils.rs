@@ -264,7 +264,7 @@ pub fn get_http_provider(url: &str) -> Provider<Http> {
     }
 }
 
-pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<()> {
+pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
     let mut contract_address = "".to_string();
     if let Some(addr) = receipt.contract_address {
         contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
@@ -281,12 +281,11 @@ pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<
     };
 
     println!(
-        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {} ETH ({} gas * {} gwei)",
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nPaid: {} ETH ({} gas * {} gwei)",
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
         receipt.block_number.expect("no block_number"),
-        nonce,
         paid.trim_end_matches('0'),
         gas_used,
         format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
