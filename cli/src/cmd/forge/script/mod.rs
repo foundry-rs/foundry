@@ -266,7 +266,7 @@ impl ScriptArgs {
                         label,
                         NestedValue {
                             internal_type: internal_type.to_string(),
-                            value: token.to_string(),
+                            value: format_token(token),
                         },
                     );
                 }
