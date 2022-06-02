@@ -103,4 +103,17 @@ interface Cheats {
     function startBroadcast(address) external;
     // Stops collecting onchain transactions
     function stopBroadcast() external;
+    // Snapshot the current state of the evm.
+    // Returns the id of the snapshot that was created.
+    // To revert a snapshot use `evmRevert`
+    function snapshot() external returns(uint256);
+    // Revert the state of the evm to a previous snapshot
+    // takes the snapshot id to revert to. This deletes the snapshot and all snapshots taken after the given snapshot id.
+    function revertTo(uint256) external;
+    // manually enables forking mode for the current test
+    function setFork(string,uint256) external;
+    // manually enables forking mode for the current test with the latest block number
+    function setFork(string) external;
+    // forks the `block` variable from the given endpoint
+    function forkBlockVariable(string, uint256) external;
 }

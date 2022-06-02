@@ -73,13 +73,13 @@ pub struct MutltiForkHandler {
     incoming: Fuse<Receiver<Request>>,
     /// All active handlers
     ///
-    /// It's expected that this list will be rather small
+    /// It's expected that this list will be rather small (<10)
     handlers: Vec<(ForkId, BackendHandler<Provider<Http>>)>,
     // requests currently in progress
     requests: Vec<RequestFuture>,
 }
 
-// === impl MutltiForkHandler ===
+// === impl MultiForkHandler ===
 
 impl MutltiForkHandler {
     fn on_request(&mut self, req: Request) {}

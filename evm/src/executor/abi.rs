@@ -68,6 +68,8 @@ ethers::contract::abigen!(
             startBroadcast()
             startBroadcast(address)
             stopBroadcast()
+            snapshot()(uint256)
+            revertTo(uint256)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
