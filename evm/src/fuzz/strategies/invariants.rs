@@ -21,19 +21,26 @@ pub fn reentrancy_strat(
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,
 ) -> SBoxedStrategy<(Address, Bytes)> {
-    any::<prop::sample::Selector>()
-        .prop_flat_map(move |_| {
-            let fuzz_state = fuzz_state.clone();
-            let target_address = *target.read();
-            let contracts = contracts.read();
-            let (_, abi, functions) = contracts.get(&target_address).unwrap();
+    let contracts_ref = contracts.clone();
 
-            let func = select_random_function(abi.clone(), functions.clone());
-            func.prop_flat_map(move |func| {
-                fuzz_contract_with_calldata(fuzz_state.clone(), target_address, func)
-            })
+    let random_contract = any::<prop::sample::Selector>()
+        .prop_map(move |selector| *selector.select(contracts_ref.read().keys()));
+    let target = any::<prop::sample::Selector>().prop_map(move |_| *target.read());
+
+    proptest::strategy::Union::new_weighted(vec![
+        (80, target.sboxed()),
+        (20, random_contract.sboxed()),
+    ])
+    .prop_flat_map(move |target_address| {
+        let fuzz_state = fuzz_state.clone();
+        let (_, abi, functions) = contracts.read().get(&target_address).unwrap().clone();
+
+        let func = select_random_function(abi, functions);
+        func.prop_flat_map(move |func| {
+            fuzz_contract_with_calldata(fuzz_state.clone(), target_address, func)
         })
-        .sboxed()
+    })
+    .sboxed()
 }
 
 pub fn invariant_strat(

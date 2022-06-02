@@ -241,16 +241,18 @@ impl RandomCallGenerator {
         } else {
             let mut testrunner = self.runner.write();
             let mut last_sequence = self.last_sequence.write();
+            let new_caller = original_target;
 
-            // Set which contract we want to generate calldata from.
+            // Set which contract we mostly want to generate calldata from.
             *self.target_reference.write() = original_caller;
 
+            // `original_caller` has a 80% chance of being the `new_target`.
             let choice = self
                 .strategy
                 .new_tree(&mut testrunner)
                 .unwrap()
                 .current()
-                .map(|(_, calldata)| (original_target, (original_caller, calldata)));
+                .map(|(new_target, calldata)| (new_caller, (new_target, calldata)));
 
             last_sequence.push(choice.clone());
             choice
