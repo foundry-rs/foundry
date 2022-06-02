@@ -8,8 +8,6 @@ pub type VError = Box<dyn std::error::Error>;
 /// The result type a [Visitor] may return
 pub type VResult = Result<(), VError>;
 
-pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
-
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
@@ -24,10 +22,6 @@ pub trait Visitor {
     }
 
     fn visit_doc_comment(&mut self, _doc_comment: &mut DocComment) -> VResult {
-        Ok(())
-    }
-
-    fn visit_doc_comments(&mut self, _doc_comments: &mut [DocComment]) -> VResult {
         Ok(())
     }
 
@@ -414,7 +408,6 @@ macro_rules! impl_visitable {
 }
 
 impl_visitable!(DocComment, visit_doc_comment);
-impl_visitable!(Vec<DocComment>, visit_doc_comments);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);

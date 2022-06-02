@@ -10,7 +10,7 @@ use crate::{
     comments::{CommentWithMetadata, Comments},
     helpers,
     solang_ext::*,
-    visit::{ParameterList, VError, VResult, Visitable, Visitor},
+    visit::{VError, VResult, Visitable, Visitor},
 };
 
 /// Contains the config and rule set
@@ -254,10 +254,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    fn temp_buf_contents(&self) -> Option<&str> {
-        self.temp_bufs.last().map(|buf| buf.w.as_str())
-    }
-
     buf_fn! { fn indent(&mut self, delta: usize) }
     buf_fn! { fn dedent(&mut self, delta: usize) }
     buf_fn! { fn start_group(&mut self) }
@@ -372,27 +368,6 @@ impl<'a, W: Write> Formatter<'a, W> {
             out.push(self.visit_to_chunk(loc.start(), item, chunk_next_byte_offset)?);
         }
         Ok(out)
-    }
-
-    fn items_to_chunks_sorted<T, F, V>(
-        &mut self,
-        items: &mut [T],
-        mapper: F,
-    ) -> Result<Vec<(usize, String)>, VError>
-    where
-        F: Fn(&mut T) -> Result<(Loc, &mut V), VError>,
-        V: Visitable + AttrSortKey,
-    {
-        let mut chunks = items
-            .iter_mut()
-            .map(|i| {
-                let (loc, vis) = mapper(i)?;
-                let attr_sort_key = vis.attr_sort_key();
-                Ok((attr_sort_key, loc.end(), self.visit_to_string(vis)?))
-            })
-            .collect::<Result<Vec<_>, VError>>()?;
-        chunks.sort();
-        Ok(chunks.into_iter().map(|(_, byte_end, string)| (byte_end, string)).collect_vec())
     }
 
     /// Transform [Visitable] items to the list of chunks
@@ -710,6 +685,20 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(buf.w)
     }
 
+    fn are_chunks_separated_multiline2<'b>(
+        &mut self,
+        format_string: &str,
+        items: impl IntoIterator<Item = &'b Chunk>,
+        separator: &str,
+    ) -> Result<bool, VError> {
+        let items = items.into_iter().collect_vec();
+        let chunks = self.simulate_to_string(|fmt| {
+            fmt.write_chunks_separated2(items.iter().copied(), separator, false)?;
+            Ok(())
+        })?;
+        Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
+    }
+
     fn format_chunk(
         &mut self,
         byte_end: usize,
@@ -864,7 +853,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         })?;
         self.comments.remove_comments_before(self.source.len());
-        write_chunk!(self, self.source.len(), "{}", comments.trim_end());
+        write_chunk!(self, self.source.len(), "{}", comments.trim_end())?;
 
         Ok(())
     }
@@ -905,19 +894,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     write!(self.buf(), "*/")?;
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    fn visit_doc_comments(&mut self, doc_comments: &mut [DocComment]) -> VResult {
-        let mut iter = doc_comments.iter_mut();
-        if let Some(doc_comment) = iter.next() {
-            doc_comment.visit(self)?
-        }
-        for doc_comment in iter {
-            writeln!(self.buf())?;
-            doc_comment.visit(self)?;
         }
 
         Ok(())
@@ -1196,89 +1172,87 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             func.ty.to_string()
         };
 
-        let (func_def, func_def_with_attrs) = self.simulated(|fmt| {
-            let params = fmt.items_to_chunks(&mut func.params, |(loc, param)| {
-                Ok((*loc, param.as_mut().ok_or("function parameter missing")?))
-            })?;
-            let attributes =
-                fmt.items_to_chunks_sorted(&mut func.attributes, |attr| Ok((attr.loc(), attr)))?;
-            let returns = fmt.items_to_chunks(&mut func.returns, |(loc, param)| {
-                Ok((*loc, param.as_mut().ok_or("function returns parameter missing")?))
-            })?;
-
-            let params_string = fmt.simulate_chunks_separated(&params, ",");
-            let attr_string = if attributes.is_empty() {
-                "".to_owned()
-            } else {
-                format!(" {}", fmt.simulate_chunks_separated(&attributes, ""))
-            };
-            let returns_string = if returns.is_empty() {
-                "".to_owned()
-            } else {
-                format!(" returns ({})", fmt.simulate_chunks_separated(&returns, ","))
-            };
-            let func_opening = if func.body.is_some() { " {" } else { ";" };
-            let func_def = format!("{func_name}({params_string})");
-            let func_def_with_attrs =
-                format!("{func_def}{attr_string}{returns_string}{func_opening}");
-
-            Ok((func_def, func_def_with_attrs))
-        })?;
-
-        let params_multiline = !self.will_it_fit(func_def);
-        let attrs_multiline = params_multiline || !self.will_it_fit(func_def_with_attrs);
-
+        // calculate locations of chunk groups
         let attrs_loc = func.attributes.first().map(|attr| attr.loc());
         let returns_loc = func.returns.first().map(|param| param.0);
         let body_loc = func.body.as_ref().map(LineOfCode::loc);
 
+        // get function parameter chunks
         let params_end = attrs_loc
             .as_ref()
             .or(returns_loc.as_ref())
             .or(body_loc.as_ref())
             .map(|loc| loc.start());
-        self.surrounded(func.loc.start(), format!("{func_name}("), ")", params_end, |fmt| {
-            let params = fmt.items_to_chunks2(&mut func.params, params_end, |(loc, param)| {
-                Ok((*loc, param.as_mut().unwrap()))
+        let params = self.items_to_chunks2(&mut func.params, params_end, |(loc, param)| {
+            Ok((*loc, param.as_mut().unwrap()))
+        })?;
+
+        // get attribute chunks
+        let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
+        let attributes = self.items_to_chunks_sorted2(&mut func.attributes, attrs_end, |attr| {
+            Ok((attr.loc(), attr))
+        })?;
+
+        // get returns parameter chunks
+        let returns_end = body_loc.as_ref().map(|loc| loc.start());
+        let returns = self.items_to_chunks2(&mut func.returns, returns_end, |(loc, param)| {
+            Ok((*loc, param.as_mut().unwrap()))
+        })?;
+
+        // check if the parameters need to be multiline
+        let simulated_func_def = self.simulate_to_string(|fmt| {
+            write!(fmt.buf(), "{func_name}(")?;
+            fmt.write_chunks_separated2(&params, ",", false)?;
+            write!(fmt.buf(), ")")?;
+            Ok(())
+        })?;
+        let params_multiline = !self.will_it_fit(&simulated_func_def);
+
+        // check if the attributes need to be multiline
+        let attrs_multiline = if params_multiline {
+            true
+        } else {
+            let simulated_func_def_attrs = self.simulate_to_string(|fmt| {
+                if !attributes.is_empty() {
+                    write!(fmt.buf(), " ")?;
+                    fmt.write_chunks_separated2(&attributes, "", false)?;
+                }
+                if !returns.is_empty() {
+                    write!(fmt.buf(), " returns(")?;
+                    fmt.write_chunks_separated2(&returns, "", false)?;
+                    write!(fmt.buf(), ")")?;
+                }
+                write!(fmt.buf(), "{}", if func.body.is_some() { " {" } else { ";" })?;
+                Ok(())
             })?;
+            !self.will_it_fit(format!("{simulated_func_def}{simulated_func_def_attrs}"))
+        };
+
+        // write parameters
+        self.surrounded(func.loc.start(), format!("{func_name}("), ")", params_end, |fmt| {
             fmt.write_chunks_separated2(&params, ",", params_multiline)?;
             Ok(())
         })?;
 
+        // write attributes
         if !func.attributes.is_empty() {
             let byte_offset = attrs_loc.unwrap().start();
-            let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
             self.write_postfix_comments_before(byte_offset)?;
             self.write_whitespace_separator(attrs_multiline)?;
             self.indented(1, |fmt| {
-                let attributes =
-                    fmt.items_to_chunks_sorted2(&mut func.attributes, attrs_end, |attr| {
-                        Ok((attr.loc(), attr))
-                    })?;
                 fmt.write_chunks_separated2(&attributes, "", attrs_multiline)?;
                 Ok(())
             })?;
         }
 
+        // write returns
         if !func.returns.is_empty() {
             let byte_offset = returns_loc.unwrap().start();
-            let returns_end = body_loc.as_ref().map(|loc| loc.start());
             self.write_postfix_comments_before(byte_offset)?;
             self.write_whitespace_separator(attrs_multiline)?;
             self.indented(1, |fmt| {
-                let returns =
-                    fmt.items_to_chunks2(&mut func.returns, returns_end, |(loc, param)| {
-                        Ok((*loc, param.as_mut().unwrap()))
-                    })?;
-                let returns_multiline = if attrs_multiline {
-                    let simulated_list = fmt.simulate_to_string(|fmt| {
-                        fmt.write_chunks_separated2(&returns, ",", false)?;
-                        Ok(())
-                    })?;
-                    !fmt.will_it_fit(format!("returns ({})", simulated_list))
-                } else {
-                    false
-                };
+                let returns_multiline = attrs_multiline &&
+                    fmt.are_chunks_separated_multiline2("returns ({})", &returns, ",")?;
                 fmt.surrounded(byte_offset, "returns (", ")", returns_end, |fmt| {
                     fmt.write_chunks_separated2(&returns, ",", returns_multiline)?;
                     Ok(())
@@ -1287,6 +1261,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             })?;
         }
 
+        // write function body
         match &mut func.body {
             Some(body) => {
                 let byte_offset = body_loc.unwrap().start();
