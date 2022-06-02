@@ -128,9 +128,6 @@ impl CommentWithMetadata {
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
     }
-    pub fn needs_newline(&self) -> bool {
-        self.is_line() || self.is_prefix()
-    }
     pub fn is_before(&self, byte: usize) -> bool {
         self.loc.start() < byte
     }
@@ -159,34 +156,6 @@ impl Comments {
         Self { prefixes, postfixes }
     }
 
-    pub(crate) fn pop_prefix(&mut self, byte: usize) -> Option<CommentWithMetadata> {
-        if self.prefixes.last()?.is_before(byte) {
-            Some(self.prefixes.pop().unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn peek_prefix(&mut self, byte: usize) -> Option<&CommentWithMetadata> {
-        self.prefixes.last().and_then(
-            |comment| {
-                if comment.is_before(byte) {
-                    Some(comment)
-                } else {
-                    None
-                }
-            },
-        )
-    }
-
-    pub(crate) fn pop_postfix(&mut self, byte: usize) -> Option<CommentWithMetadata> {
-        if self.postfixes.last()?.is_before(byte) {
-            Some(self.postfixes.pop().unwrap())
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn get_comments_before(&self, byte: usize) -> Vec<&CommentWithMetadata> {
         let mut out = self
             .prefixes
@@ -199,30 +168,33 @@ impl Comments {
         out
     }
 
-    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let mut out = self.prefixes.split_off(
+    pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+        let mut prefixes = self.prefixes.split_off(
             self.prefixes
                 .iter()
                 .find_position(|comment| comment.is_before(byte))
                 .map(|(idx, _)| idx)
                 .unwrap_or_else(|| self.prefixes.len()),
         );
-        out.append(
-            &mut self.postfixes.split_off(
-                self.postfixes
-                    .iter()
-                    .find_position(|comment| comment.is_before(byte))
-                    .map(|(idx, _)| idx)
-                    .unwrap_or_else(|| self.postfixes.len()),
-            ),
-        );
-        out.sort_by_key(|comment| comment.loc.start());
-        out
+        prefixes.reverse();
+        prefixes
     }
 
-    pub(crate) fn drain(&mut self) -> Vec<CommentWithMetadata> {
-        let mut out = std::mem::take(&mut self.prefixes);
-        out.append(&mut self.postfixes);
+    pub(crate) fn remove_postfixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+        let mut postfixes = self.postfixes.split_off(
+            self.postfixes
+                .iter()
+                .find_position(|comment| comment.is_before(byte))
+                .map(|(idx, _)| idx)
+                .unwrap_or_else(|| self.postfixes.len()),
+        );
+        postfixes.reverse();
+        postfixes
+    }
+
+    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+        let mut out = self.remove_prefixes_before(byte);
+        out.append(&mut self.remove_postfixes_before(byte));
         out.sort_by_key(|comment| comment.loc.start());
         out
     }

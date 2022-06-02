@@ -221,10 +221,7 @@ pub trait Visitor {
     }
 
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
-        if let Some(loc) = attribute.loc() {
-            self.visit_source(loc)?;
-        }
-
+        self.visit_source(attribute.loc())?;
         Ok(())
     }
 
@@ -234,18 +231,6 @@ pub trait Visitor {
 
     fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
         self.visit_source(parameter.loc)
-    }
-
-    /// Write parameter list used in function/constructor/fallback/modifier arguments, return
-    /// arguments and try return arguments including opening and closing parenthesis.
-    fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
-        self.visit_opening_paren()?;
-        if let (Some((first_loc, _)), Some((last_loc, _))) = (list.first(), list.last()) {
-            self.visit_source(Loc::File(first_loc.file_no(), first_loc.start(), last_loc.end()))?;
-        }
-        self.visit_closing_paren()?;
-
-        Ok(())
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
@@ -434,7 +419,6 @@ impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
 impl_visitable!(Parameter, visit_parameter);
-impl_visitable!(ParameterList, visit_parameter_list);
 impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
