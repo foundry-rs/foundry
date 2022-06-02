@@ -41,6 +41,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -118,16 +119,15 @@ pub struct ScriptResult {
     pub returned: bytes::Bytes,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JsonResult {
     pub logs: Vec<String>,
     pub gas_used: u64,
-    // pub returned_result: Vec<ReturnedResult>,
+    pub results: HashMap<String, NestedValue>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ReturnedResult {
-    pub label: String,
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NestedValue {
     pub internal_type: String,
     pub value: String,
 }
@@ -239,6 +239,7 @@ impl ScriptArgs {
         result: &mut ScriptResult,
     ) -> eyre::Result<()> {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
+        let mut results = HashMap::new();
 
         match func.decode_output(&result.returned) {
             Ok(decoded) => {
@@ -250,7 +251,14 @@ impl ScriptArgs {
                     } else {
                         index.to_string()
                     };
-                    // println!("{}: {} {}", label.trim_end(), internal_type, format_token(token));
+
+                    results.insert(
+                        label,
+                        NestedValue {
+                            internal_type: internal_type.to_string(),
+                            value: format_token(token),
+                        },
+                    );
                 }
             }
             Err(_) => {
@@ -259,15 +267,7 @@ impl ScriptArgs {
         }
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult {
-            logs: console_logs,
-            gas_used: result.gas,
-            // returned_result: ReturnedResult {
-            //     label: label.trim_end().to_string(),
-            //     internal_type: internal_type.to_string(),
-            //     value: format_token(token).to_string(),
-            // },
-        };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas, results };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
