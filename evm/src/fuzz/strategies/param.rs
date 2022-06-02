@@ -75,14 +75,14 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> + Sync + Se
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> SBoxedStrategy<Token> {
     // These are to comply with lifetime requirements
-    let state = arc_state.read().unwrap();
+    let state = arc_state.read();
     let state_len = state.len();
 
     // Select a value from the state
     let st = arc_state.clone();
     let value = any::<prop::sample::Index>()
         .prop_map(move |index| index.index(state_len))
-        .prop_map(move |index| *(st.read().as_ref()).unwrap().iter().nth(index).unwrap());
+        .prop_map(move |index| *st.read().iter().nth(index).unwrap());
 
     // Convert the value based on the parameter type
     match param {

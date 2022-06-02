@@ -1,7 +1,8 @@
+use parking_lot::RwLock;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use ethers::{
@@ -19,7 +20,7 @@ use crate::{
     fuzz::{
         strategies::{
             build_initial_state, collect_created_contracts, collect_state_from_call,
-            invariant_strat, EvmFuzzState,
+            invariant_strat, reentrancy_strat, EvmFuzzState,
         },
         FuzzCase, FuzzedCases,
     },
@@ -86,18 +87,20 @@ where
 
         // Prepare executor
         self.evm.set_tracing(false);
-        let inner_sequence = Arc::new(RwLock::new(vec![]));
-        let generator = RandomCallGenerator {
-            runner: Arc::new(RwLock::new(self.runner.clone())),
-            strategy: strat.clone(),
-            last_sequence: inner_sequence,
-            replay: false,
-            used: false,
-        };
 
-        // fuzz_state will collect `stack` and `memory` values for use with
-        // [fuzz_calldata_from_state]
-        self.evm.set_fuzzer(generator, fuzz_state.clone());
+        let target_reference = Arc::new(RwLock::new(Address::zero()));
+        self.evm.set_fuzzer(
+            RandomCallGenerator::new(
+                self.runner.clone(),
+                reentrancy_strat(
+                    fuzz_state.clone(),
+                    targeted_contracts.clone(),
+                    target_reference.clone(),
+                ),
+                target_reference,
+            ),
+            fuzz_state.clone(),
+        );
 
         let clean_db = self.evm.db.clone();
         let executor = RefCell::new(&mut self.evm);
@@ -217,7 +220,7 @@ where
 
                 // We clear all the targeted contracts created during this run
                 if !created.is_empty() {
-                    let mut targeted = targeted_contracts.write().unwrap();
+                    let mut targeted = targeted_contracts.write();
                     for addr in created.iter() {
                         targeted.remove(addr);
                     }

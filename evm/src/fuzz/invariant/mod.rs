@@ -9,8 +9,10 @@ use ethers::{
     prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
+use parking_lot::RwLock;
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
+    option::weighted,
     strategy::SBoxedStrategy,
     test_runner::{TestError, TestRunner},
 };
@@ -19,7 +21,7 @@ use std::{
     borrow::{Borrow, BorrowMut},
     cell::RefMut,
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use crate::executor::{Executor, RawCallResult};
@@ -64,7 +66,7 @@ where
         let generator = &mut executor.inspector_config.fuzzer.as_mut().unwrap().generator;
 
         // // will need the exact depth and all to replay
-        let sequence = generator.last_sequence.read().unwrap().clone();
+        let sequence = generator.last_sequence.read().clone();
         sequence
     };
 
@@ -139,7 +141,7 @@ pub struct InvariantFuzzError {
     /// Function data for invariant check
     pub func: Option<ethers::prelude::Bytes>,
     /// Inner Fuzzing Sequence
-    pub inner_sequence: Vec<BasicTxDetails>,
+    pub inner_sequence: Vec<Option<BasicTxDetails>>,
 }
 
 impl InvariantFuzzError {
@@ -149,7 +151,7 @@ impl InvariantFuzzError {
         abi: &Abi,
         result: &bytes::Bytes,
         inputs: &[BasicTxDetails],
-        inner_sequence: &[BasicTxDetails],
+        inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         let mut func = None;
         let origin: String;
@@ -191,51 +193,67 @@ impl InvariantFuzzError {
 pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<RwLock<TestRunner>>,
-    /// Strategy to be used to generate calls.
-    pub strategy: SBoxedStrategy<Vec<BasicTxDetails>>,
+    /// Strategy to be used to generate calls from `target_reference`.
+    pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
+    /// Reference to which contract we want a fuzzed calldata from.
+    pub target_reference: Arc<RwLock<Address>>,
     /// Flag to know if a call has been overriden.
     pub used: bool,
     /// If set to `true`, consumes the next call from `last_sequence`, otherwise from the strategy.
     pub replay: bool,
     /// Saves the sequence of generated calls that can be replayed later on.
-    pub last_sequence: Arc<RwLock<Vec<BasicTxDetails>>>,
+    pub last_sequence: Arc<RwLock<Vec<Option<BasicTxDetails>>>>,
 }
 
 impl RandomCallGenerator {
+    pub fn new(
+        runner: TestRunner,
+        strategy: SBoxedStrategy<(Address, Bytes)>,
+        target_reference: Arc<RwLock<Address>>,
+    ) -> Self {
+        let strategy = weighted(0.3, strategy).sboxed();
+
+        RandomCallGenerator {
+            runner: Arc::new(RwLock::new(runner)),
+            strategy,
+            target_reference,
+            last_sequence: Arc::new(RwLock::new(vec![])),
+            replay: false,
+            used: false,
+        }
+    }
     pub fn set_replay(&mut self, status: bool) {
         self.replay = status;
         if status {
             // So it can later be popped.
-            self.last_sequence.write().unwrap().reverse()
+            self.last_sequence.write().reverse()
         }
     }
 
     /// Gets the next call. Random if replay is not set. Otherwise, it pops from `last_sequence`.
-    pub fn next(&mut self, original_caller: Address, original_target: Address) -> BasicTxDetails {
+    pub fn next(
+        &mut self,
+        original_caller: Address,
+        original_target: Address,
+    ) -> Option<BasicTxDetails> {
         if self.replay {
-            self.last_sequence.write().unwrap().pop().unwrap()
+            self.last_sequence.write().pop().unwrap()
         } else {
-            let mut testrunner = self.runner.write().unwrap();
-            let calldata;
+            let mut testrunner = self.runner.write();
+            let mut last_sequence = self.last_sequence.write();
 
-            loop {
-                let mut reentrant_call = self.strategy.new_tree(&mut testrunner).unwrap().current();
+            // Set which contract we want to generate calldata from.
+            *self.target_reference.write() = original_caller;
 
-                let (_, (contract, data)) = reentrant_call.pop().unwrap();
-
-                // Only accepting calls made to the one who called `original_target`.
-                if contract == original_caller {
-                    calldata = data;
-                    break
-                }
-            }
-
-            self.last_sequence
-                .write()
+            let choice = self
+                .strategy
+                .new_tree(&mut testrunner)
                 .unwrap()
-                .push((original_target, (original_caller, calldata.clone())));
+                .current()
+                .map(|(_, calldata)| (original_target, (original_caller, calldata)));
 
-            (original_target, (original_caller, calldata))
+            last_sequence.push(choice.clone());
+            choice
         }
     }
 }

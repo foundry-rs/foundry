@@ -7,6 +7,7 @@ use ethers::{
     types::{Address, Log, H256, U256},
 };
 use foundry_utils::diff_score;
+use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
@@ -15,9 +16,8 @@ use revm::{
 use std::{
     collections::{BTreeMap, HashSet},
     io::Write,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
-
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
@@ -86,7 +86,7 @@ pub fn collect_state_from_call(
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
 ) {
-    let mut state = state.write().unwrap();
+    let mut state = state.write();
 
     for (address, account) in state_changeset {
         // Insert basic account information
@@ -173,7 +173,7 @@ pub fn collect_created_contracts(
     targeted_contracts: FuzzRunIdentifiedContracts,
     created: &mut Vec<Address>,
 ) -> bool {
-    let mut targeted = targeted_contracts.write().unwrap();
+    let mut targeted = targeted_contracts.write();
     let before = created.len();
 
     for (address, account) in &state_changeset {

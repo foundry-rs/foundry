@@ -14,13 +14,14 @@ use foundry_evm::{
     trace::{load_contracts, CallTraceArena, TraceKind},
     CALLER,
 };
+use parking_lot::RwLock;
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fmt,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 

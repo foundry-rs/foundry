@@ -1,3 +1,6 @@
+use parking_lot::RwLock;
+use std::sync::Arc;
+
 use ethers::{
     abi::{Abi, Function, ParamType},
     types::{Address, Bytes},
@@ -11,6 +14,27 @@ use crate::fuzz::{
     strategies::fuzz_param,
     EvmFuzzState,
 };
+
+/// Given a target address, we generate random calldata.
+pub fn reentrancy_strat(
+    fuzz_state: EvmFuzzState,
+    contracts: FuzzRunIdentifiedContracts,
+    target: Arc<RwLock<Address>>,
+) -> SBoxedStrategy<(Address, Bytes)> {
+    any::<prop::sample::Selector>()
+        .prop_flat_map(move |_| {
+            let fuzz_state = fuzz_state.clone();
+            let target_address = *target.read();
+            let contracts = contracts.read();
+            let (_, abi, functions) = contracts.get(&target_address).unwrap();
+
+            let func = select_random_function(abi.clone(), functions.clone());
+            func.prop_flat_map(move |func| {
+                fuzz_contract_with_calldata(fuzz_state.clone(), target_address, func)
+            })
+        })
+        .sboxed()
+}
 
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
@@ -61,7 +85,7 @@ fn select_random_contract(
     let selectors = any::<prop::sample::Selector>();
 
     selectors.prop_map(move |selector| {
-        let contracts = contracts.read().unwrap();
+        let contracts = contracts.read();
         let (addr, (_, abi, functions)) = selector.select(contracts.iter());
         (*addr, abi.clone(), functions.clone())
     })

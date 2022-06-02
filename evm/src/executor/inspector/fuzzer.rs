@@ -66,7 +66,7 @@ where
 impl Fuzzer {
     /// Collects `state` and `memory` values into the fuzz dictionary.
     fn collect_data(&mut self, interpreter: &mut Interpreter) {
-        let mut state = self.fuzz_state.write().unwrap();
+        let mut state = self.fuzz_state.write();
 
         for slot in interpreter.stack().data() {
             state.insert(utils::u256_to_h256_be(*slot).into());
@@ -91,16 +91,17 @@ impl Fuzzer {
             call.context.scheme == CallScheme::Call &&
             !self.generator.used
         {
-            let (sender, (contract, input)) =
-                self.generator.next(call.context.caller, call.contract);
+            if let Some((sender, (contract, input))) =
+                self.generator.next(call.context.caller, call.contract)
+            {
+                call.input = input.0;
+                call.context.caller = sender;
+                call.contract = contract;
+                call.context.code_address = contract;
+                call.context.address = contract;
 
-            call.input = input.0;
-            call.context.caller = sender;
-            call.contract = contract;
-            call.context.code_address = contract;
-            call.context.address = contract;
-
-            self.generator.used = true;
+                self.generator.used = true;
+            }
         }
     }
 }
