@@ -35,7 +35,6 @@ struct FormatBuffer<W: Sized> {
     tab_width: usize,
     is_beginning_of_line: bool,
     is_beginning_of_group: bool,
-    is_end_of_group: bool, // TODO: check
     last_indent: String,
     last_char: Option<char>,
     current_line_len: usize,
@@ -51,7 +50,6 @@ impl<W: Sized> FormatBuffer<W> {
             current_line_len: 0,
             is_beginning_of_line: true,
             is_beginning_of_group: true,
-            is_end_of_group: false,
             last_indent: String::new(),
             last_char: None,
         }
@@ -84,11 +82,6 @@ impl<W: Sized> FormatBuffer<W> {
         self.is_beginning_of_group = true
     }
 
-    fn end_group(&mut self) {
-        self.is_beginning_of_group = false;
-        self.is_end_of_group = true
-    }
-
     fn last_char_is_whitespace(&self) -> bool {
         self.last_char.map(|ch| ch.is_whitespace()).unwrap_or(true)
     }
@@ -112,11 +105,7 @@ impl<W: Write> Write for FormatBuffer<W> {
         //     s, self.is_beginning_of_line, self.is_beginning_of_group
         // );
         if self.is_beginning_of_line && !s.trim_start().is_empty() {
-            let level = if self.is_beginning_of_group || self.is_end_of_group {
-                self.level
-            } else {
-                self.level + 1
-            };
+            let level = if self.is_beginning_of_group { self.level } else { self.level + 1 };
             // TODO: println!("str: {}. level: {}", s, level);
             let indent = " ".repeat(self.tab_width * level);
             self.write_raw(&indent)?;
@@ -140,7 +129,6 @@ impl<W: Write> Write for FormatBuffer<W> {
             }
         } else {
             self.is_beginning_of_line = false;
-            self.is_beginning_of_group = false;
             self.current_line_len += s.len();
         }
 
@@ -228,7 +216,6 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn indent(&mut self, delta: usize) }
     buf_fn! { fn dedent(&mut self, delta: usize) }
     buf_fn! { fn start_group(&mut self) }
-    buf_fn! { fn end_group(&mut self) }
     // buf_fn! { fn current_indent_len(&self) -> usize }
     buf_fn! { fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize }
     buf_fn! { fn is_beginning_of_line(&self) -> bool }
@@ -461,16 +448,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         Ok(())
     }
-
-    fn grouped(
-        &mut self,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<(), VError> {
-        self.start_group();
-        fun(self)?;
-        self.end_group();
-        Ok(())
-    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -606,73 +583,65 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         self.context.contract = Some(contract.clone());
 
-        self.grouped(|fmt| {
-            write_chunk!(fmt, contract.loc.start(), "{} ", contract.ty)?;
-            write_chunk!(fmt, contract.name.loc.end(), "{} ", contract.name.name)?;
+        self.start_group();
+        write_chunk!(self, contract.loc.start(), "{} ", contract.ty)?;
+        write_chunk!(self, contract.name.loc.end(), "{} ", contract.name.name)?;
 
-            if !contract.base.is_empty() {
-                // TODO: check if chunk fits?
-                write_chunk!(fmt, contract.base.first().unwrap().loc.start(), "is")?;
+        if !contract.base.is_empty() {
+            // TODO: check if chunk fits?
+            write_chunk!(self, contract.base.first().unwrap().loc.start(), "is")?;
 
-                let bases = fmt.items_to_chunks(&mut contract.base, |base| Ok((base.loc, base)))?;
+            let bases = self.items_to_chunks(&mut contract.base, |base| Ok((base.loc, base)))?;
 
-                let multiline = fmt.are_chunks_separated_multiline(&bases, ", ");
+            let multiline = self.are_chunks_separated_multiline(&bases, ", ");
 
-                if multiline {
-                    writeln!(fmt.buf())?;
-                } else {
-                    write!(fmt.buf(), " ")?;
-                }
-
+            self.write_whitespace_separator(multiline)?;
+            self.indented_if(multiline, 1, |fmt| {
                 fmt.write_chunks_separated(&bases, ", ", multiline)?;
-
-                if multiline {
-                    writeln!(fmt.buf())?;
-                } else {
-                    write!(fmt.buf(), " ")?;
-                }
-            }
-
-            if contract.parts.is_empty() {
-                return Ok(())
-            }
-
-            writeln!(fmt.buf(), "{{")?;
-
-            let mut contract_parts_iter = contract.parts.iter_mut().peekable();
-            while let Some(part) = contract_parts_iter.next() {
-                part.visit(fmt)?;
-                writeln!(fmt.buf())?;
-
-                // If source has zero blank lines between parts and the current part is not a
-                // function, leave it as is. If it has one or more blank lines or
-                // the current part is a function, separate parts with one blank
-                // line.
-                if let Some(next_part) = contract_parts_iter.peek() {
-                    let blank_lines = fmt.blank_lines(part.loc(), next_part.loc());
-                    let is_function = match part {
-                        ContractPart::FunctionDefinition(function_definition) => matches!(
-                            **function_definition,
-                            FunctionDefinition {
-                                ty: FunctionTy::Function |
-                                    FunctionTy::Receive |
-                                    FunctionTy::Fallback,
-                                ..
-                            }
-                        ),
-                        _ => false,
-                    };
-                    if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln!(fmt.buf())?;
-                    }
-                }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+            self.write_whitespace_separator(multiline)?;
+        }
 
         if contract.parts.is_empty() {
             self.write_empty_brackets()?;
         } else {
+            writeln!(self.buf(), "{{")?;
+
+            self.indented(1, |fmt| {
+                let mut contract_parts_iter = contract.parts.iter_mut().peekable();
+                while let Some(part) = contract_parts_iter.next() {
+                    part.visit(fmt)?;
+                    writeln!(fmt.buf())?;
+
+                    // If source has zero blank lines between parts and the current part is not a
+                    // function, leave it as is. If it has one or more blank lines or
+                    // the current part is a function, separate parts with one blank
+                    // line.
+                    if let Some(next_part) = contract_parts_iter.peek() {
+                        let blank_lines = fmt.blank_lines(part.loc(), next_part.loc());
+                        let is_function =
+                            if let ContractPart::FunctionDefinition(function_definition) = part {
+                                matches!(
+                                    **function_definition,
+                                    FunctionDefinition {
+                                        ty: FunctionTy::Function |
+                                            FunctionTy::Receive |
+                                            FunctionTy::Fallback,
+                                        ..
+                                    }
+                                )
+                            } else {
+                                false
+                            };
+                        if is_function && blank_lines > 0 || blank_lines > 1 {
+                            writeln!(fmt.buf())?;
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+
             write!(self.buf(), "}}")?;
         }
 
@@ -761,6 +730,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
+        self.start_group();
         write_chunk!(self, enumeration.loc.start(), "enum {} ", &enumeration.name.name)?;
 
         if enumeration.values.is_empty() {
@@ -792,6 +762,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
+        // TODO: start group?
         match expr {
             Expression::Type(loc, typ) => match typ {
                 Type::Address => write_chunk!(self, loc.start(), "address")?,
@@ -841,6 +812,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+        self.start_group();
         var.ty.visit(self)?;
 
         if let Some(storage) = &var.storage {
@@ -867,6 +839,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
         self.context.function = Some(func.clone());
 
+        self.start_group();
         write!(self.buf(), "{}", func.ty)?;
 
         if let Some(Identifier { name, loc }) = &func.name {
@@ -1014,6 +987,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_base(&mut self, base: &mut Base) -> VResult {
+        self.start_group();
         let need_parents = self.context.function.is_some() || base.args.is_some();
 
         self.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
@@ -1086,6 +1060,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        self.start_group();
         write_chunk!(self, structure.name.loc.end(), "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
@@ -1108,6 +1083,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        self.start_group();
         write_chunk!(self, def.name.loc.end(), "type {} is ", def.name.name)?;
         def.ty.visit(self)?;
         self.write_semicolon()?;
@@ -1127,6 +1103,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         unchecked: bool,
         statements: &mut Vec<Statement>,
     ) -> VResult {
+        // TODO: start group?
         if unchecked {
             write!(self.buf(), "unchecked ")?;
         }
@@ -1191,6 +1168,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+        self.start_group();
         write_chunk!(self, event.name.loc.end(), "event {}", event.name.name)?;
 
         let params = self.items_to_chunks(&mut event.fields, |param| Ok((param.loc, param)))?;
@@ -1227,15 +1205,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        self.grouped(|fmt| {
-            write_chunk!(fmt, error.name.loc.end(), "error {}", error.name.name)?;
+        self.start_group();
+        write_chunk!(self, error.name.loc.end(), "error {}", error.name.name)?;
 
-            let params = fmt.items_to_chunks(&mut error.fields, |param| Ok((param.loc, param)))?;
-            let multiline = fmt.are_chunks_separated_multiline(&params, ", ");
-            fmt.write_chunks_with_paren_separated(&params, ", ", multiline)?;
-            fmt.write_semicolon()?;
-            Ok(())
-        })
+        let params = self.items_to_chunks(&mut error.fields, |param| Ok((param.loc, param)))?;
+        let multiline = self.are_chunks_separated_multiline(&params, ", ");
+        self.write_chunks_with_paren_separated(&params, ", ", multiline)?;
+        self.write_semicolon()?;
+
+        Ok(())
     }
 
     fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
@@ -1282,6 +1260,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+        self.start_group();
         var.ty.visit(self)?;
 
         // TODO write chunks to string in order and then do sort
@@ -1501,18 +1480,18 @@ mod tests {
 
     test_directory! { ConstructorDefinition }
     test_directory! { ContractDefinition }
-    // test_directory! { DocComments }
-    // test_directory! { EnumDefinition }
+    test_directory! { DocComments }
+    test_directory! { EnumDefinition }
     test_directory! { ErrorDefinition }
-    // test_directory! { EventDefinition }
-    // test_directory! { FunctionDefinition }
-    // test_directory! { FunctionType }
-    // test_directory! { ImportDirective }
-    // test_directory! { ModifierDefinition }
+    test_directory! { EventDefinition }
+    test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
+    test_directory! { ImportDirective }
+    test_directory! { ModifierDefinition }
     test_directory! { StatementBlock }
-    // test_directory! { StructDefinition }
-    // test_directory! { TypeDefinition }
-    // test_directory! { UsingDirective }
-    // test_directory! { VariableDefinition }
-    // test_directory! { SimpleComments }
+    test_directory! { StructDefinition }
+    test_directory! { TypeDefinition }
+    test_directory! { UsingDirective }
+    test_directory! { VariableDefinition }
+    test_directory! { SimpleComments }
 }
