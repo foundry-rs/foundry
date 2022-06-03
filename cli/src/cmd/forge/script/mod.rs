@@ -161,8 +161,8 @@ impl ScriptArgs {
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &etherscan_identifier);
             decoder.identify(trace, &local_identifier);
+            decoder.identify(trace, &etherscan_identifier);
         }
         Ok(decoder)
     }
