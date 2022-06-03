@@ -77,6 +77,20 @@ where
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
+    // TODO: Duplicate code of the debugger inspector
+    fn initialize_interp(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
+        // map for a given address does not exist, *but* we need to account for the fact that the
+        // code given by the interpreter may either be the contract init code, or the runtime code.
+        self.build_ic_map(data.env.cfg.spec_id, &interp.contract().code);
+        Return::Continue
+    }
+
     // TODO: Don't collect coverage for test contract if possible
     fn step(
         &mut self,

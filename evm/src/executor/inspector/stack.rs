@@ -68,7 +68,13 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.coverage,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 

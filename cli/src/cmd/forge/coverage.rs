@@ -11,7 +11,7 @@ use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
     abi::Address,
-    prelude::{artifacts, Artifact, Project, ProjectCompileOutput},
+    prelude::{Artifact, Project, ProjectCompileOutput},
     solc::{
         artifacts::contract::CompactContractBytecode,
         sourcemap::{self, SourceMap},
@@ -232,11 +232,7 @@ impl CoverageArgs {
                                 source_map,
                                 hit_map.clone(),
                             );
-                        } else {
-                            println!("Found no hit map: {:?}", artifact_id);
                         }
-                    } else {
-                        println!("Found no source map: {:?}", artifact_id);
                     }
                 }
             }
