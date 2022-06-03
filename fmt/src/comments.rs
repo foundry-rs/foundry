@@ -156,18 +156,6 @@ impl Comments {
         Self { prefixes, postfixes }
     }
 
-    pub(crate) fn get_comments_before(&self, byte: usize) -> Vec<&CommentWithMetadata> {
-        let mut out = self
-            .prefixes
-            .iter()
-            .rev()
-            .take_while(|comment| comment.is_before(byte))
-            .chain(self.prefixes.iter().rev().take_while(|comment| comment.is_before(byte)))
-            .collect::<Vec<_>>();
-        out.sort_by_key(|comment| comment.loc.start());
-        out
-    }
-
     pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         let mut prefixes = self.prefixes.split_off(
             self.prefixes

@@ -221,6 +221,11 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> VResult {
+        self.visit_source(attribute.loc())?;
+        Ok(())
+    }
+
     fn visit_base(&mut self, base: &mut Base) -> VResult {
         self.visit_source(base.loc)
     }
@@ -415,6 +420,7 @@ impl_visitable!(DocComment, visit_doc_comment);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
+impl_visitable!(VariableAttribute, visit_var_attribute);
 impl_visitable!(Parameter, visit_parameter);
 impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
