@@ -386,15 +386,41 @@ impl LineOfCode for Comment {
     }
 }
 
-impl OptionalLineOfCode for FunctionAttribute {
-    fn loc(&self) -> Option<Loc> {
+impl LineOfCode for FunctionAttribute {
+    fn loc(&self) -> Loc {
         match self {
-            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
-            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            FunctionAttribute::Mutability(mutability) => mutability.loc(),
+            // visibility will always have a location in a function attribute
+            FunctionAttribute::Visibility(visibility) => visibility.loc().unwrap(),
             FunctionAttribute::Virtual(loc) |
             FunctionAttribute::Immutable(loc) |
             FunctionAttribute::Override(loc, _) |
-            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+            FunctionAttribute::BaseOrModifier(loc, _) => *loc,
         }
+    }
+}
+
+impl LineOfCode for VariableAttribute {
+    fn loc(&self) -> Loc {
+        match self {
+            // visibility will always have a location in a function attribute
+            VariableAttribute::Visibility(visibility) => visibility.loc().unwrap(),
+            VariableAttribute::Constant(loc) |
+            VariableAttribute::Immutable(loc) |
+            VariableAttribute::Override(loc) => *loc,
+        }
+    }
+}
+
+impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
+    fn loc(&self) -> Option<Loc> {
+        if self.is_empty() {
+            return None
+        }
+        let mut locs = self.iter().map(|(loc, _)| loc).collect::<Vec<_>>();
+        locs.sort();
+        let mut loc = **locs.first().unwrap();
+        loc.use_end_from(locs.pop().unwrap());
+        Some(loc)
     }
 }
