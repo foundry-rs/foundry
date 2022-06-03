@@ -187,9 +187,20 @@ macro_rules! write_chunk {
     ($self:ident, $loc:expr) => {{
         write_chunk!($self, $loc, "")
     }};
-    ($self:ident, $loc:expr, $($arg:tt)*) => {{
+    ($self:ident, $loc:expr, $format_str:literal) => {{
+        write_chunk!($self, $loc, $format_str,)
+    }};
+    ($self:ident, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
         // println!("write_chunk[{}:{}]", file!(), line!());
-        let chunk = $self.chunk_at($loc, format_args!($($arg)*), None);
+        let chunk = $self.chunk_at($loc, format_args!($format_str, $($arg)*), None);
+        $self.write_chunk(&chunk)
+    }};
+    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+        write_chunk!($self, $loc, $end_loc, $format_str,)
+    }};
+    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        // println!("write_chunk[{}:{}]", file!(), line!());
+        let chunk = $self.chunk_at($loc, format_args!($format_str, $($arg)*), Some($end_loc));
         $self.write_chunk(&chunk)
     }};
 }
@@ -198,8 +209,17 @@ macro_rules! writeln_chunk {
     ($self:ident, $loc:expr) => {{
         writeln_chunk!($self, $loc, "")
     }};
-    ($self:ident, $loc:expr, $($arg:tt)*) => {{
-        write_chunk!($self, $loc, "{}\n", format_args!($($arg)*))
+    ($self:ident, $loc:expr, $format_str:literal) => {{
+        writeln_chunk!($self, $loc, $format_str,)
+    }};
+    ($self:ident, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        write_chunk!($self, $loc, "{}\n", format_args!($format_str, $($arg)*))
+    }};
+    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+        writeln_chunk!($self, $loc, $end_loc, $format_str,)
+    }};
+    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        write_chunk!($self, $loc, $end_loc, "{}\n", format_args!($format_str, $($arg)*))
     }};
 }
 
@@ -266,25 +286,36 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn set_last_indent_group_skipped(&mut self, skip: bool) }
     buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
 
-    fn next_chunk_needs_space(&self) -> bool {
-        !self.is_beginning_of_line() &&
-            !self
-                .last_char()
-                .map(|ch| {
-                    // character is whitespace or doesn't require whitespace
-                    ch.is_whitespace() ||
-                        match ch {
-                            '{' | '[' | '(' => !self.config.bracket_spacing,
-                            _ => false,
-                        }
-                })
-                .unwrap_or(true)
+    fn next_chunk_needs_space(&self, next_char: char) -> bool {
+        if self.is_beginning_of_line() {
+            return false
+        }
+        let last_char =
+            if let Some(last_char) = self.last_char() { last_char } else { return false };
+        if last_char.is_whitespace() {
+            return false
+        }
+        if next_char.is_whitespace() {
+            return false
+        }
+        match last_char {
+            '{' | '[' => match next_char {
+                '{' | '[' | '(' => false,
+                _ => self.config.bracket_spacing,
+            },
+            '(' => false,
+            _ => match next_char {
+                '}' | ']' => self.config.bracket_spacing,
+                ')' => false,
+                _ => true,
+            },
+        }
     }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
     fn write_opening_bracket(&mut self) -> std::fmt::Result {
-        let space = if self.next_chunk_needs_space() { " " } else { "" };
+        let space = if self.next_chunk_needs_space('{') { " " } else { "" };
         write!(self.buf(), "{space}{{")
     }
 
@@ -292,7 +323,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// `" }"` if `true`, `"}"` if `false`
     fn write_closing_bracket(&mut self) -> std::fmt::Result {
         let bracket = if self.config.bracket_spacing {
-            if self.next_chunk_needs_space() {
+            if self.next_chunk_needs_space('}') {
                 " }"
             } else {
                 "}"
@@ -306,7 +337,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> std::fmt::Result {
-        let space = if self.next_chunk_needs_space() { " " } else { "" };
+        let space = if self.next_chunk_needs_space('{') { " " } else { "" };
         let brackets = if self.config.bracket_spacing { "{ }" } else { "{}" };
         write!(self.buf(), "{space}{brackets}")
     }
@@ -516,7 +547,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let indented = self.is_beginning_of_line();
             if indented {
                 self.indent(1);
-            } else if self.next_chunk_needs_space() {
+            } else if self.next_chunk_needs_space('/') {
                 write!(self.buf(), " ")?;
             }
             if comment.is_line() {
@@ -561,20 +592,30 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    fn chunked(
+        &mut self,
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
+    ) -> Result<Chunk, VError> {
+        let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
+        let prefixes = self.comments.remove_prefixes_before(byte_offset);
+        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        fun(self)?;
+        let content = self.temp_bufs.pop().unwrap().w;
+        let postfixes = next_byte_offset
+            .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
+            .unwrap_or_default();
+        Ok(Chunk { postfixes_before, prefixes, content, postfixes })
+    }
+
     fn visit_to_chunk(
         &mut self,
         byte_offset: usize,
         visitable: &mut impl Visitable,
         next_byte_offset: Option<usize>,
     ) -> Result<Chunk, VError> {
-        Ok(Chunk {
-            postfixes_before: self.comments.remove_postfixes_before(byte_offset),
-            prefixes: self.comments.remove_prefixes_before(byte_offset),
-            content: self.visit_to_string(visitable)?,
-            postfixes: next_byte_offset
-                .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
-                .unwrap_or_default(),
-        })
+        self.chunked(byte_offset, next_byte_offset, |fmt| visitable.visit(fmt))
     }
 
     fn write_chunk(&mut self, chunk: &Chunk) -> std::fmt::Result {
@@ -599,29 +640,19 @@ impl<'a, W: Write> Formatter<'a, W> {
             chunk.content.clone()
         };
 
-        // add whitespace if necessary
-        if self.next_chunk_needs_space() &&
-            !content
-                .chars()
-                .next()
-                .map(|ch|
-                    // check if next char in chunk provides spacing
-                    ch.is_whitespace() || match ch {
-                    ')' | '}' | ']' | ',' => true,
-                    '(' | '{' | '[' => matches!(self.last_char(), Some('{') | Some('[') | Some('(')),
-                    _ => false
-                })
-                .unwrap_or(true)
-        {
-            if self.will_it_fit(format!(" {content}")) {
-                write!(self.buf(), " ")?;
-            } else {
-                writeln!(self.buf())?;
+        if !content.is_empty() {
+            // add whitespace if necessary
+            if self.next_chunk_needs_space(content.chars().next().unwrap()) {
+                if self.will_it_fit(format!(" {content}")) {
+                    write!(self.buf(), " ")?;
+                } else {
+                    writeln!(self.buf())?;
+                }
             }
-        }
 
-        // write chunk
-        write!(self.buf(), "{content}")?;
+            // write chunk
+            write!(self.buf(), "{content}")?;
+        }
 
         // write any postfix comments
         for comment in &chunk.postfixes {
@@ -659,18 +690,6 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         }
         self.simulate_chunk(max_byte_end, string)
-    }
-
-    fn simulated<T>(
-        &mut self,
-        mut fun: impl FnMut(&mut Self) -> Result<T, VError>,
-    ) -> Result<T, VError> {
-        let comments = self.comments.clone();
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
-        let res = fun(self)?;
-        self.temp_bufs.pop();
-        self.comments = comments;
-        Ok(res)
     }
 
     fn simulate_to_string(
@@ -994,94 +1013,121 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
-        write_chunk!(self, import.loc.end(), "import \"{}\";", &import.string)?;
+    fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> VResult {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), import.loc.start(), "import")?;
+            write_chunk!(fmt, import.loc.start(), import.loc.end(), "\"{}\"", &import.string)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_import_global(
         &mut self,
+        loc: Loc,
         global: &mut StringLiteral,
         alias: &mut Identifier,
     ) -> VResult {
-        write_chunk!(self, alias.loc.end(), "import \"{}\" as {};", global.string, alias.name)?;
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), global.loc.start(), "import")?;
+            write_chunk!(fmt, global.loc.start(), global.loc.end(), "\"{}\"", &global.string)?;
+            write_chunk!(fmt, loc.start(), alias.loc.start(), "as")?;
+            alias.visit(fmt)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_import_renames(
         &mut self,
+        loc: Loc,
         imports: &mut [(Identifier, Option<Identifier>)],
         from: &mut StringLiteral,
     ) -> VResult {
-        write!(self.buf(), "import ")?;
-
-        let mut imports = imports
-            .iter()
-            .map(|(ident, alias)| {
-                (
-                    alias.as_ref().unwrap_or(ident).loc.end(),
-                    format!(
-                        "{}{}",
-                        ident.name,
-                        alias
-                            .as_ref()
-                            .map_or("".to_string(), |alias| format!(" as {}", alias.name))
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        imports.sort();
-
-        let multiline = self.are_chunks_separated_multiline(&imports, ", ");
-
-        if multiline {
-            writeln!(self.buf(), "{{")?;
-        } else {
-            self.write_opening_bracket()?;
+        if imports.is_empty() {
+            self.grouped(|fmt| {
+                write_chunk!(fmt, loc.start(), "import")?;
+                fmt.write_empty_brackets()?;
+                write_chunk!(fmt, loc.start(), from.loc.start(), "from")?;
+                write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+                fmt.write_semicolon()?;
+                Ok(())
+            })?;
+            return Ok(())
         }
 
-        self.indented_if(multiline, 1, |fmt| {
-            fmt.write_chunks_separated(&imports, ",", multiline)?;
+        let imports_start = imports.first().unwrap().0.loc.start();
+
+        write_chunk!(self, loc.start(), imports_start, "import")?;
+
+        self.surrounded(imports_start, "{", "}", Some(from.loc.start()), |fmt| {
+            let mut imports = imports.iter_mut().peekable();
+            let mut import_chunks = Vec::new();
+            while let Some((ident, alias)) = imports.next() {
+                import_chunks.push(fmt.chunked(
+                    ident.loc.start(),
+                    imports.peek().map(|(ident, _)| ident.loc.start()),
+                    |fmt| {
+                        fmt.grouped(|fmt| {
+                            ident.visit(fmt)?;
+                            if let Some(alias) = alias {
+                                write_chunk!(fmt, ident.loc.end(), alias.loc.start(), "as")?;
+                                alias.visit(fmt)?;
+                            }
+                            Ok(())
+                        })
+                    },
+                )?);
+            }
+
+            let multiline = fmt.are_chunks_separated_multiline2(
+                &format!("{{}} }} from \"{}\";", from.string),
+                &import_chunks,
+                ",",
+            )?;
+            fmt.write_chunks_separated2(&import_chunks, ",", multiline)?;
             Ok(())
         })?;
 
-        if multiline {
-            write!(self.buf(), "\n}}")?;
-        } else {
-            self.write_closing_bracket()?;
-        }
-
-        write_chunk!(self, from.loc.end(), " from \"{}\";", from.string)?;
+        self.grouped(|fmt| {
+            write_chunk!(fmt, imports_start, from.loc.start(), "from")?;
+            write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
 
         Ok(())
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
-        write_chunk!(self, enumeration.loc.start(), "enum {} ", &enumeration.name.name)?;
+        let mut name = self.visit_to_chunk(
+            enumeration.name.loc.start(),
+            &mut enumeration.name,
+            Some(enumeration.loc.end()),
+        )?;
+        name.content = format!("enum {}", name.content);
+        self.write_chunk(&name)?;
 
         if enumeration.values.is_empty() {
             self.write_empty_brackets()?;
         } else {
-            // TODO rewrite with some enumeration
-            write!(self.buf(), "{{")?;
-
-            self.indented(1, |fmt| {
-                let mut enum_values = enumeration.values.iter().peekable();
-                while let Some(value) = enum_values.next() {
-                    writeln_chunk!(fmt, value.loc.start())?;
-                    write_chunk!(fmt, value.loc.end(), "{}", &value.name)?;
-
-                    if enum_values.peek().is_some() {
-                        write!(fmt.buf(), ",")?;
-                    }
-                }
-                Ok(())
-            })?;
-
-            self.write_postfix_comments_before(enumeration.loc.end())?;
-            self.write_prefix_comments_before(enumeration.loc.end())?;
-            writeln!(self.buf())?;
-            write!(self.buf(), "}}")?;
+            self.surrounded(
+                enumeration.values.first().unwrap().loc.start(),
+                "{",
+                "}",
+                Some(enumeration.loc.end()),
+                |fmt| {
+                    let values = fmt.items_to_chunks2(
+                        &mut enumeration.values,
+                        Some(enumeration.loc.end()),
+                        |ident| Ok((ident.loc, ident)),
+                    )?;
+                    fmt.write_chunks_separated2(&values, ",", true)?;
+                    Ok(())
+                },
+            )?;
         }
 
         Ok(())

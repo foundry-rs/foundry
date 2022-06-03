@@ -33,12 +33,13 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, _import: &mut StringLiteral) -> VResult {
+    fn visit_import_plain(&mut self, _loc: Loc, _import: &mut StringLiteral) -> VResult {
         Ok(())
     }
 
     fn visit_import_global(
         &mut self,
+        _loc: Loc,
         _global: &mut StringLiteral,
         _alias: &mut Identifier,
     ) -> VResult {
@@ -47,6 +48,7 @@ pub trait Visitor {
 
     fn visit_import_renames(
         &mut self,
+        _loc: Loc,
         _imports: &mut [(Identifier, Option<Identifier>)],
         _from: &mut StringLiteral,
     ) -> VResult {
@@ -316,9 +318,11 @@ impl Visitable for SourceUnitPart {
 impl Visitable for Import {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
-            Import::Plain(import, _) => v.visit_import_plain(import),
-            Import::GlobalSymbol(global, import_as, _) => v.visit_import_global(global, import_as),
-            Import::Rename(from, imports, _) => v.visit_import_renames(imports, from),
+            Import::Plain(import, loc) => v.visit_import_plain(*loc, import),
+            Import::GlobalSymbol(global, import_as, loc) => {
+                v.visit_import_global(*loc, global, import_as)
+            }
+            Import::Rename(from, imports, loc) => v.visit_import_renames(*loc, imports, from),
         }
     }
 }
