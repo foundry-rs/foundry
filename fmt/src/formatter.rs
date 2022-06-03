@@ -683,6 +683,79 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_operator_expr(
+        &mut self,
+        expr: &mut (impl Operator + Visitable + CodeLocation),
+    ) -> Result<(), VError> {
+        let op = expr.operator().unwrap();
+        let has_space_around = expr.has_space_around();
+        let op_precedence = expr.precedence();
+        let loc = expr.loc();
+        let left_loc = expr.left_mut().map(|expr| expr.loc());
+        let right_loc = expr.right_mut().map(|expr| expr.loc());
+
+        if let Some(left) = expr.left_mut() {
+            let left_start = left_loc.unwrap().start();
+            let left_end = right_loc.map(|loc| loc.start()).unwrap_or_else(|| loc.end());
+            let needs_paren = !left.precedence().is_evaluated_first(op_precedence);
+
+            let mut write_left = |fmt: &mut Self| {
+                let mut chunk = fmt.visit_to_chunk(left_start, Some(left_end), left)?;
+                if !has_space_around {
+                    chunk.content.push_str(op);
+                }
+                fmt.write_chunk(&chunk)?;
+                Ok(())
+            };
+            if needs_paren {
+                self.surrounded(left_start, "(", ")", Some(left_end), write_left)?;
+            } else {
+                write_left(self)?;
+            }
+
+            if has_space_around {
+                write_chunk!(self, left_start, left_end, "{op}")?;
+            }
+
+            if let Some(right) = expr.right_mut() {
+                assert!(has_space_around, "Only unary operators don't have spacing");
+
+                let right_start = right_loc.unwrap().start();
+                let needs_paren = op_precedence.is_evaluated_first(right.precedence());
+
+                if needs_paren {
+                    self.surrounded(right_start, "(", ")", Some(loc.end()), |fmt| {
+                        right.visit(fmt)
+                    })?;
+                } else {
+                    right.visit(self)?;
+                }
+            }
+        } else if let Some(right) = expr.right_mut() {
+            let right_start = right_loc.unwrap().start();
+            let needs_paren = op_precedence.is_evaluated_first(right.precedence());
+
+            if has_space_around {
+                write_chunk!(self, right_start, "{op}")?;
+            }
+            let mut write_right = |fmt: &mut Self| {
+                let mut chunk = fmt.visit_to_chunk(right_start, Some(loc.end()), right)?;
+                if !has_space_around {
+                    chunk.content = format!("{op}{}", chunk.content);
+                }
+                fmt.write_chunk(&chunk)?;
+                Ok(())
+            };
+            if needs_paren {
+                self.surrounded(right_start, "(", ")", Some(loc.end()), write_right)?;
+            } else {
+                write_right(self)?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn grouped(
         &mut self,
         mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
@@ -1092,6 +1165,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 write!(self.buf(), "]")?;
             }
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::Complement(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::UnaryMinus(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => self.visit_operator_expr(expr)?,
             Expression::Variable(ident) => {
                 ident.visit(self)?;
             }
@@ -1891,5 +1991,6 @@ mod tests {
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
     test_directory! { SimpleComments }
+    test_directory! { ExpressionPrecedence }
     test_directory! { FunctionDefinitionWithComments }
 }
