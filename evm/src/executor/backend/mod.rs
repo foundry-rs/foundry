@@ -22,8 +22,42 @@ pub use in_memory_db::MemDb;
 /// # 2. Forked Database
 /// A `revm::Database` that forks off a remote client
 ///
+///
 /// In addition to that we support forking manually on the fly.
-/// Additional forks can be created and their state can be switched manually.
+/// Additional forks can be created. Each unique fork is identified by its unique `ForkId`. We treat
+/// forks as unique if they have the same `(endpoint, block number)` pair.
+///
+/// When it comes to testing, it's intended that each contract will use its own `Backend`
+/// (`Backend::clone`). This way each contract uses its own encapsulated evm state. For in-memory
+/// testing, the database is just an owned `revm::InMemoryDB`.
+///
+/// The `db` if fork-mode basically consists of 2 halves:
+///   - everything fetched from the remote is readonly
+///   - all local changes (instructed by the contract) are written to the backend's `db` and don't
+///     alter the state of the remote client. This way a fork (`SharedBackend`), can be used by
+///     multiple contracts at the same time.
+///
+/// # Fork swapping
+///
+/// Multiple "forks" can be created `Backend::create_fork()`, however only 1 can be used by the
+/// `db`. However, their state can be hot-swapped by swapping the read half of `db` from one fork to
+/// another.
+///
+/// **Note:** this only affects the readonly half of the `db`, local changes are persistent across
+/// fork-state swaps.
+///
+/// # Snapshotting
+///
+/// A snapshot of the current overall state can be taken at any point in time. A snapshot is
+/// identified by a unique id that's returned when a snapshot is created. A snapshot can only be
+/// reverted _once_. After a successful revert, the same snapshot id cannot be used again. Reverting
+/// a snapshot replaces the current active state with the snapshot state, the snapshot is deleted
+/// afterwards, as well as any snapshots taken after the reverted snapshot, (e.g.: reverting to id
+/// 0x1 will delete snapshots with ids 0x1, 0x2, etc.)
+///
+/// **Note:** Snapshots work across fork-swaps, e.g. if fork `A` is currently active, then a
+/// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
+/// after reverting the snapshot.
 #[derive(Debug, Clone)]
 pub struct Backend2 {
     /// The access point for managing forks
@@ -32,7 +66,7 @@ pub struct Backend2 {
     /// state
     pub db: CacheDB<Backend>,
     /// Contains snapshots made at a certain point
-    snapshots: Snapshots<BackendSnapshot>,
+    snapshots: Snapshots<CacheDB<Backend>>,
 }
 
 // === impl Backend ===
@@ -79,13 +113,6 @@ enum BackendDatabase {
     Memory(InMemoryDB),
     /// Backed is currently serving data from the remote endpoint identified by the `ForkId`
     Fork(SharedBackend, ForkId),
-}
-
-/// Represents a snapshot of the entire state
-#[derive(Debug, Clone)]
-enum BackendSnapshot {
-    Memory(InMemoryDB),
-    Fork(ForkDbSnapshot),
 }
 
 /// Variants of a [revm::Database]
