@@ -199,7 +199,7 @@ macro_rules! write_chunk {
     }};
     ($self:ident, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
         // println!("write_chunk[{}:{}]", file!(), line!());
-        let chunk = $self.chunk_at($loc, format_args!($format_str, $($arg)*), None);
+        let chunk = $self.chunk_at($loc, None, format_args!($format_str, $($arg)*));
         $self.write_chunk(&chunk)
     }};
     ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal) => {{
@@ -207,7 +207,7 @@ macro_rules! write_chunk {
     }};
     ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
         // println!("write_chunk[{}:{}]", file!(), line!());
-        let chunk = $self.chunk_at($loc, format_args!($format_str, $($arg)*), Some($end_loc));
+        let chunk = $self.chunk_at($loc, Some($end_loc), format_args!($format_str, $($arg)*));
         $self.write_chunk(&chunk)
     }};
 }
@@ -418,7 +418,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
                 items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
-            out.push(self.visit_to_chunk(loc.start(), item, chunk_next_byte_offset)?);
+            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
         }
         Ok(out)
     }
@@ -449,7 +449,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 items.peek().map(|(_, loc, _)| loc.start()).or(next_byte_offset);
             out.push((
                 (attr_sort_key, loc),
-                self.visit_to_chunk(loc.start(), item, chunk_next_byte_offset)?,
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?,
             ));
         }
         out.sort_by_key(|(k, _)| *k);
@@ -612,8 +612,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn chunk_at(
         &mut self,
         byte_offset: usize,
-        content: impl std::fmt::Display,
         next_byte_offset: Option<usize>,
+        content: impl std::fmt::Display,
     ) -> Chunk {
         Chunk {
             postfixes_before: self.comments.remove_postfixes_before(byte_offset),
@@ -645,8 +645,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn visit_to_chunk(
         &mut self,
         byte_offset: usize,
-        visitable: &mut impl Visitable,
         next_byte_offset: Option<usize>,
+        visitable: &mut impl Visitable,
     ) -> Result<Chunk, VError> {
         self.chunked(byte_offset, next_byte_offset, |fmt| visitable.visit(fmt))
     }
@@ -1135,8 +1135,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
         let mut name = self.visit_to_chunk(
             enumeration.name.loc.start(),
-            &mut enumeration.name,
             Some(enumeration.loc.end()),
+            &mut enumeration.name,
         )?;
         name.content = format!("enum {}", name.content);
         self.write_chunk(&name)?;
