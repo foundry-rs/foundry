@@ -3,7 +3,13 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::executor::fork::{database::ForkedDatabase, BackendHandler};
+use crate::executor::{
+    fork::{
+        database::{ForkDbSnapshot, ForkedDatabase},
+        BackendHandler, SharedBackend,
+    },
+    snapshot::Snapshots,
+};
 use ethers::{
     providers::{Http, Provider},
     types::BlockId,
@@ -24,36 +30,24 @@ pub struct ForkId(pub String);
 
 /// A database type that can maintain multiple forks
 #[derive(Debug, Clone)]
-pub struct MutltiFork {
+pub struct MultiFork {
     /// Channel to send `Request`s to the handler
     handler: Sender<Request>,
     /// All created databases for forks identified by their `ForkId`
     forks: HashMap<ForkId, ForkedDatabase>,
-    /// The currently active Database
-    active: ForkId,
 }
 
-// === impl MultiFork ===
+// === impl MultiForkBackend ===
 
-impl MutltiFork {
-    /// Creates a new pair of `MutltiFork` and its handler `MutltiForkHandler`
-    pub fn new(_id: ForkId, _db: ForkedDatabase) -> (MutltiFork, MutltiForkHandler) {
+impl MultiFork {
+    /// Creates a new pair of `MutltiFork` and its handler `MultiForkHandler`
+    pub fn new(_id: ForkId, _db: ForkedDatabase) -> (MultiFork, MultiForkHandler) {
         todo!()
     }
 
-    /// Creates a new pair and spawns the `MutltiForkHandler` on a background thread
-    pub fn spawn(_id: ForkId, _db: ForkedDatabase) -> MutltiFork {
+    /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
+    pub fn spawn(_id: ForkId, _db: ForkedDatabase) -> MultiFork {
         todo!()
-    }
-
-    /// Returns the identifier of the currently active fork
-    pub fn active_id(&self) -> &ForkId {
-        &self.active
-    }
-
-    /// Returns the currently active database
-    pub fn active(&self) -> &ForkedDatabase {
-        &self.forks[self.active_id()]
     }
 }
 
@@ -66,7 +60,7 @@ enum Request {
 type RequestFuture = Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
 
 /// The type that manages connections in the background
-pub struct MutltiForkHandler {
+pub struct MultiForkHandler {
     /// Incoming requests from the `MultiFork`.
     incoming: Fuse<Receiver<Request>>,
     /// All active handlers
@@ -79,13 +73,13 @@ pub struct MutltiForkHandler {
 
 // === impl MultiForkHandler ===
 
-impl MutltiForkHandler {
+impl MultiForkHandler {
     fn on_request(&mut self, _req: Request) {}
 }
 
 // Drives all handler to completion
 // This future will finish once all underlying BackendHandler are completed
-impl Future for MutltiForkHandler {
+impl Future for MultiForkHandler {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

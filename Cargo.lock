@@ -1995,7 +1995,7 @@ dependencies = [
  "once_cell",
  "parking_lot 0.12.0",
  "proptest",
- "revm",
+ "revm 1.3.1",
  "serde",
  "serde_json",
  "tempfile",
@@ -4018,10 +4018,41 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles",
+ "revm_precompiles 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rlp",
  "serde",
  "sha3 0.10.1",
+]
+
+[[package]]
+name = "revm"
+version = "1.3.1"
+dependencies = [
+ "arrayref",
+ "auto_impl",
+ "bytes",
+ "hashbrown 0.12.0",
+ "hex",
+ "num_enum",
+ "primitive-types",
+ "revm_precompiles 1.0.0",
+ "rlp",
+ "serde",
+ "sha3 0.10.1",
+]
+
+[[package]]
+name = "revm_precompiles"
+version = "1.0.0"
+dependencies = [
+ "bytes",
+ "k256",
+ "num 0.4.0",
+ "primitive-types",
+ "ripemd",
+ "sha2 0.10.2",
+ "sha3 0.10.1",
+ "substrate-bn",
 ]
 
 [[package]]
@@ -5197,7 +5228,7 @@ dependencies = [
  "eyre",
  "forge",
  "hex",
- "revm",
+ "revm 1.3.0",
  "tui",
 ]
 

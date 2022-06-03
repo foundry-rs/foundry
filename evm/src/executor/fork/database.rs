@@ -38,7 +38,7 @@ pub struct ForkedDatabase {
     /// This exclusively stores the _unchanged_ remote client state
     db: BlockchainDb,
     /// holds the snapshot state of a blockchain
-    snapshots: Arc<Mutex<Snapshots<DbSnapshot>>>,
+    snapshots: Arc<Mutex<Snapshots<ForkDbSnapshot>>>,
 }
 
 impl ForkedDatabase {
@@ -60,7 +60,7 @@ impl ForkedDatabase {
         &mut self.cache_db
     }
 
-    pub fn snapshots(&self) -> &Arc<Mutex<Snapshots<DbSnapshot>>> {
+    pub fn snapshots(&self) -> &Arc<Mutex<Snapshots<ForkDbSnapshot>>> {
         &self.snapshots
     }
 
@@ -90,9 +90,9 @@ impl ForkedDatabase {
         &self.db
     }
 
-    pub fn create_snapshot(&self) -> DbSnapshot {
+    pub fn create_snapshot(&self) -> ForkDbSnapshot {
         let db = self.db.db();
-        DbSnapshot {
+        ForkDbSnapshot {
             local: self.cache_db.clone(),
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
@@ -111,7 +111,7 @@ impl ForkedDatabase {
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots().lock().remove(id) };
         if let Some(snapshot) = snapshot {
-            let DbSnapshot { accounts, storage, block_hashes, local } = snapshot;
+            let ForkDbSnapshot { accounts, storage, block_hashes, local } = snapshot;
             let db = self.inner().db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -184,7 +184,7 @@ impl DatabaseCommit for ForkedDatabase {
 
 /// Represents a snapshot of the database
 #[derive(Debug)]
-pub struct DbSnapshot {
+pub struct ForkDbSnapshot {
     local: CacheDB<SharedBackend>,
     accounts: BTreeMap<Address, AccountInfo>,
     storage: BTreeMap<Address, BTreeMap<U256, U256>>,
@@ -193,7 +193,7 @@ pub struct DbSnapshot {
 
 // === impl DbSnapshot ===
 
-impl DbSnapshot {
+impl ForkDbSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
         self.local.storage().get(&address).and_then(|entry| entry.get(&index)).copied()
     }
@@ -202,7 +202,7 @@ impl DbSnapshot {
 // This `DatabaseRef` implementation works similar to `CacheDB` which prioritizes modified elements,
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
-impl DatabaseRef for DbSnapshot {
+impl DatabaseRef for ForkDbSnapshot {
     fn basic(&self, address: Address) -> AccountInfo {
         match self.local.cache().get(&address) {
             Some(info) => info.clone(),
