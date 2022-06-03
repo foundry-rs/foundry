@@ -325,10 +325,11 @@ impl<'a, W: Write> Formatter<'a, W> {
                 '{' | '[' | '(' => false,
                 _ => self.config.bracket_spacing,
             },
-            '(' => false,
+            '(' | '.' => false,
             _ => match next_char {
                 '}' | ']' => self.config.bracket_spacing,
                 ')' => false,
+                '.' => false,
                 _ => true,
             },
         }
@@ -398,22 +399,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Transform [Visitable] items to the list of chunks
-    fn items_to_chunks2<T, F, V>(
+    fn items_to_chunks2<'b>(
         &mut self,
-        items: &mut [T],
         next_byte_offset: Option<usize>,
-        mapper: F,
-    ) -> Result<Vec<Chunk>, VError>
-    where
-        F: Fn(&mut T) -> Result<(Loc, &mut V), VError>,
-        V: Visitable,
-    {
-        let mut items = items
-            .iter_mut()
-            .map(mapper)
-            .collect::<Result<Vec<_>, VError>>()?
-            .into_iter()
-            .peekable();
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b)), VError>> + 'b,
+    ) -> Result<Vec<Chunk>, VError> {
+        let mut items =
+            items.into_iter().collect::<Result<Vec<_>, VError>>()?.into_iter().peekable();
         let mut out = Vec::new();
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
@@ -423,23 +415,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out)
     }
 
-    /// Transform [Visitable] items to the list of chunks
-    fn items_to_chunks_sorted2<T, F, V>(
+    fn items_to_chunks_sorted3<'b>(
         &mut self,
-        items: &mut [T],
         next_byte_offset: Option<usize>,
-        mapper: F,
-    ) -> Result<Vec<Chunk>, VError>
-    where
-        F: Fn(&mut T) -> Result<(Loc, &mut V), VError>,
-        V: Visitable + AttrSortKey,
-    {
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b)), VError>>
+            + 'b,
+    ) -> Result<Vec<Chunk>, VError> {
         let mut items = items
-            .iter_mut()
-            .map(|i| {
-                let (loc, vis) = mapper(i)?;
-                Ok((vis.attr_sort_key(), loc, vis))
-            })
+            .into_iter()
+            .map_ok(|(loc, vis)| (vis.attr_sort_key(), loc, vis))
             .collect::<Result<Vec<_>, VError>>()?
             .into_iter()
             .peekable();
@@ -737,6 +721,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(buf.w)
     }
 
+    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool, VError> {
+        let simulated = self.simulate_to_string(|fmt| {
+            fmt.write_chunk(chunk)?;
+            Ok(())
+        })?;
+        Ok(self.will_it_fit(format_string.replacen("{}", &simulated, 1)))
+    }
+
     fn are_chunks_separated_multiline2<'b>(
         &mut self,
         format_string: &str,
@@ -971,8 +963,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if !contract.base.is_empty() {
             self.indented(1, |fmt| {
                 let base_end = contract.parts.first().map(|part| part.loc().start());
-                let bases = fmt
-                    .items_to_chunks2(&mut contract.base, base_end, |base| Ok((base.loc, base)))?;
+                let bases = fmt.items_to_chunks2(
+                    base_end,
+                    contract.base.iter_mut().map(|base| Ok((base.loc, base))),
+                )?;
                 let multiline = fmt.are_chunks_separated_multiline2("{}", &bases, ",")?;
                 fmt.write_chunks_separated2(&bases, ",", multiline)?;
                 fmt.write_whitespace_separator(multiline)?;
@@ -1151,9 +1145,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 Some(enumeration.loc.end()),
                 |fmt| {
                     let values = fmt.items_to_chunks2(
-                        &mut enumeration.values,
                         Some(enumeration.loc.end()),
-                        |ident| Ok((ident.loc, ident)),
+                        enumeration.values.iter_mut().map(|ident| Ok((ident.loc, ident))),
                     )?;
                     fmt.write_chunks_separated2(&values, ",", true)?;
                     Ok(())
@@ -1194,6 +1187,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 write!(self.buf(), "]")?;
             }
+            Expression::Variable(ident) => {
+                ident.visit(self)?;
+            }
+            Expression::MemberAccess(_, expr, ident) => {
+                let (remaining, idents) = {
+                    let mut idents = vec![ident];
+                    let mut remaining = expr.as_mut();
+                    while let Expression::MemberAccess(_, expr, ident) = remaining {
+                        idents.push(ident);
+                        remaining = expr;
+                    }
+                    idents.reverse();
+                    (remaining, idents)
+                };
+
+                self.visit_expr(remaining.loc(), remaining)?;
+
+                let mut chunks = self.items_to_chunks2(
+                    Some(loc.end()),
+                    idents.into_iter().map(|ident| Ok((ident.loc, ident))),
+                )?;
+                chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+                let multiline = self.are_chunks_separated_multiline2("{}", &chunks, "")?;
+                self.write_chunks_separated2(&chunks, "", multiline)?;
+            }
             _ => self.visit_source(loc)?,
         };
 
@@ -1205,35 +1223,35 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
-        write!(self.buf(), "emit ")?;
-        event.loc().visit(self)?;
-        self.write_semicolon()?;
-
+    fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> VResult {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), "emit")?;
+            event.visit(fmt)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
-        var.ty.visit(self)?;
-
-        if let Some(storage) = &var.storage {
-            write_chunk!(self, storage.loc().end(), "{}", storage)?;
-        }
-
-        write_chunk!(self, var.name.loc.end(), "{}", var.name.name)?;
-
+        self.grouped(|fmt| {
+            var.ty.visit(fmt)?;
+            if let Some(storage) = &var.storage {
+                write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
+            }
+            write_chunk!(fmt, var.name.loc.end(), "{}", var.name.name)?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_break(&mut self) -> VResult {
-        write!(self.buf(), "break;")?;
-
+        write_chunk!(self, 0, "break;")?;
         Ok(())
     }
 
     fn visit_continue(&mut self) -> VResult {
-        write!(self.buf(), "continue;")?;
-
+        write_chunk!(self, 0, "continue;")?;
         Ok(())
     }
 
@@ -1260,21 +1278,24 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .or(returns_loc.as_ref())
             .or(body_loc.as_ref())
             .map(|loc| loc.start());
-        let params = self.items_to_chunks2(&mut func.params, params_end, |(loc, param)| {
-            Ok((*loc, param.as_mut().unwrap()))
-        })?;
+        let params = self.items_to_chunks2(
+            params_end,
+            func.params.iter_mut().map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+        )?;
 
         // get attribute chunks
         let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
-        let attributes = self.items_to_chunks_sorted2(&mut func.attributes, attrs_end, |attr| {
-            Ok((attr.loc(), attr))
-        })?;
+        let attributes = self.items_to_chunks_sorted3(
+            attrs_end,
+            func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+        )?;
 
         // get returns parameter chunks
         let returns_end = body_loc.as_ref().map(|loc| loc.start());
-        let returns = self.items_to_chunks2(&mut func.returns, returns_end, |(loc, param)| {
-            Ok((*loc, param.as_mut().unwrap()))
-        })?;
+        let returns = self.items_to_chunks2(
+            returns_end,
+            func.returns.iter_mut().map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+        )?;
 
         // check if the parameters need to be multiline
         let simulated_func_def = self.simulate_to_string(|fmt| {
@@ -1364,22 +1385,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, mutability.loc().end(), "{mutability}")?
             }
             FunctionAttribute::Visibility(visibility) => {
-                if let Some(loc) = visibility.loc() {
-                    write_chunk!(self, loc.end(), "{visibility}")?
-                } else {
-                    write!(self.buf(), "{visibility}")?
-                }
+                // Visibility will always have a location in a Function attribute
+                write_chunk!(self, visibility.loc().unwrap().end(), "{visibility}")?
             }
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(loc, args) => {
-                write!(self.buf(), "override")?;
+                write_chunk!(self, loc.start(), "override")?;
                 if !args.is_empty() {
-                    let args =
-                        args.iter().map(|arg| (arg.loc.end(), &arg.name)).collect::<Vec<_>>();
-                    let multiline = self.are_chunks_separated_multiline(&args, ", ");
                     self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt| {
-                        fmt.write_chunks_separated(&args, ",", multiline)?;
+                        let args = fmt.items_to_chunks2(
+                            Some(loc.end()),
+                            args.iter_mut().map(|arg| Ok((arg.loc, arg))),
+                        )?;
+                        let multiline = fmt.are_chunks_separated_multiline2("{}", &args, ", ")?;
+                        fmt.write_chunks_separated2(&args, ",", multiline)?;
                         Ok(())
                     })?;
                 }
@@ -1394,10 +1414,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if is_contract_base {
                     base.visit(self)?;
                 } else {
-                    let base_or_modifier = self.visit_to_string(base)?;
-                    let base_or_modifier =
-                        base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier);
-                    write_chunk!(self, loc.end(), "{base_or_modifier}")?;
+                    let mut base_or_modifier =
+                        self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+                    if base_or_modifier.content.ends_with("()") {
+                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                    }
+                    self.write_chunk(&base_or_modifier)?;
                 }
             }
         };
@@ -1408,7 +1430,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_base(&mut self, base: &mut Base) -> VResult {
         let need_parents = self.context.function.is_some() || base.args.is_some();
 
-        self.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
+        self.grouped(|fmt| {
+            fmt.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
+            Ok(())
+        })?;
 
         if need_parents {
             self.visit_opening_paren()?;
@@ -1629,29 +1654,88 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         write_chunk!(self, using.loc.start(), "using")?;
 
-        match &mut using.list {
+        let ty_start = using.ty.as_mut().map(|ty| LineOfCode::loc(&ty).start());
+        let global_start = using.global.as_mut().map(|global| global.loc.start());
+        let loc_end = using.loc.end();
+
+        let (is_library, mut list_chunks) = match &mut using.list {
             UsingList::Library(library) => {
-                self.visit_expr(LineOfCode::loc(library), library)?;
+                (true, vec![self.visit_to_chunk(library.loc().start(), None, library)?])
             }
             UsingList::Functions(funcs) => {
-                let func_strs = self.items_to_chunks(funcs, |func| Ok((func.loc(), func)))?;
-                let multiline = self.are_chunks_separated_multiline(func_strs.iter(), ", ");
-                self.write_opening_bracket()?;
-                self.write_chunks_separated(&func_strs, ",", multiline)?;
-                self.write_closing_bracket()?;
+                let mut funcs = funcs.iter_mut().peekable();
+                let mut chunks = Vec::new();
+                while let Some(func) = funcs.next() {
+                    let next_byte_end = funcs.peek().map(|func| func.loc().start());
+                    chunks.push(self.chunked(func.loc().start(), next_byte_end, |fmt| {
+                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))
+                    })?);
+                }
+                (false, chunks)
             }
-        }
+        };
 
-        write_chunk!(self, using.loc.start(), "for")?;
-
-        if let Some(ty) = &mut using.ty {
-            ty.visit(self)?;
+        let for_chunk = self.chunk_at(
+            using.loc.start(),
+            Some(ty_start.or(global_start).unwrap_or(loc_end)),
+            "for",
+        );
+        let ty_chunk = if let Some(ty) = &mut using.ty {
+            self.visit_to_chunk(ty.loc().start(), Some(global_start.unwrap_or(loc_end)), ty)?
         } else {
-            write_chunk!(self, using.loc.start(), "*")?;
-        }
+            self.chunk_at(using.loc.start(), Some(global_start.unwrap_or(loc_end)), "*")
+        };
+        let global_chunk = using
+            .global
+            .as_mut()
+            .map(|global| self.visit_to_chunk(global.loc.start(), Some(using.loc.end()), global))
+            .transpose()?;
 
-        if let Some(global) = &mut using.global {
-            write_chunk!(self, global.loc.end(), "{}", global.name)?;
+        let write_for_def = |fmt: &mut Self| {
+            fmt.grouped(|fmt| {
+                fmt.write_chunk(&for_chunk)?;
+                fmt.write_chunk(&ty_chunk)?;
+                if let Some(global_chunk) = global_chunk.as_ref() {
+                    fmt.write_chunk(global_chunk)?;
+                }
+                Ok(())
+            })?;
+            Ok(())
+        };
+
+        let simulated_for_def = self.simulate_to_string(write_for_def)?;
+
+        if is_library {
+            let chunk = list_chunks.pop().unwrap();
+            if self.will_chunk_fit(&format!("{{}} {simulated_for_def};"), &chunk)? {
+                self.write_chunk(&chunk)?;
+                write_for_def(self)?;
+            } else {
+                self.write_whitespace_separator(true)?;
+                self.grouped(|fmt| {
+                    fmt.write_chunk(&chunk)?;
+                    Ok(())
+                })?;
+                self.write_whitespace_separator(true)?;
+                write_for_def(self)?;
+            }
+        } else {
+            self.surrounded(
+                using.loc.start(),
+                "{",
+                "}",
+                Some(ty_start.or(global_start).unwrap_or(loc_end)),
+                |fmt| {
+                    let multiline = fmt.are_chunks_separated_multiline2(
+                        &format!("{{ {{}} }} {simulated_for_def};"),
+                        &list_chunks,
+                        ",",
+                    )?;
+                    fmt.write_chunks_separated2(&list_chunks, ",", multiline)?;
+                    Ok(())
+                },
+            )?;
+            write_for_def(self)?;
         }
 
         self.write_semicolon()?;
@@ -1867,6 +1951,6 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
-    test_directory! { SimpleComments }
+    // test_directory! { SimpleComments }
     test_directory! { FunctionDefinitionWithComments }
 }
