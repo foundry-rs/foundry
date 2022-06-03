@@ -16,6 +16,7 @@ use std::fmt;
 use super::*;
 
 impl ScriptArgs {
+    /// Sends the transactions which haven't been broadcasted yet.
     pub async fn send_transactions(
         &self,
         deployment_sequence: &mut ScriptSequence,
@@ -42,6 +43,10 @@ impl ScriptArgs {
             // otherwise.
             let sequential_broadcast = local_wallets.len() != 1 || self.slow;
 
+            // Make a one-time gas price estimation
+            let gas_price = provider.get_gas_price().await?;
+            let eip1559_fees = provider.estimate_eip1559_fees(None).await?;
+
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
             let sequence = deployment_sequence
@@ -51,7 +56,20 @@ impl ScriptArgs {
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
-                    (tx.clone(), signer)
+                    let mut tx = tx.clone();
+
+                    // fill gas price
+                    match tx {
+                        TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
+                            tx.set_gas_price(gas_price);
+                        }
+                        TypedTransaction::Eip1559(ref mut inner) => {
+                            inner.max_fee_per_gas = Some(eip1559_fees.0);
+                            inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
+                        }
+                    }
+
+                    (tx, signer)
                 })
                 .collect::<Vec<_>>();
 
@@ -74,6 +92,9 @@ impl ScriptArgs {
                     pending_transactions.push(tx_hash);
                 }
             }
+
+            // Checkpoint save
+            let _ = deployment_sequence.save();
 
             if !sequential_broadcast {
                 println!("##\nCollecting Receipts.");
