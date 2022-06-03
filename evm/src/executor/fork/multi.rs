@@ -6,7 +6,7 @@
 use crate::executor::{
     fork::{
         database::{ForkDbSnapshot, ForkedDatabase},
-        BackendHandler, SharedBackend,
+        BackendHandler, CreateFork, SharedBackend,
     },
     snapshot::Snapshots,
 };
@@ -49,12 +49,16 @@ impl MultiFork {
     pub fn spawn(_id: ForkId, _db: ForkedDatabase) -> MultiFork {
         todo!()
     }
+
+    pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
+        todo!()
+    }
 }
 
 /// Request that's send to the handler
 #[derive(Debug)]
 enum Request {
-    Create { fork_id: ForkId, endpoint: String, chain_id: Option<u64>, block: Option<BlockId> },
+    Create(CreateFork),
 }
 
 type RequestFuture = Pin<Box<dyn Future<Output = ()> + 'static + Send>>;

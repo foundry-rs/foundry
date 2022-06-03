@@ -7,7 +7,7 @@ use revm::{
 
 mod in_memory_db;
 use crate::executor::{
-    fork::{database::ForkDbSnapshot, ForkId, MultiFork},
+    fork::{database::ForkDbSnapshot, CreateFork, ForkId, MultiFork},
     snapshot::Snapshots,
 };
 pub use in_memory_db::MemDb;
@@ -27,7 +27,7 @@ pub use in_memory_db::MemDb;
 #[derive(Debug, Clone)]
 pub struct Backend2 {
     /// The access point for managing forks
-    pub forks: MultiFork,
+    forks: MultiFork,
     /// The database that holds the entire state, uses an internal database depending on current
     /// state
     pub db: CacheDB<Backend>,
@@ -52,6 +52,22 @@ impl Backend2 {
     }
 
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
+        todo!()
+    }
+
+    /// Creates a new fork but does _not_ select it
+    pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
+        self.forks.create_fork(fork)
+    }
+
+    /// Selects the fork's state
+    ///
+    /// **Note**: this does not change the local state, but swaps the remote state
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no fork with the given `id` exists
+    pub fn select_fork(&mut self, id: ForkId) -> eyre::Result<()> {
         todo!()
     }
 }
