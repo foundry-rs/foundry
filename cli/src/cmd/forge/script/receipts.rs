@@ -48,8 +48,11 @@ pub async fn wait_for_receipts(
                     deployment_sequence.remove_pending(receipt.transaction_hash);
                     receipts.push(receipt)
                 }
-                Ok(None) | Err(_) => {
-                    errors.push(format!("Failure on receiving a receipt for {}", tx_hash));
+                Ok(None) => {
+                    errors.push(format!("Received an empty receipt for {}", tx_hash));
+                }
+                Err(err) => {
+                    errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
                 }
             }
             if total_txes > 1 {
