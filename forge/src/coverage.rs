@@ -61,7 +61,7 @@ impl CoverageReporter for SummaryReporter {
 fn format_cell(hits: usize, total: usize) -> Cell {
     let percentage = if total == 0 { 1. } else { hits as f64 / total as f64 };
 
-    Cell::new(format!("{}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
+    Cell::new(format!("{:.2}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
         _ if percentage < 0.5 => Color::Red,
         _ if percentage < 0.75 => Color::Yellow,
         _ => Color::Green,
