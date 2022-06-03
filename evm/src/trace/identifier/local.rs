@@ -46,6 +46,7 @@ impl TraceIdentifier for LocalTraceIdentifier {
                     contract: Some(id.identifier()),
                     label: Some(id.name.clone()),
                     abi: Some(Cow::Borrowed(abi)),
+                    artifact_id: Some(id.clone()),
                 })
             })
             .collect()

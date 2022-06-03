@@ -7,8 +7,10 @@ use crate::{
     compile::ProjectCompiler,
     utils,
 };
+use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
+    abi::Address,
     prelude::{Artifact, Project, ProjectCompileOutput},
     solc::{
         artifacts::contract::CompactContractBytecode,
@@ -20,7 +22,7 @@ use forge::{
     coverage::{CoverageMap, CoverageReporter, LcovReporter, SummaryReporter, Visitor},
     executor::opts::EvmOpts,
     result::SuiteResult,
-    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, CallTraceDecoderBuilder},
+    trace::identifier::LocalTraceIdentifier,
     MultiContractRunnerBuilder,
 };
 use foundry_common::evm::EvmArgs;
@@ -60,7 +62,7 @@ impl CoverageArgs {
 
     /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
     pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // merge all configs
+        // Merge all configs
         let figment: Figment = self.into();
         let evm_opts = figment.extract()?;
         let config = Config::from_provider(figment).sanitized();
@@ -83,6 +85,7 @@ impl Cmd for CoverageArgs {
     }
 }
 
+// The main flow of the command itself
 impl CoverageArgs {
     /// Collects and adjusts configuration.
     fn configure(&self) -> eyre::Result<(Config, EvmOpts)> {
@@ -107,7 +110,6 @@ impl CoverageArgs {
             project
         };
 
-        // TODO: This does not strip file prefixes for `SourceFiles`...
         let output = ProjectCompiler::default()
             .compile(&project)?
             .with_stripped_file_prefixes(project.root());
@@ -207,13 +209,19 @@ impl CoverageArgs {
         let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), false).unwrap());
         for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
             if let Some(_hit_data) = result.coverage.take() {
-                let mut decoder =
-                    CallTraceDecoderBuilder::new().with_events(local_identifier.events()).build();
+                let mut identities: BTreeMap<Address, ArtifactId> = BTreeMap::new();
                 for (_, trace) in &mut result.traces {
-                    decoder.identify(trace, &local_identifier);
+                    local_identifier
+                        .identify_addresses(trace.addresses().into_iter().collect())
+                        .into_iter()
+                        .for_each(|identity| {
+                            if let Some(artifact_id) = identity.artifact_id {
+                                identities.insert(identity.address, artifact_id);
+                            }
+                        })
                 }
-                // TODO: We need an ArtifactId here for the addresses
-                let CallTraceDecoder { contracts: _, .. } = decoder;
+
+                println!("{identities:?}");
 
                 // ..
             }
@@ -245,5 +253,3 @@ pub enum CoverageReportKind {
     Summary,
     Lcov,
 }
-
-// TODO: Move reporters to own module
