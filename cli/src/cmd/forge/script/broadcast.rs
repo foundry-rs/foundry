@@ -11,7 +11,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use indicatif::{ProgressBar, ProgressStyle};
-use std::fmt;
+use std::{cmp::min, fmt};
 
 use super::*;
 
@@ -29,7 +29,7 @@ impl ScriptArgs {
             let required_addresses = deployment_sequence
                 .transactions
                 .iter()
-                .skip(deployment_sequence.receipts.len())
+                .skip(already_broadcasted)
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
@@ -73,33 +73,49 @@ impl ScriptArgs {
                 })
                 .collect::<Vec<_>>();
 
-            let mut pending_transactions = vec![];
+            let pb = init_progress!(deployment_sequence.transactions, "txes");
 
-            println!("##\nSending transactions.");
+            //  We send transactions and wait for receipts in batches of 50, since some networks
+            // cannot handle more than that.
+            let batch_size = 50;
+            let batches = sequence.chunks(batch_size).map(|f| f.to_vec()).collect::<Vec<_>>();
+            let mut index = 0;
 
-            let pb = init_progress!(sequence, "txes");
+            for (batch_number, batch) in batches.into_iter().enumerate() {
+                let mut pending_transactions = vec![];
 
-            for (index, (tx, signer)) in sequence.into_iter().enumerate() {
-                let tx_hash =
-                    self.send_transaction(tx, signer, sequential_broadcast, fork_url).await?;
-                deployment_sequence.add_pending(tx_hash);
+                println!(
+                    "##\nSending transactions [{} - {}].",
+                    batch_number * batch_size,
+                    batch_number * batch_size + min(batch_size, batch.len()) - 1
+                );
+                for (tx, signer) in batch.into_iter() {
+                    let tx_hash =
+                        self.send_transaction(tx, signer, sequential_broadcast, fork_url).await?;
+                    deployment_sequence.add_pending(tx_hash);
 
-                update_progress!(pb, index);
+                    update_progress!(pb, (index + already_broadcasted));
+                    index += 1;
 
-                if sequential_broadcast {
-                    wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone()).await?;
-                } else {
-                    pending_transactions.push(tx_hash);
+                    if sequential_broadcast {
+                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
+                            .await?;
+                    } else {
+                        pending_transactions.push(tx_hash);
+                    }
                 }
-            }
 
-            // Checkpoint save
-            let _ = deployment_sequence.save();
+                // Checkpoint save
+                deployment_sequence.save()?;
 
-            if !sequential_broadcast {
-                println!("##\nCollecting Receipts.");
-                wait_for_receipts(pending_transactions, deployment_sequence, provider.clone())
-                    .await?;
+                if !sequential_broadcast {
+                    println!("##\nCollecting Receipts.");
+                    wait_for_receipts(pending_transactions, deployment_sequence, provider.clone())
+                        .await?;
+                }
+
+                // Checkpoint save
+                deployment_sequence.save()?;
             }
         }
 
