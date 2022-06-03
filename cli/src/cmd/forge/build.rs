@@ -147,6 +147,7 @@ pub struct CoreBuildArgs {
     pub revert_strings: Option<RevertStrings>,
 
     #[clap(help_heading = "COMPILER OPTIONS", long, help = "Don't print anything on startup.")]
+    #[serde(skip)]
     pub silent: bool,
 }
 
@@ -218,10 +219,6 @@ impl Provider for CoreBuildArgs {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
-        if self.silent {
-            dict.insert("silent".to_string(), self.silent.into());
-        }
-
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -269,7 +266,12 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        compile::compile(&project, self.names, self.sizes)
+
+        if self.args.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compile::compile(&project, self.names, self.sizes)
+        }
     }
 }
 

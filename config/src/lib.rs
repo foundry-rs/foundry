@@ -286,8 +286,6 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
-    /// Whether to compile in silent mode
-    pub silent: bool,
 }
 
 impl Config {
@@ -508,10 +506,6 @@ impl Config {
         if self.force {
             project.cleanup()?;
         }
-
-        // if self.silent {
-        //     compile::suppress_compile(&project)?;
-        // }
 
         if let Some(solc) = self.ensure_solc()? {
             project.solc = solc;
@@ -1321,7 +1315,6 @@ impl Default for Config {
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
             sparse_mode: false,
-            silent: false,
         }
     }
 }
