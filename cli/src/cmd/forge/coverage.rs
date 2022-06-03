@@ -11,7 +11,7 @@ use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
     abi::Address,
-    prelude::{Artifact, Project, ProjectCompileOutput},
+    prelude::{artifacts, Artifact, Project, ProjectCompileOutput},
     solc::{
         artifacts::contract::CompactContractBytecode,
         sourcemap::{self, SourceMap},
@@ -173,8 +173,8 @@ impl CoverageArgs {
         self,
         project: Project,
         output: ProjectCompileOutput,
-        _source_maps: BTreeMap<ArtifactId, SourceMap>,
-        map: CoverageMap,
+        source_maps: BTreeMap<ArtifactId, SourceMap>,
+        mut map: CoverageMap,
         config: Config,
         evm_opts: EvmOpts,
     ) -> eyre::Result<()> {
@@ -208,7 +208,7 @@ impl CoverageArgs {
         // TODO: Coverage for fuzz tests
         let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), false).unwrap());
         for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
-            if let Some(_hit_data) = result.coverage.take() {
+            if let Some(hit_map) = result.coverage.take() {
                 let mut identities: BTreeMap<Address, ArtifactId> = BTreeMap::new();
                 for (_, trace) in &mut result.traces {
                     local_identifier
@@ -221,9 +221,24 @@ impl CoverageArgs {
                         })
                 }
 
-                println!("{identities:?}");
-
-                // ..
+                // TODO: Do we actually only need to identify the test contract that was run in
+                // order to get the source map and source version for that contract?
+                for (addr, artifact_id) in identities.into_iter() {
+                    // TODO: Make this more sane
+                    if let Some(source_map) = source_maps.get(&artifact_id) {
+                        if let Some(hit_map) = hit_map.get(&addr) {
+                            map.add_hit_map(
+                                artifact_id.version.clone(),
+                                source_map,
+                                hit_map.clone(),
+                            );
+                        } else {
+                            println!("Found no hit map: {:?}", artifact_id);
+                        }
+                    } else {
+                        println!("Found no source map: {:?}", artifact_id);
+                    }
+                }
             }
         }
 
