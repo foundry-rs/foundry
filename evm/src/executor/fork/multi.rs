@@ -17,14 +17,12 @@ use futures::{
 use std::{collections::HashMap, pin::Pin};
 use tracing::trace;
 
-// TODO move some types from avil fork to evm
-
 /// The identifier for a specific fork, this could be the name of the network a custom descriptive
 /// name.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ForkId(pub String);
 
-/// A database type that maintains multiple forks
+/// A database type that can maintain multiple forks
 #[derive(Debug, Clone)]
 pub struct MutltiFork {
     /// Channel to send `Request`s to the handler

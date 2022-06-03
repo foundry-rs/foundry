@@ -10,3 +10,4 @@ pub use cache::{BlockchainDb, BlockchainDbMeta, JsonBlockCacheDB, MemDb};
 pub mod database;
 
 mod multi;
+pub use multi::{MutltiFork, MutltiForkHandler};

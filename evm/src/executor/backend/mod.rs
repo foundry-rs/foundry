@@ -6,6 +6,7 @@ use revm::{
 };
 
 mod in_memory_db;
+use crate::executor::fork::MutltiFork;
 pub use in_memory_db::MemDb;
 
 /// Provides the underlying `revm::Database` implementation.
@@ -20,8 +21,12 @@ pub use in_memory_db::MemDb;
 ///
 /// In addition to that we support forking manually on the fly.
 /// Additional forks can be created and their state can be switched manually.
+///
 #[derive(Debug, Clone)]
-pub struct Backend2 {}
+pub struct Backend2 {
+    /// The access point for managing forks
+    forks: MutltiFork,
+}
 
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]

@@ -229,6 +229,12 @@ impl MultiContractRunner {
             })
     }
 
+    /// Executes all tests that match the given `filter`
+    ///
+    /// This will create the runtime based on the configured `evm` ops and create the `Backend`
+    /// before executing all contracts and their tests in _parallel_.
+    ///
+    /// Each Executor gets its own instance of the `Backend`.
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
@@ -238,7 +244,7 @@ impl MultiContractRunner {
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(self.evm_opts.evm_env());
 
-        // the db backend that serves all the data
+        // the db backend that serves all the data, each contract gets its own clone
         let db = runtime.block_on(Backend::new(self.fork.take(), &env));
 
         let results = self
