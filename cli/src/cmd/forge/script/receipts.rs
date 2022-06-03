@@ -32,7 +32,7 @@ pub async fn wait_for_receipts(
 
     let mut receipts = vec![];
     let mut errors: Vec<String> = vec![];
-    let pb = init_progress!(tx_hashes, "txes");
+    let pb = init_progress!(tx_hashes, "receipts");
 
     let total_txes = tx_hashes.len();
     for (index, tx_hash) in tx_hashes.into_iter().enumerate() {

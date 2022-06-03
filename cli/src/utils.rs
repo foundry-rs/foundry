@@ -325,16 +325,20 @@ impl CommandUtils for Command {
 
 #[macro_export]
 macro_rules! init_progress {
-    ($local:expr, $label:expr) => {
-        {
-            let pb = ProgressBar::new($local.len() as u64);
-            pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} $label ({eta})")
+    ($local:expr, $label:expr) => {{
+        let pb = ProgressBar::new($local.len() as u64);
+        let mut template =
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+        template += $label;
+        template += " ({eta})";
+        pb.set_style(
+            ProgressStyle::with_template(&template)
                 .unwrap()
                 .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
-                .progress_chars("#>-"));
-            pb
-        }
-    }
+                .progress_chars("#>-"),
+        );
+        pb
+    }};
 }
 
 #[macro_export]
