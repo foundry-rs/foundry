@@ -37,6 +37,7 @@ impl FromStr for ChainOrAll {
 }
 
 #[derive(Debug, Parser)]
+#[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
@@ -54,11 +55,12 @@ pub struct CleanArgs {
         multiple_values(true),
         use_value_delimiter(true),
         require_value_delimiter(true),
-        value_name = "BLOCKS"
+        value_name = "BLOCKS",
+        group = "etherscan-blocks"
     )]
     blocks: Vec<u64>,
 
-    #[clap(long)]
+    #[clap(long, group = "etherscan-blocks")]
     etherscan: bool,
 }
 
