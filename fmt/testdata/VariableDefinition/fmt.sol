@@ -34,6 +34,6 @@ contract Contract {
 
     uint256 constant POWER_EXPRESSION =
         10 ** 27;
-    uint256 constant ADD_EXPRESSION =
+    uint256 constant ADDED_EXPRESSION =
         1 + 2;
 }
