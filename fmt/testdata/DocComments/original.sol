@@ -16,12 +16,7 @@ contract HelloWorld {
 
     /// Constructs the dude
         /// @param age The dude's age
-    constructor(uint256 age) {
-        theDude = Person({
-            age: age,
-            wallet: msg.sender
-        });
-    }
+    constructor(uint256 age) {}
 
     /** @dev Calculates a rectangle's surface and perimeter.
       * @param w Width of the rectangle.
@@ -29,8 +24,5 @@ contract HelloWorld {
                 * @return s The calculated surface.
 * @return p The calculated perimeter.
       */
-    function rectangle(uint256 w, uint256 h) public pure returns (uint256 s, uint256 p) {
-        s = w * h;
-        p = 2 * (w + h);
-    }
+    function rectangle(uint256 w, uint256 h) public pure returns (uint256 s, uint256 p) {}
 }
