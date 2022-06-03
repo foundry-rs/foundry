@@ -1,22 +1,19 @@
-use crate::{cmd::ScriptSequence, utils::print_receipt};
-use ethers::prelude::{Http, PendingTransaction, Provider, TxHash};
-use futures::StreamExt;
+use std::sync::Arc;
 
-use super::broadcast::BroadcastError;
+use crate::{cmd::ScriptSequence, init_progress, update_progress, utils::print_receipt};
+use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Gets the receipts of previously pending transactions.
 pub async fn wait_for_pending(
-    provider: &Provider<Http>,
+    provider: Arc<Provider<RetryClient<Http>>>,
     deployment_sequence: &mut ScriptSequence,
 ) -> eyre::Result<()> {
     if !deployment_sequence.pending.is_empty() {
         println!("##\nChecking previously pending transactions.");
-        wait_for_receipts(
-            &deployment_sequence.pending.iter().map(|tx_hash| Ok(*tx_hash)).collect::<Vec<_>>(),
-            deployment_sequence,
-            provider,
-        )
-        .await?;
+        wait_for_receipts(deployment_sequence.pending.clone(), deployment_sequence, provider)
+            .await?;
     }
     Ok(())
 }
@@ -24,41 +21,47 @@ pub async fn wait_for_pending(
 /// Waits for a list of receipts. If it fails, it tries to retrieve the transaction hash that can be
 /// used on a later run with `--resume`.
 pub async fn wait_for_receipts(
-    tx_hashes: &[Result<TxHash, BroadcastError>],
+    tx_hashes: Vec<TxHash>,
     deployment_sequence: &mut ScriptSequence,
-    provider: &Provider<Http>,
+    provider: Arc<Provider<RetryClient<Http>>>,
 ) -> eyre::Result<()> {
-    let mut tasks = vec![];
-    for tx_hash in tx_hashes {
-        tasks.push(PendingTransaction::new(tx_hash.clone()?, provider));
-    }
+    let mut tasks = futures::stream::iter(
+        tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
+    )
+    .buffered(2);
 
-    let tasks = futures::stream::iter(tasks).buffered(20);
     let mut receipts = vec![];
     let mut errors: Vec<String> = vec![];
+    let pb = init_progress!(tx_hashes, "txes");
 
-    for (tx_hash, receipt) in tx_hashes.iter().zip(tasks.collect::<Vec<_>>().await) {
-        let tx_hash = tx_hash.clone()?;
-
-        match receipt {
-            Ok(Some(receipt)) => {
-                if let Some(status) = receipt.status {
-                    if status.is_zero() {
-                        errors.push(format!("Transaction Failure: {}", receipt.transaction_hash));
+    let total_txes = tx_hashes.len();
+    for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
+        if let Some(receipt) = tasks.next().await {
+            match receipt {
+                Ok(Some(receipt)) => {
+                    if let Some(status) = receipt.status {
+                        if status.is_zero() {
+                            errors
+                                .push(format!("Transaction Failure: {}", receipt.transaction_hash));
+                        }
                     }
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    receipts.push(receipt)
                 }
-                deployment_sequence.remove_pending(receipt.transaction_hash);
-                let _ = print_receipt(&receipt);
-                receipts.push(receipt)
+                Ok(None) | Err(_) => {
+                    errors.push(format!("Failure on receiving a receipt for {}", tx_hash));
+                }
             }
-            Ok(None) | Err(_) => {
-                deployment_sequence.add_pending(tx_hash);
-                errors.push(format!("Failure on receiving a receipt for {}", tx_hash));
+            if total_txes > 1 {
+                update_progress!(pb, index);
             }
+        } else {
+            break
         }
     }
 
     for receipt in receipts {
+        let _ = print_receipt(&receipt);
         deployment_sequence.add_receipt(receipt);
     }
 

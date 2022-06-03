@@ -64,7 +64,7 @@ impl ScriptArgs {
             let mut deployment_sequence =
                 ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
 
-            receipts::wait_for_pending(&provider, &mut deployment_sequence).await?;
+            receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
                 self.send_transactions(&mut deployment_sequence, &fork_url).await?;

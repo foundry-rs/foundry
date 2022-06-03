@@ -1,7 +1,7 @@
 use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
-    prelude::{Http, Provider, TransactionReceipt},
+    prelude::{Http, Provider, RetryClient, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
     utils::format_units,
@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -254,14 +255,15 @@ pub fn enable_paint() {
 
 /// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
 /// node) and with the default, `7s` if otherwise.
-pub fn get_http_provider(url: &str) -> Provider<Http> {
-    let provider = Provider::try_from(url).expect("Bad fork provider.");
+pub fn get_http_provider(url: &str) -> Arc<Provider<RetryClient<Http>>> {
+    let provider =
+        Provider::<RetryClient<Http>>::new_client(url, 10, 1000).expect("Bad fork provider.");
 
-    if url.contains("127.0.0.1") || url.contains("localhost") {
+    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
         provider.interval(Duration::from_millis(100))
     } else {
         provider
-    }
+    })
 }
 
 pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
@@ -319,6 +321,27 @@ impl CommandUtils for Command {
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.trim().into())
     }
+}
+
+#[macro_export]
+macro_rules! init_progress {
+    ($local:expr, $label:expr) => {
+        {
+            let pb = ProgressBar::new($local.len() as u64);
+            pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} $label ({eta})")
+                .unwrap()
+                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .progress_chars("#>-"));
+            pb
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! update_progress {
+    ($pb:ident, $index:expr) => {
+        $pb.set_position($index as u64 + 1);
+    };
 }
 
 #[cfg(test)]

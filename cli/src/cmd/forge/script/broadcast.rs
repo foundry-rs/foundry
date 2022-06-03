@@ -1,6 +1,8 @@
 use crate::{
     cmd::{forge::script::receipts::wait_for_receipts, ScriptSequence, VerifyBundle},
+    init_progress,
     opts::WalletType,
+    update_progress,
     utils::get_http_provider,
 };
 use ethers::{
@@ -8,7 +10,7 @@ use ethers::{
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
-use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::fmt;
 
 use super::*;
@@ -20,8 +22,9 @@ impl ScriptArgs {
         fork_url: &str,
     ) -> eyre::Result<()> {
         let provider = get_http_provider(fork_url);
+        let already_broadcasted = deployment_sequence.receipts.len();
 
-        if deployment_sequence.receipts.len() < deployment_sequence.transactions.len() {
+        if already_broadcasted < deployment_sequence.transactions.len() {
             let required_addresses = deployment_sequence
                 .transactions
                 .iter()
@@ -29,7 +32,7 @@ impl ScriptArgs {
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets = self.wallets.find_all(&provider, required_addresses).await?;
+            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
             if local_wallets.is_empty() {
                 eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
             }
@@ -39,24 +42,34 @@ impl ScriptArgs {
             // otherwise.
             let sequential_broadcast = local_wallets.len() != 1 || self.slow;
 
-            let transactions = deployment_sequence.transactions.clone();
-
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
-            let sequence = transactions.into_iter().map(|tx| {
-                let from = *tx.from().expect("No sender for onchain transaction!");
-                let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
-                (tx, signer)
-            });
+            let sequence = deployment_sequence
+                .transactions
+                .iter()
+                .skip(already_broadcasted)
+                .map(|tx| {
+                    let from = *tx.from().expect("No sender for onchain transaction!");
+                    let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+                    (tx.clone(), signer)
+                })
+                .collect::<Vec<_>>();
 
             let mut pending_transactions = vec![];
 
             println!("##\nSending transactions.");
-            for (tx, signer) in sequence {
-                let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+
+            let pb = init_progress!(sequence, "txes");
+
+            for (index, (tx, signer)) in sequence.into_iter().enumerate() {
+                let tx_hash =
+                    self.send_transaction(tx, signer, sequential_broadcast, fork_url).await?;
+                deployment_sequence.add_pending(tx_hash);
+
+                update_progress!(pb, index);
 
                 if sequential_broadcast {
-                    wait_for_receipts(&[tx_hash.await], deployment_sequence, &provider).await?;
+                    wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone()).await?;
                 } else {
                     pending_transactions.push(tx_hash);
                 }
@@ -64,15 +77,8 @@ impl ScriptArgs {
 
             if !sequential_broadcast {
                 println!("##\nCollecting Receipts.");
-                wait_for_receipts(
-                    &futures::stream::iter(pending_transactions)
-                        .buffered(20)
-                        .collect::<Vec<_>>()
-                        .await,
-                    deployment_sequence,
-                    &provider,
-                )
-                .await?;
+                wait_for_receipts(pending_transactions, deployment_sequence, provider.clone())
+                    .await?;
             }
         }
 
@@ -202,7 +208,6 @@ where
     SignerMiddleware<T, U>: Middleware,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-
     let pending = signer
         .send_transaction(legacy_or_1559, None)
         .await

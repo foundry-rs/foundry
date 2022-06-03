@@ -1,8 +1,9 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
+    prelude::RetryClient,
     providers::{Http, Provider},
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
@@ -12,25 +13,25 @@ use serde::Serialize;
 
 #[derive(Debug)]
 pub enum WalletType {
-    Local(SignerMiddleware<Provider<Http>, LocalWallet>),
-    Ledger(SignerMiddleware<Provider<Http>, Ledger>),
-    Trezor(SignerMiddleware<Provider<Http>, Trezor>),
+    Local(SignerMiddleware<Arc<Provider<RetryClient<Http>>>, LocalWallet>),
+    Ledger(SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Ledger>),
+    Trezor(SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Trezor>),
 }
 
-impl From<SignerMiddleware<Provider<Http>, Ledger>> for WalletType {
-    fn from(hw: SignerMiddleware<Provider<Http>, Ledger>) -> WalletType {
+impl From<SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Ledger>> for WalletType {
+    fn from(hw: SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Ledger>) -> WalletType {
         WalletType::Ledger(hw)
     }
 }
 
-impl From<SignerMiddleware<Provider<Http>, Trezor>> for WalletType {
-    fn from(hw: SignerMiddleware<Provider<Http>, Trezor>) -> WalletType {
+impl From<SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Trezor>> for WalletType {
+    fn from(hw: SignerMiddleware<Arc<Provider<RetryClient<Http>>>, Trezor>) -> WalletType {
         WalletType::Trezor(hw)
     }
 }
 
-impl From<SignerMiddleware<Provider<Http>, LocalWallet>> for WalletType {
-    fn from(wallet: SignerMiddleware<Provider<Http>, LocalWallet>) -> WalletType {
+impl From<SignerMiddleware<Arc<Provider<RetryClient<Http>>>, LocalWallet>> for WalletType {
+    fn from(wallet: SignerMiddleware<Arc<Provider<RetryClient<Http>>>, LocalWallet>) -> WalletType {
         WalletType::Local(wallet)
     }
 }
