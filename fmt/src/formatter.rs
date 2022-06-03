@@ -38,6 +38,7 @@ struct IndentGroup {
 struct FormatBuffer<W: Sized> {
     indents: Vec<IndentGroup>,
     tab_width: usize,
+    line_length: usize,
     is_beginning_of_line: bool,
     last_indent: String,
     last_char: Option<char>,
@@ -46,10 +47,11 @@ struct FormatBuffer<W: Sized> {
 }
 
 impl<W: Sized> FormatBuffer<W> {
-    fn new(w: W, tab_width: usize) -> Self {
+    fn new(w: W, tab_width: usize, line_length: usize) -> Self {
         Self {
             w,
             tab_width,
+            line_length,
             indents: vec![],
             current_line_len: 0,
             is_beginning_of_line: true,
@@ -80,11 +82,16 @@ impl<W: Sized> FormatBuffer<W> {
         }
     }
 
-    fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        self.last_indent
-            .len()
-            .saturating_add(self.current_line_len)
-            .saturating_add(s.as_ref().len())
+    fn line_len(&self) -> usize {
+        self.line_length
+    }
+
+    fn last_indent_len(&self) -> usize {
+        self.last_indent.len()
+    }
+
+    fn current_line_len(&self) -> usize {
+        self.current_line_len
     }
 
     fn is_beginning_of_line(&self) -> bool {
@@ -158,7 +165,7 @@ impl<W: Write> Write for FormatBuffer<W> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Chunk {
     postfixes_before: Vec<CommentWithMetadata>,
     prefixes: Vec<CommentWithMetadata>,
@@ -257,7 +264,7 @@ macro_rules! buf_fn {
 impl<'a, W: Write> Formatter<'a, W> {
     pub fn new(w: &'a mut W, source: &'a str, comments: Comments, config: FormatterConfig) -> Self {
         Self {
-            buf: FormatBuffer::new(w, config.tab_width),
+            buf: FormatBuffer::new(w, config.tab_width, config.line_length),
             source,
             config,
             temp_bufs: Vec::new(),
@@ -274,12 +281,27 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    fn push_temp_buf(&mut self) {
+        let mut buffer = FormatBuffer::new(
+            String::new(),
+            self.config.tab_width,
+            self.line_len().saturating_sub(self.last_indent_len()),
+        );
+        buffer.current_line_len = self.current_line_len();
+        self.temp_bufs.push(buffer);
+    }
+
+    fn pop_temp_buf(&mut self) -> Option<FormatBuffer<String>> {
+        self.temp_bufs.pop()
+    }
+
     buf_fn! { fn indent(&mut self, delta: usize) }
     buf_fn! { fn dedent(&mut self, delta: usize) }
     buf_fn! { fn start_group(&mut self) }
     buf_fn! { fn end_group(&mut self) }
-    // buf_fn! { fn current_indent_len(&self) -> usize }
-    buf_fn! { fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize }
+    buf_fn! { fn line_len(&self) -> usize }
+    buf_fn! { fn current_line_len(&self) -> usize }
+    buf_fn! { fn last_indent_len(&self) -> usize }
     buf_fn! { fn is_beginning_of_line(&self) -> bool }
     buf_fn! { fn last_char(&self) -> Option<char> }
     buf_fn! { fn last_indent_group_skipped(&self) -> bool }
@@ -439,7 +461,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         if text.as_ref().contains('\n') {
             return false
         }
-        self.len_indented_with_current(text) <= self.config.line_length
+        self.line_len() >
+            self.last_indent_len()
+                .saturating_add(self.current_line_len())
+                .saturating_add(text.as_ref().len())
     }
 
     fn are_chunks_separated_multiline<'b>(
@@ -497,15 +522,23 @@ impl<'a, W: Write> Formatter<'a, W> {
     ) -> std::fmt::Result {
         let mut chunks = chunks.into_iter().peekable();
         while let Some(chunk) = chunks.next() {
-            let postfixes = if chunk.postfixes.is_empty() {
-                self.write_chunk(chunk)?;
-                vec![]
-            } else {
-                let mut chunk = chunk.clone();
-                let postfixes = std::mem::take(&mut chunk.postfixes);
-                self.write_chunk(&chunk)?;
-                postfixes
-            };
+            let mut chunk = chunk.clone();
+
+            // handle postfixes before and add newline if necessary
+            let postfixes_before = std::mem::take(&mut chunk.postfixes_before);
+            for comment in postfixes_before {
+                self.write_comment(&comment)?;
+            }
+            if multiline && !self.is_beginning_of_line() {
+                writeln!(self.buf())?;
+            }
+
+            // remove postfixes so we can add separator between
+            let postfixes = std::mem::take(&mut chunk.postfixes);
+
+            self.write_chunk(&chunk)?;
+
+            // add separator
             if chunks.peek().is_some() {
                 write!(self.buf(), "{}", separator)?;
                 for comment in postfixes {
@@ -524,9 +557,9 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     fn visit_to_string(&mut self, visitable: &mut impl Visitable) -> Result<String, VError> {
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.push_temp_buf();
         visitable.visit(self)?;
-        let buf = self.temp_bufs.pop().unwrap();
+        let buf = self.pop_temp_buf().unwrap();
         Ok(buf.w)
     }
 
@@ -600,9 +633,9 @@ impl<'a, W: Write> Formatter<'a, W> {
     ) -> Result<Chunk, VError> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.push_temp_buf();
         fun(self)?;
-        let content = self.temp_bufs.pop().unwrap().w;
+        let content = self.pop_temp_buf().unwrap().w;
         let postfixes = next_byte_offset
             .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
             .unwrap_or_default();
@@ -697,9 +730,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
     ) -> Result<String, VError> {
         let comments = self.comments.clone();
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.push_temp_buf();
         fun(self)?;
-        let buf = self.temp_bufs.pop().unwrap();
+        let buf = self.pop_temp_buf().unwrap();
         self.comments = comments;
         Ok(buf.w)
     }
@@ -723,9 +756,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         byte_end: usize,
         chunk: impl std::fmt::Display,
     ) -> Result<String, VError> {
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.push_temp_buf();
         write_chunk!(self, byte_end, "{chunk}")?;
-        let buf = self.temp_bufs.pop().unwrap();
+        let buf = self.pop_temp_buf().unwrap();
         Ok(buf.w)
     }
 
@@ -775,9 +808,9 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         write_chunk!(self, byte_offset, "{first_chunk}")?;
 
-        self.temp_bufs.push(FormatBuffer::new(String::new(), self.config.tab_width));
+        self.push_temp_buf();
         fun(self)?;
-        let contents = self.temp_bufs.pop().unwrap().w;
+        let contents = self.pop_temp_buf().unwrap().w;
 
         let multiline = !self.will_it_fit(format!("{contents}{last_chunk}"));
         if multiline {
@@ -924,36 +957,38 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.grouped(|fmt| {
             write_chunk!(fmt, contract.loc.start(), "{}", contract.ty)?;
             write_chunk!(fmt, contract.name.loc.end(), "{}", contract.name.name)?;
-
             if !contract.base.is_empty() {
-                write_chunk!(fmt, contract.base.first().unwrap().loc.start(), "is")?;
-
-                let bases = fmt.items_to_chunks(&mut contract.base, |base| Ok((base.loc, base)))?;
-
-                let multiline = fmt.are_chunks_separated_multiline(&bases, ", ");
-
-                if multiline {
-                    writeln!(fmt.buf())?;
-                } else {
-                    write!(fmt.buf(), " ")?;
-                }
-
-                fmt.write_chunks_separated(&bases, ",", multiline)?;
-
-                if multiline {
-                    writeln!(fmt.buf())?;
-                } else {
-                    write!(fmt.buf(), " ")?;
-                }
+                write_chunk!(
+                    fmt,
+                    contract.name.loc.end(),
+                    contract.base.first().unwrap().loc.start(),
+                    "is"
+                )?;
             }
+            Ok(())
+        })?;
 
-            if contract.parts.is_empty() {
-                return Ok(())
-            }
+        if !contract.base.is_empty() {
+            self.indented(1, |fmt| {
+                let base_end = contract.parts.first().map(|part| part.loc().start());
+                let bases = fmt
+                    .items_to_chunks2(&mut contract.base, base_end, |base| Ok((base.loc, base)))?;
+                let multiline = fmt.are_chunks_separated_multiline2("{}", &bases, ",")?;
+                fmt.write_chunks_separated2(&bases, ",", multiline)?;
+                fmt.write_whitespace_separator(multiline)?;
+                Ok(())
+            })?;
+        }
 
-            fmt.write_opening_bracket()?;
-            writeln!(fmt.buf())?;
+        if contract.parts.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
 
+        self.write_opening_bracket()?;
+        writeln!(self.buf())?;
+
+        self.indented(1, |fmt| {
             let mut contract_parts_iter = contract.parts.iter_mut().peekable();
             while let Some(part) = contract_parts_iter.next() {
                 part.visit(fmt)?;
@@ -985,11 +1020,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         })?;
 
-        if contract.parts.is_empty() {
-            self.write_empty_brackets()?;
-        } else {
-            write!(self.buf(), "}}")?;
-        }
+        self.write_closing_bracket()?;
 
         self.context.contract = None;
 
@@ -1768,7 +1799,6 @@ mod tests {
 
         let (mut source_pt, source_comments) = solang_parser::parse(source, 1).unwrap();
         let source_comments = Comments::new(source_comments, source);
-        println!("{source_comments:?}");
 
         let (mut expected_pt, expected_comments) =
             solang_parser::parse(expected_source, 1).unwrap();

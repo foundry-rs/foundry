@@ -22,5 +22,5 @@ contract SampleContract {
     }
 }
 
-// comment 
-contract /* comment */ ExampleContract /* comment 9 */ is SampleContract {}
+// comment 20
+contract /* comment 21 */ ExampleContract /* comment 22 */ is SampleContract {}
