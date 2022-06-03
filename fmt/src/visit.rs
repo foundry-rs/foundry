@@ -8,8 +8,6 @@ pub type VError = Box<dyn std::error::Error>;
 /// The result type a [Visitor] may return
 pub type VResult = Result<(), VError>;
 
-pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
-
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
@@ -27,10 +25,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_doc_comments(&mut self, _doc_comments: &mut [DocComment]) -> VResult {
-        Ok(())
-    }
-
     fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
         Ok(())
     }
@@ -39,12 +33,13 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, _import: &mut StringLiteral) -> VResult {
+    fn visit_import_plain(&mut self, _loc: Loc, _import: &mut StringLiteral) -> VResult {
         Ok(())
     }
 
     fn visit_import_global(
         &mut self,
+        _loc: Loc,
         _global: &mut StringLiteral,
         _alias: &mut Identifier,
     ) -> VResult {
@@ -53,6 +48,7 @@ pub trait Visitor {
 
     fn visit_import_renames(
         &mut self,
+        _loc: Loc,
         _imports: &mut [(Identifier, Option<Identifier>)],
         _from: &mut StringLiteral,
     ) -> VResult {
@@ -221,10 +217,12 @@ pub trait Visitor {
     }
 
     fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
-        if let Some(loc) = attribute.loc() {
-            self.visit_source(loc)?;
-        }
+        self.visit_source(attribute.loc())?;
+        Ok(())
+    }
 
+    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> VResult {
+        self.visit_source(attribute.loc())?;
         Ok(())
     }
 
@@ -234,18 +232,6 @@ pub trait Visitor {
 
     fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
         self.visit_source(parameter.loc)
-    }
-
-    /// Write parameter list used in function/constructor/fallback/modifier arguments, return
-    /// arguments and try return arguments including opening and closing parenthesis.
-    fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
-        self.visit_opening_paren()?;
-        if let (Some((first_loc, _)), Some((last_loc, _))) = (list.first(), list.last()) {
-            self.visit_source(Loc::File(first_loc.file_no(), first_loc.start(), last_loc.end()))?;
-        }
-        self.visit_closing_paren()?;
-
-        Ok(())
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
@@ -337,9 +323,11 @@ impl Visitable for SourceUnitPart {
 impl Visitable for Import {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
-            Import::Plain(import, _) => v.visit_import_plain(import),
-            Import::GlobalSymbol(global, import_as, _) => v.visit_import_global(global, import_as),
-            Import::Rename(from, imports, _) => v.visit_import_renames(imports, from),
+            Import::Plain(import, loc) => v.visit_import_plain(*loc, import),
+            Import::GlobalSymbol(global, import_as, loc) => {
+                v.visit_import_global(*loc, global, import_as)
+            }
+            Import::Rename(from, imports, loc) => v.visit_import_renames(*loc, imports, from),
         }
     }
 }
@@ -429,12 +417,11 @@ macro_rules! impl_visitable {
 }
 
 impl_visitable!(DocComment, visit_doc_comment);
-impl_visitable!(Vec<DocComment>, visit_doc_comments);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
+impl_visitable!(VariableAttribute, visit_var_attribute);
 impl_visitable!(Parameter, visit_parameter);
-impl_visitable!(ParameterList, visit_parameter_list);
 impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
