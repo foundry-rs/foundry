@@ -5,6 +5,24 @@ use revm::{
     AccountInfo, Env,
 };
 
+mod in_memory_db;
+pub use in_memory_db::MemDb;
+
+/// Provides the underlying `revm::Database` implementation.
+///
+/// A `Backend` can be initialised in two forms:
+///
+/// # 1. Empty in-memory Database
+/// This is the default variant: an empty `revm::Database`
+///
+/// # 2. Forked Database
+/// A `revm::Database` that forks off a remote client
+///
+/// In addition to that we support forking manually on the fly.
+/// Additional forks can be created and their state can be switched manually.
+#[derive(Debug, Clone)]
+pub struct Backend2 {}
+
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]
 pub enum Backend {
@@ -26,8 +44,9 @@ impl Backend {
         }
     }
 
+    /// Creates an empty in memory database
     pub fn simple() -> Self {
-        Backend::Simple(EmptyDB())
+        Backend::Simple(EmptyDB::default())
     }
 }
 

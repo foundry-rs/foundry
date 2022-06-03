@@ -24,7 +24,7 @@ use revm::{
 use std::collections::{BTreeMap, VecDeque};
 
 /// custom revm database implementations
-mod backend;
+pub mod backend;
 /// Executor builder
 pub mod builder;
 /// Forking provider

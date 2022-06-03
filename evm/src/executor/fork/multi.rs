@@ -9,7 +9,7 @@ use ethers::{
     types::BlockId,
 };
 use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
+    channel::mpsc::{Receiver, Sender},
     stream::{Fuse, Stream},
     task::{Context, Poll},
     Future, FutureExt,
@@ -39,12 +39,12 @@ pub struct MutltiFork {
 
 impl MutltiFork {
     /// Creates a new pair of `MutltiFork` and its handler `MutltiForkHandler`
-    pub fn new(id: ForkId, db: ForkedDatabase) -> (MutltiFork, MutltiForkHandler) {
+    pub fn new(_id: ForkId, _db: ForkedDatabase) -> (MutltiFork, MutltiForkHandler) {
         todo!()
     }
 
     /// Creates a new pair and spawns the `MutltiForkHandler` on a background thread
-    pub fn spawn(id: ForkId, db: ForkedDatabase) -> MutltiFork {
+    pub fn spawn(_id: ForkId, _db: ForkedDatabase) -> MutltiFork {
         todo!()
     }
 
@@ -82,7 +82,7 @@ pub struct MutltiForkHandler {
 // === impl MultiForkHandler ===
 
 impl MutltiForkHandler {
-    fn on_request(&mut self, req: Request) {}
+    fn on_request(&mut self, _req: Request) {}
 }
 
 // Drives all handler to completion
@@ -110,7 +110,7 @@ impl Future for MutltiForkHandler {
 
         // advance all jobs
         for n in (0..pin.requests.len()).rev() {
-            let mut request = pin.requests.swap_remove(n);
+            let _request = pin.requests.swap_remove(n);
             // TODO poll future
         }
 

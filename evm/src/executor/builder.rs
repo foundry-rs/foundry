@@ -11,10 +11,7 @@ use ethers::{
     providers::{Http, Provider, RetryClient},
     types::U256,
 };
-use revm::{
-    db::{DatabaseRef, EmptyDB},
-    Env, SpecId,
-};
+use revm::{Env, SpecId};
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Default, Debug)]
