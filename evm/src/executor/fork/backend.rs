@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::executor::fork::BlockchainDb;
+use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -14,8 +14,6 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-
-use crate::executor::fork::cache::FlushJsonBlockCacheDB;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -110,21 +108,15 @@ where
         match req {
             BackendRequest::Basic(addr, sender) => {
                 trace!(target: "backendhandler", "received request basic address={:?}", addr);
-                let lock = self.db.accounts().read();
-                let basic = lock.get(&addr).cloned();
-                // release the lock
-                drop(lock);
-                if let Some(basic) = basic {
+                let acc = self.db.accounts().read().get(&addr).cloned();
+                if let Some(basic) = acc {
                     let _ = sender.send(basic);
                 } else {
                     self.request_account(addr, sender);
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let lock = self.db.block_hashes().read();
-                let hash = lock.get(&number).cloned();
-                // release the lock
-                drop(lock);
+                let hash = self.db.block_hashes().read().get(&number).cloned();
                 if let Some(hash) = hash {
                     let _ = sender.send(hash);
                 } else {
@@ -132,13 +124,9 @@ where
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
-                let lock = self.db.storage().read();
-                let acc = lock.get(&addr);
-                let value = acc.and_then(|acc| acc.get(&idx).copied());
-                // release the lock
-                drop(lock);
-
                 // account is already stored in the cache
+                let value =
+                    self.db.storage().read().get(&addr).and_then(|acc| acc.get(&idx).copied());
                 if let Some(value) = value {
                     let _ = sender.send(value);
                 } else {
