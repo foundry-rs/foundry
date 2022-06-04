@@ -2,6 +2,7 @@ mod backend;
 
 pub use backend::{BackendHandler, SharedBackend};
 use ethers::types::BlockNumber;
+use revm::Env;
 use std::path::PathBuf;
 
 mod init;
@@ -24,4 +25,6 @@ pub struct CreateFork {
     pub url: String,
     /// The block to fork against
     pub block: BlockNumber,
+    /// The env to create this fork, main purpose is to provide some metadata for the fork
+    pub env: Env,
 }

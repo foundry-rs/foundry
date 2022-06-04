@@ -3,24 +3,28 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::executor::{
-    fork::{
-        database::{ForkDbSnapshot, ForkedDatabase},
-        BackendHandler, CreateFork, SharedBackend,
-    },
-    snapshot::Snapshots,
-};
+use crate::executor::fork::{database::ForkedDatabase, BackendHandler, CreateFork, SharedBackend};
 use ethers::{
-    providers::{Http, Provider},
-    types::BlockId,
+    providers::{Http, Provider, RetryClient},
+    types::BlockNumber,
 };
+
+use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
+use ethers::prelude::Middleware;
 use futures::{
     channel::mpsc::{Receiver, Sender},
     stream::{Fuse, Stream},
     task::{Context, Poll},
     Future, FutureExt,
 };
-use std::{collections::HashMap, pin::Pin};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::{
+        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+        Arc,
+    },
+};
 use tracing::trace;
 
 /// The identifier for a specific fork, this could be the name of the network a custom descriptive
@@ -33,8 +37,6 @@ pub struct ForkId(pub String);
 pub struct MultiFork {
     /// Channel to send `Request`s to the handler
     handler: Sender<Request>,
-    /// All created databases for forks identified by their `ForkId`
-    forks: HashMap<ForkId, ForkedDatabase>,
 }
 
 // === impl MultiForkBackend ===
@@ -50,18 +52,33 @@ impl MultiFork {
         todo!()
     }
 
-    pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
-        todo!()
+    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::CreateFork(Box::new(fork), sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        rx.recv()?
     }
 }
+
+type Handler = BackendHandler<Arc<Provider<RetryClient<Http>>>>;
+
+type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(SharedBackend, Handler)>> + Send>>;
+
+type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend)>>;
 
 /// Request that's send to the handler
 #[derive(Debug)]
 enum Request {
-    Create(CreateFork),
+    /// Creates a new ForkBackend
+    CreateFork(Box<CreateFork>, CreateSender),
+    /// Returns the Fork backend for the `ForkId` if it exists
+    GetBacked(ForkId, OneshotSender<Option<SharedBackend>>),
 }
 
-type RequestFuture = Pin<Box<dyn Future<Output = ()> + 'static + Send>>;
+enum ForkTask {
+    /// Contains the future that will establish a new fork
+    Create(CreateFuture, ForkId, CreateSender),
+}
 
 /// The type that manages connections in the background
 pub struct MultiForkHandler {
@@ -70,15 +87,41 @@ pub struct MultiForkHandler {
     /// All active handlers
     ///
     /// It's expected that this list will be rather small (<10)
-    handlers: Vec<(ForkId, BackendHandler<Provider<Http>>)>,
-    // requests currently in progress
-    requests: Vec<RequestFuture>,
+    handlers: Vec<(ForkId, Handler)>,
+    // tasks currently in progress
+    pending_tasks: Vec<ForkTask>,
+    /// All created Forks
+    forks: HashMap<ForkId, SharedBackend>,
+
+    /// The retries to allow for new providers
+    retries: u32,
+    /// Initial backoff delay for requests
+    backoff: u64,
 }
 
 // === impl MultiForkHandler ===
 
 impl MultiForkHandler {
-    fn on_request(&mut self, _req: Request) {}
+    fn on_request(&mut self, req: Request) {
+        match req {
+            Request::CreateFork(fork, sender) => {
+                let fork_id = create_fork_id(&fork.url, fork.block);
+                if let Some(fork) = self.forks.get(&fork_id).cloned() {
+                    let _ = sender.send(Ok((fork_id, fork)));
+                } else {
+                    let retries = self.retries;
+                    let backoff = self.backoff;
+                    // need to create a new fork
+                    let task = Box::pin(async move { create_fork(*fork, retries, backoff).await });
+                    self.pending_tasks.push(ForkTask::Create(task, fork_id, sender));
+                }
+            }
+            Request::GetBacked(fork_id, sender) => {
+                let fork = self.forks.get(&fork_id).cloned();
+                let _ = sender.send(fork);
+            }
+        }
+    }
 }
 
 // Drives all handler to completion
@@ -104,10 +147,27 @@ impl Future for MultiForkHandler {
             }
         }
 
-        // advance all jobs
-        for n in (0..pin.requests.len()).rev() {
-            let _request = pin.requests.swap_remove(n);
-            // TODO poll future
+        // advance all tasks
+        for n in (0..pin.pending_tasks.len()).rev() {
+            let task = pin.pending_tasks.swap_remove(n);
+            match task {
+                ForkTask::Create(mut fut, id, sender) => {
+                    if let Poll::Ready(resp) = fut.poll_unpin(cx) {
+                        match resp {
+                            Ok((fork, handler)) => {
+                                pin.handlers.push((id.clone(), handler));
+                                pin.forks.insert(id.clone(), fork.clone());
+                                let _ = sender.send(Ok((id, fork)));
+                            }
+                            Err(err) => {
+                                let _ = sender.send(Err(err));
+                            }
+                        }
+                    } else {
+                        pin.pending_tasks.push(ForkTask::Create(fut, id, sender));
+                    }
+                }
+            }
         }
 
         // advance all handlers
@@ -130,4 +190,39 @@ impl Future for MultiForkHandler {
 
         Poll::Pending
     }
+}
+
+/// Returns  the identifier for a Fork which consists of the url and the block number
+fn create_fork_id(url: &str, num: BlockNumber) -> ForkId {
+    ForkId(format!("{url}@{num:?}"))
+}
+
+/// Creates a new fork
+///
+/// This will establish a new `Provider` to the endpoint and return the Fork Backend
+async fn create_fork(
+    fork: CreateFork,
+    retries: u32,
+    backoff: u64,
+) -> eyre::Result<(SharedBackend, Handler)> {
+    let CreateFork { cache_path, url, block: block_number, env } = fork;
+    let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
+        url.clone().as_str(),
+        retries,
+        backoff,
+    )?);
+    let mut meta = BlockchainDbMeta::new(env, url);
+
+    // update the meta to match the forked config
+    meta.cfg_env.chain_id = provider.get_chainid().await?;
+
+    let number = match block_number {
+        BlockNumber::Pending | BlockNumber::Latest => provider.get_block_number().await?.as_u64(),
+        BlockNumber::Earliest => 0,
+        BlockNumber::Number(num) => num.as_u64(),
+    };
+    meta.block_env.number = number.into();
+
+    let db = BlockchainDb::new(meta, cache_path);
+    todo!()
 }

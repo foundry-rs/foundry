@@ -2,12 +2,13 @@ use crate::executor::{fork::SharedBackend, Fork};
 use ethers::prelude::{H160, H256, U256};
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    AccountInfo, Env, InMemoryDB,
+    AccountInfo, Env,
 };
+use tracing::{trace, warn};
 
 mod in_memory_db;
 use crate::executor::{
-    fork::{database::ForkDbSnapshot, CreateFork, ForkId, MultiFork},
+    fork::{CreateFork, ForkId, MultiFork},
     snapshot::Snapshots,
 };
 pub use in_memory_db::MemDb;
@@ -77,21 +78,36 @@ impl Backend2 {
     /// This will spawn a new background thread that manages forks and will establish a fork if
     /// `fork` is `Some`. If `fork` is `None` this `Backend` will launch with an in-memory
     /// Database
-    pub fn new(fork: Option<Fork>, env: &Env) -> Self {
+    pub fn new(_fork: Option<Fork>, _env: &Env) -> Self {
         todo!()
     }
 
-    pub fn insert_snapshot(&self) -> U256 {
-        todo!()
+    /// Creates a new snapshot
+    pub fn snapshot(&mut self) -> U256 {
+        let id = self.snapshots.insert(self.db.clone());
+        trace!(target: "backend", "Created new snapshot {}", id);
+        id
     }
 
-    pub fn revert_snapshot(&mut self, id: U256) -> bool {
-        todo!()
+    /// Reverts the snapshot if it exists
+    ///
+    /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
+    /// exists.
+    pub fn revert(&mut self, id: U256) -> bool {
+        if let Some(snapshot) = self.snapshots.remove(id) {
+            self.db = snapshot;
+            trace!(target: "backend", "Reverted snapshot {}", id);
+            true
+        } else {
+            warn!(target: "backend", "No snapshot to revert for {}", id);
+            false
+        }
     }
 
     /// Creates a new fork but does _not_ select it
     pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
-        self.forks.create_fork(fork)
+        self.forks.create_fork(fork);
+        todo!()
     }
 
     /// Selects the fork's state
@@ -101,18 +117,9 @@ impl Backend2 {
     /// # Errors
     ///
     /// Returns an error if no fork with the given `id` exists
-    pub fn select_fork(&mut self, id: ForkId) -> eyre::Result<()> {
+    pub fn select_fork(&mut self, _id: ForkId) -> eyre::Result<()> {
         todo!()
     }
-}
-
-/// The Database that holds the state
-#[derive(Debug, Clone)]
-enum BackendDatabase {
-    /// Backend is an in-memory `revm::Database`
-    Memory(InMemoryDB),
-    /// Backed is currently serving data from the remote endpoint identified by the `ForkId`
-    Fork(SharedBackend, ForkId),
 }
 
 /// Variants of a [revm::Database]
