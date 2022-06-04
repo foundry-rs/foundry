@@ -207,7 +207,10 @@ impl ScriptArgs {
         Ok(())
     }
 
-    fn maybe_load_etherscan_api_key(&mut self, script_config: &mut ScriptConfig) -> eyre::Result<()> {
+    fn maybe_load_etherscan_api_key(
+        &mut self,
+        script_config: &mut ScriptConfig,
+    ) -> eyre::Result<()> {
         if let Some(ref etherscan_api_key) = self.etherscan_api_key {
             script_config.config.etherscan_api_key = Some(etherscan_api_key.clone());
         }
