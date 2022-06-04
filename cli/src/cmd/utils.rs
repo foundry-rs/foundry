@@ -350,6 +350,9 @@ impl ScriptSequence {
             let mut future_verifications = vec![];
             let mut create2 = self.create2_contracts.clone().into_iter();
 
+            // Make sure the receipts have the right order first.
+            self.sort_receipts();
+
             for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
                 let mut create2_offset = 0;
 
