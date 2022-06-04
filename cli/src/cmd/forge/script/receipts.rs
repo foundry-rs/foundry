@@ -28,7 +28,7 @@ pub async fn wait_for_receipts(
     let mut tasks = futures::stream::iter(
         tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
     )
-    .buffered(20);
+    .buffered(10);
 
     let mut receipts = vec![];
     let mut errors: Vec<String> = vec![];

@@ -62,6 +62,7 @@ impl DebugArgs {
             etherscan_api_key: None,
             verify: false,
             json: false,
+            with_gas_price: None,
         };
         script.run_script().await
     }

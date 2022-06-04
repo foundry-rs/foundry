@@ -58,7 +58,7 @@ impl ScriptArgs {
                 .expect("You must provide an RPC URL (see --fork-url).")
                 .clone();
 
-            let provider = get_http_provider(&fork_url);
+            let provider = get_http_provider(&fork_url, true);
             let chain = provider.get_chainid().await?.as_u64();
 
             let mut deployment_sequence =

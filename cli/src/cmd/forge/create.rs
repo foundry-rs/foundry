@@ -166,6 +166,7 @@ impl CreateArgs {
         let config = Config::from(&self.eth);
         let provider = get_http_provider(
             &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            false,
         );
         let params = match abi.constructor {
             Some(ref v) => {

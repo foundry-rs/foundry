@@ -6,10 +6,11 @@ use crate::{
     utils::get_http_provider,
 };
 use ethers::{
-    prelude::{SignerMiddleware, TxHash},
+    prelude::{Signer, SignerMiddleware, TxHash},
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
+use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt};
 
@@ -22,7 +23,7 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
     ) -> eyre::Result<()> {
-        let provider = get_http_provider(fork_url);
+        let provider = get_http_provider(fork_url, true);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -58,14 +59,18 @@ impl ScriptArgs {
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
                     let mut tx = tx.clone();
 
-                    // fill gas price
-                    match tx {
-                        TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
-                            tx.set_gas_price(gas_price);
-                        }
-                        TypedTransaction::Eip1559(ref mut inner) => {
-                            inner.max_fee_per_gas = Some(eip1559_fees.0);
-                            inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
+                    if let Some(gas_price) = self.with_gas_price {
+                        tx.set_gas_price(gas_price);
+                    } else {
+                        // fill gas price
+                        match tx {
+                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
+                                tx.set_gas_price(gas_price);
+                            }
+                            TypedTransaction::Eip1559(ref mut inner) => {
+                                inner.max_fee_per_gas = Some(eip1559_fees.0);
+                                inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
+                            }
                         }
                     }
 
@@ -75,13 +80,13 @@ impl ScriptArgs {
 
             let pb = init_progress!(deployment_sequence.transactions, "txes");
 
-            //  We send transactions and wait for receipts in batches of 50, since some networks
+            // We send transactions and wait for receipts in batches of 100, since some networks
             // cannot handle more than that.
             let batch_size = 100;
-            let batches = sequence.chunks(batch_size).map(|f| f.to_vec()).collect::<Vec<_>>();
             let mut index = 0;
 
-            for (batch_number, batch) in batches.into_iter().enumerate() {
+            for (batch_number, batch) in sequence.chunks(batch_size).map(|f| f.to_vec()).enumerate()
+            {
                 let mut pending_transactions = vec![];
 
                 println!(
@@ -90,28 +95,40 @@ impl ScriptArgs {
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 );
                 for (tx, signer) in batch.into_iter() {
-                    let tx_hash =
-                        self.send_transaction(tx, signer, sequential_broadcast, fork_url).await?;
-                    deployment_sequence.add_pending(tx_hash);
-
-                    update_progress!(pb, (index + already_broadcasted));
-                    index += 1;
+                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                     if sequential_broadcast {
-                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
-                            .await?;
+                        wait_for_receipts(
+                            vec![tx_hash.await?],
+                            deployment_sequence,
+                            provider.clone(),
+                        )
+                        .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
                 }
 
-                // Checkpoint save
-                deployment_sequence.save()?;
+                if !pending_transactions.is_empty() {
+                    let mut buffer = futures::stream::iter(pending_transactions).buffered(7);
 
-                if !sequential_broadcast {
-                    println!("##\nCollecting Receipts.");
-                    wait_for_receipts(pending_transactions, deployment_sequence, provider.clone())
-                        .await?;
+                    let mut tx_hashes = vec![];
+
+                    while let Some(tx_hash) = buffer.next().await {
+                        update_progress!(pb, (index + already_broadcasted));
+                        index += 1;
+                        let tx_hash = tx_hash?;
+                        deployment_sequence.add_pending(tx_hash);
+                        tx_hashes.push(tx_hash);
+                    }
+
+                    // Checkpoint save
+                    deployment_sequence.save()?;
+
+                    if !sequential_broadcast {
+                        println!("##\nCollecting Receipts.");
+                        wait_for_receipts(tx_hashes, deployment_sequence, provider.clone()).await?;
+                    }
                 }
 
                 // Checkpoint save
@@ -170,13 +187,16 @@ impl ScriptArgs {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
                 let (gas_filled_txs, create2_contracts) =
-                    self.execute_transactions(txs, script_config, decoder)
-                    .await
-                    .map_err(|_| eyre::eyre!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`"))?;
+                    self.execute_transactions(txs, script_config, decoder).await.map_err(|_| {
+                        eyre::eyre!(
+                            "One or more transactions failed when simulating the
+                on-chain version. Check the trace by re-running with `-vvv`"
+                        )
+                    })?;
+
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
-                let provider = get_http_provider(&fork_url);
-                let chain = provider.get_chainid().await?.as_u64();
+                let chain = get_http_provider(&fork_url, false).get_chainid().await?.as_u64();
                 let is_legacy = self.legacy ||
                     Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
 
@@ -251,7 +271,10 @@ where
     legacy_or_1559.set_chain_id(signer.signer().chain_id());
 
     let signature = signer
-        .sign_transaction(&legacy_or_1559, *legacy_or_1559.from().expect("Tx should have a `from`."))
+        .sign_transaction(
+            &legacy_or_1559,
+            *legacy_or_1559.from().expect("Tx should have a `from`."),
+        )
         .await
         .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
