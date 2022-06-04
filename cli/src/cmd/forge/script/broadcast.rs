@@ -239,14 +239,26 @@ impl fmt::Display for BroadcastError {
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    legacy_or_1559: TypedTransaction,
+    mut legacy_or_1559: TypedTransaction,
 ) -> Result<TxHash, BroadcastError>
 where
-    SignerMiddleware<T, U>: Middleware,
+    T: Middleware,
+    U: Signer,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+
+    // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
+    legacy_or_1559.set_chain_id(signer.signer().chain_id());
+
+    let signature = signer
+        .sign_transaction(&legacy_or_1559, *legacy_or_1559.from().expect("Tx should have a `from`."))
+        .await
+        .map_err(|err| BroadcastError::Simple(err.to_string()))?;
+
+    // Submit the raw transaction
     let pending = signer
-        .send_transaction(legacy_or_1559, None)
+        .provider()
+        .send_raw_transaction(legacy_or_1559.rlp_signed(&signature))
         .await
         .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
