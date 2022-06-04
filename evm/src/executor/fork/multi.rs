@@ -3,19 +3,19 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use crate::executor::fork::{database::ForkedDatabase, BackendHandler, CreateFork, SharedBackend};
+use crate::executor::fork::{
+    BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
+};
 use ethers::{
+    prelude::Middleware,
     providers::{Http, Provider, RetryClient},
     types::BlockNumber,
 };
-
-use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
-use ethers::prelude::Middleware;
 use futures::{
-    channel::mpsc::{Receiver, Sender},
+    channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
     task::{Context, Poll},
-    Future, FutureExt,
+    Future, FutureExt, StreamExt,
 };
 use std::{
     collections::HashMap,
@@ -42,14 +42,30 @@ pub struct MultiFork {
 // === impl MultiForkBackend ===
 
 impl MultiFork {
-    /// Creates a new pair of `MutltiFork` and its handler `MultiForkHandler`
-    pub fn new(_id: ForkId, _db: ForkedDatabase) -> (MultiFork, MultiForkHandler) {
-        todo!()
+    /// Creates a new pair multi fork pair
+    pub fn new() -> (Self, MultiForkHandler) {
+        let (handler, handler_rx) = channel(1);
+        (Self { handler }, MultiForkHandler::new(handler_rx))
     }
 
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
-    pub fn spawn(_id: ForkId, _db: ForkedDatabase) -> MultiFork {
-        todo!()
+    pub fn spawn() -> Self {
+        let (fork, handler) = Self::new();
+        // spawn a light-weight thread with a thread-local async runtime just for
+        // sending and receiving data from the remote client(s)
+        let _ = std::thread::Builder::new()
+            .name("multi-fork-backend-thread".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to create multi-fork-backend-thread tokio runtime");
+
+                rt.block_on(async move { handler.await });
+            })
+            .expect("failed to spawn multi fork handler thread");
+        trace!(target: "fork::multi", "spawned MultiForkHandler thread");
+        fork
     }
 
     pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {
@@ -81,20 +97,25 @@ enum ForkTask {
 }
 
 /// The type that manages connections in the background
+#[must_use = "MultiForkHandler does nothing unless polled."]
 pub struct MultiForkHandler {
     /// Incoming requests from the `MultiFork`.
     incoming: Fuse<Receiver<Request>>,
+
     /// All active handlers
     ///
     /// It's expected that this list will be rather small (<10)
     handlers: Vec<(ForkId, Handler)>,
+
     // tasks currently in progress
     pending_tasks: Vec<ForkTask>,
-    /// All created Forks
+
+    /// All created Forks in order to reuse them
     forks: HashMap<ForkId, SharedBackend>,
 
     /// The retries to allow for new providers
     retries: u32,
+
     /// Initial backoff delay for requests
     backoff: u64,
 }
@@ -102,6 +123,18 @@ pub struct MultiForkHandler {
 // === impl MultiForkHandler ===
 
 impl MultiForkHandler {
+    fn new(incoming: Receiver<Request>) -> Self {
+        Self {
+            incoming: incoming.fuse(),
+            handlers: Default::default(),
+            pending_tasks: Default::default(),
+            forks: Default::default(),
+            retries: 8,
+            // 800ms
+            backoff: 800,
+        }
+    }
+
     fn on_request(&mut self, req: Request) {
         match req {
             Request::CreateFork(fork, sender) => {
