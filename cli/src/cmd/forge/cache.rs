@@ -37,6 +37,7 @@ impl FromStr for ChainOrAll {
 }
 
 #[derive(Debug, Parser)]
+#[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
@@ -54,9 +55,13 @@ pub struct CleanArgs {
         multiple_values(true),
         use_value_delimiter(true),
         require_value_delimiter(true),
-        value_name = "BLOCKS"
+        value_name = "BLOCKS",
+        group = "etherscan-blocks"
     )]
     blocks: Vec<u64>,
+
+    #[clap(long, group = "etherscan-blocks")]
+    etherscan: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -84,12 +89,18 @@ impl Cmd for CleanArgs {
     type Output = ();
 
     fn run(self) -> Result<Self::Output> {
-        let CleanArgs { chains, blocks } = self;
+        let CleanArgs { chains, blocks, etherscan } = self;
 
         for chain_or_all in chains {
             match chain_or_all {
-                ChainOrAll::Chain(chain) => clean_chain_cache(chain, blocks.to_vec())?,
-                ChainOrAll::All => Config::clean_foundry_cache()?,
+                ChainOrAll::Chain(chain) => clean_chain_cache(chain, blocks.to_vec(), etherscan)?,
+                ChainOrAll::All => {
+                    if etherscan {
+                        Config::clean_foundry_etherscan_cache()?;
+                    } else {
+                        Config::clean_foundry_cache()?
+                    }
+                }
             }
         }
 
@@ -114,9 +125,13 @@ impl Cmd for LsArgs {
     }
 }
 
-fn clean_chain_cache(chain: Chain, blocks: Vec<u64>) -> Result<()> {
+fn clean_chain_cache(chain: Chain, blocks: Vec<u64>, etherscan: bool) -> Result<()> {
     if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
         if blocks.is_empty() {
+            Config::clean_foundry_etherscan_chain_cache(foundry_chain)?;
+            if etherscan {
+                return Ok(())
+            }
             Config::clean_foundry_chain_cache(foundry_chain)?;
         } else {
             for block in blocks {
