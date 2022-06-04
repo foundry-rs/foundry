@@ -4,6 +4,7 @@ use crate::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
         Cmd,
     },
+    compile,
     compile::ProjectCompiler,
     suggestions, utils,
     utils::FoundryPathExt,
@@ -475,7 +476,11 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     let output = if config.sparse_mode {
         compiler.compile_sparse(&project, filter.clone())
     } else {
-        compiler.compile(&project)
+        if args.opts.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compiler.compile(&project)
+        }
     }?;
 
     // Determine print verbosity and executor verbosity
