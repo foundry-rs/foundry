@@ -47,6 +47,7 @@ impl ScriptArgs {
             // Make a one-time gas price estimation
             let gas_price = provider.get_gas_price().await?;
             let eip1559_fees = provider.estimate_eip1559_fees(None).await?;
+            let chain_id = provider.get_chainid().await?;
 
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
@@ -58,6 +59,8 @@ impl ScriptArgs {
                     let from = *tx.from().expect("No sender for onchain transaction!");
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
                     let mut tx = tx.clone();
+
+                    tx.set_chain_id(chain_id.as_u64());
 
                     if let Some(gas_price) = self.with_gas_price {
                         tx.set_gas_price(gas_price);
@@ -203,13 +206,11 @@ impl ScriptArgs {
                 let txes = gas_filled_txs
                     .into_iter()
                     .map(|tx| {
-                        let mut tx = if is_legacy {
+                        if is_legacy {
                             TypedTransaction::Legacy(tx.into())
                         } else {
                             TypedTransaction::Eip1559(tx.into())
-                        };
-                        tx.set_chain_id(chain);
-                        tx
+                        }
                     })
                     .collect();
 
@@ -259,7 +260,7 @@ impl fmt::Display for BroadcastError {
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    mut legacy_or_1559: TypedTransaction,
+    legacy_or_1559: TypedTransaction,
 ) -> Result<TxHash, BroadcastError>
 where
     T: Middleware,
@@ -268,8 +269,6 @@ where
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
 
     // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
-    legacy_or_1559.set_chain_id(signer.signer().chain_id());
-
     let signature = signer
         .sign_transaction(
             &legacy_or_1559,
