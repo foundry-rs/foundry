@@ -77,7 +77,7 @@ impl ScriptArgs {
 
             //  We send transactions and wait for receipts in batches of 50, since some networks
             // cannot handle more than that.
-            let batch_size = 50;
+            let batch_size = 100;
             let batches = sequence.chunks(batch_size).map(|f| f.to_vec()).collect::<Vec<_>>();
             let mut index = 0;
 
