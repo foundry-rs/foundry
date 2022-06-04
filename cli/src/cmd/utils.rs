@@ -15,6 +15,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use foundry_utils::Retry;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -381,10 +382,19 @@ impl ScriptSequence {
                                 name: artifact.name.clone(),
                             };
 
+                            // We strip the build metadadata information, since it can lead to
+                            // etherscan not identifying it correctly. eg:
+                            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
+                            let version = Version::new(
+                                artifact.version.major,
+                                artifact.version.minor,
+                                artifact.version.patch,
+                            );
+
                             let verify = verify::VerifyArgs {
                                 address: contract_address,
                                 contract,
-                                compiler_version: None,
+                                compiler_version: Some(version.to_string()),
                                 constructor_args: Some(hex::encode(&constructor_args)),
                                 num_of_optimizations: verify.num_of_optimizations,
                                 chain: chain.into(),
