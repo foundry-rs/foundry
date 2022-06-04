@@ -32,7 +32,8 @@ use tracing::trace;
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ForkId(pub String);
 
-/// A database type that can maintain multiple forks
+/// The Sender half of multi fork pair.
+/// Can send requests to the `MultiForkHandler` to create forks
 #[derive(Debug, Clone)]
 pub struct MultiFork {
     /// Channel to send `Request`s to the handler
@@ -49,11 +50,13 @@ impl MultiFork {
     }
 
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
-    pub fn spawn() -> Self {
+    ///
+    /// Also returns the `JoinHandle` of the spawned thread.
+    pub fn spawn() -> (Self, std::thread::JoinHandle<()>) {
         let (fork, handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)
-        let _ = std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("multi-fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -65,7 +68,7 @@ impl MultiFork {
             })
             .expect("failed to spawn multi fork handler thread");
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
-        fork
+        (fork, handle)
     }
 
     pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {

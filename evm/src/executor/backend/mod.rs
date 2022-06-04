@@ -65,9 +65,9 @@ pub struct Backend2 {
     forks: MultiFork,
     /// The database that holds the entire state, uses an internal database depending on current
     /// state
-    pub db: CacheDB<Backend>,
+    pub db: CacheDB<BackendDatabase>,
     /// Contains snapshots made at a certain point
-    snapshots: Snapshots<CacheDB<Backend>>,
+    snapshots: Snapshots<CacheDB<BackendDatabase>>,
 }
 
 // === impl Backend ===
@@ -75,11 +75,17 @@ pub struct Backend2 {
 impl Backend2 {
     /// Creates a new instance of `Backend`
     ///
-    /// This will spawn a new background thread that manages forks and will establish a fork if
-    /// `fork` is `Some`. If `fork` is `None` this `Backend` will launch with an in-memory
-    /// Database
-    pub fn new(_fork: Option<Fork>, _env: &Env) -> Self {
-        todo!()
+    /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
+    /// database
+    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
+        let db = if let Some(f) = fork {
+            let (id, fork) = forks.create_fork(f).expect("Unable to fork");
+            CacheDB::new(BackendDatabase::Forked(fork, id))
+        } else {
+            CacheDB::new(BackendDatabase::Simple(EmptyDB()))
+        };
+
+        Self { forks, db, snapshots: Default::default() }
     }
 
     /// Creates a new snapshot
@@ -124,13 +130,52 @@ impl Backend2 {
 
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]
+pub enum BackendDatabase {
+    /// Simple in memory [revm::Database]
+    Simple(EmptyDB),
+    /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
+    /// same data
+    Forked(SharedBackend, ForkId),
+}
+
+impl DatabaseRef for BackendDatabase {
+    fn basic(&self, address: H160) -> AccountInfo {
+        match self {
+            BackendDatabase::Simple(inner) => inner.basic(address),
+            BackendDatabase::Forked(inner, _) => inner.basic(address),
+        }
+    }
+
+    fn code_by_hash(&self, address: H256) -> bytes::Bytes {
+        match self {
+            BackendDatabase::Simple(inner) => inner.code_by_hash(address),
+            BackendDatabase::Forked(inner, _) => inner.code_by_hash(address),
+        }
+    }
+
+    fn storage(&self, address: H160, index: U256) -> U256 {
+        match self {
+            BackendDatabase::Simple(inner) => inner.storage(address, index),
+            BackendDatabase::Forked(inner, _) => inner.storage(address, index),
+        }
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        match self {
+            BackendDatabase::Simple(inner) => inner.block_hash(number),
+            BackendDatabase::Forked(inner, _) => inner.block_hash(number),
+        }
+    }
+}
+
+/// Variants of a [revm::Database]
+#[derive(Debug, Clone)]
 pub enum Backend {
     /// Simple in memory [revm::Database]
     Simple(EmptyDB),
     /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
     /// same data
     Forked(SharedBackend),
-    // TODO
 }
 
 impl Backend {
