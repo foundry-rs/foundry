@@ -3,7 +3,8 @@ use eyre::{Context, ContextCompat};
 
 use ethers::{
     prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
+        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
+        ProjectCompileOutput, ProjectPathsConfig,
     },
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
@@ -152,13 +153,20 @@ impl ScriptArgs {
 
         let output = match dunce::canonicalize(&self.path) {
             // We got passed an existing path to the contract
-            Ok(target_contract) => compile::compile_files(&project, vec![target_contract])?,
+            Ok(target_contract) => {
+                self.standalone_check(&target_contract, &project.paths)?;
+
+                compile::compile_files(&project, vec![target_contract])?
+            }
             Err(_) => {
                 // We either got passed `contract_path:contract_name` or the contract name.
                 let contract = ContractInfo::from_str(&self.path)?;
                 let (path, output) = if let Some(path) = contract.path {
-                    let output =
-                        compile::compile_files(&project, vec![dunce::canonicalize(&path)?])?;
+                    let path = dunce::canonicalize(&path)?;
+
+                    self.standalone_check(&path, &project.paths)?;
+
+                    let output = compile::compile_files(&project, vec![path.clone()])?;
 
                     (path, output)
                 } else {
@@ -166,10 +174,10 @@ impl ScriptArgs {
                     let cache = SolFilesCache::read_joined(&project.paths)?;
 
                     let res = get_cached_entry_by_name(&cache, &contract.name)?;
-                    (res.0.to_str().ok_or(eyre::eyre!("Invalid path string."))?.to_string(), output)
+                    (res.0, output)
                 };
 
-                self.path = path;
+                self.path = path.to_str().ok_or(eyre::eyre!("Invalid path string."))?.to_string();
                 self.target_contract = Some(contract.name);
                 output
             }
@@ -178,6 +186,20 @@ impl ScriptArgs {
         // We always compile our contract path, since it's not possible to get srcmaps from cached
         // artifacts
         Ok((project, output))
+    }
+
+    /// Throws an error if `target` is a standalone script and `verify` is requested. We only allow
+    /// `verify` inside projects.
+    fn standalone_check(
+        &self,
+        target_contract: &PathBuf,
+        project_paths: &ProjectPathsConfig,
+    ) -> eyre::Result<()> {
+        let graph = Graph::resolve(project_paths)?;
+        if graph.files().get(target_contract).is_none() && self.verify {
+            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+        }
+        Ok(())
     }
 }
 

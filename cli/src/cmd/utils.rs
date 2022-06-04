@@ -189,21 +189,21 @@ pub struct VerifyBundle {
 }
 
 impl VerifyBundle {
-    pub fn new(config: &Config, known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>) -> Self {
+    pub fn new(
+        project: &Project,
+        config: &Config,
+        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
 
         let project_paths = ProjectPathsArgs {
-            root: Some(config.__root.0.clone()),
-            contracts: Some(config.src.clone()),
-            remappings: config
-                .remappings
-                .iter()
-                .map(|remap| remap.clone().to_remapping(config.__root.0.clone()))
-                .collect(),
+            root: Some(project.paths.root.clone()),
+            contracts: Some(project.paths.sources.clone()),
+            remappings: project.paths.remappings.clone(),
             remappings_env: None,
-            cache_path: Some(config.cache_path.clone()),
-            lib_paths: config.libs.clone(),
+            cache_path: Some(project.paths.cache.clone()),
+            lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
             config_path: Some(config.get_config_path()),
         };

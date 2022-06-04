@@ -46,6 +46,7 @@ impl ScriptArgs {
         } = self.build(&script_config)?;
 
         let mut verify = VerifyBundle::new(
+            &project,
             &script_config.config,
             unwrap_contracts(&highlevel_known_contracts, false),
         );
