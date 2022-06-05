@@ -1120,6 +1120,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getFilterChanges`
     pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
+        node_info!("eth_getFilterChanges");
         self.filters.get_filter_changes(id).await
     }
 

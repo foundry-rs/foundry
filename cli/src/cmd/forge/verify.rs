@@ -10,6 +10,7 @@ use ethers::{
         utils::lookup_compiler_version,
         Client,
     },
+    prelude::artifacts::StandardJsonCompilerInput,
     solc::{
         artifacts::{BytecodeHash, Source},
         cache::CacheEntry,
@@ -99,6 +100,15 @@ pub struct VerifyArgs {
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     pub project_paths: ProjectPathsArgs,
+
+    #[clap(
+        help_heading = "LINKER OPTIONS",
+        help = "Set pre-linked libraries.",
+        long,
+        env = "DAPP_LIBRARIES",
+        value_name = "LIBRARIES"
+    )]
+    pub libraries: Vec<String>,
 }
 
 impl VerifyArgs {
@@ -181,7 +191,7 @@ impl VerifyArgs {
             use_solc: None,
             offline: false,
             force: false,
-            libraries: vec![],
+            libraries: self.libraries.clone(),
             via_ir: false,
             revert_strings: None,
         };
@@ -388,10 +398,18 @@ To skip this solc dry, pass `--force`.
         target: &Path,
         version: &Version,
     ) -> eyre::Result<(String, String, CodeFormat)> {
-        let input = project
+        let mut input: StandardJsonCompilerInput = project
             .standard_json_input(target)
             .wrap_err("Failed to get standard json input")?
             .normalize_evm_version(version);
+
+        input.settings.libraries.libs = input
+            .settings
+            .libraries
+            .libs
+            .into_iter()
+            .map(|(f, libs)| (f.strip_prefix(&project.root()).unwrap_or(&f).to_path_buf(), libs))
+            .collect();
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
