@@ -41,10 +41,23 @@ pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
         .unwrap()
 });
 
-pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
+pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+    let out = (*PROJECT).compile().unwrap();
+    if out.has_compiler_errors() {
+        eprintln!("{}", out);
+        panic!("Compiled with errors");
+    }
+    out
+});
 
-pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> =
-    Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
+pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+    let out = (*LIBS_PROJECT).compile().unwrap();
+    if out.has_compiler_errors() {
+        eprintln!("{}", out);
+        panic!("Compiled with errors");
+    }
+    out
+});
 
 pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {

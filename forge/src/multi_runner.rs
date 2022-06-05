@@ -337,6 +337,7 @@ mod tests {
         },
     };
     use foundry_evm::trace::TraceKind;
+    use foundry_utils::init_tracing_subscriber;
     use std::env;
 
     /// Builds a base runner
@@ -511,6 +512,7 @@ mod tests {
 
     #[test]
     fn test_logs() {
+        init_tracing_subscriber();
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, true).unwrap();
 

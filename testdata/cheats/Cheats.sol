@@ -103,19 +103,19 @@ interface Cheats {
     function startBroadcast(address) external;
     // Stops collecting onchain transactions
     function stopBroadcast() external;
-//    // Snapshot the current state of the evm.
-//    // Returns the id of the snapshot that was created.
-//    // To revert a snapshot use `revertTo`
-//    function snapshot() external returns(uint256);
-//    // Revert the state of the evm to a previous snapshot
-//    // takes the snapshot id to revert to. This deletes the snapshot and all snapshots taken after the given snapshot id.
-//    function revertTo(uint256) external;
-//    // Creates a new fork with the given endpoint and block and returns the identifier of the fork
-//    function createFork(string,uint256) external returns(uint256);
-//    // Creates a new fork with the given endpoint and the latest block and returns the identifier of the fork
-//    function createFork(string) external returns(uint256);
-//    // takes a fork identifier created by `createFork` and changes the state
-//    function switchFork(uint256) external;
-//    // forks the `block` variable from the given endpoint
-//    function forkBlockVariable(string, uint256) external;
+    // Snapshot the current state of the evm.
+    // Returns the id of the snapshot that was created.
+    // To revert a snapshot use `revertTo`
+    function snapshot() external returns(uint256);
+    // Revert the state of the evm to a previous snapshot
+    // takes the snapshot id to revert to. This deletes the snapshot and all snapshots taken after the given snapshot id.
+    function revertTo(uint256) external;
+    // Creates a new fork with the given endpoint and block and returns the identifier of the fork
+    function createFork(string calldata,uint256) external returns(uint256);
+    // Creates a new fork with the given endpoint and the latest block and returns the identifier of the fork
+    function createFork(string calldata) external returns(uint256);
+    // takes a fork identifier created by `createFork` and changes the state
+    function switchFork(uint256) external;
+    // forks the `block` variable from the given endpoint
+    function forkBlockVariable(string calldata, uint256) external;
 }
