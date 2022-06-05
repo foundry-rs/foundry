@@ -197,6 +197,8 @@ impl VerifyBundle {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
 
+        let config_path = config.get_config_path();
+
         let project_paths = ProjectPathsArgs {
             root: Some(project.paths.root.clone()),
             contracts: Some(project.paths.sources.clone()),
@@ -205,7 +207,7 @@ impl VerifyBundle {
             cache_path: Some(project.paths.cache.clone()),
             lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: Some(config.get_config_path()),
+            config_path: if config_path.exists() { Some(config_path) } else { None },
         };
 
         VerifyBundle {
