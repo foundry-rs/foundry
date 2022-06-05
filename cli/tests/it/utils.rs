@@ -17,6 +17,7 @@ pub fn etherscan_key(chain: Chain) -> Option<String> {
         Chain::Fantom | Chain::FantomTestnet => {
             std::env::var("FTMSCAN_API_KEY").or_else(|_| std::env::var("FANTOMSCAN_API_KEY")).ok()
         }
+        Chain::OptimismKovan => std::env::var("OP_KOVAN_API_KEY").ok(),
         _ => std::env::var("ETHERSCAN_API_KEY").ok(),
     }
 }
