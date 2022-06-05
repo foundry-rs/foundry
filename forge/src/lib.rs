@@ -12,11 +12,10 @@ pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 mod utils;
 pub use utils::deploy_create2_deployer;
 
-mod types;
-pub use types::*;
+mod traits;
+pub use traits::*;
 
-mod result;
-pub use result::*;
+pub mod result;
 
 /// The Forge EVM backend
 pub use foundry_evm::*;

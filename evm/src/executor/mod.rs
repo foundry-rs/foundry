@@ -157,6 +157,7 @@ impl Default for RawCallResult {
     }
 }
 
+#[derive(Debug)]
 pub struct Executor<DB: DatabaseRef> {
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin

@@ -3,7 +3,7 @@
 use crate::{
     eth::backend::db::{Db, StateDb},
     mem::state::state_merkle_trie_root,
-    revm::{db::DatabaseRef, AccountInfo, Database},
+    revm::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;

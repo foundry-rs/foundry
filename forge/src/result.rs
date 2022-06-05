@@ -6,8 +6,8 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzedCases},
     trace::{CallTraceArena, TraceKind},
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
-use serde::{Serialize, Deserialize};
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Clone, Serialize)]

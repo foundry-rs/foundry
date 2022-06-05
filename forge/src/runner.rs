@@ -10,18 +10,16 @@ use ethers::{
 use eyre::Result;
 use foundry_evm::{
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
-    fuzz::{FuzzedExecutor},
-    trace::{CallTraceArena, TraceKind},
+    fuzz::FuzzedExecutor,
+    trace::TraceKind,
     CALLER,
 };
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use std::{collections::BTreeMap, time::Instant};
 
-use std::{
-    collections::BTreeMap,
-    time::{Instant},
-};
-
+/// A type that executes all tests of a contract
+#[derive(Debug)]
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
     pub executor: Executor<DB>,
@@ -76,7 +74,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = vec![];
+        let mut traces = Vec::with_capacity(self.predeploy_libs.len());
         for code in self.predeploy_libs.iter() {
             match self.executor.deploy(self.sender, code.0.clone(), 0u32.into(), self.errors) {
                 Ok(DeployResult { traces: tmp_traces, .. }) => {
@@ -87,7 +85,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
                     // If we failed to call the constructor, force the tracekind to be setup so
                     // a trace is shown.
-                    let traces = traces.map(|traces|vec![(TraceKind::Setup, traces)]).unwrap_or_default();
+                    let traces =
+                        traces.map(|traces| vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
                     return Ok(TestSetup {
                         address: Address::zero(),
@@ -109,11 +108,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         {
             Ok(d) => d,
             Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
-                let traces = if let Some(traces) = traces {
-                    vec![(TraceKind::Setup, traces)]
-                } else {
-                    vec![]
-                };
+                let traces =
+                    traces.map(|traces| vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
                 return Ok(TestSetup {
                     address: Address::zero(),
@@ -137,7 +133,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         deploy_create2_deployer(&mut self.executor)?;
 
         // Optionally call the `setUp` function
-        Ok(if setup {
+        let setup = if setup {
             tracing::trace!("setting up");
             let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
                 .executor
@@ -156,12 +152,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 ),
             };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
-            logs.extend_from_slice(&setup_logs);
+            logs.extend(setup_logs);
 
             TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
         } else {
             TestSetup { address, logs, traces, ..Default::default() }
-        })
+        };
+
+        Ok(setup)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression

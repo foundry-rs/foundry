@@ -1,8 +1,8 @@
 //! Test command
 use crate::{
     cmd::{
-        Cmd,
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
+        Cmd,
     },
     compile::ProjectCompiler,
     suggestions, utils,
@@ -14,14 +14,15 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
-    MultiContractRunner,
-    MultiContractRunnerBuilder, TestFilter, trace::{
-        CallTraceDecoderBuilder,
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier}, TraceKind,
+    result::{SuiteResult, TestKind, TestResult},
+    trace::{
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        CallTraceDecoderBuilder, TraceKind,
     },
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{Config, figment::Figment};
+use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
@@ -33,7 +34,6 @@ use std::{
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
-use forge::result::{SuiteResult, TestKind};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -331,7 +331,7 @@ pub struct Test {
     /// The signature of the solidity test
     pub signature: String,
     /// Result of the executed solidity test
-    pub result: forge::TestResult,
+    pub result: TestResult,
 }
 
 impl Test {
@@ -364,17 +364,17 @@ impl TestOutcome {
     }
 
     /// Iterator over all succeeding tests and their names
-    pub fn successes(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.success)
     }
 
     /// Iterator over all failing tests and their names
-    pub fn failures(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| !t.success)
     }
 
     /// Iterator over all tests and their names
-    pub fn tests(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
     }
 
@@ -431,7 +431,7 @@ impl TestOutcome {
     }
 }
 
-fn short_test_result(name: &str, result: &forge::TestResult) {
+fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
