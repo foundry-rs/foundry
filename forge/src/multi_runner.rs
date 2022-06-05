@@ -14,140 +14,7 @@ use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
 
-/// Builder used for instantiating the multi-contract runner
-#[derive(Debug, Default)]
-pub struct MultiContractRunnerBuilder {
-    /// The fuzzer to be used for running fuzz tests
-    pub fuzzer: Option<TestRunner>,
-    /// The address which will be used to deploy the initial contracts and send all
-    /// transactions
-    pub sender: Option<Address>,
-    /// The initial balance for each one of the deployed smart contracts
-    pub initial_balance: U256,
-    /// The EVM spec to use
-    pub evm_spec: Option<SpecId>,
-    /// The fork config
-    pub fork: Option<Fork>,
-}
-
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
-
-impl MultiContractRunnerBuilder {
-    /// Given an EVM, proceeds to return a runner which is able to execute all tests
-    /// against that evm
-    pub fn build<A>(
-        self,
-        root: impl AsRef<Path>,
-        output: ProjectCompileOutput<A>,
-        evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner>
-    where
-        A: ArtifactOutput,
-    {
-        // This is just the contracts compiled, but we need to merge this with the read cached
-        // artifacts
-        let contracts = output
-            .with_stripped_file_prefixes(root)
-            .into_artifacts()
-            .map(|(i, c)| (i, c.into_contract_bytecode()))
-            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
-
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
-        let source_paths = contracts
-            .iter()
-            .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))
-            .collect::<BTreeMap<String, String>>();
-
-        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
-        let mut deployable_contracts = DeployableContracts::default();
-
-        foundry_utils::link_with_nonce_or_address(
-            BTreeMap::from_iter(contracts),
-            &mut known_contracts,
-            Default::default(),
-            evm_opts.sender,
-            U256::one(),
-            &mut deployable_contracts,
-            |file, key| (format!("{key}.json:{key}"), file, key),
-            |post_link_input| {
-                let PostLinkInput {
-                    contract,
-                    known_contracts,
-                    id,
-                    extra: deployable_contracts,
-                    dependencies,
-                } = post_link_input;
-
-                // get bytes
-                let bytecode =
-                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
-                        b
-                    } else {
-                        return Ok(())
-                    };
-
-                let abi = contract.abi.expect("We should have an abi by now");
-                // if its a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions().any(|func| func.name.starts_with("test"))
-                {
-                    deployable_contracts
-                        .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
-                }
-
-                contract
-                    .deployed_bytecode
-                    .and_then(|d_bcode| d_bcode.bytecode)
-                    .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
-                Ok(())
-            },
-        )?;
-
-        let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
-        Ok(MultiContractRunner {
-            contracts: deployable_contracts,
-            known_contracts,
-            evm_opts,
-            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
-            sender: self.sender,
-            fuzzer: self.fuzzer,
-            errors: Some(execution_info.2),
-            source_paths,
-            fork: self.fork,
-        })
-    }
-
-    #[must_use]
-    pub fn sender(mut self, sender: Address) -> Self {
-        self.sender = Some(sender);
-        self
-    }
-
-    #[must_use]
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
-        self.initial_balance = initial_balance;
-        self
-    }
-
-    #[must_use]
-    pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
-        self.fuzzer = Some(fuzzer);
-        self
-    }
-
-    #[must_use]
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
-        self.evm_spec = Some(spec);
-        self
-    }
-
-    #[must_use]
-    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
-        self.fork = fork;
-        self
-    }
-}
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
@@ -315,6 +182,139 @@ impl MultiContractRunner {
             libs,
         );
         runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
+    }
+}
+
+/// Builder used for instantiating the multi-contract runner
+#[derive(Debug, Default)]
+pub struct MultiContractRunnerBuilder {
+    /// The fuzzer to be used for running fuzz tests
+    pub fuzzer: Option<TestRunner>,
+    /// The address which will be used to deploy the initial contracts and send all
+    /// transactions
+    pub sender: Option<Address>,
+    /// The initial balance for each one of the deployed smart contracts
+    pub initial_balance: U256,
+    /// The EVM spec to use
+    pub evm_spec: Option<SpecId>,
+    /// The fork config
+    pub fork: Option<Fork>,
+}
+
+impl MultiContractRunnerBuilder {
+    /// Given an EVM, proceeds to return a runner which is able to execute all tests
+    /// against that evm
+    pub fn build<A>(
+        self,
+        root: impl AsRef<Path>,
+        output: ProjectCompileOutput<A>,
+        evm_opts: EvmOpts,
+    ) -> Result<MultiContractRunner>
+    where
+        A: ArtifactOutput,
+    {
+        // This is just the contracts compiled, but we need to merge this with the read cached
+        // artifacts
+        let contracts = output
+            .with_stripped_file_prefixes(root)
+            .into_artifacts()
+            .map(|(i, c)| (i, c.into_contract_bytecode()))
+            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
+
+        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
+        let source_paths = contracts
+            .iter()
+            .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))
+            .collect::<BTreeMap<String, String>>();
+
+        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+        let mut deployable_contracts = DeployableContracts::default();
+
+        foundry_utils::link_with_nonce_or_address(
+            BTreeMap::from_iter(contracts),
+            &mut known_contracts,
+            Default::default(),
+            evm_opts.sender,
+            U256::one(),
+            &mut deployable_contracts,
+            |file, key| (format!("{key}.json:{key}"), file, key),
+            |post_link_input| {
+                let PostLinkInput {
+                    contract,
+                    known_contracts,
+                    id,
+                    extra: deployable_contracts,
+                    dependencies,
+                } = post_link_input;
+
+                // get bytes
+                let bytecode =
+                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
+                        b
+                    } else {
+                        return Ok(())
+                    };
+
+                let abi = contract.abi.expect("We should have an abi by now");
+                // if its a test, add it to deployable contracts
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
+                {
+                    deployable_contracts
+                        .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                }
+
+                contract
+                    .deployed_bytecode
+                    .and_then(|d_bcode| d_bcode.bytecode)
+                    .and_then(|bcode| bcode.object.into_bytes())
+                    .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
+                Ok(())
+            },
+        )?;
+
+        let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
+        Ok(MultiContractRunner {
+            contracts: deployable_contracts,
+            known_contracts,
+            evm_opts,
+            evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            sender: self.sender,
+            fuzzer: self.fuzzer,
+            errors: Some(execution_info.2),
+            source_paths,
+            fork: self.fork,
+        })
+    }
+
+    #[must_use]
+    pub fn sender(mut self, sender: Address) -> Self {
+        self.sender = Some(sender);
+        self
+    }
+
+    #[must_use]
+    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+        self.initial_balance = initial_balance;
+        self
+    }
+
+    #[must_use]
+    pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
+        self.fuzzer = Some(fuzzer);
+        self
+    }
+
+    #[must_use]
+    pub fn evm_spec(mut self, spec: SpecId) -> Self {
+        self.evm_spec = Some(spec);
+        self
+    }
+
+    #[must_use]
+    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+        self.fork = fork;
+        self
     }
 }
 
