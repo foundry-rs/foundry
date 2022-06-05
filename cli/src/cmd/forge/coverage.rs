@@ -123,9 +123,8 @@ impl CoverageArgs {
         let (artifacts, sources) = output.into_artifacts_with_sources();
 
         let source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)> = artifacts
-            .iter()
-            // TODO: Filter out dependencies
-            .map(|(id, artifact)| (id.clone(), CompactContractBytecode::from(artifact.clone())))
+            .into_iter()
+            .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
             .filter_map(|(id, artifact): (ArtifactId, CompactContractBytecode)| {
                 Some((
                     id,
@@ -145,6 +144,13 @@ impl CoverageArgs {
 
         let mut map = CoverageMap::new();
         for (path, versioned_sources) in sources.0.into_iter() {
+            // TODO: Make these checks robust
+            let is_test = path.ends_with(".t.sol");
+            let is_dependency = path.starts_with("lib");
+            if is_test || is_dependency {
+                continue
+            }
+
             for mut versioned_source in versioned_sources {
                 let source = &mut versioned_source.source_file;
                 if let Some(ast) = source.ast.take() {
