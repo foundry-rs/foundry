@@ -1,6 +1,5 @@
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    deploy_create2_deployer,
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
@@ -33,7 +32,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             self.executor.set_balance(self.sender, U256::MAX);
 
             if need_create2_deployer {
-                deploy_create2_deployer(&mut self.executor)?;
+                self.executor.deploy_create2_deployer()?;
             }
         }
 

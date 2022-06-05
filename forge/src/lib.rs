@@ -9,9 +9,6 @@ pub use runner::ContractRunner;
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-mod utils;
-pub use utils::deploy_create2_deployer;
-
 mod traits;
 pub use traits::*;
 

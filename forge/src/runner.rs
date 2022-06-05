@@ -1,5 +1,4 @@
 use crate::{
-    deploy_create2_deployer,
     result::{SuiteResult, TestKind, TestResult, TestSetup},
     TestFilter,
 };
@@ -130,7 +129,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_balance(address, self.initial_balance);
         self.executor.set_balance(self.sender, self.initial_balance);
 
-        deploy_create2_deployer(&mut self.executor)?;
+        self.executor.deploy_create2_deployer()?;
 
         // Optionally call the `setUp` function
         let setup = if setup {
