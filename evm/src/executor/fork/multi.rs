@@ -7,9 +7,10 @@ use crate::executor::fork::{
     BackendHandler, BlockchainDb, BlockchainDbMeta, CreateFork, SharedBackend,
 };
 use ethers::{
+    abi::{AbiDecode, AbiEncode, AbiError},
     prelude::Middleware,
     providers::{Http, Provider, RetryClient},
-    types::BlockNumber,
+    types::{BlockId, BlockNumber},
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -19,6 +20,7 @@ use futures::{
 };
 use std::{
     collections::HashMap,
+    fmt,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -31,6 +33,30 @@ use tracing::trace;
 /// name.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ForkId(pub String);
+
+impl fmt::Display for ForkId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<T: Into<String>> From<T> for ForkId {
+    fn from(id: T) -> Self {
+        Self(id.into())
+    }
+}
+
+impl AbiEncode for ForkId {
+    fn encode(self) -> Vec<u8> {
+        AbiEncode::encode(self.0)
+    }
+}
+
+impl AbiDecode for ForkId {
+    fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, AbiError> {
+        Ok(Self(String::decode(bytes)?))
+    }
+}
 
 /// The Sender half of multi fork pair.
 /// Can send requests to the `MultiForkHandler` to create forks
@@ -71,11 +97,24 @@ impl MultiFork {
         (fork, handle)
     }
 
+    /// Returns a fork backend
+    ///
+    /// If no matching fork backend exists it will be created
     pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         rx.recv()?
+    }
+
+    /// Returns the corresponding fork if it exist
+    ///
+    /// Returns `None` if no matching fork backend is available.
+    pub fn get_fork(&self, id: impl Into<ForkId>) -> eyre::Result<Option<SharedBackend>> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetFork(id.into(), sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
     }
 }
 
@@ -91,7 +130,7 @@ enum Request {
     /// Creates a new ForkBackend
     CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists
-    GetBacked(ForkId, OneshotSender<Option<SharedBackend>>),
+    GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
 }
 
 enum ForkTask {
@@ -152,7 +191,7 @@ impl MultiForkHandler {
                     self.pending_tasks.push(ForkTask::Create(task, fork_id, sender));
                 }
             }
-            Request::GetBacked(fork_id, sender) => {
+            Request::GetFork(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).cloned();
                 let _ = sender.send(fork);
             }
@@ -230,7 +269,7 @@ impl Future for MultiForkHandler {
 
 /// Returns  the identifier for a Fork which consists of the url and the block number
 fn create_fork_id(url: &str, num: BlockNumber) -> ForkId {
-    ForkId(format!("{url}@{num:?}"))
+    ForkId(format!("{url}@{num}"))
 }
 
 /// Creates a new fork
@@ -260,5 +299,5 @@ async fn create_fork(
     meta.block_env.number = number.into();
 
     let db = BlockchainDb::new(meta, cache_path);
-    todo!()
+    Ok(SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into())))))
 }

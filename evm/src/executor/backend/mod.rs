@@ -4,6 +4,7 @@ use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
     AccountInfo, Env,
 };
+use std::collections::HashMap;
 use tracing::{trace, warn};
 
 mod in_memory_db;
@@ -63,6 +64,8 @@ pub use in_memory_db::MemDb;
 pub struct Backend2 {
     /// The access point for managing forks
     forks: MultiFork,
+    /// tracks all created forks
+    created_forks: HashMap<ForkId, SharedBackend>,
     /// The database that holds the entire state, uses an internal database depending on current
     /// state
     pub db: CacheDB<BackendDatabase>,
@@ -82,10 +85,10 @@ impl Backend2 {
             let (id, fork) = forks.create_fork(f).expect("Unable to fork");
             CacheDB::new(BackendDatabase::Forked(fork, id))
         } else {
-            CacheDB::new(BackendDatabase::Simple(EmptyDB()))
+            CacheDB::new(BackendDatabase::InMemory(EmptyDB()))
         };
 
-        Self { forks, db, snapshots: Default::default() }
+        Self { forks, db, created_forks: Default::default(), snapshots: Default::default() }
     }
 
     /// Creates a new snapshot
@@ -112,8 +115,9 @@ impl Backend2 {
 
     /// Creates a new fork but does _not_ select it
     pub fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
-        self.forks.create_fork(fork);
-        todo!()
+        let (id, fork) = self.forks.create_fork(fork)?;
+        self.created_forks.insert(id.clone(), fork);
+        Ok(id)
     }
 
     /// Selects the fork's state
@@ -123,16 +127,23 @@ impl Backend2 {
     /// # Errors
     ///
     /// Returns an error if no fork with the given `id` exists
-    pub fn select_fork(&mut self, _id: ForkId) -> eyre::Result<()> {
-        todo!()
+    pub fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()> {
+        let id = id.into();
+        let fork = self
+            .created_forks
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("Fork Id {} does not exist", id))?;
+        *self.db.db_mut() = BackendDatabase::Forked(fork, id);
+        Ok(())
     }
 }
 
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]
 pub enum BackendDatabase {
-    /// Simple in memory [revm::Database]
-    Simple(EmptyDB),
+    /// Simple in-memory [revm::Database]
+    InMemory(EmptyDB),
     /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
     /// same data
     Forked(SharedBackend, ForkId),
@@ -141,28 +152,28 @@ pub enum BackendDatabase {
 impl DatabaseRef for BackendDatabase {
     fn basic(&self, address: H160) -> AccountInfo {
         match self {
-            BackendDatabase::Simple(inner) => inner.basic(address),
+            BackendDatabase::InMemory(inner) => inner.basic(address),
             BackendDatabase::Forked(inner, _) => inner.basic(address),
         }
     }
 
     fn code_by_hash(&self, address: H256) -> bytes::Bytes {
         match self {
-            BackendDatabase::Simple(inner) => inner.code_by_hash(address),
+            BackendDatabase::InMemory(inner) => inner.code_by_hash(address),
             BackendDatabase::Forked(inner, _) => inner.code_by_hash(address),
         }
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
         match self {
-            BackendDatabase::Simple(inner) => inner.storage(address, index),
+            BackendDatabase::InMemory(inner) => inner.storage(address, index),
             BackendDatabase::Forked(inner, _) => inner.storage(address, index),
         }
     }
 
     fn block_hash(&self, number: U256) -> H256 {
         match self {
-            BackendDatabase::Simple(inner) => inner.block_hash(number),
+            BackendDatabase::InMemory(inner) => inner.block_hash(number),
             BackendDatabase::Forked(inner, _) => inner.block_hash(number),
         }
     }
