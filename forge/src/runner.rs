@@ -5,22 +5,21 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    types::{Address, Bytes, Log, U256},
+    types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_evm::{
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
-    fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
+    fuzz::{FuzzedExecutor},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use serde::{Deserialize, Serialize};
+
 use std::{
     collections::BTreeMap,
-    fmt,
-    time::{Duration, Instant},
+    time::{Instant},
 };
 
 pub struct ContractRunner<'a, DB: DatabaseRef> {
@@ -88,11 +87,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
                     // If we failed to call the constructor, force the tracekind to be setup so
                     // a trace is shown.
-                    let traces = if let Some(traces) = traces {
-                        vec![(TraceKind::Setup, traces)]
-                    } else {
-                        vec![]
-                    };
+                    let traces = traces.map(|traces|vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
                     return Ok(TestSetup {
                         address: Address::zero(),

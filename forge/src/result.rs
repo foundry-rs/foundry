@@ -7,6 +7,7 @@ use foundry_evm::{
     trace::{CallTraceArena, TraceKind},
 };
 use std::{collections::BTreeMap, fmt, time::Duration};
+use serde::{Serialize, Deserialize};
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Clone, Serialize)]
