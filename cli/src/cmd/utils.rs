@@ -478,7 +478,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     matches!(
-        Chain::try_from(chain).expect("Chain does not exist."),
+        Chain::try_from(chain).unwrap_or(Chain::Mainnet),
         Chain::Arbitrum | Chain::ArbitrumTestnet
     )
 }
