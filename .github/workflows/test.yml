@@ -205,7 +205,7 @@ jobs:
         uses: actions-rs/clippy-check@v1
         with:
           args: --all --all-features -- -D warnings
-          token: ${{ secrets.GTIHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   cross-platform:
     name: Cross-platform tests
