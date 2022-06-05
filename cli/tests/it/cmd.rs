@@ -36,6 +36,39 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_cleaned();
 });
 
+// checks that `cache ls` can be invoked and displays the foundry cache
+forgetest_ignore!(can_cache_ls, |_: TestProject, mut cmd: TestCommand| {
+    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+    let block1 = 100;
+    let block2 = 101;
+
+    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+    let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
+    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+    let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+    fs::create_dir_all(block1_cache_dir).unwrap();
+    fs::write(block1_file, "{}").unwrap();
+    fs::create_dir_all(block2_cache_dir).unwrap();
+    fs::write(block2_file, "{}").unwrap();
+    fs::create_dir_all(etherscan_cache_dir).unwrap();
+
+    cmd.args(["cache", "ls"]);
+    let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
+    let output_lines = output_string.split("\n").collect::<Vec<_>>();
+    println!("{output_string}");
+
+    assert_eq!(output_lines.len(), 6);
+    assert!(output_lines[0].starts_with("-️ mainnet ("));
+    assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
+    assert_eq!(output_lines[2], "");
+    assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
+    assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
+    assert_eq!(output_lines[5], "");
+
+    Config::clean_foundry_cache().unwrap();
+});
+
 // checks that `cache clean` can be invoked and cleans the foundry cache
 // this test is not isolated and modifies ~ so it is ignored
 forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
@@ -48,17 +81,58 @@ forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
     assert!(!path.exists());
 });
 
+// checks that `cache clean --etherscan` can be invoked and only cleans the foundry etherscan cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_etherscan, |_: TestProject, mut cmd: TestCommand| {
+    let cache_dir = Config::foundry_cache_dir().unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+    let path = cache_dir.as_path();
+    let etherscan_path = etherscan_cache_dir.as_path();
+    fs::create_dir_all(etherscan_path).unwrap();
+    cmd.args(["cache", "clean", "--etherscan"]);
+    cmd.assert_empty_stdout();
+
+    assert!(path.exists());
+    assert!(!etherscan_path.exists());
+
+    Config::clean_foundry_cache().unwrap();
+});
+
+// checks that `cache clean all --etherscan` can be invoked and only cleans the foundry etherscan
+// cache. This test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_all_etherscan, |_: TestProject, mut cmd: TestCommand| {
+    let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+    let rpc_path = rpc_cache_dir.as_path();
+    let etherscan_path = etherscan_cache_dir.as_path();
+    fs::create_dir_all(rpc_path).unwrap();
+    fs::create_dir_all(etherscan_path).unwrap();
+    cmd.args(["cache", "clean", "all", "--etherscan"]);
+    cmd.assert_empty_stdout();
+
+    assert!(rpc_path.exists());
+    assert!(!etherscan_path.exists());
+
+    Config::clean_foundry_cache().unwrap();
+});
+
 // checks that `cache clean <chain>` can be invoked and cleans the chain cache
 // this test is not isolated and modifies ~ so it is ignored
 forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir =
-        Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
+    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+    let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
     let path = cache_dir.as_path();
+    let etherscan_path = etherscan_cache_dir.as_path();
     fs::create_dir_all(path).unwrap();
+    fs::create_dir_all(etherscan_path).unwrap();
     cmd.args(["cache", "clean", "mainnet"]);
     cmd.assert_empty_stdout();
 
     assert!(!path.exists());
+    assert!(!etherscan_path.exists());
+
+    Config::clean_foundry_cache().unwrap();
 });
 
 // checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
@@ -66,18 +140,50 @@ forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| 
 forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
     let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
     let block1 = 100;
-    let block2 = 102;
+    let block2 = 101;
+    let block3 = 102;
     let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
     let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+    let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
+    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
     let block1_path = block1_cache_dir.as_path();
     let block2_path = block2_cache_dir.as_path();
+    let block3_path = block3_cache_dir.as_path();
+    let etherscan_path = etherscan_cache_dir.as_path();
     fs::create_dir_all(block1_path).unwrap();
     fs::create_dir_all(block2_path).unwrap();
+    fs::create_dir_all(block3_path).unwrap();
+    fs::create_dir_all(etherscan_path).unwrap();
     cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
     cmd.assert_empty_stdout();
 
     assert!(!block1_path.exists());
     assert!(!block2_path.exists());
+    assert!(block3_path.exists());
+    assert!(etherscan_path.exists());
+
+    Config::clean_foundry_cache().unwrap();
+});
+
+// checks that `cache clean <chain> --etherscan` can be invoked and cleans the etherscan chain cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_chain_etherscan, |_: TestProject, mut cmd: TestCommand| {
+    let cache_dir =
+        Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
+    let etherscan_cache_dir =
+        Config::foundry_etherscan_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet))
+            .unwrap();
+    let path = cache_dir.as_path();
+    let etherscan_path = etherscan_cache_dir.as_path();
+    fs::create_dir_all(path).unwrap();
+    fs::create_dir_all(etherscan_path).unwrap();
+    cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
+    cmd.assert_empty_stdout();
+
+    assert!(path.exists());
+    assert!(!etherscan_path.exists());
+
+    Config::clean_foundry_cache().unwrap();
 });
 
 // checks that init works

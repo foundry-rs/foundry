@@ -138,7 +138,7 @@ impl RunArgs {
             let etherscan_identifier = EtherscanIdentifier::new(
                 evm_opts.get_remote_chain_id(),
                 config.etherscan_api_key,
-                Config::foundry_etherscan_cache_dir(evm_opts.get_chain_id()),
+                Config::foundry_etherscan_chain_cache_dir(evm_opts.get_chain_id()),
                 Duration::from_secs(24 * 60 * 60),
             );
 

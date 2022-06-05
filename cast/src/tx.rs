@@ -56,9 +56,13 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         let to_addr = resolve_ens(provider, foundry_utils::resolve_addr(to, chain)?).await?;
 
         let tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr).to(to_addr).into()
+            TransactionRequest::new().from(from_addr).to(to_addr).chain_id(chain as u64).into()
         } else {
-            Eip1559TransactionRequest::new().from(from_addr).to(to_addr).into()
+            Eip1559TransactionRequest::new()
+                .from(from_addr)
+                .to(to_addr)
+                .chain_id(chain as u64)
+                .into()
         };
 
         Ok(Self { to: to_addr, chain, tx, func: None, etherscan_api_key: None, provider })
@@ -325,6 +329,7 @@ mod tests {
         assert_eq!(tx.gas_price().unwrap().as_u32(), 34);
         assert_eq!(tx.value().unwrap().as_u32(), 56);
         assert_eq!(tx.nonce().unwrap().as_u32(), 78);
+        assert_eq!(tx.chain_id().unwrap().as_u32(), 1);
         Ok(())
     }
 

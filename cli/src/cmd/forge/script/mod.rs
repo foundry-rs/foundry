@@ -152,7 +152,7 @@ impl ScriptArgs {
         let etherscan_identifier = EtherscanIdentifier::new(
             script_config.evm_opts.get_remote_chain_id(),
             script_config.config.etherscan_api_key.clone(),
-            Config::foundry_etherscan_cache_dir(script_config.evm_opts.get_chain_id()),
+            Config::foundry_etherscan_chain_cache_dir(script_config.evm_opts.get_chain_id()),
             Duration::from_secs(24 * 60 * 60),
         );
 
