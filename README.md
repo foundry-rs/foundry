@@ -5,23 +5,18 @@
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 
 [gha-badge]: https://img.shields.io/github/workflow/status/foundry-rs/foundry/test?style=flat-square
-[tg-badge]:
-  https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
+[tg-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
 [tg-url]: https://t.me/foundry_rs
-[tg-support-badge]:
-  https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
+[tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum
-application development written in Rust.**
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
 Foundry consists of:
 
-- [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and
-  Dapptools).
-- [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts,
-  sending transactions and getting chain data.
-- [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network
+- [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
+- [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
@@ -29,7 +24,7 @@ Foundry consists of:
 
 ## Installation
 
-*Having issues? See the [troubleshooting section](#troubleshooting-installation)*.
+_Having issues? See the [troubleshooting section](#troubleshooting-installation)_.
 
 First run the command below to get `foundryup`, the Foundry toolchain installer:
 
@@ -37,15 +32,13 @@ First run the command below to get `foundryup`, the Foundry toolchain installer:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-If you do not want to use the redirect, feel free to manually download the
-foundryup installation script from
-[here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup).
+If you do not want to use the redirect, feel free to manually download the foundryup installation script from [here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup).
 
 Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
 
 Other ways to use `foundryup`, and other documentation, can be found [here](./foundryup). Happy forging!
 
-### Installing from source
+### Installing from Source
 
 For people that want to install from source, you can do so like below:
 
@@ -58,23 +51,25 @@ cargo install --path ./cli --bins --locked --force
 cargo install --path ./anvil --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`
+Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`.
 
 ### Installing for CI in Github Action
 
-See [https://github.com/foundry-rs/foundry-toolchain](https://github.com/foundry-rs/foundry-toolchain) github action.
+See [https://github.com/foundry-rs/foundry-toolchain](https://github.com/foundry-rs/foundry-toolchain) GitHub Action.
 
 ### Installing via Docker
 
 Foundry maintains a [Docker image repository](https://github.com/foundry-rs/foundry/pkgs/container/foundry).
 
-You can pull the latest release image like so:  
+You can pull the latest release image like so:
+
 ```sh
 docker pull ghcr.io/foundry-rs/foundry:latest
 ```
+
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
 
-### Manual download
+### Manual Download
 
 You can manually download nightly releases [here](https://github.com/foundry-rs/foundry/releases).
 
@@ -83,21 +78,17 @@ You can manually download nightly releases [here](https://github.com/foundry-rs/
 ### Features
 
 - **Fast & flexible compilation pipeline**
-  - Automatic Solidity compiler version detection & installation (under
-    `~/.svm`)
+  - Automatic Solidity compiler version detection & installation (under `~/.svm`)
   - **Incremental compilation & caching**: Only changed files are re-compiled
   - Parallel compilation
-  - Non-standard directory structures support (e.g.
-    [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
+  - Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
 - **Tests are written in Solidity** (like in DappTools)
 - **Fast fuzz testing** with shrinking of inputs & printing of counter-examples
-- **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like
-  tokio
+- **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like tokio
 - **Flexible debug logging**
-  - Dapptools-style, using `DsTest`'s emitted logs
+  - DappTools-style, using `DsTest`'s emitted logs
   - Hardhat-style, using the popular `console.sol` contract
-- **Portable (5-10MB) & easy to install** without requiring Nix or any other
-  package manager
+- **Portable (5-10MB) & easy to install** without requiring Nix or any other package manager
 - **Fast CI** with the [Foundry GitHub action][foundry-gha].
 
 ### How Fast?
@@ -115,7 +106,7 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 | [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
 | [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
 
-*Note: In the above benchmarks, compilation was always skipped*
+_Note: In the above benchmarks, compilation was always skipped_
 
 **Compilation Benchmarks**
 
@@ -125,8 +116,7 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 ## Cast
 
-Cast is a swiss army knife for interacting with Ethereum applications from the
-command line.
+Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
 More documentation can be found in the [cast package](./cast).
 
@@ -134,21 +124,15 @@ More documentation can be found in the [cast package](./cast).
 
 ### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called
-[`foundry.toml`](./config) in the root of your project, or any other parent
-director. See
-[config package](./config/README.md#all-options) for all available options.
+Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent director. See [config package](./config/README.md#all-options) for all available options.
 
 Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
 
-You can select another profile using the `FOUNDRY_PROFILE` environment variable.
-You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
+You can select another profile using the `FOUNDRY_PROFILE` environment variable. You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
 
 `forge init` creates a basic, extendable `foundry.toml` file.
 
-To see your current configuration, run `forge config`. To see only basic
-options (as set with `forge init`), run `forge config --basic`. This can be used
-to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
+To see your current configuration, run `forge config`. To see only basic options (as set with `forge init`), run `forge config --basic`. This can be used to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
 
 By default `forge config` shows the currently selected foundry profile and its values. It also accepts the same arguments as `forge build`.
 
@@ -165,12 +149,11 @@ You can find additional setup and configurations guides in the [Foundry Book][fo
 
 ### Troubleshooting Installation
 
-#### `libusb` error when running `forge`/`cast`
+#### `libusb` Error When Running `forge`/`cast`
 
-If you are using the binaries as released, you may see the following error on
-MacOS:
+If you are using the binaries as released, you may see the following error on MacOS:
 
-```
+```sh
 dyld: Library not loaded: /usr/local/opt/libusb/lib/libusb-1.0.0.dylib
 ```
 
@@ -180,17 +163,17 @@ In order to fix this, you must install `libusb` like so:
 brew install libusb
 ```
 
-#### Out of date `GLIBC` error when running `forge` from default `foundryup` install:
+#### Out of Date `GLIBC` Error When Running `forge` From Default `foundryup` Install:
 
 If you run into an error resembling the following when using `foundryup`:
 
-```
+```sh
 forge: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.29' not found (required by forge)
 ```
 
 There are 2 workarounds:
 
-1. Building from source: ``foundryup -b master``
+1. Building from source: `foundryup -b master`
 2. [Using Docker](https://book.getfoundry.sh/getting-started/installation.html#using-with-docker)
 
 ## Contributing
@@ -207,29 +190,15 @@ If the answer is not there:
 - Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
 - Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
-If you want to contribute, or follow along with contributor discussion,
-you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
+If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
 ## Acknowledgements
 
-- Foundry is a clean-room rewrite of the testing framework
-  [dapptools](https://github.com/dapphub/dapptools). None of this would have
-  been possible without the DappHub team's work over the years.
-- [Matthias Seitz](https://twitter.com/mattsse_): Created
-  [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
-  which is the backbone of our compilation pipeline, as well as countless
-  contributions to ethers, in particular the `abigen` macros.
-- [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
-  version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use
-  to auto-detect and manage multiple Solidity versions.
-- [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's
-  cheatcodes and implementing
-  [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a
-  critical feature for debugging smart contract calls.
-- All the other
-  [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the
-  [ethers-rs](https://github.com/gakonst/ethers-rs) &
-  [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
+- Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
+- [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
+- [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
+- [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
+- All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
@@ -241,5 +210,4 @@ you can use our [main telegram](https://t.me/foundry_rs) to chat with us about t
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
 [convex]: https://github.com/mds1/convex-shutdown-simulation
 [vscode-setup]: https://book.getfoundry.sh/config/vscode.html
-[shell-setup]:
-  https://book.getfoundry.sh/config/shell-autocompletion.html
+[shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
