@@ -111,7 +111,7 @@ impl ScriptArgs {
         foundry_utils::link_with_nonce_or_address(
             contracts.clone(),
             &mut highlevel_known_contracts,
-            &mut libs,
+            libs,
             sender,
             nonce,
             &mut extra_info,
@@ -156,11 +156,17 @@ impl ScriptArgs {
 
         let target = extra_info.target_id.expect("Target not found?");
         let mut predeploy_libraries = vec![];
-        let mut libraries = vec![];
+        let mut new_libraries = vec![];
 
         for (library, bytecode) in run_dependencies.into_iter() {
             predeploy_libraries.push(bytecode);
-            libraries.push(library);
+            new_libraries.push(library);
+        }
+        let mut new_libraries = Libraries::parse(&new_libraries)?;
+
+        // Merge with user provided libraries
+        for (file, libraries) in libraries_addresses.libs.into_iter() {
+            new_libraries.libs.entry(file).or_insert(BTreeMap::new()).extend(libraries.into_iter())
         }
 
         Ok(BuildOutput {
@@ -171,7 +177,7 @@ impl ScriptArgs {
             predeploy_libraries,
             sources: BTreeMap::new(),
             project,
-            libraries: Libraries::parse(&libraries)?,
+            libraries: new_libraries,
         })
     }
 

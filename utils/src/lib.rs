@@ -61,7 +61,7 @@ pub struct PostLinkInput<'a, T, U> {
 pub fn link_with_nonce_or_address<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
-    deployed_library_addresses: &mut Libraries,
+    deployed_library_addresses: Libraries,
     sender: Address,
     nonce: U256,
     extra: &mut U,
@@ -119,7 +119,7 @@ pub fn link_with_nonce_or_address<T, U>(
                         &contracts_by_slug,
                         &link_tree,
                         &mut dependencies,
-                        deployed_library_addresses,
+                        &deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -164,7 +164,7 @@ pub fn recurse_link<'a>(
     // library deployment vector (file:contract:address, bytecode)
     deployment: &'a mut Vec<(String, ethers_core::types::Bytes)>,
     // deployed library addresses fname => adddress
-    deployed_library_addresses: &'a mut Libraries,
+    deployed_library_addresses: &'a Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender

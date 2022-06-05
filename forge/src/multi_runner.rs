@@ -60,12 +60,11 @@ impl MultiContractRunnerBuilder {
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
-        let mut libraries = Default::default();
 
         foundry_utils::link_with_nonce_or_address(
             BTreeMap::from_iter(contracts),
             &mut known_contracts,
-            &mut libraries,
+            Default::default(),
             evm_opts.sender,
             U256::one(),
             &mut deployable_contracts,
