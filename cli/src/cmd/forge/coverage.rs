@@ -145,6 +145,10 @@ impl CoverageArgs {
         let mut map = CoverageMap::new();
         for (path, versioned_sources) in sources.0.into_iter() {
             // TODO: Make these checks robust
+            // NOTE: We should actually filter out test contracts in the AST
+            // instead of on a source file level. Repositories like Solmate
+            // have a lot of abstract contracts that are being tested, and these
+            // are usually defined in the test files themselves.
             let is_test = path.ends_with(".t.sol");
             let is_dependency = path.starts_with("lib");
             if is_test || is_dependency {
