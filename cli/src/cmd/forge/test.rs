@@ -620,7 +620,7 @@ fn test(
         let etherscan_identifier = EtherscanIdentifier::new(
             remote_chain_id,
             config.etherscan_api_key,
-            remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
+            remote_chain_id.and_then(Config::foundry_etherscan_chain_cache_dir),
             cache_ttl,
         );
 

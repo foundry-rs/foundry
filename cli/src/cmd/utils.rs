@@ -4,7 +4,7 @@ use clap::Parser;
 use ethers::{
     abi::{Abi, Address},
     core::types::Chain,
-    prelude::{ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
+    prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
             CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
@@ -16,6 +16,7 @@ use ethers::{
 };
 use foundry_config::Config;
 use foundry_utils::Retry;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -189,23 +190,25 @@ pub struct VerifyBundle {
 }
 
 impl VerifyBundle {
-    pub fn new(config: &Config, known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>) -> Self {
+    pub fn new(
+        project: &Project,
+        config: &Config,
+        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
 
+        let config_path = config.get_config_path();
+
         let project_paths = ProjectPathsArgs {
-            root: Some(config.__root.0.clone()),
-            contracts: Some(config.src.clone()),
-            remappings: config
-                .remappings
-                .iter()
-                .map(|remap| remap.clone().to_remapping(config.__root.0.clone()))
-                .collect(),
+            root: Some(project.paths.root.clone()),
+            contracts: Some(project.paths.sources.clone()),
+            remappings: project.paths.remappings.clone(),
             remappings_env: None,
-            cache_path: Some(config.cache_path.clone()),
-            lib_paths: config.libs.clone(),
+            cache_path: Some(project.paths.cache.clone()),
+            lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: Some(config.get_config_path()),
+            config_path: if config_path.exists() { Some(config_path) } else { None },
         };
 
         VerifyBundle {
@@ -226,6 +229,7 @@ pub struct ScriptSequence {
     pub create2_contracts: Vec<Address>,
     pub path: PathBuf,
     pub timestamp: u64,
+    pub libraries: Vec<String>,
 }
 
 impl ScriptSequence {
@@ -248,6 +252,7 @@ impl ScriptSequence {
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
                 .as_secs(),
+            libraries: vec![],
         })
     }
 
@@ -324,6 +329,18 @@ impl ScriptSequence {
         self.create2_contracts.push(address);
     }
 
+    pub fn add_libraries(&mut self, libraries: Libraries) {
+        self.libraries = {
+            let mut str_libs = vec![];
+            for (file, libs) in libraries.libs {
+                for (name, address) in libs {
+                    str_libs.push(format!("{}:{}:{}", file.to_string_lossy(), name, address));
+                }
+            }
+            str_libs
+        };
+    }
+
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
     pub fn get_path(
         out: &Path,
@@ -385,10 +402,19 @@ impl ScriptSequence {
                                 name: artifact.name.clone(),
                             };
 
+                            // We strip the build metadadata information, since it can lead to
+                            // etherscan not identifying it correctly. eg:
+                            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
+                            let version = Version::new(
+                                artifact.version.major,
+                                artifact.version.minor,
+                                artifact.version.patch,
+                            );
+
                             let verify = verify::VerifyArgs {
                                 address: contract_address,
                                 contract,
-                                compiler_version: None,
+                                compiler_version: Some(version.to_string()),
                                 constructor_args: Some(hex::encode(&constructor_args)),
                                 num_of_optimizations: verify.num_of_optimizations,
                                 chain: chain.into(),
@@ -398,6 +424,7 @@ impl ScriptSequence {
                                 force: false,
                                 watch: true,
                                 retry: RETRY_VERIFY_ON_CREATE,
+                                libraries: self.libraries.clone(),
                             };
 
                             future_verifications.push(verify.run());
@@ -450,8 +477,8 @@ macro_rules! update_progress {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
-    match Chain::try_from(chain).expect("Chain does not exist.") {
-        Chain::Arbitrum | Chain::ArbitrumTestnet => true,
-        _ => false,
-    }
+    matches!(
+        Chain::try_from(chain).expect("Chain does not exist."),
+        Chain::Arbitrum | Chain::ArbitrumTestnet
+    )
 }

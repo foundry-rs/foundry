@@ -9,6 +9,7 @@ use anvil_rpc::response::ResponseResult;
 use ethers::prelude::{Log as EthersLog, H256 as TxHash};
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 
+use anvil_core::eth::filter::Filter;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -61,9 +62,13 @@ impl Filters {
         ResponseResult::success(Vec::<()>::new())
     }
 
-    /// Returns an array of all logs matching filter with given id.
-    pub async fn get_filter_logs(&self, id: &str) -> ResponseResult {
-        self.get_filter_changes(id).await
+    /// Returns the original `Filter` of an `eth_newFilter`
+    pub async fn get_log_filter(&self, id: &str) -> Option<Filter> {
+        let filters = self.active_filters.lock().await;
+        if let Some((EthFilter::Logs(ref log), _)) = filters.get(id) {
+            return log.filter.filter.clone()
+        }
+        None
     }
 
     /// Removes the filter identified with the `id`
@@ -137,9 +142,16 @@ impl Stream for EthFilter {
 /// Listens for new blocks and matching logs emitted in that block
 #[derive(Debug)]
 pub struct LogsFilter {
+    /// listener for new blocks
     pub blocks: NewBlockNotifications,
+    /// accessor for block storage
     pub storage: StorageInfo,
+    /// matcher with all provided filter params
     pub filter: FilteredParams,
+    /// existing logs that matched the filter when the listener was installed
+    ///
+    /// They'll be returned on the first pill
+    pub historic: Option<Vec<EthersLog>>,
 }
 
 // === impl LogsFilter ===
@@ -147,7 +159,7 @@ pub struct LogsFilter {
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
-        let mut logs = Vec::new();
+        let mut logs = self.historic.take().unwrap_or_default();
         while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash);
             let receipts = self.storage.receipts(block.hash);

@@ -75,9 +75,8 @@ impl ScriptArgs {
                                 tx.set_gas_price(gas_price);
                             }
                             TypedTransaction::Eip1559(ref mut inner) => {
-                                let eip1559_fees = eip1559_fees
-                                    .clone()
-                                    .expect("Could not get eip1559 fee estimation.");
+                                let eip1559_fees =
+                                    eip1559_fees.expect("Could not get eip1559 fee estimation.");
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
                                 inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                             }
@@ -193,6 +192,7 @@ impl ScriptArgs {
         &self,
         target: &ArtifactId,
         transactions: Option<VecDeque<TypedTransaction>>,
+        libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
         verify: VerifyBundle,
@@ -226,6 +226,8 @@ impl ScriptArgs {
 
                 let mut deployment_sequence =
                     ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
+
+                deployment_sequence.add_libraries(libraries);
 
                 create2_contracts
                     .into_iter()

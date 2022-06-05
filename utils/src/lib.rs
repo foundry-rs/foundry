@@ -54,7 +54,7 @@ pub struct PostLinkInput<'a, T, U> {
     pub known_contracts: &'a mut BTreeMap<ArtifactId, T>,
     pub id: ArtifactId,
     pub extra: &'a mut U,
-    pub dependencies: Vec<ethers_core::types::Bytes>,
+    pub dependencies: Vec<(String, ethers_core::types::Bytes)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -161,8 +161,8 @@ pub fn recurse_link<'a>(
     contracts: &'a BTreeMap<String, CompactContractBytecode>,
     // fname => Vec<(fname, file, key)>
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
-    // library deployment vector
-    deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // library deployment vector (file:contract:address, bytecode)
+    deployment: &'a mut Vec<(String, ethers_core::types::Bytes)>,
     // deployed library addresses fname => adddress
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
@@ -184,7 +184,7 @@ pub fn recurse_link<'a>(
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&target) {
+            if let Some(deps) = dependency_tree.get(next_target) {
                 if !deps.is_empty() {
                     // actually link the nested dependencies to this dependency
                     recurse_link(
@@ -218,13 +218,16 @@ pub fn recurse_link<'a>(
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), address);
-            target_bytecode.1.link(file, key, address);
+            target_bytecode.1.link(file.clone(), key.clone(), address);
 
             if deployed_address.is_none() {
+                let library = format!("{}:{}:0x{}", file, key, hex::encode(address));
+
                 // push the dependency into the library deployment vector
-                deployment.push(
+                deployment.push((
+                    library,
                     next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
-                );
+                ));
             }
         });
     }
@@ -995,10 +998,10 @@ mod tests {
                     }
                     "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }
@@ -1007,14 +1010,14 @@ mod tests {
                     }
                     "NestedLib.json:NestedLib" => {
                         assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
                     }
                     "LibraryConsumer.json:LibraryConsumer" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }

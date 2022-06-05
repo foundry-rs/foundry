@@ -196,10 +196,16 @@ jobs:
           cache-on-failure: true
 
       - name: cargo fmt
-        run: cargo +nightly fmt --all -- --check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all --check
 
       - name: cargo clippy
-        run: cargo +nightly clippy --all --all-features -- -D warnings
+        uses: actions-rs/clippy-check@v1
+        with:
+          args: --all --all-features -- -D warnings
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   cross-platform:
     name: Cross-platform tests
