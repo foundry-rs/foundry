@@ -443,6 +443,6 @@ macro_rules! init_progress {
 #[macro_export]
 macro_rules! update_progress {
     ($pb:ident, $index:expr) => {
-        $pb.set_position($index as u64 + 1);
+        $pb.set_position(($index + 1) as u64);
     };
 }

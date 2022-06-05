@@ -33,8 +33,8 @@ pub async fn wait_for_receipts(
     let mut receipts = vec![];
     let mut errors: Vec<String> = vec![];
     let pb = init_progress!(tx_hashes, "receipts");
+    update_progress!(pb, -1);
 
-    let total_txes = tx_hashes.len();
     for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
         if let Some(receipt) = tasks.next().await {
             match receipt {
@@ -55,9 +55,7 @@ pub async fn wait_for_receipts(
                     errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
                 }
             }
-            if total_txes > 1 {
-                update_progress!(pb, index);
-            }
+            update_progress!(pb, index);
         } else {
             break
         }

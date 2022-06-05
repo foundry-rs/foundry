@@ -101,6 +101,9 @@ impl ScriptArgs {
                     let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                     if sequential_broadcast {
+                        update_progress!(pb, (index + already_broadcasted));
+                        index += 1;
+
                         wait_for_receipts(
                             vec![tx_hash.await?],
                             deployment_sequence,
@@ -129,7 +132,7 @@ impl ScriptArgs {
                     deployment_sequence.save()?;
 
                     if !sequential_broadcast {
-                        println!("##\nCollecting Receipts.");
+                        println!("##\nWaiting for receipts.");
                         wait_for_receipts(tx_hashes, deployment_sequence, provider.clone()).await?;
                     }
                 }
