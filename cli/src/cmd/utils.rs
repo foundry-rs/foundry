@@ -3,7 +3,7 @@ use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use clap::Parser;
 use ethers::{
     abi::{Abi, Address},
-    prelude::{ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
+    prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
             CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
@@ -226,6 +226,7 @@ pub struct ScriptSequence {
     pub create2_contracts: Vec<Address>,
     pub path: PathBuf,
     pub timestamp: u64,
+    pub libraries: Vec<String>,
 }
 
 impl ScriptSequence {
@@ -248,6 +249,7 @@ impl ScriptSequence {
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
                 .as_secs(),
+            libraries: vec![],
         })
     }
 
@@ -322,6 +324,25 @@ impl ScriptSequence {
 
     pub fn add_create2(&mut self, address: Address) {
         self.create2_contracts.push(address);
+    }
+
+    pub fn add_libraries(&mut self, libraries: Libraries) {
+        self.libraries = {
+            let mut str_libs = vec![];
+            for (file, libs) in libraries.libs {
+                let file = file.to_str().expect("wrong path");
+
+                for (name, address) in libs {
+                    str_libs.push(format!(
+                        "{}:{}:{}",
+                        file.strip_prefix("__").unwrap_or(file),
+                        name,
+                        address
+                    ));
+                }
+            }
+            str_libs
+        };
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
@@ -404,8 +425,9 @@ impl ScriptSequence {
                                 force: false,
                                 watch: true,
                                 retry: RETRY_VERIFY_ON_CREATE,
+                                libraries: self.libraries.clone(),
                             };
-
+                            dbg!(&verify.libraries);
                             future_verifications.push(verify.run());
                         }
                     }

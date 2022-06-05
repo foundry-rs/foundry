@@ -91,7 +91,7 @@ impl ScriptArgs {
         foundry_utils::link_with_nonce_or_address(
             contracts.clone(),
             &mut highlevel_known_contracts,
-            libs,
+            &mut libs,
             sender,
             nonce,
             &mut extra_info,
@@ -142,6 +142,7 @@ impl ScriptArgs {
             predeploy_libraries: run_dependencies,
             sources: BTreeMap::new(),
             project,
+            libraries: libs,
         })
     }
 
@@ -218,6 +219,7 @@ pub struct BuildOutput {
     pub contract: CompactContractBytecode,
     pub known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<u32, String>,
 }

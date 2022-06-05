@@ -110,6 +110,7 @@ impl ScriptArgs {
         &self,
         target: &ArtifactId,
         transactions: Option<VecDeque<TypedTransaction>>,
+        libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
         verify: VerifyBundle,
@@ -142,6 +143,8 @@ impl ScriptArgs {
 
                 let mut deployment_sequence =
                     ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
+
+                deployment_sequence.add_libraries(libraries);
 
                 create2_contracts
                     .into_iter()

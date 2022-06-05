@@ -61,7 +61,7 @@ pub struct PostLinkInput<'a, T, U> {
 pub fn link_with_nonce_or_address<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
-    deployed_library_addresses: Libraries,
+    deployed_library_addresses: &mut Libraries,
     sender: Address,
     nonce: U256,
     extra: &mut U,
@@ -119,7 +119,7 @@ pub fn link_with_nonce_or_address<T, U>(
                         &contracts_by_slug,
                         &link_tree,
                         &mut dependencies,
-                        &deployed_library_addresses,
+                        deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -164,7 +164,7 @@ pub fn recurse_link<'a>(
     // library deployment vector
     deployment: &'a mut Vec<ethers_core::types::Bytes>,
     // deployed library addresses fname => adddress
-    deployed_library_addresses: &'a Libraries,
+    deployed_library_addresses: &'a mut Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -184,7 +184,7 @@ pub fn recurse_link<'a>(
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&target) {
+            if let Some(deps) = dependency_tree.get(next_target) {
                 if !deps.is_empty() {
                     // actually link the nested dependencies to this dependency
                     recurse_link(
@@ -213,7 +213,19 @@ pub fn recurse_link<'a>(
             }
 
             let address = deployed_address.unwrap_or_else(|| {
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
+                let address =
+                    ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+
+                // So it doesn't mess with the internal logic by getting recognized as an existing
+                // library. We clear it later.
+                let path = format!("__{}", file);
+                deployed_library_addresses
+                    .libs
+                    .entry(PathBuf::from(path))
+                    .or_insert_with(BTreeMap::default)
+                    .insert(key.clone(), format!("0x{}", hex::encode(address)));
+
+                address
             });
 
             // link the dependency to the target
