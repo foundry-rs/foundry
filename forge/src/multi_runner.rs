@@ -188,7 +188,7 @@ impl MultiContractRunner {
     }
 
     // Get all tests of matching path and contract
-    pub fn get_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> Vec<String> {
+    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
         self.contracts
             .iter()
             .filter(|(id, _)| {
@@ -202,7 +202,7 @@ impl MultiContractRunner {
 
     pub fn list(
         &self,
-        filter: &(impl TestFilter + Send + Sync),
+        filter: &impl TestFilter,
     ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.contracts
             .iter()
@@ -237,7 +237,7 @@ impl MultiContractRunner {
     /// Each Executor gets its own instance of the `Backend`.
     pub fn test(
         &mut self,
-        filter: &(impl TestFilter + Send + Sync),
+        filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {

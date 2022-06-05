@@ -385,7 +385,9 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
 
-        // TODO(mattsse): while tests don't modify the state we have cheatcodes that affect the state (fork cheat codes, snapshots), so in order to execute all tests in parallel they need their own copy of the `Executor`,
+        // TODO(mattsse): while tests don't modify the state we have cheatcodes that affect the
+        // state (fork cheat codes, snapshots), so in order to execute all tests in parallel they
+        // need their own copy of the `Executor`,
 
         let test_results = tests
             .par_iter()
@@ -419,7 +421,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     ///
     /// Calls the given functions and returns the `TestResult`.
     ///
-    /// State modifications are not committed to the evm database but discarded after the call, similar to `eth_call`.
+    /// State modifications are not committed to the evm database but discarded after the call,
+    /// similar to `eth_call`.
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(
         &self,
