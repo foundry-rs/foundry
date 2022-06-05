@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicU16, Ordering};
 
+mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
 mod fork;
 mod ganache;
+mod logs;
 mod pubsub;
 mod traces;
 mod transaction;

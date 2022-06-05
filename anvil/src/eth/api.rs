@@ -279,7 +279,7 @@ impl EthApi {
             EthRequest::EthNewPendingTransactionFilter(_) => {
                 self.new_pending_transaction_filter().await.to_rpc_result()
             }
-            EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await,
+            EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await.to_rpc_result(),
             EthRequest::EthUninstallFilter(id) => self.uninstall_filter(&id).await.to_rpc_result(),
             EthRequest::TxPoolStatus(_) => self.txpool_status().await.to_rpc_result(),
             EthRequest::TxPoolInspect(_) => self.txpool_inspect().await.to_rpc_result(),
@@ -1087,10 +1087,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
+        // all logs that are already available that match the filter
+        let historic = self.backend.logs(filter.clone()).await?;
         let filter = EthFilter::Logs(Box::new(LogsFilter {
             blocks: self.new_block_notifications(),
             storage: self.storage_info(),
             filter: FilteredParams::new(Some(filter)),
+            historic: Some(historic),
         }));
         Ok(self.filters.add_filter(filter).await)
     }
@@ -1123,9 +1126,13 @@ impl EthApi {
     /// Returns an array of all logs matching filter with given id.
     ///
     /// Handler for ETH RPC call: `eth_getFilterLogs`
-    pub async fn get_filter_logs(&self, id: &str) -> ResponseResult {
+    pub async fn get_filter_logs(&self, id: &str) -> Result<Vec<Log>> {
         node_info!("eth_getFilterLogs");
-        self.filters.get_filter_logs(id).await
+        if let Some(filter) = self.filters.get_log_filter(id).await {
+            self.backend.logs(filter).await
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     /// Handler for ETH RPC call: `eth_uninstallFilter`
