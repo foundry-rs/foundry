@@ -331,12 +331,7 @@ impl ScriptSequence {
             let mut str_libs = vec![];
             for (file, libs) in libraries.libs {
                 for (name, address) in libs {
-                    str_libs.push(format!(
-                        "{}:{}:{}",
-                        file.to_str().expect("wrong path"),
-                        name,
-                        address
-                    ));
+                    str_libs.push(format!("{}:{}:{}", file.to_string_lossy(), name, address));
                 }
             }
             str_libs

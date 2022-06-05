@@ -408,13 +408,7 @@ To skip this solc dry, pass `--force`.
             .libraries
             .libs
             .into_iter()
-            .map(|(f, libs)| {
-                if f.is_absolute() {
-                    (f.strip_prefix(&project.root()).unwrap().to_path_buf(), libs)
-                } else {
-                    (f, libs)
-                }
-            })
+            .map(|(f, libs)| (f.strip_prefix(&project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
 
         let source =

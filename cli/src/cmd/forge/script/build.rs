@@ -155,16 +155,12 @@ impl ScriptArgs {
         )?;
 
         let target = extra_info.target_id.expect("Target not found?");
-        let mut predeploy_libraries = vec![];
-        let mut new_libraries = vec![];
 
-        for (library, bytecode) in run_dependencies.into_iter() {
-            predeploy_libraries.push(bytecode);
-            new_libraries.push(library);
-        }
-        let mut new_libraries = Libraries::parse(&new_libraries)?;
+        let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
+            run_dependencies.into_iter().unzip();
 
         // Merge with user provided libraries
+        let mut new_libraries = Libraries::parse(&new_libraries)?;
         for (file, libraries) in libraries_addresses.libs.into_iter() {
             new_libraries.libs.entry(file).or_insert(BTreeMap::new()).extend(libraries.into_iter())
         }
@@ -213,7 +209,7 @@ impl ScriptArgs {
                     (res.0, output)
                 };
 
-                self.path = path.to_str().ok_or(eyre::eyre!("Invalid path string."))?.to_string();
+                self.path = path.to_string_lossy().to_string();
                 self.target_contract = Some(contract.name);
                 output
             }
