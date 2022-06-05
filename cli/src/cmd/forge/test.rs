@@ -1,8 +1,8 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
         Cmd,
+        forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
     },
     compile::ProjectCompiler,
     suggestions, utils,
@@ -14,14 +14,14 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
-    trace::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
-        CallTraceDecoderBuilder, TraceKind,
+    MultiContractRunner,
+    MultiContractRunnerBuilder, TestFilter, trace::{
+        CallTraceDecoderBuilder,
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier}, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{Config, figment::Figment};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
@@ -33,6 +33,7 @@ use std::{
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
+use forge::result::{SuiteResult, TestKind};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
