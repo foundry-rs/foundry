@@ -276,10 +276,10 @@ pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
     }
 
     let gas_used = receipt.gas_used.unwrap_or_default();
-    let gas_price = receipt.effective_gas_price.expect("no gas price");
+    let gas_price = receipt.effective_gas_price.unwrap_or_default();
     let paid = format_units(gas_used.mul(gas_price), 18)?;
 
-    let check = if receipt.status.unwrap().is_zero() {
+    let check = if receipt.status.unwrap_or_default().is_zero() {
         Emoji("❌ ", " [Failed] ")
     } else {
         Emoji("✅ ", " [Success] ")
@@ -290,7 +290,7 @@ pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
-        receipt.block_number.expect("no block_number"),
+        receipt.block_number.unwrap_or_default(),
         paid.trim_end_matches('0'),
         gas_used,
         format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
