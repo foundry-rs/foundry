@@ -118,14 +118,10 @@ impl MultiContractRunner {
             .contracts
             .par_iter()
             .filter(|(id, _)| {
-                dbg!("filter matches");
                 filter.matches_path(id.source.to_string_lossy()) &&
                     filter.matches_contract(&id.name)
             })
-            .filter(|(_, (abi, _, _))| {
-                dbg!("filter funs");
-                abi.functions().any(|func| filter.matches_test(&func.name))
-            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
@@ -214,8 +210,8 @@ impl MultiContractRunnerBuilder {
         output: ProjectCompileOutput<A>,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
-        where
-            A: ArtifactOutput,
+    where
+        A: ArtifactOutput,
     {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
@@ -516,7 +512,6 @@ mod tests {
     #[test]
     fn test_logs() {
         let mut runner = runner();
-        dbg!(runner.contracts.keys());
         let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, true).unwrap();
 
         assert_multiple(
