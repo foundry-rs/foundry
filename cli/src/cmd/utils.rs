@@ -3,6 +3,7 @@ use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use clap::Parser;
 use ethers::{
     abi::{Abi, Address},
+    core::types::Chain,
     prelude::{ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
@@ -445,4 +446,12 @@ macro_rules! update_progress {
     ($pb:ident, $index:expr) => {
         $pb.set_position(($index + 1) as u64);
     };
+}
+
+/// True if the network calculates gas costs differently.
+pub fn has_different_gas_calc(chain: u64) -> bool {
+    match Chain::try_from(chain).expect("Chain does not exist.") {
+        Chain::Arbitrum | Chain::ArbitrumTestnet => true,
+        _ => false,
+    }
 }

@@ -1,5 +1,8 @@
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, ScriptSequence, VerifyBundle},
+    cmd::{
+        forge::script::receipts::wait_for_receipts, has_different_gas_calc, ScriptSequence,
+        VerifyBundle,
+    },
     init_progress,
     opts::WalletType,
     update_progress,
@@ -46,7 +49,7 @@ impl ScriptArgs {
 
             // Make a one-time gas price estimation
             let gas_price = provider.get_gas_price().await?;
-            let eip1559_fees = provider.estimate_eip1559_fees(None).await?;
+            let eip1559_fees = provider.estimate_eip1559_fees(None).await.ok();
             let chain_id = provider.get_chainid().await?;
 
             // Iterate through transactions, matching the `from` field with the associated
@@ -58,6 +61,7 @@ impl ScriptArgs {
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+
                     let mut tx = tx.clone();
 
                     tx.set_chain_id(chain_id.as_u64());
@@ -71,6 +75,9 @@ impl ScriptArgs {
                                 tx.set_gas_price(gas_price);
                             }
                             TypedTransaction::Eip1559(ref mut inner) => {
+                                let eip1559_fees = eip1559_fees
+                                    .clone()
+                                    .expect("Could not get eip1559 fee estimation.");
                                 inner.max_fee_per_gas = Some(eip1559_fees.0);
                                 inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
                             }
@@ -263,13 +270,28 @@ impl fmt::Display for BroadcastError {
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    legacy_or_1559: TypedTransaction,
+    mut legacy_or_1559: TypedTransaction,
 ) -> Result<TxHash, BroadcastError>
 where
     T: Middleware,
     U: Signer,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+
+    if has_different_gas_calc(signer.signer().chain_id()) {
+        match legacy_or_1559 {
+            TypedTransaction::Legacy(ref mut inner) => inner.gas = None,
+            TypedTransaction::Eip1559(ref mut inner) => inner.gas = None,
+            TypedTransaction::Eip2930(ref mut inner) => inner.tx.gas = None,
+        };
+
+        legacy_or_1559.set_gas(
+            signer
+                .estimate_gas(&legacy_or_1559)
+                .await
+                .map_err(|err| BroadcastError::Simple(err.to_string()))?,
+        );
+    }
 
     // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
     let signature = signer
