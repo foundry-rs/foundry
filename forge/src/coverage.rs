@@ -1,6 +1,6 @@
 use comfy_table::{Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
-use std::io::Write;
+use std::{collections::HashMap, io::Write, path::PathBuf};
 
 /// A coverage reporter.
 pub trait CoverageReporter {
@@ -144,6 +144,73 @@ where
 
         println!("Wrote LCOV report.");
 
+        Ok(())
+    }
+}
+
+/// A super verbose reporter for debugging coverage while it is still unstable.
+pub struct DebugReporter {
+    /// The summary table.
+    table: Table,
+    /// The total coverage of the entire project.
+    total: CoverageSummary,
+    /// Uncovered items
+    uncovered: HashMap<PathBuf, Vec<CoverageItem>>,
+}
+
+impl Default for DebugReporter {
+    fn default() -> Self {
+        let mut table = Table::new();
+        table.set_header(&["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
+
+        Self { table, total: CoverageSummary::default(), uncovered: HashMap::default() }
+    }
+}
+
+impl DebugReporter {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
+        let mut row = Row::new();
+        row.add_cell(name.into())
+            .add_cell(format_cell(summary.line_hits, summary.line_count))
+            .add_cell(format_cell(summary.statement_hits, summary.statement_count))
+            .add_cell(format_cell(summary.branch_hits, summary.branch_count))
+            .add_cell(format_cell(summary.function_hits, summary.function_count));
+        self.table.add_row(row);
+    }
+}
+
+impl CoverageReporter for DebugReporter {
+    fn build(&mut self, map: CoverageMap) {
+        for file in map {
+            let summary = file.summary();
+
+            self.total.add(&summary);
+            self.add_row(file.path.to_string_lossy(), summary);
+
+            file.items.iter().for_each(|item| {
+                if item.hits() == 0 {
+                    self.uncovered.entry(file.path.clone()).or_default().push(item.clone());
+                }
+            })
+        }
+    }
+
+    fn finalize(mut self) -> eyre::Result<()> {
+        self.add_row("Total", self.total.clone());
+        println!("{}", self.table);
+
+        for (path, items) in self.uncovered {
+            println!("Uncovered for {:?}:", path);
+            items.iter().for_each(|item| {
+                if item.hits() == 0 {
+                    println!("- {:?}", item);
+                }
+            });
+        }
         Ok(())
     }
 }

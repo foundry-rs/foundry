@@ -134,13 +134,6 @@ pub struct SourceFile {
 impl SourceFile {
     /// Get a simple summary of the coverage for the file.
     pub fn summary(&self) -> CoverageSummary {
-        println!("Uncovered for {:?}:", self.path);
-        self.items.iter().for_each(|item| {
-            if item.hits() == 0 {
-                println!("- {:?}", item);
-            }
-        });
-
         self.items.iter().fold(CoverageSummary::default(), |mut summary, item| match item {
             CoverageItem::Line { hits, .. } => {
                 summary.line_count += 1;

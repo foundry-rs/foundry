@@ -14,7 +14,9 @@ use ethers::{
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap, ArtifactId},
 };
 use forge::{
-    coverage::{CoverageMap, CoverageReporter, LcovReporter, SummaryReporter, Visitor},
+    coverage::{
+        CoverageMap, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter, Visitor,
+    },
     executor::opts::EvmOpts,
     result::SuiteResult,
     trace::identifier::LocalTraceIdentifier,
@@ -237,6 +239,11 @@ impl CoverageArgs {
                 reporter.build(map);
                 reporter.finalize()
             }
+            CoverageReportKind::Debug => {
+                let mut reporter = DebugReporter::new();
+                reporter.build(map);
+                reporter.finalize()
+            }
         }
     }
 }
@@ -246,4 +253,5 @@ impl CoverageArgs {
 pub enum CoverageReportKind {
     Summary,
     Lcov,
+    Debug,
 }
