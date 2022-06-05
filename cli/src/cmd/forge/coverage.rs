@@ -12,11 +12,7 @@ use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
     abi::Address,
     prelude::{Artifact, Project, ProjectCompileOutput},
-    solc::{
-        artifacts::contract::CompactContractBytecode,
-        sourcemap::{self, SourceMap},
-        ArtifactId,
-    },
+    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap, ArtifactId},
 };
 use forge::{
     coverage::{CoverageMap, CoverageReporter, LcovReporter, SummaryReporter, Visitor},
@@ -137,14 +133,7 @@ impl CoverageArgs {
             })
             .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
             .filter_map(|(id, artifact): (ArtifactId, CompactContractBytecode)| {
-                let source_map = artifact
-                    .deployed_bytecode
-                    .as_ref()
-                    .and_then(|bytecode| bytecode.bytecode.as_ref())
-                    .and_then(|bytecode| bytecode.source_map.as_ref())
-                    .and_then(|source_map| sourcemap::parse(source_map).ok())?;
-
-                Some((id, source_map))
+                artifact.get_source_map().and_then(|source_map| Some((id, source_map.ok()?)))
             })
             .collect();
 
