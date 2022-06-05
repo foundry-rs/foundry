@@ -1,9 +1,14 @@
-use crate::{cmd::get_cached_entry_by_name, compile, opts::forge::ContractInfo};
+use crate::{
+    cmd::{get_cached_entry_by_name, unwrap_contracts, VerifyBundle},
+    compile,
+    opts::forge::ContractInfo,
+};
 use eyre::{Context, ContextCompat};
 
 use ethers::{
     prelude::{
-        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Project, ProjectCompileOutput,
+        artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
+        ProjectCompileOutput, ProjectPathsConfig,
     },
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
@@ -15,6 +20,22 @@ use std::{collections::BTreeMap, str::FromStr};
 use super::*;
 
 impl ScriptArgs {
+    /// Compiles the file or project and the verify metadata.
+    pub fn compile(
+        &mut self,
+        script_config: &ScriptConfig,
+    ) -> eyre::Result<(BuildOutput, VerifyBundle)> {
+        let build_output = self.build(script_config)?;
+
+        let verify = VerifyBundle::new(
+            &build_output.project,
+            &script_config.config,
+            unwrap_contracts(&build_output.highlevel_known_contracts, false),
+        );
+
+        Ok((build_output, verify))
+    }
+
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
@@ -133,14 +154,26 @@ impl ScriptArgs {
             },
         )?;
 
+        let target = extra_info.target_id.expect("Target not found?");
+
+        let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
+            run_dependencies.into_iter().unzip();
+
+        // Merge with user provided libraries
+        let mut new_libraries = Libraries::parse(&new_libraries)?;
+        for (file, libraries) in libraries_addresses.libs.into_iter() {
+            new_libraries.libs.entry(file).or_insert(BTreeMap::new()).extend(libraries.into_iter())
+        }
+
         Ok(BuildOutput {
-            target: extra_info.target_id.expect("Target not found?"),
+            target,
             contract,
             known_contracts: contracts,
             highlevel_known_contracts,
-            predeploy_libraries: run_dependencies,
+            predeploy_libraries,
             sources: BTreeMap::new(),
             project,
+            libraries: new_libraries,
         })
     }
 
@@ -152,13 +185,20 @@ impl ScriptArgs {
 
         let output = match dunce::canonicalize(&self.path) {
             // We got passed an existing path to the contract
-            Ok(target_contract) => compile::compile_files(&project, vec![target_contract])?,
+            Ok(target_contract) => {
+                self.standalone_check(&target_contract, &project.paths)?;
+
+                compile::compile_files(&project, vec![target_contract])?
+            }
             Err(_) => {
                 // We either got passed `contract_path:contract_name` or the contract name.
                 let contract = ContractInfo::from_str(&self.path)?;
                 let (path, output) = if let Some(path) = contract.path {
-                    let output =
-                        compile::compile_files(&project, vec![dunce::canonicalize(&path)?])?;
+                    let path = dunce::canonicalize(&path)?;
+
+                    self.standalone_check(&path, &project.paths)?;
+
+                    let output = compile::compile_files(&project, vec![path.clone()])?;
 
                     (path, output)
                 } else {
@@ -166,10 +206,10 @@ impl ScriptArgs {
                     let cache = SolFilesCache::read_joined(&project.paths)?;
 
                     let res = get_cached_entry_by_name(&cache, &contract.name)?;
-                    (res.0.to_str().ok_or(eyre::eyre!("Invalid path string."))?.to_string(), output)
+                    (res.0, output)
                 };
 
-                self.path = path;
+                self.path = path.to_string_lossy().to_string();
                 self.target_contract = Some(contract.name);
                 output
             }
@@ -179,13 +219,27 @@ impl ScriptArgs {
         // artifacts
         Ok((project, output))
     }
+
+    /// Throws an error if `target` is a standalone script and `verify` is requested. We only allow
+    /// `verify` inside projects.
+    fn standalone_check(
+        &self,
+        target_contract: &PathBuf,
+        project_paths: &ProjectPathsConfig,
+    ) -> eyre::Result<()> {
+        let graph = Graph::resolve(project_paths)?;
+        if graph.files().get(target_contract).is_none() && self.verify {
+            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+        }
+        Ok(())
+    }
 }
 
 struct ExtraLinkingInfo<'a> {
     no_target_name: bool,
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
-    dependencies: &'a mut Vec<ethers::types::Bytes>,
+    dependencies: &'a mut Vec<(String, ethers::types::Bytes)>,
     matched: bool,
     target_id: Option<ArtifactId>,
 }
@@ -196,6 +250,7 @@ pub struct BuildOutput {
     pub contract: CompactContractBytecode,
     pub known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    pub libraries: Libraries,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
     pub sources: BTreeMap<u32, String>,
 }

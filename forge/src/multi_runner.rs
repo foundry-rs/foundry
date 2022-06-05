@@ -91,8 +91,17 @@ impl MultiContractRunnerBuilder {
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
-                    deployable_contracts
-                        .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                    deployable_contracts.insert(
+                        id.clone(),
+                        (
+                            abi.clone(),
+                            bytecode,
+                            dependencies
+                                .into_iter()
+                                .map(|(_, bytecode)| bytecode)
+                                .collect::<Vec<_>>(),
+                        ),
+                    );
                 }
 
                 contract

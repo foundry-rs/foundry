@@ -17,7 +17,10 @@ use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Function},
-    prelude::{artifacts::ContractBytecodeSome, ArtifactId, Bytes, Project},
+    prelude::{
+        artifacts::{ContractBytecodeSome, Libraries},
+        ArtifactId, Bytes, Project,
+    },
     types::{transaction::eip2718::TypedTransaction, Address, Log, TransactionRequest, U256},
 };
 use forge::{

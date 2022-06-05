@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{unwrap_contracts, ScriptSequence, VerifyBundle},
+    cmd::{unwrap_contracts, ScriptSequence},
     utils::get_http_provider,
 };
 
@@ -35,20 +35,7 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let BuildOutput {
-            project,
-            target,
-            contract,
-            mut highlevel_known_contracts,
-            predeploy_libraries,
-            known_contracts: default_known_contracts,
-            sources,
-        } = self.build(&script_config)?;
-
-        let mut verify = VerifyBundle::new(
-            &script_config.config,
-            unwrap_contracts(&highlevel_known_contracts, false),
-        );
+        let (build_output, mut verify) = self.compile(&script_config)?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
@@ -61,8 +48,12 @@ impl ScriptArgs {
             let provider = get_http_provider(&fork_url);
             let chain = provider.get_chainid().await?.as_u64();
 
-            let mut deployment_sequence =
-                ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
+            let mut deployment_sequence = ScriptSequence::load(
+                &script_config.config,
+                &self.sig,
+                &build_output.target,
+                chain,
+            )?;
 
             receipts::wait_for_pending(&provider, &mut deployment_sequence).await?;
 
@@ -71,12 +62,36 @@ impl ScriptArgs {
             }
 
             if self.verify {
+                // We might have predeployed libraries from the broadcasting, so we need to relink
+                // the contracts with them, since their mapping is not included in the solc cache
+                // files.
+                let BuildOutput { highlevel_known_contracts, .. } = self.link(
+                    build_output.project,
+                    build_output.known_contracts,
+                    Libraries::parse(&deployment_sequence.libraries)?,
+                    script_config.config.sender, // irrelevant, since we're not creating any
+                    U256::zero(),                // irrelevant, since we're not creating any
+                )?;
+
+                verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+
                 deployment_sequence.verify_contracts(verify, chain).await?;
             }
         } else {
+            let BuildOutput {
+                project,
+                target,
+                contract,
+                mut highlevel_known_contracts,
+                predeploy_libraries,
+                known_contracts: default_known_contracts,
+                sources,
+                mut libraries,
+            } = build_output;
+
             let known_contracts = unwrap_contracts(&highlevel_known_contracts, true);
 
-            // execute once with default sender
+            // Execute once with default sender.
             let sender = script_config.evm_opts.sender;
             let mut result =
                 self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
@@ -91,7 +106,8 @@ impl ScriptArgs {
                     result.transactions.as_ref(),
                     &predeploy_libraries,
                 )? {
-                    highlevel_known_contracts = self
+                    // We have a new sender, so we need to relink all the predeployed libraries.
+                    (libraries, highlevel_known_contracts) = self
                         .rerun_with_new_deployer(
                             project,
                             &mut script_config,
@@ -107,7 +123,7 @@ impl ScriptArgs {
                         &unwrap_contracts(&highlevel_known_contracts, true),
                     )?;
                 } else {
-                    // prepend predeploy libraries
+                    // Add predeploy libraries to the list of broadcastable transactions.
                     let mut lib_deploy = self.create_deploy_transactions(
                         script_config.evm_opts.sender,
                         script_config.sender_nonce,
@@ -132,6 +148,7 @@ impl ScriptArgs {
                 self.handle_broadcastable_transactions(
                     &target,
                     result.transactions,
+                    libraries,
                     &mut decoder,
                     &script_config,
                     verify,
@@ -145,13 +162,13 @@ impl ScriptArgs {
 
     /// Reruns the execution with a new sender and relinks the libraries accordingly
     async fn rerun_with_new_deployer(
-        &self,
+        &mut self,
         project: Project,
         script_config: &mut ScriptConfig,
         new_sender: Address,
         first_run_result: &mut ScriptResult,
         default_known_contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    ) -> eyre::Result<BTreeMap<ArtifactId, ContractBytecodeSome>> {
+    ) -> eyre::Result<(Libraries, BTreeMap<ArtifactId, ContractBytecodeSome>)> {
         // if we had a new sender that requires relinking, we need to
         // get the nonce mainnet for accurate addresses for predeploy libs
         let nonce = foundry_utils::next_nonce(
@@ -166,14 +183,15 @@ impl ScriptArgs {
         .await?;
         script_config.sender_nonce = nonce;
 
-        let BuildOutput { contract, highlevel_known_contracts, predeploy_libraries, .. } = self
-            .link(
-                project,
-                default_known_contracts,
-                script_config.config.parsed_libraries()?,
-                new_sender,
-                nonce,
-            )?;
+        let BuildOutput {
+            libraries, contract, highlevel_known_contracts, predeploy_libraries, ..
+        } = self.link(
+            project,
+            default_known_contracts,
+            script_config.config.parsed_libraries()?,
+            new_sender,
+            nonce,
+        )?;
 
         let mut txs = self.create_deploy_transactions(new_sender, nonce, &predeploy_libraries);
 
@@ -189,7 +207,7 @@ impl ScriptArgs {
         *first_run_result = result;
         first_run_result.transactions = Some(txs);
 
-        Ok(highlevel_known_contracts)
+        Ok((libraries, highlevel_known_contracts))
     }
 
     /// In case the user has loaded *only* one private-key, we can assume that he's using it as the
