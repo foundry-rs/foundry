@@ -10,7 +10,6 @@ use crate::{
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
-    abi::Address,
     prelude::{Artifact, Project, ProjectCompileOutput},
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap, ArtifactId},
 };
@@ -117,23 +116,28 @@ impl CoverageArgs {
     fn prepare(
         &self,
         output: ProjectCompileOutput,
-    ) -> eyre::Result<(CoverageMap, HashMap<ArtifactId, SourceMap>)> {
+    ) -> eyre::Result<(CoverageMap, HashMap<ArtifactId, (SourceMap, SourceMap)>)> {
         // Get sources and source maps
         let (artifacts, sources) = output.into_artifacts_with_sources();
 
-        let source_maps: HashMap<ArtifactId, SourceMap> = artifacts
-            .into_iter()
-            .filter(|(_, artifact)| {
-                // TODO: Filter out dependencies
-                // Filter out tests
-                !artifact
-                    .get_abi()
-                    .map(|abi| abi.functions().any(|f| f.name.starts_with("test")))
-                    .unwrap_or_default()
-            })
-            .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
+        let source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)> = artifacts
+            .iter()
+            // TODO: Filter out dependencies
+            .map(|(id, artifact)| (id.clone(), CompactContractBytecode::from(artifact.clone())))
             .filter_map(|(id, artifact): (ArtifactId, CompactContractBytecode)| {
-                artifact.get_source_map().and_then(|source_map| Some((id, source_map.ok()?)))
+                Some((
+                    id,
+                    (
+                        artifact.get_source_map()?.ok()?,
+                        artifact
+                            .get_deployed_bytecode()
+                            .as_ref()?
+                            .bytecode
+                            .as_ref()?
+                            .source_map()?
+                            .ok()?,
+                    ),
+                ))
             })
             .collect();
 
@@ -162,7 +166,7 @@ impl CoverageArgs {
         self,
         project: Project,
         output: ProjectCompileOutput,
-        source_maps: HashMap<ArtifactId, SourceMap>,
+        source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)>,
         mut map: CoverageMap,
         config: Config,
         evm_opts: EvmOpts,
@@ -198,29 +202,21 @@ impl CoverageArgs {
         let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), false).unwrap());
         for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
             if let Some(hit_map) = result.coverage.take() {
-                let mut identities: HashMap<Address, ArtifactId> = HashMap::new();
                 for (_, trace) in &mut result.traces {
                     local_identifier
                         .identify_addresses(trace.addresses().into_iter().collect())
                         .into_iter()
-                        .for_each(|identity| {
-                            if let Some(artifact_id) = identity.artifact_id {
-                                identities.insert(identity.address, artifact_id);
-                            }
-                        })
-                }
+                        .filter_map(|identity| {
+                            let artifact_id = identity.artifact_id?;
+                            let source_map = source_maps.get(&artifact_id)?;
 
-                // Record hits for contracts we have source maps for
-                for (version, hits, source_map) in
-                    identities.into_iter().filter_map(|(addr, artifact_id)| {
-                        Some((
-                            artifact_id.version.clone(),
-                            hit_map.get(&addr)?,
-                            source_maps.get(&artifact_id)?,
-                        ))
-                    })
-                {
-                    map.add_hit_map(version, source_map, hits.clone());
+                            Some((artifact_id, source_map, hit_map.get(&identity.address)?))
+                        })
+                        .for_each(|(id, source_map, hits)| {
+                            // TODO: Distinguish between creation/runtime in a smart way
+                            map.add_hit_map(id.version.clone(), &source_map.0, hits.clone());
+                            map.add_hit_map(id.version, &source_map.1, hits.clone())
+                        });
                 }
             }
         }
