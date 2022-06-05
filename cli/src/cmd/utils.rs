@@ -330,12 +330,10 @@ impl ScriptSequence {
         self.libraries = {
             let mut str_libs = vec![];
             for (file, libs) in libraries.libs {
-                let file = file.to_str().expect("wrong path");
-
                 for (name, address) in libs {
                     str_libs.push(format!(
                         "{}:{}:{}",
-                        file.strip_prefix("__").unwrap_or(file),
+                        file.to_str().expect("wrong path"),
                         name,
                         address
                     ));
@@ -427,7 +425,7 @@ impl ScriptSequence {
                                 retry: RETRY_VERIFY_ON_CREATE,
                                 libraries: self.libraries.clone(),
                             };
-                            dbg!(&verify.libraries);
+
                             future_verifications.push(verify.run());
                         }
                     }

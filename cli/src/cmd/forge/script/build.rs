@@ -1,4 +1,8 @@
-use crate::{cmd::get_cached_entry_by_name, compile, opts::forge::ContractInfo};
+use crate::{
+    cmd::{get_cached_entry_by_name, unwrap_contracts, VerifyBundle},
+    compile,
+    opts::forge::ContractInfo,
+};
 use eyre::{Context, ContextCompat};
 
 use ethers::{
@@ -16,6 +20,22 @@ use std::{collections::BTreeMap, str::FromStr};
 use super::*;
 
 impl ScriptArgs {
+    /// Compiles the file or project and the verify metadata.
+    pub fn compile(
+        &mut self,
+        script_config: &ScriptConfig,
+    ) -> eyre::Result<(BuildOutput, VerifyBundle)> {
+        let build_output = self.build(script_config)?;
+
+        let verify = VerifyBundle::new(
+            &build_output.project,
+            &script_config.config,
+            unwrap_contracts(&build_output.highlevel_known_contracts, false),
+        );
+
+        Ok((build_output, verify))
+    }
+
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
         let (project, output) = self.get_project_and_output(script_config)?;
@@ -134,15 +154,24 @@ impl ScriptArgs {
             },
         )?;
 
+        let target = extra_info.target_id.expect("Target not found?");
+        let mut predeploy_libraries = vec![];
+        let mut libraries = vec![];
+
+        for (library, bytecode) in run_dependencies.into_iter() {
+            predeploy_libraries.push(bytecode);
+            libraries.push(library);
+        }
+
         Ok(BuildOutput {
-            target: extra_info.target_id.expect("Target not found?"),
+            target,
             contract,
             known_contracts: contracts,
             highlevel_known_contracts,
-            predeploy_libraries: run_dependencies,
+            predeploy_libraries,
             sources: BTreeMap::new(),
             project,
-            libraries: libs,
+            libraries: Libraries::parse(&libraries)?,
         })
     }
 
@@ -208,7 +237,7 @@ struct ExtraLinkingInfo<'a> {
     no_target_name: bool,
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
-    dependencies: &'a mut Vec<ethers::types::Bytes>,
+    dependencies: &'a mut Vec<(String, ethers::types::Bytes)>,
     matched: bool,
     target_id: Option<ArtifactId>,
 }

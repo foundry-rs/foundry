@@ -54,7 +54,7 @@ pub struct PostLinkInput<'a, T, U> {
     pub known_contracts: &'a mut BTreeMap<ArtifactId, T>,
     pub id: ArtifactId,
     pub extra: &'a mut U,
-    pub dependencies: Vec<ethers_core::types::Bytes>,
+    pub dependencies: Vec<(String, ethers_core::types::Bytes)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -161,8 +161,8 @@ pub fn recurse_link<'a>(
     contracts: &'a BTreeMap<String, CompactContractBytecode>,
     // fname => Vec<(fname, file, key)>
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
-    // library deployment vector
-    deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // library deployment vector (file:contract:address, bytecode)
+    deployment: &'a mut Vec<(String, ethers_core::types::Bytes)>,
     // deployed library addresses fname => adddress
     deployed_library_addresses: &'a mut Libraries,
     // nonce to start at
@@ -213,30 +213,21 @@ pub fn recurse_link<'a>(
             }
 
             let address = deployed_address.unwrap_or_else(|| {
-                let address =
-                    ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
-
-                // So it doesn't mess with the internal logic by getting recognized as an existing
-                // library. We clear it later.
-                let path = format!("__{}", file);
-                deployed_library_addresses
-                    .libs
-                    .entry(PathBuf::from(path))
-                    .or_insert_with(BTreeMap::default)
-                    .insert(key.clone(), format!("0x{}", hex::encode(address)));
-
-                address
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
             });
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), address);
-            target_bytecode.1.link(file, key, address);
+            target_bytecode.1.link(file.clone(), key.clone(), address);
 
             if deployed_address.is_none() {
+                let library = format!("{}:{}:0x{}", file, key, hex::encode(address));
+
                 // push the dependency into the library deployment vector
-                deployment.push(
+                deployment.push((
+                    library,
                     next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
-                );
+                ));
             }
         });
     }
@@ -1007,10 +998,10 @@ mod tests {
                     }
                     "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }
@@ -1019,14 +1010,14 @@ mod tests {
                     }
                     "NestedLib.json:NestedLib" => {
                         assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
                     }
                     "LibraryConsumer.json:LibraryConsumer" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }
