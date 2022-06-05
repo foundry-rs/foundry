@@ -23,7 +23,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
-use std::{collections::BTreeMap, sync::mpsc::channel, thread};
+use std::{collections::HashMap, sync::mpsc::channel, thread};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -117,11 +117,11 @@ impl CoverageArgs {
     fn prepare(
         &self,
         output: ProjectCompileOutput,
-    ) -> eyre::Result<(CoverageMap, BTreeMap<ArtifactId, SourceMap>)> {
+    ) -> eyre::Result<(CoverageMap, HashMap<ArtifactId, SourceMap>)> {
         // Get sources and source maps
         let (artifacts, sources) = output.into_artifacts_with_sources();
 
-        let source_maps: BTreeMap<ArtifactId, SourceMap> = artifacts
+        let source_maps: HashMap<ArtifactId, SourceMap> = artifacts
             .into_iter()
             .filter(|(_, artifact)| {
                 // TODO: Filter out dependencies
@@ -162,7 +162,7 @@ impl CoverageArgs {
         self,
         project: Project,
         output: ProjectCompileOutput,
-        source_maps: BTreeMap<ArtifactId, SourceMap>,
+        source_maps: HashMap<ArtifactId, SourceMap>,
         mut map: CoverageMap,
         config: Config,
         evm_opts: EvmOpts,
@@ -198,7 +198,7 @@ impl CoverageArgs {
         let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), false).unwrap());
         for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
             if let Some(hit_map) = result.coverage.take() {
-                let mut identities: BTreeMap<Address, ArtifactId> = BTreeMap::new();
+                let mut identities: HashMap<Address, ArtifactId> = HashMap::new();
                 for (_, trace) in &mut result.traces {
                     local_identifier
                         .identify_addresses(trace.addresses().into_iter().collect())
@@ -210,19 +210,17 @@ impl CoverageArgs {
                         })
                 }
 
-                // TODO: Do we actually only need to identify the test contract that was run in
-                // order to get the source map and source version for that contract?
-                for (addr, artifact_id) in identities.into_iter() {
-                    // TODO: Make this more sane
-                    if let Some(source_map) = source_maps.get(&artifact_id) {
-                        if let Some(hit_map) = hit_map.get(&addr) {
-                            map.add_hit_map(
-                                artifact_id.version.clone(),
-                                source_map,
-                                hit_map.clone(),
-                            );
-                        }
-                    }
+                // Record hits for contracts we have source maps for
+                for (version, hits, source_map) in
+                    identities.into_iter().filter_map(|(addr, artifact_id)| {
+                        Some((
+                            artifact_id.version.clone(),
+                            hit_map.get(&addr)?,
+                            source_maps.get(&artifact_id)?,
+                        ))
+                    })
+                {
+                    map.add_hit_map(version, source_map, hits.clone());
                 }
             }
         }
