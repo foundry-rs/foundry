@@ -4,7 +4,7 @@ use super::{
     Executor,
 };
 use crate::executor::{
-    backend::Backend2,
+    backend::Backend,
     fork::{BlockchainDb, BlockchainDbMeta},
 };
 use ethers::{
@@ -85,7 +85,7 @@ impl ExecutorBuilder {
     }
 
     /// Builds the executor as configured.
-    pub fn build(self, db: Backend2) -> Executor {
+    pub fn build(self, db: Backend) -> Executor {
         let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);
         Executor::new(db, self.env, self.inspector_config, gas_limit)
     }

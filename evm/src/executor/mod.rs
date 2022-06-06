@@ -36,7 +36,7 @@ pub use backend::Backend;
 
 pub mod snapshot;
 
-use crate::executor::{backend::Backend2, inspector::DEFAULT_CREATE2_DEPLOYER};
+use crate::executor::{backend::Backend, inspector::DEFAULT_CREATE2_DEPLOYER};
 pub use builder::{ExecutorBuilder, Fork};
 
 /// A mapping of addresses to their changed state.
@@ -50,7 +50,7 @@ pub struct Executor {
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    pub backend: Backend2,
+    pub backend: Backend,
     env: Env,
     inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -63,7 +63,7 @@ pub struct Executor {
 
 impl Executor {
     pub fn new(
-        mut backend: Backend2,
+        mut backend: Backend,
         env: Env,
         inspector_config: InspectorStackConfig,
         gas_limit: U256,

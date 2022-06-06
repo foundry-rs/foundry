@@ -7,7 +7,7 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::executor::{
-    backend::Backend2,
+    backend::Backend,
     fork::{CreateFork, MultiFork},
     opts::EvmOpts,
     Backend, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
@@ -121,7 +121,7 @@ impl MultiContractRunner {
 
         {
             // the db backend that serves all the data, each contract gets its own instance
-            let db = Backend2::new(forks, self.fork2.take());
+            let db = Backend::new(forks, self.fork2.take());
 
             let results = self
                 .contracts

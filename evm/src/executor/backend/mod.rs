@@ -20,7 +20,7 @@ pub use in_memory_db::MemDb;
 #[auto_impl::auto_impl(&mut, Box)]
 pub trait BackendTrait: Database {}
 
-impl BackendTrait for Backend2 {}
+impl BackendTrait for Backend {}
 
 impl<'a> BackendTrait for RefDBWrapper<'a> {}
 
@@ -71,7 +71,7 @@ impl<'a> BackendTrait for RefDBWrapper<'a> {}
 /// snapshot is created before fork `B` is selected, then fork `A` will be the active fork again
 /// after reverting the snapshot.
 #[derive(Debug, Clone)]
-pub struct Backend2 {
+pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
     /// tracks all created forks
@@ -85,7 +85,7 @@ pub struct Backend2 {
 
 // === impl Backend ===
 
-impl Backend2 {
+impl Backend {
     /// Creates a new instance of `Backend`
     ///
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
@@ -167,7 +167,7 @@ impl Backend2 {
 
 // a bunch of delegate revm trait implementations
 
-impl DatabaseRef for Backend2 {
+impl DatabaseRef for Backend {
     fn basic(&self, address: H160) -> AccountInfo {
         self.db.basic(address)
     }
@@ -185,13 +185,13 @@ impl DatabaseRef for Backend2 {
     }
 }
 
-impl DatabaseCommit for Backend2 {
+impl DatabaseCommit for Backend {
     fn commit(&mut self, changes: Map<H160, Account>) {
         self.db.commit(changes)
     }
 }
 
-impl Database for Backend2 {
+impl Database for Backend {
     fn basic(&mut self, address: H160) -> AccountInfo {
         self.db.basic(address)
     }
