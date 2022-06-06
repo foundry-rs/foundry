@@ -3,37 +3,42 @@
 use crate::solang_ext::*;
 use solang_parser::pt::*;
 
-/// The error type a [Visitor] may return
-pub type VError = Box<dyn std::error::Error>;
-/// The result type a [Visitor] may return
-pub type VResult = Result<(), VError>;
-
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
 /// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
-    fn visit_source(&mut self, _loc: Loc) -> VResult {
+    type Error: std::error::Error;
+
+    fn visit_source(&mut self, _loc: Loc) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
+    fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_doc_comment(&mut self, _doc_comment: &mut DocComment) -> VResult {
+    fn visit_doc_comment(&mut self, _doc_comment: &mut DocComment) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
+    fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_pragma(&mut self, _ident: &mut Identifier, _str: &mut StringLiteral) -> VResult {
+    fn visit_pragma(
+        &mut self,
+        _ident: &mut Identifier,
+        _str: &mut StringLiteral,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, _loc: Loc, _import: &mut StringLiteral) -> VResult {
+    fn visit_import_plain(
+        &mut self,
+        _loc: Loc,
+        _import: &mut StringLiteral,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -42,7 +47,7 @@ pub trait Visitor {
         _loc: Loc,
         _global: &mut StringLiteral,
         _alias: &mut Identifier,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -51,11 +56,11 @@ pub trait Visitor {
         _loc: Loc,
         _imports: &mut [(Identifier, Option<Identifier>)],
         _from: &mut StringLiteral,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> VResult {
+    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -64,7 +69,7 @@ pub trait Visitor {
         loc: Loc,
         _dialect: &mut Option<StringLiteral>,
         _block: &mut YulBlock,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -73,32 +78,32 @@ pub trait Visitor {
         loc: Loc,
         _unchecked: bool,
         _statements: &mut Vec<Statement>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_args(&mut self, loc: Loc, _args: &mut Vec<NamedArgument>) -> VResult {
+    fn visit_args(&mut self, loc: Loc, _args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
     /// Don't write semicolon at the end because expressions can appear as both
     /// part of other node and a statement in the function body
-    fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_ident(&mut self, loc: Loc, _ident: &mut Identifier) -> VResult {
+    fn visit_ident(&mut self, loc: Loc, _ident: &mut Identifier) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_emit(&mut self, loc: Loc, _event: &mut Expression) -> VResult {
+    fn visit_emit(&mut self, loc: Loc, _event: &mut Expression) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<(), Self::Error> {
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -110,7 +115,7 @@ pub trait Visitor {
         loc: Loc,
         _declaration: &mut VariableDeclaration,
         _expr: &mut Option<Expression>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
 
@@ -119,11 +124,15 @@ pub trait Visitor {
 
     /// Don't write semicolon at the end because variable declarations can appear in both
     /// struct definition and function body as a statement
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<(), Self::Error> {
         self.visit_source(var.loc)
     }
 
-    fn visit_return(&mut self, loc: Loc, _expr: &mut Option<Expression>) -> VResult {
+    fn visit_return(
+        &mut self,
+        loc: Loc,
+        _expr: &mut Option<Expression>,
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
 
@@ -135,7 +144,7 @@ pub trait Visitor {
         loc: Loc,
         _error: &mut Option<Expression>,
         _args: &mut Vec<Expression>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
 
@@ -147,18 +156,18 @@ pub trait Visitor {
         loc: Loc,
         _error: &mut Option<Expression>,
         _args: &mut Vec<NamedArgument>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_break(&mut self) -> VResult {
+    fn visit_break(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_continue(&mut self) -> VResult {
+    fn visit_continue(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -169,7 +178,7 @@ pub trait Visitor {
         _expr: &mut Expression,
         _returns: &mut Option<(Vec<(Loc, Option<Parameter>)>, Box<Statement>)>,
         _clauses: &mut Vec<CatchClause>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -179,7 +188,7 @@ pub trait Visitor {
         _cond: &mut Expression,
         _if_branch: &mut Box<Statement>,
         _else_branch: &mut Option<Box<Statement>>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -188,11 +197,16 @@ pub trait Visitor {
         loc: Loc,
         _cond: &mut Statement,
         _body: &mut Expression,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_while(&mut self, loc: Loc, _cond: &mut Expression, _body: &mut Statement) -> VResult {
+    fn visit_while(
+        &mut self,
+        loc: Loc,
+        _cond: &mut Expression,
+        _body: &mut Statement,
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -203,11 +217,11 @@ pub trait Visitor {
         _cond: &mut Option<Box<Expression>>,
         _update: &mut Option<Box<Statement>>,
         _body: &mut Option<Box<Statement>>,
-    ) -> VResult {
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<(), Self::Error> {
         self.visit_source(func.loc())?;
         if func.body.is_none() {
             self.visit_stray_semicolon()?;
@@ -216,73 +230,79 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+    fn visit_function_attribute(
+        &mut self,
+        attribute: &mut FunctionAttribute,
+    ) -> Result<(), Self::Error> {
         self.visit_source(attribute.loc())?;
         Ok(())
     }
 
-    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> VResult {
+    fn visit_var_attribute(
+        &mut self,
+        attribute: &mut VariableAttribute,
+    ) -> Result<(), Self::Error> {
         self.visit_source(attribute.loc())?;
         Ok(())
     }
 
-    fn visit_base(&mut self, base: &mut Base) -> VResult {
+    fn visit_base(&mut self, base: &mut Base) -> Result<(), Self::Error> {
         self.visit_source(base.loc)
     }
 
-    fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
+    fn visit_parameter(&mut self, parameter: &mut Parameter) -> Result<(), Self::Error> {
         self.visit_source(parameter.loc)
     }
 
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<(), Self::Error> {
         self.visit_source(structure.loc)?;
 
         Ok(())
     }
 
-    fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+    fn visit_event(&mut self, event: &mut EventDefinition) -> Result<(), Self::Error> {
         self.visit_source(event.loc)?;
         self.visit_stray_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> Result<(), Self::Error> {
         self.visit_source(param.loc)
     }
 
-    fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<(), Self::Error> {
         self.visit_source(error.loc)?;
         self.visit_stray_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
+    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> Result<(), Self::Error> {
         self.visit_source(param.loc)
     }
 
-    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> Result<(), Self::Error> {
         self.visit_source(def.loc)
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult {
+    fn visit_stray_semicolon(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_opening_paren(&mut self) -> VResult {
+    fn visit_opening_paren(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_closing_paren(&mut self) -> VResult {
+    fn visit_closing_paren(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_newline(&mut self) -> VResult {
+    fn visit_newline(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn visit_using(&mut self, using: &mut Using) -> VResult {
+    fn visit_using(&mut self, using: &mut Using) -> Result<(), Self::Error> {
         self.visit_source(using.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -297,11 +317,16 @@ pub trait Visitor {
 /// We want to take a `&mut self` to be able to implement some advanced features in the future such
 /// as modifying the Parse Tree before formatting it.
 pub trait Visitable {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult;
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor;
 }
 
 impl Visitable for SourceUnitPart {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
             SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
@@ -321,7 +346,10 @@ impl Visitable for SourceUnitPart {
 }
 
 impl Visitable for Import {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         match self {
             Import::Plain(import, loc) => v.visit_import_plain(*loc, import),
             Import::GlobalSymbol(global, import_as, loc) => {
@@ -333,7 +361,10 @@ impl Visitable for Import {
 }
 
 impl Visitable for ContractPart {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         match self {
             ContractPart::StructDefinition(structure) => v.visit_struct(structure),
             ContractPart::EventDefinition(event) => v.visit_event(event),
@@ -350,7 +381,10 @@ impl Visitable for ContractPart {
 }
 
 impl Visitable for Statement {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         match self {
             Statement::Block { loc, unchecked, statements } => {
                 v.visit_block(*loc, *unchecked, statements)
@@ -389,19 +423,28 @@ impl Visitable for Statement {
 }
 
 impl Visitable for Loc {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         v.visit_source(*self)
     }
 }
 
 impl Visitable for Expression {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         v.visit_expr(LineOfCode::loc(self), self)
     }
 }
 
 impl Visitable for Identifier {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
         v.visit_ident(self.loc, self)
     }
 }
@@ -409,7 +452,10 @@ impl Visitable for Identifier {
 macro_rules! impl_visitable {
     ($type:ty, $func:ident) => {
         impl Visitable for $type {
-            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+            fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+            where
+                V: Visitor,
+            {
                 v.$func(self)
             }
         }

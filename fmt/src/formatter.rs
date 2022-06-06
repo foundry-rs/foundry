@@ -5,13 +5,50 @@ use std::fmt::Write;
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::*;
+use thiserror::Error;
 
 use crate::{
     comments::{CommentWithMetadata, Comments},
     helpers,
     solang_ext::*,
-    visit::{VError, VResult, Visitable, Visitor},
+    visit::{Visitable, Visitor},
 };
+
+#[derive(Error, Debug)]
+pub enum FormatterError {
+    #[error(transparent)]
+    Fmt(#[from] std::fmt::Error),
+    #[error(transparent)]
+    Custom(Box<dyn std::error::Error>),
+}
+
+impl FormatterError {
+    fn custom(err: impl std::error::Error + 'static) -> Self {
+        Self::Custom(Box::new(err))
+    }
+}
+
+#[allow(unused_macros)]
+macro_rules! format_err {
+    ($msg:literal $(,)?) => {
+        $crate::formatter::FormatterError::custom($msg.to_string())
+    };
+    ($err:expr $(,)?) => {
+        $crate::formatter::FormatterError::custom($err)
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::formatter::FormatterError::custom(format!($fmt, $($arg)*))
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! bail {
+    ($($arg:tt)*) => {
+        return Err($crate::formatter::format_err!($($arg)*));
+    }
+}
+
+pub type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// Contains the config and rule set
 #[derive(Debug, Clone)]
@@ -367,14 +404,15 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
-    fn write_opening_bracket(&mut self) -> std::fmt::Result {
+    fn write_opening_bracket(&mut self) -> Result<()> {
         let space = if self.next_chunk_needs_space('{') { " " } else { "" };
-        write!(self.buf(), "{space}{{")
+        write!(self.buf(), "{space}{{")?;
+        Ok(())
     }
 
     /// Write closing bracket with respect to `config.bracket_spacing` setting:
     /// `" }"` if `true`, `"}"` if `false`
-    fn write_closing_bracket(&mut self) -> std::fmt::Result {
+    fn write_closing_bracket(&mut self) -> Result<()> {
         let bracket = if self.config.bracket_spacing {
             if self.next_chunk_needs_space('}') {
                 " }"
@@ -384,25 +422,28 @@ impl<'a, W: Write> Formatter<'a, W> {
         } else {
             "}"
         };
-        write!(self.buf(), "{bracket}")
+        write!(self.buf(), "{bracket}")?;
+        Ok(())
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
-    fn write_empty_brackets(&mut self) -> std::fmt::Result {
+    fn write_empty_brackets(&mut self) -> Result<()> {
         let space = if self.next_chunk_needs_space('{') { " " } else { "" };
         let brackets = if self.config.bracket_spacing { "{ }" } else { "{}" };
-        write!(self.buf(), "{space}{brackets}")
+        write!(self.buf(), "{space}{brackets}")?;
+        Ok(())
     }
 
     /// Write semicolon to the buffer
-    fn write_semicolon(&mut self) -> std::fmt::Result {
-        write!(self.buf(), ";")
+    fn write_semicolon(&mut self) -> Result<()> {
+        write!(self.buf(), ";")?;
+        Ok(())
     }
 
     /// Write whitespace separator to the buffer
     /// `"\n"` if `multiline` is `true`, `" "` if `false`
-    fn write_whitespace_separator(&mut self, multiline: bool) -> std::fmt::Result {
+    fn write_whitespace_separator(&mut self, multiline: bool) -> Result<()> {
         if !self.is_beginning_of_line() {
             write!(self.buf(), "{}", if multiline { "\n" } else { " " })?;
         }
@@ -413,10 +454,9 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn items_to_chunks<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
-        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b)), VError>> + 'b,
-    ) -> Result<Vec<Chunk>, VError> {
-        let mut items =
-            items.into_iter().collect::<Result<Vec<_>, VError>>()?.into_iter().peekable();
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
+        let mut items = items.into_iter().collect::<Result<Vec<_>>>()?.into_iter().peekable();
         let mut out = Vec::new();
         while let Some((loc, item)) = items.next() {
             let chunk_next_byte_offset =
@@ -429,13 +469,12 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn items_to_chunks_sorted<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
-        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b)), VError>>
-            + 'b,
-    ) -> Result<Vec<Chunk>, VError> {
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
         let mut items = items
             .into_iter()
             .map_ok(|(loc, vis)| (vis.attr_sort_key(), loc, vis))
-            .collect::<Result<Vec<_>, VError>>()?
+            .collect::<Result<Vec<_>>>()?
             .into_iter()
             .peekable();
         let mut out = Vec::new();
@@ -467,7 +506,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         chunks: impl IntoIterator<Item = &'b Chunk>,
         separator: &str,
         multiline: bool,
-    ) -> std::fmt::Result {
+    ) -> Result<()> {
         let mut chunks = chunks.into_iter().peekable();
         while let Some(chunk) = chunks.next() {
             let mut chunk = chunk.clone();
@@ -509,7 +548,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.source[a.end()..b.start()].matches('\n').count()
     }
 
-    fn write_comment(&mut self, comment: &CommentWithMetadata) -> std::fmt::Result {
+    fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         if comment.is_prefix() {
             let last_indent_group_skipped = self.last_indent_group_skipped();
             if !self.is_beginning_of_line() {
@@ -536,14 +575,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn write_postfix_comments_before(&mut self, byte_end: usize) -> std::fmt::Result {
+    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
         for postfix in self.comments.remove_postfixes_before(byte_end) {
             self.write_comment(&postfix)?;
         }
         Ok(())
     }
 
-    fn write_prefix_comments_before(&mut self, byte_end: usize) -> std::fmt::Result {
+    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
         for prefix in self.comments.remove_prefixes_before(byte_end) {
             self.write_comment(&prefix)?;
         }
@@ -570,8 +609,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         byte_offset: usize,
         next_byte_offset: Option<usize>,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<Chunk, VError> {
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Chunk> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
         self.push_temp_buf();
@@ -588,11 +627,14 @@ impl<'a, W: Write> Formatter<'a, W> {
         byte_offset: usize,
         next_byte_offset: Option<usize>,
         visitable: &mut impl Visitable,
-    ) -> Result<Chunk, VError> {
-        self.chunked(byte_offset, next_byte_offset, |fmt| visitable.visit(fmt))
+    ) -> Result<Chunk> {
+        self.chunked(byte_offset, next_byte_offset, |fmt| {
+            visitable.visit(fmt)?;
+            Ok(())
+        })
     }
 
-    fn write_chunk(&mut self, chunk: &Chunk) -> std::fmt::Result {
+    fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
         // handle comments before chunk
         for comment in &chunk.postfixes_before {
             self.write_comment(comment)?;
@@ -638,8 +680,8 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn simulate_to_string(
         &mut self,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<String, VError> {
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<String> {
         let comments = self.comments.clone();
         self.push_temp_buf();
         fun(self)?;
@@ -648,14 +690,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(buf.w)
     }
 
-    fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String, VError> {
-        self.simulate_to_string(|fmt| {
-            fmt.write_chunk(chunk)?;
-            Ok(())
-        })
+    fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
+        self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
 
-    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool, VError> {
+    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool> {
         let chunk_str = self.chunk_to_string(chunk)?;
         Ok(self.will_it_fit(format_string.replacen("{}", &chunk_str, 1)))
     }
@@ -665,20 +704,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         format_string: &str,
         items: impl IntoIterator<Item = &'b Chunk>,
         separator: &str,
-    ) -> Result<bool, VError> {
+    ) -> Result<bool> {
         let items = items.into_iter().collect_vec();
         let chunks = self.simulate_to_string(|fmt| {
-            fmt.write_chunks_separated(items.iter().copied(), separator, false)?;
-            Ok(())
+            fmt.write_chunks_separated(items.iter().copied(), separator, false)
         })?;
         Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
     }
 
-    fn indented(
-        &mut self,
-        delta: usize,
-        fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<(), VError> {
+    fn indented(&mut self, delta: usize, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
         self.indented_if(true, delta, fun)
     }
 
@@ -686,8 +720,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         condition: bool,
         delta: usize,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<(), VError> {
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<()> {
         if condition {
             self.indent(delta);
         }
@@ -701,7 +735,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn visit_operator_expr(
         &mut self,
         expr: &mut (impl Operator + Visitable + CodeLocation),
-    ) -> Result<(), VError> {
+    ) -> Result<()> {
         let op = expr.operator().unwrap();
         let has_space_around = expr.has_space_around();
         let op_precedence = expr.precedence();
@@ -771,10 +805,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn grouped(
-        &mut self,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<(), VError> {
+    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
         self.start_group();
         fun(self)?;
         self.end_group();
@@ -787,8 +818,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         first_chunk: impl std::fmt::Display,
         last_chunk: impl std::fmt::Display,
         next_byte_end: Option<usize>,
-        mut fun: impl FnMut(&mut Self) -> Result<(), VError>,
-    ) -> Result<(), VError> {
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<()> {
         self.write_postfix_comments_before(byte_offset)?;
 
         write_chunk!(self, byte_offset, "{first_chunk}")?;
@@ -826,8 +857,11 @@ impl<'a, W: Write> Formatter<'a, W> {
 
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
-    fn visit_source(&mut self, loc: Loc) -> VResult {
-        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())?;
+    type Error = FormatterError;
+
+    fn visit_source(&mut self, loc: Loc) -> Result<()> {
+        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())
+            .map_err(FormatterError::custom)?;
         let mut lines = source.splitn(2, '\n');
 
         write_chunk!(self, loc.end(), "{}", lines.next().unwrap())?;
@@ -842,7 +876,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
+    fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<()> {
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
         //     SourceUnitPart::PragmaDirective(_, _, _) => 0,
@@ -895,7 +929,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
+    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> Result<()> {
         match doc_comment.ty {
             CommentType::Line => {
                 write!(self.buf(), "///{}", doc_comment.comment)?;
@@ -936,7 +970,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
+    fn visit_contract(&mut self, contract: &mut ContractDefinition) -> Result<()> {
         self.context.contract = Some(contract.clone());
 
         self.grouped(|fmt| {
@@ -1014,7 +1048,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
+    fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> Result<()> {
         #[allow(clippy::if_same_then_else)]
         let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
@@ -1031,7 +1065,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> VResult {
+    fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), import.loc.start(), "import")?;
             write_chunk!(fmt, import.loc.start(), import.loc.end(), "\"{}\"", &import.string)?;
@@ -1046,7 +1080,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         global: &mut StringLiteral,
         alias: &mut Identifier,
-    ) -> VResult {
+    ) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), global.loc.start(), "import")?;
             write_chunk!(fmt, global.loc.start(), global.loc.end(), "\"{}\"", &global.string)?;
@@ -1063,7 +1097,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         imports: &mut [(Identifier, Option<Identifier>)],
         from: &mut StringLiteral,
-    ) -> VResult {
+    ) -> Result<()> {
         if imports.is_empty() {
             self.grouped(|fmt| {
                 write_chunk!(fmt, loc.start(), "import")?;
@@ -1119,7 +1153,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
+    fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
         let mut name = self.visit_to_chunk(
             enumeration.name.loc.start(),
             Some(enumeration.loc.end()),
@@ -1150,7 +1184,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> Result<()> {
         match expr {
             Expression::Type(loc, typ) => match typ {
                 Type::Address => write_chunk!(self, loc.start(), "address")?,
@@ -1238,12 +1272,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_ident(&mut self, loc: Loc, ident: &mut Identifier) -> VResult {
+    fn visit_ident(&mut self, loc: Loc, ident: &mut Identifier) -> Result<()> {
         write_chunk!(self, loc.end(), "{}", ident.name)?;
         Ok(())
     }
 
-    fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> VResult {
+    fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), "emit")?;
             event.visit(fmt)?;
@@ -1253,7 +1287,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<()> {
         self.grouped(|fmt| {
             var.ty.visit(fmt)?;
             if let Some(storage) = &var.storage {
@@ -1265,17 +1299,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_break(&mut self) -> VResult {
+    fn visit_break(&mut self) -> Result<()> {
         write_chunk!(self, "break;")?;
         Ok(())
     }
 
-    fn visit_continue(&mut self) -> VResult {
+    fn visit_continue(&mut self) -> Result<()> {
         write_chunk!(self, "continue;")?;
         Ok(())
     }
 
-    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
         self.context.function = Some(func.clone());
 
         self.write_postfix_comments_before(func.loc.start())?;
@@ -1398,7 +1432,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> Result<()> {
         match attribute {
             FunctionAttribute::Mutability(mutability) => {
                 write_chunk!(self, mutability.loc().end(), "{mutability}")?
@@ -1446,7 +1480,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_base(&mut self, base: &mut Base) -> VResult {
+    fn visit_base(&mut self, base: &mut Base) -> Result<()> {
         let name_loc = LineOfCode::loc(&base.name);
         let mut name = self.chunked(name_loc.start(), Some(name_loc.end()), |fmt| {
             fmt.grouped(|fmt| {
@@ -1484,7 +1518,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
+    fn visit_parameter(&mut self, parameter: &mut Parameter) -> Result<()> {
         self.grouped(|fmt| {
             parameter.ty.visit(fmt)?;
             if let Some(storage) = &parameter.storage {
@@ -1498,7 +1532,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
         let mut name = self.visit_to_chunk(
             structure.name.loc.start(),
             Some(structure.loc.end()),
@@ -1533,7 +1567,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, def.loc.start(), def.name.loc.start(), "type")?;
             def.name.visit(fmt)?;
@@ -1545,7 +1579,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult {
+    fn visit_stray_semicolon(&mut self) -> Result<()> {
         self.write_semicolon()?;
         Ok(())
     }
@@ -1555,7 +1589,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         unchecked: bool,
         statements: &mut Vec<Statement>,
-    ) -> VResult {
+    ) -> Result<()> {
         if unchecked {
             write!(self.buf(), "unchecked ")?;
         }
@@ -1601,22 +1635,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_opening_paren(&mut self) -> VResult {
+    fn visit_opening_paren(&mut self) -> Result<()> {
         write_chunk!(self, "(")?;
         Ok(())
     }
 
-    fn visit_closing_paren(&mut self) -> VResult {
+    fn visit_closing_paren(&mut self) -> Result<()> {
         write_chunk!(self, ")")?;
         Ok(())
     }
 
-    fn visit_newline(&mut self) -> VResult {
+    fn visit_newline(&mut self) -> Result<()> {
         writeln_chunk!(self)?;
         Ok(())
     }
 
-    fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+    fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
         let mut name =
             self.visit_to_chunk(event.name.loc.start(), Some(event.loc.end()), &mut event.name)?;
         name.content = format!("event {}(", name.content);
@@ -1651,7 +1685,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> Result<()> {
         self.grouped(|fmt| {
             param.ty.visit(fmt)?;
             if param.indexed {
@@ -1665,7 +1699,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<()> {
         let mut name =
             self.visit_to_chunk(error.name.loc.start(), Some(error.loc.end()), &mut error.name)?;
         name.content = format!("error {}(", name.content);
@@ -1692,7 +1726,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
+    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> Result<()> {
         self.grouped(|fmt| {
             param.ty.visit(fmt)?;
             if let Some(name) = &param.name {
@@ -1703,7 +1737,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_using(&mut self, using: &mut Using) -> VResult {
+    fn visit_using(&mut self, using: &mut Using) -> Result<()> {
         write_chunk!(self, using.loc.start(), "using")?;
 
         let ty_start = using.ty.as_mut().map(|ty| LineOfCode::loc(&ty).start());
@@ -1795,7 +1829,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> VResult {
+    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> Result<()> {
         let token = match attribute {
             VariableAttribute::Visibility(visibility) => visibility.to_string(),
             VariableAttribute::Constant(_) => "constant".to_string(),
@@ -1807,7 +1841,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         var.ty.visit(self)?;
 
         let name_start = var.name.loc.start();
