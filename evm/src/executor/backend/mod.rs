@@ -1,19 +1,20 @@
-use crate::executor::{fork::SharedBackend, Fork};
+use crate::executor::{
+    fork::{CreateFork, ForkId, MultiFork, SharedBackend},
+    snapshot::Snapshots,
+};
 use bytes::Bytes;
-use ethers::prelude::{H160, H256, U256};
+use ethers::{
+    prelude::{H160, H256, U256},
+    types::Address,
+};
 use hashbrown::HashMap as Map;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB, RefDBWrapper},
-    Account, AccountInfo, Database, DatabaseCommit, Env,
+    db::{CacheDB, DatabaseRef, EmptyDB},
+    Account, AccountInfo, Database, DatabaseCommit, Env, Inspector, Log, Return, TransactOut,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
-
 mod in_memory_db;
-use crate::executor::{
-    fork::{CreateFork, ForkId, MultiFork},
-    snapshot::Snapshots,
-};
 pub use in_memory_db::MemDb;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
@@ -21,8 +22,6 @@ pub use in_memory_db::MemDb;
 pub trait DatabaseExt: Database {}
 
 impl DatabaseExt for Backend {}
-
-impl<'a> DatabaseExt for RefDBWrapper<'a> {}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -246,5 +245,53 @@ impl DatabaseRef for BackendDatabase {
             BackendDatabase::InMemory(inner) => inner.block_hash(number),
             BackendDatabase::Forked(inner, _) => inner.block_hash(number),
         }
+    }
+}
+
+/// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called
+pub(crate) struct RefBackendWrapper<'a> {
+    pub inner: &'a mut Backend,
+}
+
+// === impl RefBackendWrapper ===
+
+impl<'a> RefBackendWrapper<'a> {
+    pub fn new(inner: &'a mut Backend) -> Self {
+        Self { inner }
+    }
+
+    pub fn inspect_ref<INSP>(
+        &mut self,
+        mut env: Env,
+        mut inspector: INSP,
+    ) -> (Return, TransactOut, u64, Map<Address, Account>, Vec<Log>)
+    where
+        INSP: Inspector<Self>,
+    {
+        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+    }
+}
+
+impl<'a> DatabaseExt for RefBackendWrapper<'a> {}
+
+impl<'a> Drop for RefBackendWrapper<'a> {
+    fn drop(&mut self) {
+        // TODO revert all things snapshots etc created
+    }
+}
+
+impl<'a> Database for RefBackendWrapper<'a> {
+    fn basic(&mut self, address: H160) -> AccountInfo {
+        DatabaseRef::basic(self.inner, address)
+    }
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
+        DatabaseRef::code_by_hash(self.inner, code_hash)
+    }
+    fn storage(&mut self, address: H160, index: U256) -> U256 {
+        DatabaseRef::storage(self.inner, address, index)
+    }
+
+    fn block_hash(&mut self, number: U256) -> H256 {
+        DatabaseRef::block_hash(self.inner, number)
     }
 }

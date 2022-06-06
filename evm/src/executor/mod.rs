@@ -1,5 +1,6 @@
 /// ABIs used internally in the executor
 pub mod abi;
+
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 pub use abi::{
@@ -20,7 +21,10 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    cell::{Ref, RefCell},
+    collections::{BTreeMap, VecDeque},
+};
 
 /// custom revm database implementations
 pub mod backend;
@@ -32,25 +36,37 @@ pub mod fork;
 pub mod inspector;
 /// Executor configuration
 pub mod opts;
-pub use backend::Backend;
-
 pub mod snapshot;
 
-use crate::executor::{backend::Backend, inspector::DEFAULT_CREATE2_DEPLOYER};
+use crate::executor::{
+    backend::{Backend, RefBackendWrapper},
+    inspector::DEFAULT_CREATE2_DEPLOYER,
+};
 pub use builder::{ExecutorBuilder, Fork};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
 
+/// A type that can execute calls
 ///
-#[derive(Debug)]
+/// The executor can be configured with various `revm::Inspector`s, like `Cheatcodes`.
+///
+/// There are two ways of executing calls:
+///   - `committing`: any state changes made during the call are recorded and are persisting
+///  - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
+///    other words: the state of the underlying database remains unchanged.
+///
+/// Some more advanced cheatcodes (`fork`, `snapshot`) always require mutable access in the
+/// `Backend`. However, the constraint `committing`/`raw` still applies.
+/// Therefore, this type is not thread-safe.
+#[derive(Debug, Clone)]
 pub struct Executor {
     /// The underlying `revm::Database` that contains the EVM storage
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    pub backend: Backend,
+    backend: RefCell<Backend>,
     env: Env,
     inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -75,12 +91,21 @@ impl Executor {
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
 
-        Executor { backend, env, inspector_config, gas_limit }
+        Executor { backend: RefCell::new(backend), env, inspector_config, gas_limit }
+    }
+
+    /// Returns a mutable reference to the Backend
+    pub fn backend_mut(&mut self) -> &mut Backend {
+        self.backend.get_mut()
+    }
+
+    pub fn backend(&self) -> Ref<'_, Backend> {
+        self.backend.borrow()
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        let create2_deployer_account = self.backend.basic(DEFAULT_CREATE2_DEPLOYER);
+        let create2_deployer_account = self.backend_mut().basic(DEFAULT_CREATE2_DEPLOYER);
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -99,24 +124,24 @@ impl Executor {
 
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
-        let mut account = self.backend.basic(address);
+        let mut account = self.backend_mut().basic(address);
         account.balance = amount;
 
-        self.backend.insert_cache(address, account);
+        self.backend_mut().insert_cache(address, account);
         self
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> U256 {
-        self.backend.basic(address).balance
+        self.backend().basic(address).balance
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> &mut Self {
-        let mut account = self.backend.basic(address);
+        let mut account = self.backend_mut().basic(address);
         account.nonce = nonce;
 
-        self.backend.insert_cache(address, account);
+        self.backend_mut().insert_cache(address, account);
         self
     }
 
@@ -222,10 +247,10 @@ impl Executor {
         // Build VM
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        evm.database(&mut self.backend);
+        let mut inspector = self.inspector_config.stack();
+        evm.database(self.backend_mut());
 
         // Run the call
-        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
@@ -347,13 +372,13 @@ impl Executor {
         let stipend = stipend(&calldata, self.env.cfg.spec_id);
 
         // Build VM
-        let mut evm = EVM::new();
-        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        evm.database(&self.backend);
+        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        let mut db = self.backend.borrow_mut();
+        let mut db = RefBackendWrapper::new(&mut *db);
 
         // Run the call
         let mut inspector = self.inspector_config.stack();
-        let (status, out, gas, state_changeset, _) = evm.inspect_ref(&mut inspector);
+        let (status, out, gas, state_changeset, _) = db.inspect_ref(env, &mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
@@ -397,9 +422,10 @@ impl Executor {
     ) -> std::result::Result<DeployResult, EvmError> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
-        evm.database(&mut self.backend);
 
         let mut inspector = self.inspector_config.stack();
+        evm.database(self.backend_mut());
+
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
             inspector.collect_inspector_states();
@@ -471,8 +497,8 @@ impl Executor {
         should_fail: bool,
     ) -> bool {
         // Construct a new VM with the state changeset
-        let mut backend = self.backend.clone_empty();
-        backend.insert_cache(address, self.backend.basic(address));
+        let mut backend = self.backend().clone_empty();
+        backend.insert_cache(address, self.backend().basic(address));
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
