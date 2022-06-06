@@ -1859,6 +1859,7 @@ dependencies = [
  "pretty_assertions",
  "semver",
  "solang-parser",
+ "thiserror",
 ]
 
 [[package]]
