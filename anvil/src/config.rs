@@ -32,7 +32,8 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
-use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use serde_json::{json, Value};
+use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration, fs::File, io::BufWriter, io::Write, collections::HashMap};
 use yansi::Paint;
 
 /// Default port the rpc will open
@@ -108,6 +109,148 @@ pub struct NodeConfig {
     pub transaction_order: TransactionOrder,
     /// Filename to write anvil output as json
     pub config_out: Option<String>,
+}
+
+impl NodeConfig {
+    fn as_string(&self, fork: Option<&ClientFork>) -> String {
+        let mut config_string: String = "".to_owned();
+        config_string.push_str(&format!("\n{}", Paint::green(BANNER)));
+        config_string.push_str(&format!("\n    {}", VERSION_MESSAGE));
+        config_string.push_str(&format!("\n    {}", Paint::green("https://github.com/foundry-rs/foundry")));
+
+        config_string.push_str(&format!(
+            r#"
+
+Available Accounts
+==================
+"#
+        ));
+        let balance = format_ether(self.genesis_balance);
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            config_string.push_str(&format!("\n({}) {:?} ({} ETH)", idx, wallet.address(), balance));
+        }
+
+        config_string.push_str(&format!(
+            r#"
+
+Private Keys
+==================
+"#
+        ));
+
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            let hex = hex::encode(wallet.signer().to_bytes());
+            config_string.push_str(&format!("\n({}) 0x{}", idx, hex));
+        }
+
+        if let Some(ref gen) = self.account_generator {
+            config_string.push_str(&format!(
+                r#"
+
+Wallet
+==================
+Mnemonic:          {}
+Derivation path:   {}
+"#,
+                gen.phrase,
+                gen.get_derivation_path()
+            ));
+        }
+
+        config_string.push_str(&format!(
+            r#"
+
+Base Fee
+==================
+{}
+"#,
+            Paint::green(format!("\n{}", self.base_fee))
+        ));
+        config_string.push_str(&format!(
+            r#"
+Gas Price
+==================
+{}
+"#,
+            Paint::green(format!("\n{}", self.gas_price))
+        ));
+
+        config_string.push_str(&format!(
+            r#"
+Gas Limit
+==================
+{}
+"#,
+            Paint::green(format!("\n{}", self.gas_limit))
+        ));
+
+        if let Some(fork) = fork {
+            config_string.push_str(&format!(
+                r#"
+Fork
+==================
+Endpoint:       {}
+Block number:   {}
+Block hash:     {:?}
+Chain ID:       {}
+
+"#,
+                fork.eth_rpc_url(),
+                fork.block_number(),
+                fork.block_hash(),
+                fork.chain_id()
+            ));
+        }
+
+        config_string
+    }
+
+    fn as_json(&self, fork: Option<&ClientFork>) -> String {
+        let config_as_json: Value;
+        let mut wallet_description = HashMap::new();
+        let mut available_accounts = Vec::with_capacity(self.genesis_accounts.len());
+        let mut private_keys = Vec::with_capacity(self.genesis_accounts.len());
+        let balance = format_ether(self.genesis_balance);
+
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            available_accounts.push(format!("({}) {:?} ({} ETH)", idx, wallet.address(), balance));
+            private_keys.push(format!("({}) 0x{}", idx, hex::encode(wallet.signer().to_bytes())));
+        }
+
+        if let Some(ref gen) = self.account_generator {
+            let phrase = format!("{}", gen.get_phrase());
+            let derivation_path = format!("{}", gen.get_derivation_path());
+
+            wallet_description.insert("derivation_path".to_string(), derivation_path);
+            wallet_description.insert("mnemonic".to_string(), phrase);
+        };
+
+        if let Some(fork) = fork {
+            config_as_json = json!({
+              "available_accounts": available_accounts,
+              "private_keys": private_keys,
+              "endpoint": fork.eth_rpc_url(),
+              "block_number": fork.block_number(),
+              "block_hash": fork.block_hash(),
+              "chain_id": fork.chain_id(),
+              "wallet": wallet_description,
+              "base_fee": format!("{}", self.base_fee),
+              "gas_price": format!("{}", self.gas_price),
+              "gas_limit": format!("{}", self.gas_limit),
+            });
+        } else {
+            config_as_json = json!({
+              "available_accounts": available_accounts,
+              "private_keys": private_keys,
+              "wallet": wallet_description,
+              "base_fee": format!("{}", self.base_fee),
+              "gas_price": format!("{}", self.gas_price),
+              "gas_limit": format!("{}", self.gas_limit),
+            });
+        }
+
+        serde_json::to_string(&config_as_json).unwrap()
+    }
 }
 
 // === impl NodeConfig ===
@@ -277,7 +420,7 @@ impl NodeConfig {
 
     /// Sets file to write config info to
     #[must_use]
-    pub fn set_config_out(mut self, config_out: String) -> Self {
+    pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
         self.config_out = Option::from(config_out);
         self
     }
@@ -336,96 +479,16 @@ impl NodeConfig {
 
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
-        if self.config_out {
-            // TODO write to json
+        if self.config_out.is_some() {
+            let f = File::create(self.config_out.as_deref().unwrap()).expect("Unable to create anvil config description file");
+            let mut f = BufWriter::new(f);
+            f.write_all(self.as_json(fork).as_bytes()).expect("Unable to write data");
         }
         if self.silent {
             return
         }
-        println!("{}", Paint::green(BANNER));
-        println!("    {}", VERSION_MESSAGE);
-        println!("    {}", Paint::green("https://github.com/foundry-rs/foundry"));
 
-        print!(
-            r#"
-Available Accounts
-==================
-"#
-        );
-        let balance = format_ether(self.genesis_balance);
-        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            println!("({}) {:?} ({} ETH)", idx, wallet.address(), balance);
-        }
-
-        print!(
-            r#"
-Private Keys
-==================
-"#
-        );
-
-        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let hex = hex::encode(wallet.signer().to_bytes());
-            println!("({}) 0x{}", idx, hex);
-        }
-
-        if let Some(ref gen) = self.account_generator {
-            print!(
-                r#"
-Wallet
-==================
-Mnemonic:          {}
-Derivation path:   {}
-"#,
-                gen.phrase,
-                gen.get_derivation_path()
-            );
-        }
-
-        print!(
-            r#"
-Base Fee
-==================
-{}
-"#,
-            Paint::green(format!("{}", self.base_fee))
-        );
-        print!(
-            r#"
-Gas Price
-==================
-{}
-"#,
-            Paint::green(format!("{}", self.gas_price))
-        );
-
-        print!(
-            r#"
-Gas Limit
-==================
-{}
-"#,
-            Paint::green(format!("{}", self.gas_limit))
-        );
-
-        if let Some(fork) = fork {
-            print!(
-                r#"
-Fork
-==================
-Endpoint:       {}
-Block number:   {}
-Block hash:     {:?}
-Chain ID:       {}
-"#,
-                fork.eth_rpc_url(),
-                fork.block_number(),
-                fork.block_hash(),
-                fork.chain_id()
-            );
-        }
-
-        println!();
+        println!("{}", self.as_string(fork))
     }
 
     /// Returns the path where the cache file should be stored
@@ -631,6 +694,10 @@ impl AccountGenerator {
     pub fn phrase(mut self, phrase: impl Into<String>) -> Self {
         self.phrase = phrase.into();
         self
+    }
+
+    fn get_phrase(&self) -> &str {
+        &self.phrase
     }
 
     #[must_use]

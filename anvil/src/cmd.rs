@@ -90,7 +90,7 @@ pub struct NodeArgs {
 
     #[clap(
     long,
-    help = "Writes output of `anvil` as json to user-specified file. [Default anvil_out.json]",
+    help = "Writes output of `anvil` as json to user-specified file",
     value_name = "OUT_FILE"
     )]
     pub config_out: Option<String>,
