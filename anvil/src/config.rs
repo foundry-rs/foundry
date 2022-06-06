@@ -106,6 +106,8 @@ pub struct NodeConfig {
     pub host: Option<IpAddr>,
     /// How transactions are sorted in the mempool
     pub transaction_order: TransactionOrder,
+    /// Filename to write anvil output as json
+    pub config_out: Option<String>,
 }
 
 // === impl NodeConfig ===
@@ -146,6 +148,7 @@ impl Default for NodeConfig {
             server_config: Default::default(),
             host: None,
             transaction_order: Default::default(),
+            config_out: None,
         }
     }
 }
@@ -272,6 +275,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets file to write config info to
+    #[must_use]
+    pub fn set_config_out(mut self, config_out: String) -> Self {
+        self.config_out = Option::from(config_out);
+        self
+    }
+
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
@@ -326,6 +336,9 @@ impl NodeConfig {
 
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
+        if self.config_out {
+            // TODO write to json
+        }
         if self.silent {
             return
         }
