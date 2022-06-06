@@ -1,5 +1,5 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
-use crate::{debug::DebugArena, executor::backend::BackendTrait, trace::CallTraceArena};
+use crate::{debug::DebugArena, executor::backend::DatabaseExt, trace::CallTraceArena};
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
 use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
@@ -55,7 +55,7 @@ impl InspectorStack {
 
 impl<DB> Inspector<DB> for InspectorStack
 where
-    DB: BackendTrait,
+    DB: DatabaseExt,
 {
     fn initialize_interp(
         &mut self,

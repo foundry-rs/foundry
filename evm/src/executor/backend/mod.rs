@@ -18,11 +18,11 @@ pub use in_memory_db::MemDb;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
-pub trait BackendTrait: Database {}
+pub trait DatabaseExt: Database {}
 
-impl BackendTrait for Backend {}
+impl DatabaseExt for Backend {}
 
-impl<'a> BackendTrait for RefDBWrapper<'a> {}
+impl<'a> DatabaseExt for RefDBWrapper<'a> {}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
