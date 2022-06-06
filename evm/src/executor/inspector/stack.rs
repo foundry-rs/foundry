@@ -1,10 +1,9 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
-use crate::{debug::DebugArena, trace::CallTraceArena};
+use crate::{debug::DebugArena, executor::backend::BackendTrait, trace::CallTraceArena};
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
 use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 use std::collections::BTreeMap;
-use crate::executor::backend::BackendTrait;
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch

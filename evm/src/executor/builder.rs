@@ -4,7 +4,7 @@ use super::{
     Executor,
 };
 use crate::executor::{
-    backend::{Backend2},
+    backend::Backend2,
     fork::{BlockchainDb, BlockchainDbMeta},
 };
 use ethers::{

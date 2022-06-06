@@ -14,12 +14,12 @@ use ethers::{
 };
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
+use revm::{
+    db::DatabaseCommit, return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut,
+    TransactTo, TxEnv, EVM,
+};
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use revm::{
-    db::{DatabaseCommit},
-    return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
-};
 use std::collections::{BTreeMap, VecDeque};
 
 /// custom revm database implementations
