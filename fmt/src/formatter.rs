@@ -37,8 +37,8 @@ struct IndentGroup {
 
 struct FormatBuffer<W: Sized> {
     indents: Vec<IndentGroup>,
+    base_indent_len: usize,
     tab_width: usize,
-    line_length: usize,
     is_beginning_of_line: bool,
     last_indent: String,
     last_char: Option<char>,
@@ -47,17 +47,25 @@ struct FormatBuffer<W: Sized> {
 }
 
 impl<W: Sized> FormatBuffer<W> {
-    fn new(w: W, tab_width: usize, line_length: usize) -> Self {
+    fn new(w: W, tab_width: usize) -> Self {
         Self {
             w,
             tab_width,
-            line_length,
+            base_indent_len: 0,
             indents: vec![],
             current_line_len: 0,
             is_beginning_of_line: true,
             last_indent: String::new(),
             last_char: None,
         }
+    }
+
+    fn create_temp_buf(&self) -> FormatBuffer<String> {
+        let mut new = FormatBuffer::new(String::new(), self.tab_width);
+        new.last_indent = " ".repeat(self.last_indent_len());
+        new.base_indent_len = self.level() * self.tab_width;
+        new.current_line_len = self.current_line_len();
+        new
     }
 
     fn indent(&mut self, delta: usize) {
@@ -82,12 +90,8 @@ impl<W: Sized> FormatBuffer<W> {
         }
     }
 
-    fn line_len(&self) -> usize {
-        self.line_length
-    }
-
     fn last_indent_len(&self) -> usize {
-        self.last_indent.len()
+        self.last_indent.len() + self.base_indent_len
     }
 
     fn current_line_len(&self) -> usize {
@@ -113,7 +117,24 @@ impl<W: Sized> FormatBuffer<W> {
 
 impl<W: Write> FormatBuffer<W> {
     fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
-        self.w.write_str(s.as_ref())
+        let mut lines = s.as_ref().lines().peekable();
+        while let Some(line) = lines.next() {
+            // remove the whitespace that covered by the base indent length (this is normally the
+            // case with temporary buffers as this will be readded by the underlying IndentWriter
+            // later on
+            let line_start = line
+                .char_indices()
+                .take(self.base_indent_len + 1)
+                .take_while(|(_, ch)| ch.is_whitespace())
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            self.w.write_str(&line[line_start..])?;
+            if lines.peek().is_some() {
+                self.w.write_char('\n')?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -133,7 +154,7 @@ impl<W: Write> Write for FormatBuffer<W> {
         if self.is_beginning_of_line && !s.trim_start().is_empty() {
             // TODO: println!("str: {}. level: {}", s, level);
             let indent = " ".repeat(self.tab_width * level);
-            self.write_raw(&indent)?;
+            self.w.write_str(&indent)?;
             self.last_indent = indent;
         }
 
@@ -279,7 +300,7 @@ macro_rules! buf_fn {
 impl<'a, W: Write> Formatter<'a, W> {
     pub fn new(w: &'a mut W, source: &'a str, comments: Comments, config: FormatterConfig) -> Self {
         Self {
-            buf: FormatBuffer::new(w, config.tab_width, config.line_length),
+            buf: FormatBuffer::new(w, config.tab_width),
             source,
             config,
             temp_bufs: Vec::new(),
@@ -296,25 +317,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    fn push_temp_buf(&mut self) {
-        let mut buffer = FormatBuffer::new(
-            String::new(),
-            self.config.tab_width,
-            self.line_len().saturating_sub(self.last_indent_len()),
-        );
-        buffer.current_line_len = self.current_line_len();
-        self.temp_bufs.push(buffer);
-    }
-
-    fn pop_temp_buf(&mut self) -> Option<FormatBuffer<String>> {
-        self.temp_bufs.pop()
-    }
-
     buf_fn! { fn indent(&mut self, delta: usize) }
     buf_fn! { fn dedent(&mut self, delta: usize) }
     buf_fn! { fn start_group(&mut self) }
     buf_fn! { fn end_group(&mut self) }
-    buf_fn! { fn line_len(&self) -> usize }
+    buf_fn! { fn create_temp_buf(&self) -> FormatBuffer<String> }
     buf_fn! { fn current_line_len(&self) -> usize }
     buf_fn! { fn last_indent_len(&self) -> usize }
     buf_fn! { fn is_beginning_of_line(&self) -> bool }
@@ -322,6 +329,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn last_indent_group_skipped(&self) -> bool }
     buf_fn! { fn set_last_indent_group_skipped(&mut self, skip: bool) }
     buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
+
+    fn push_temp_buf(&mut self) {
+        self.temp_bufs.push(self.create_temp_buf());
+    }
+
+    fn pop_temp_buf(&mut self) -> Option<FormatBuffer<String>> {
+        self.temp_bufs.pop()
+    }
 
     fn next_chunk_needs_space(&self, next_char: char) -> bool {
         if self.is_beginning_of_line() {
@@ -441,7 +456,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         if text.as_ref().contains('\n') {
             return false
         }
-        self.line_len() >
+        self.config.line_length >
             self.last_indent_len()
                 .saturating_add(self.current_line_len())
                 .saturating_add(text.as_ref().len())
