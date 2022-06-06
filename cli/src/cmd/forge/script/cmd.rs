@@ -25,6 +25,7 @@ impl ScriptArgs {
         };
 
         self.maybe_load_private_key(&mut script_config)?;
+        self.maybe_load_etherscan_api_key(&mut script_config)?;
 
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
             // when forking, override the sender's nonce to the onchain value
@@ -220,6 +221,16 @@ impl ScriptArgs {
             if wallets.len() == 1 {
                 script_config.evm_opts.sender = wallets.get(0).unwrap().address()
             }
+        }
+        Ok(())
+    }
+
+    fn maybe_load_etherscan_api_key(
+        &mut self,
+        script_config: &mut ScriptConfig,
+    ) -> eyre::Result<()> {
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            script_config.config.etherscan_api_key = Some(etherscan_api_key.clone());
         }
         Ok(())
     }
