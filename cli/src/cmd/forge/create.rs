@@ -137,7 +137,10 @@ impl CreateArgs {
     pub async fn run_create(self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        if self.json {
+        if self.opts.silent {
+            // Suppress compile stdout messages if --silent is specified
+            compile::suppress_compile(&project)?;
+        } else if self.json {
             // Suppress compile stdout messages when printing json output
             compile::suppress_compile(&project)?;
         } else {
