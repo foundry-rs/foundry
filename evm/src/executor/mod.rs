@@ -12,7 +12,6 @@ use ethers::{
     prelude::{decode_function_data, encode_function_data, Address, U256},
     types::{transaction::eip2718::TypedTransaction, Log},
 };
-use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 /// Reexport commonly used revm types
@@ -217,7 +216,7 @@ impl Executor {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult> {
         let stipend = stipend(&calldata, self.env.cfg.spec_id);
 
         // Build VM
@@ -344,7 +343,7 @@ impl Executor {
         to: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<RawCallResult> {
+    ) -> eyre::Result<RawCallResult> {
         let stipend = stipend(&calldata, self.env.cfg.spec_id);
 
         // Build VM
