@@ -15,7 +15,12 @@ contract HelloWorld {
 
     /// Constructs the dude
     /// @param age The dude's age
-    constructor(uint256 age) {}
+    constructor(uint256 age) {
+        theDude = Person({
+            age: age,
+            wallet: msg.sender
+        });
+    }
 
     /**
      * @dev Calculates a rectangle's surface and perimeter.
@@ -28,5 +33,8 @@ contract HelloWorld {
         public
         pure
         returns (uint256 s, uint256 p)
-    {}
+    {
+        s = w * h;
+        p = 2 * (w + h);
+    }
 }
