@@ -322,6 +322,18 @@ pub trait Visitable {
         V: Visitor;
 }
 
+impl<T> Visitable for &mut T
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        T::visit(self, v)
+    }
+}
+
 impl Visitable for SourceUnitPart {
     fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
     where

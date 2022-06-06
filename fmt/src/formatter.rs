@@ -813,77 +813,80 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_operator_expr(
+    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        let simulated = self.simulate_to_string(|fmt| {
+            fmt.visit_flattened_expr_multiline(flattened, false)?;
+            Ok(())
+        })?;
+        if !self.will_it_fit(simulated) {
+            self.visit_flattened_expr_multiline(flattened, true)?;
+        } else {
+            // TODO we can probably reuse simulated here
+            self.visit_flattened_expr_multiline(flattened, false)?;
+        }
+        Ok(())
+    }
+
+    fn visit_flattened_expr_multiline<E>(
         &mut self,
-        expr: &mut (impl Operator + Visitable + CodeLocation),
-    ) -> Result<()> {
-        let op = expr.operator().unwrap();
-        let has_space_around = expr.has_space_around();
-        let op_precedence = expr.precedence();
-        let loc = expr.loc();
-        let left_loc = expr.left_mut().map(|expr| expr.loc());
-        let right_loc = expr.right_mut().map(|expr| expr.loc());
+        flattened: &mut [FlatExpression<&mut E>],
+        multiline: bool,
+    ) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        let mut flattened = flattened.iter_mut().peekable();
+        let mut prefix_ops = String::new();
+        while let Some(item) = flattened.next() {
+            let loc = item.loc();
+            match item {
+                FlatExpression::Expression(expr) => {
+                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
 
-        if let Some(left) = expr.left_mut() {
-            let left_start = left_loc.unwrap().start();
-            let left_end = right_loc.map(|loc| loc.start()).unwrap_or_else(|| loc.end());
-            let needs_paren = !left.precedence().is_evaluated_first(op_precedence);
+                    chunk.content.insert_str(0, &prefix_ops);
+                    prefix_ops.clear();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        chunk.content.push_str(op);
+                        flattened.next();
+                    }
 
-            let mut write_left = |fmt: &mut Self, _multiline| {
-                let mut chunk = fmt.visit_to_chunk(left_start, Some(left_end), left)?;
-                if !has_space_around {
-                    chunk.content.push_str(op);
+                    self.write_chunk(&chunk)?;
+                    if multiline && flattened.peek().is_some() {
+                        self.write_whitespace_separator(true)?;
+                    }
                 }
-                fmt.write_chunk(&chunk)?;
-                Ok(())
-            };
-            if needs_paren {
-                self.surrounded(left_start, "(", ")", Some(left_end), write_left)?;
-            } else {
-                write_left(self, false)?;
-            }
-
-            if has_space_around {
-                write_chunk!(self, left_start, left_end, "{op}")?;
-            }
-
-            if let Some(right) = expr.right_mut() {
-                assert!(has_space_around, "Only unary operators don't have spacing");
-
-                let right_start = right_loc.unwrap().start();
-                let needs_paren = op_precedence.is_evaluated_first(right.precedence());
-
-                if needs_paren {
-                    self.surrounded(right_start, "(", ")", Some(loc.end()), |fmt, _multiline| {
-                        right.visit(fmt)
-                    })?;
-                } else {
-                    right.visit(self)?;
+                FlatExpression::SpacedOp(op) => {
+                    write_chunk!(self, "{op}")?;
                 }
-            }
-        } else if let Some(right) = expr.right_mut() {
-            let right_start = right_loc.unwrap().start();
-            let needs_paren = op_precedence.is_evaluated_first(right.precedence());
-
-            if has_space_around {
-                write_chunk!(self, right_start, "{op}")?;
-            }
-            let mut write_right = |fmt: &mut Self, _multiline| {
-                let mut chunk = fmt.visit_to_chunk(right_start, Some(loc.end()), right)?;
-                if !has_space_around {
-                    chunk.content = format!("{op}{}", chunk.content);
+                FlatExpression::UnspacedOp(op) => {
+                    prefix_ops.push_str(op);
                 }
-                fmt.write_chunk(&chunk)?;
-                Ok(())
-            };
-            if needs_paren {
-                self.surrounded(right_start, "(", ")", Some(loc.end()), write_right)?;
-            } else {
-                write_right(self, false)?;
+                FlatExpression::Group(group) => {
+                    let mut prefix = std::mem::take(&mut prefix_ops);
+                    prefix.push('(');
+                    let mut suffix = ")".to_string();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        suffix.push_str(op);
+                        flattened.next();
+                    }
+                    self.surrounded(
+                        loc.map(|loc| loc.start()).unwrap_or(0),
+                        prefix,
+                        suffix,
+                        loc.map(|loc| loc.end()),
+                        |fmt, _multiline| fmt.visit_flattened_expr(group),
+                    )?;
+                }
             }
         }
-
         Ok(())
+    }
+
+    fn visit_operator_expr(&mut self, expr: &mut Expression) -> Result<()> {
+        self.visit_flattened_expr(&mut expr.flatten())
     }
 
     fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
