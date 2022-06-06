@@ -194,6 +194,7 @@ impl VerifyArgs {
             libraries: self.libraries.clone(),
             via_ir: false,
             revert_strings: None,
+            silent: false,
         };
 
         let project = build_args.project()?;

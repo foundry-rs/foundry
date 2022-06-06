@@ -145,6 +145,10 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
+
+    #[clap(help_heading = "COMPILER OPTIONS", long, help = "Don't print anything on startup.")]
+    #[serde(skip)]
+    pub silent: bool,
 }
 
 impl CoreBuildArgs {
@@ -262,7 +266,12 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        compile::compile(&project, self.names, self.sizes)
+
+        if self.args.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compile::compile(&project, self.names, self.sizes)
+        }
     }
 }
 
