@@ -12,6 +12,8 @@ pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 mod traits;
 pub use traits::*;
 
+mod types;
+
 pub mod result;
 
 #[cfg(test)]

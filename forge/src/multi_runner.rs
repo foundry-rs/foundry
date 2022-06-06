@@ -41,7 +41,7 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    pub fn count_filtered_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> usize {
+    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
         self.contracts
             .iter()
             .filter(|(id, _)| {
