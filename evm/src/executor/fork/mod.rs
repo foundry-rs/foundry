@@ -25,6 +25,8 @@ pub struct CreateFork {
     pub url: String,
     /// The block to fork against
     pub block: BlockNumber,
+    /// chain id to use, if `None` then the chain_id will be fetched from the endpoint
+    pub chain_id: Option<u64>,
     /// The env to create this fork, main purpose is to provide some metadata for the fork
     pub env: Env,
 }

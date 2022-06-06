@@ -10,7 +10,7 @@ use ethers::{
     abi::{AbiDecode, AbiEncode, AbiError},
     prelude::Middleware,
     providers::{Http, Provider, RetryClient},
-    types::{BlockId, BlockNumber},
+    types::{BlockId, BlockNumber, U256},
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -280,7 +280,7 @@ async fn create_fork(
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(SharedBackend, Handler)> {
-    let CreateFork { cache_path, url, block: block_number, env } = fork;
+    let CreateFork { cache_path, url, block: block_number, env, chain_id } = fork;
     let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
         url.clone().as_str(),
         retries,
@@ -289,7 +289,12 @@ async fn create_fork(
     let mut meta = BlockchainDbMeta::new(env, url);
 
     // update the meta to match the forked config
-    meta.cfg_env.chain_id = provider.get_chainid().await?;
+    let chain_id = if let Some(chain_id) = chain_id {
+        U256::from(chain_id)
+    } else {
+        provider.get_chainid().await?
+    };
+    meta.cfg_env.chain_id = chain_id;
 
     let number = match block_number {
         BlockNumber::Pending | BlockNumber::Latest => provider.get_block_number().await?.as_u64(),

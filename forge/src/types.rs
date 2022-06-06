@@ -1,8 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
-use ethers::abi::{Event, Function, Abi, AbiError};
-use ethers::solc::artifacts::CompactContractBytecode;
-use ethers::types::H256;
+use ethers::{
+    abi::{Abi, AbiError, Event, Function},
+    solc::artifacts::CompactContractBytecode,
+    types::H256,
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 /// Represents a solidity Contract that's a test target
 #[derive(Debug, Clone)]
@@ -33,6 +37,4 @@ pub struct TestFunction {
 
 // === impl TestFunction ===
 
-impl TestFunction {
-
-}
+impl TestFunction {}

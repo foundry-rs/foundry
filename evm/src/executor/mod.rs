@@ -37,138 +37,21 @@ pub use backend::Backend;
 
 pub mod snapshot;
 
-use crate::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use crate::executor::{backend::Backend2, inspector::DEFAULT_CREATE2_DEPLOYER};
 pub use builder::{ExecutorBuilder, Fork};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
 
-#[derive(thiserror::Error, Debug)]
-pub enum EvmError {
-    /// Error which occurred during execution of a transaction
-    #[error("Execution reverted: {reason} (gas: {gas})")]
-    Execution {
-        reverted: bool,
-        reason: String,
-        gas: u64,
-        stipend: u64,
-        logs: Vec<Log>,
-        traces: Option<CallTraceArena>,
-        debug: Option<DebugArena>,
-        labels: BTreeMap<Address, String>,
-        transactions: Option<VecDeque<TypedTransaction>>,
-        state_changeset: Option<StateChangeset>,
-    },
-    /// Error which occurred during ABI encoding/decoding
-    #[error(transparent)]
-    AbiError(#[from] ethers::contract::AbiError),
-    /// Any other error.
-    #[error(transparent)]
-    Eyre(#[from] eyre::Error),
-}
-
-/// The result of a deployment.
+///
 #[derive(Debug)]
-pub struct DeployResult {
-    /// The address of the deployed contract
-    pub address: Address,
-    /// The gas cost of the deployment
-    pub gas: u64,
-    /// The logs emitted during the deployment
-    pub logs: Vec<Log>,
-    /// The traces of the deployment
-    pub traces: Option<CallTraceArena>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
-}
-
-/// The result of a call.
-#[derive(Debug)]
-pub struct CallResult<D: Detokenize> {
-    /// Whether the call reverted or not
-    pub reverted: bool,
-    /// The decoded result of the call
-    pub result: D,
-    /// The gas used for the call
-    pub gas: u64,
-    /// The initial gas stipend for the transaction
-    pub stipend: u64,
-    /// The logs emitted during the call
-    pub logs: Vec<Log>,
-    /// The labels assigned to addresses during the call
-    pub labels: BTreeMap<Address, String>,
-    /// The traces of the call
-    pub traces: Option<CallTraceArena>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
-    /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
-    /// The changeset of the state.
-    ///
-    /// This is only present if the changed state was not committed to the database (i.e. if you
-    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: Option<StateChangeset>,
-}
-
-/// The result of a raw call.
-#[derive(Debug)]
-pub struct RawCallResult {
-    /// The status of the call
-    status: Return,
-    /// Whether the call reverted or not
-    pub reverted: bool,
-    /// The raw result of the call
-    pub result: Bytes,
-    /// The gas used for the call
-    pub gas: u64,
-    /// The initial gas stipend for the transaction
-    pub stipend: u64,
-    /// The logs emitted during the call
-    pub logs: Vec<Log>,
-    /// The labels assigned to addresses during the call
-    pub labels: BTreeMap<Address, String>,
-    /// The traces of the call
-    pub traces: Option<CallTraceArena>,
-    /// The debug nodes of the call
-    pub debug: Option<DebugArena>,
-    /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
-    /// The changeset of the state.
-    ///
-    /// This is only present if the changed state was not committed to the database (i.e. if you
-    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: Option<StateChangeset>,
-}
-
-impl Default for RawCallResult {
-    fn default() -> Self {
-        Self {
-            status: Return::Continue,
-            reverted: false,
-            result: Bytes::new(),
-            gas: 0,
-            stipend: 0,
-            logs: Vec::new(),
-            labels: BTreeMap::new(),
-            traces: None,
-            debug: None,
-            transactions: None,
-            state_changeset: None,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Executor<DB: DatabaseRef> {
+pub struct Executor {
+    /// The underlying `revm::Database` that contains the EVM storage
     // Note: We do not store an EVM here, since we are really
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    //
-    // Also, if we stored the VM here we would still need to
-    // take `&mut self` when we are not committing to the database, since
-    // we need to set `evm.env`.
-    pub db: CacheDB<DB>,
+    pub backend: Backend2,
     env: Env,
     inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -179,31 +62,26 @@ pub struct Executor<DB: DatabaseRef> {
 
 // === impl Executor ===
 
-impl<DB> Executor<DB>
-where
-    DB: DatabaseRef,
-{
+impl Executor {
     pub fn new(
-        inner_db: DB,
+        mut backend: Backend2,
         env: Env,
         inspector_config: InspectorStackConfig,
         gas_limit: U256,
     ) -> Self {
-        let mut db = CacheDB::new(inner_db);
-
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        db.insert_cache(
+        backend.db.insert_cache(
             CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
 
-        Executor { db, env, inspector_config, gas_limit }
+        Executor { backend, env, inspector_config, gas_limit }
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        let create2_deployer_account = self.db.basic(DEFAULT_CREATE2_DEPLOYER);
+        let create2_deployer_account = self.backend.basic(DEFAULT_CREATE2_DEPLOYER);
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -222,24 +100,24 @@ where
 
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
-        let mut account = self.db.basic(address);
+        let mut account = self.backend.basic(address);
         account.balance = amount;
 
-        self.db.insert_cache(address, account);
+        self.backend.insert_cache(address, account);
         self
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> U256 {
-        self.db.basic(address).balance
+        self.backend.basic(address).balance
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> &mut Self {
-        let mut account = self.db.basic(address);
+        let mut account = self.backend.basic(address);
         account.nonce = nonce;
 
-        self.db.insert_cache(address, account);
+        self.backend.insert_cache(address, account);
         self
     }
 
@@ -345,7 +223,7 @@ where
         // Build VM
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        evm.database(&mut self.db);
+        evm.database(&mut self.backend);
 
         // Run the call
         let mut inspector = self.inspector_config.stack();
@@ -472,7 +350,7 @@ where
         // Build VM
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        evm.database(&self.db);
+        evm.database(&self.backend);
 
         // Run the call
         let mut inspector = self.inspector_config.stack();
@@ -520,7 +398,7 @@ where
     ) -> std::result::Result<DeployResult, EvmError> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
-        evm.database(&mut self.db);
+        evm.database(&mut self.backend);
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
@@ -585,7 +463,7 @@ where
     /// DSTest will not revert inside its `assertEq`-like functions which allows
     /// to test multiple assertions in 1 test function while also preserving logs.
     ///
-    /// Instead it sets `failed` to `true` which we must check.
+    /// Instead, it sets `failed` to `true` which we must check.
     pub fn is_success(
         &self,
         address: Address,
@@ -594,9 +472,9 @@ where
         should_fail: bool,
     ) -> bool {
         // Construct a new VM with the state changeset
-        let mut db = CacheDB::new(EmptyDB());
-        db.insert_cache(address, self.db.basic(address));
-        db.commit(state_changeset);
+        let mut backend = self.backend.clone_empty();
+        backend.insert_cache(address, self.backend.basic(address));
+        backend.commit(state_changeset);
         let executor =
             Executor::new(db, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
 
@@ -637,6 +515,121 @@ where
                 gas_limit: self.gas_limit.as_u64(),
                 ..self.env.tx.clone()
             },
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum EvmError {
+    /// Error which occurred during execution of a transaction
+    #[error("Execution reverted: {reason} (gas: {gas})")]
+    Execution {
+        reverted: bool,
+        reason: String,
+        gas: u64,
+        stipend: u64,
+        logs: Vec<Log>,
+        traces: Option<CallTraceArena>,
+        debug: Option<DebugArena>,
+        labels: BTreeMap<Address, String>,
+        transactions: Option<VecDeque<TypedTransaction>>,
+        state_changeset: Option<StateChangeset>,
+    },
+    /// Error which occurred during ABI encoding/decoding
+    #[error(transparent)]
+    AbiError(#[from] ethers::contract::AbiError),
+    /// Any other error.
+    #[error(transparent)]
+    Eyre(#[from] eyre::Error),
+}
+
+/// The result of a deployment.
+#[derive(Debug)]
+pub struct DeployResult {
+    /// The address of the deployed contract
+    pub address: Address,
+    /// The gas cost of the deployment
+    pub gas: u64,
+    /// The logs emitted during the deployment
+    pub logs: Vec<Log>,
+    /// The traces of the deployment
+    pub traces: Option<CallTraceArena>,
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+}
+
+/// The result of a call.
+#[derive(Debug)]
+pub struct CallResult<D: Detokenize> {
+    /// Whether the call reverted or not
+    pub reverted: bool,
+    /// The decoded result of the call
+    pub result: D,
+    /// The gas used for the call
+    pub gas: u64,
+    /// The initial gas stipend for the transaction
+    pub stipend: u64,
+    /// The logs emitted during the call
+    pub logs: Vec<Log>,
+    /// The labels assigned to addresses during the call
+    pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
+    /// The changeset of the state.
+    ///
+    /// This is only present if the changed state was not committed to the database (i.e. if you
+    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
+    pub state_changeset: Option<StateChangeset>,
+}
+
+/// The result of a raw call.
+#[derive(Debug)]
+pub struct RawCallResult {
+    /// The status of the call
+    status: Return,
+    /// Whether the call reverted or not
+    pub reverted: bool,
+    /// The raw result of the call
+    pub result: Bytes,
+    /// The gas used for the call
+    pub gas: u64,
+    /// The initial gas stipend for the transaction
+    pub stipend: u64,
+    /// The logs emitted during the call
+    pub logs: Vec<Log>,
+    /// The labels assigned to addresses during the call
+    pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
+    /// The debug nodes of the call
+    pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
+    /// The changeset of the state.
+    ///
+    /// This is only present if the changed state was not committed to the database (i.e. if you
+    /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
+    pub state_changeset: Option<StateChangeset>,
+}
+
+impl Default for RawCallResult {
+    fn default() -> Self {
+        Self {
+            status: Return::Continue,
+            reverted: false,
+            result: Bytes::new(),
+            gas: 0,
+            stipend: 0,
+            logs: Vec::new(),
+            labels: BTreeMap::new(),
+            traces: None,
+            debug: None,
+            transactions: None,
+            state_changeset: None,
         }
     }
 }

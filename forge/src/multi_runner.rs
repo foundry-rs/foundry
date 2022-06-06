@@ -7,7 +7,10 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::executor::{
-    opts::EvmOpts, Backend, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+    backend::Backend2,
+    fork::{CreateFork, MultiFork},
+    opts::EvmOpts,
+    Backend, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
@@ -38,6 +41,8 @@ pub struct MultiContractRunner {
     pub source_paths: BTreeMap<String, String>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// The fork to use at launch
+    pub fork2: Option<CreateFork>,
 }
 
 impl MultiContractRunner {
@@ -96,64 +101,129 @@ impl MultiContractRunner {
             })
     }
 
-    /// Executes all tests that match the given `filter`
+    /// Executes _all_ tests that match the given `filter`
     ///
     /// This will create the runtime based on the configured `evm` ops and create the `Backend`
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
+    pub fn test2(
+        &mut self,
+        filter: &impl TestFilter,
+        stream_result: Option<Sender<(String, SuiteResult)>>,
+        include_fuzz_tests: bool,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        // TODO  move to builder
+        let runtime = RuntimeOrHandle::new();
+        let env = runtime.block_on(self.evm_opts.evm_env());
+
+        let (forks, fork_handler) = MultiFork::spawn();
+
+        {
+            // the db backend that serves all the data, each contract gets its own instance
+            let db = Backend2::new(forks, self.fork2.take());
+
+            let results = self
+                .contracts
+                .par_iter()
+                .filter(|(id, _)| {
+                    filter.matches_path(id.source.to_string_lossy()) &&
+                        filter.matches_contract(&id.name)
+                })
+                .filter(|(_, (abi, _, _))| {
+                    abi.functions().any(|func| filter.matches_test(&func.name))
+                })
+                .map(|(id, (abi, deploy_code, libs))| {
+                    let mut executor = ExecutorBuilder::new()
+                        .with_cheatcodes(self.evm_opts.ffi)
+                        .with_config(env.clone())
+                        .with_spec(self.evm_spec)
+                        .with_gas_limit(self.evm_opts.gas_limit())
+                        .set_tracing(self.evm_opts.verbosity >= 3)
+                        .build(db.clone());
+
+                    let result = self.run_tests(
+                        &id.identifier(),
+                        abi,
+                        executor,
+                        deploy_code.clone(),
+                        libs,
+                        (filter, include_fuzz_tests),
+                    )?;
+                    Ok((id.identifier(), result))
+                })
+                .filter_map(Result::<_>::ok)
+                .filter(|(_, results)| !results.is_empty())
+                .map_with(stream_result, |stream_result, (name, result)| {
+                    if let Some(stream_result) = stream_result.as_ref() {
+                        stream_result.send((name.clone(), result.clone())).unwrap();
+                    }
+                    (name, result)
+                })
+                .collect::<BTreeMap<_, _>>();
+        }
+
+        // the spawned handler contains some resources, rpc caches, that will get flushed on drop,
+        // in order to ensure everything is flushed properly we wait for the thread to finish which
+        // will happen when all the channels (MultiFork) are dropped
+        fork_handler.join()?;
+
+        Ok(results)
+    }
+
     pub fn test(
         &mut self,
         filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        let runtime = RuntimeOrHandle::new();
-        let env = runtime.block_on(self.evm_opts.evm_env());
-
-        // the db backend that serves all the data, each contract gets its own clone
-        let db = runtime.block_on(Backend::new(self.fork.take(), &env));
-
-        let results = self
-            .contracts
-            .par_iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
-            .map(|(id, (abi, deploy_code, libs))| {
-                let mut builder = ExecutorBuilder::new()
-                    .with_cheatcodes(self.evm_opts.ffi)
-                    .with_config(env.clone())
-                    .with_spec(self.evm_spec)
-                    .with_gas_limit(self.evm_opts.gas_limit());
-
-                if self.evm_opts.verbosity >= 3 {
-                    builder = builder.with_tracing();
-                }
-
-                let executor = builder.build(db.clone());
-                let result = self.run_tests(
-                    &id.identifier(),
-                    abi,
-                    executor,
-                    deploy_code.clone(),
-                    libs,
-                    (filter, include_fuzz_tests),
-                )?;
-                Ok((id.identifier(), result))
-            })
-            .filter_map(Result::<_>::ok)
-            .filter(|(_, results)| !results.is_empty())
-            .map_with(stream_result, |stream_result, (name, result)| {
-                if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
-                }
-                (name, result)
-            })
-            .collect::<BTreeMap<_, _>>();
-        Ok(results)
+        // let runtime = RuntimeOrHandle::new();
+        // let env = runtime.block_on(self.evm_opts.evm_env());
+        //
+        // // the db backend that serves all the data, each contract gets its own clone
+        // let db = runtime.block_on(Backend::new(self.fork.take(), &env));
+        //
+        // let results = self
+        //     .contracts
+        //     .par_iter()
+        //     .filter(|(id, _)| {
+        //         filter.matches_path(id.source.to_string_lossy()) &&
+        //             filter.matches_contract(&id.name)
+        //     })
+        //     .filter(|(_, (abi, _, _))| abi.functions().any(|func|
+        // filter.matches_test(&func.name)))     .map(|(id, (abi, deploy_code, libs))| {
+        //         let mut builder = ExecutorBuilder::new()
+        //             .with_cheatcodes(self.evm_opts.ffi)
+        //             .with_config(env.clone())
+        //             .with_spec(self.evm_spec)
+        //             .with_gas_limit(self.evm_opts.gas_limit());
+        //
+        //         if self.evm_opts.verbosity >= 3 {
+        //             builder = builder.with_tracing();
+        //         }
+        //
+        //         let executor = builder.build(db.clone());
+        //         let result = self.run_tests(
+        //             &id.identifier(),
+        //             abi,
+        //             executor,
+        //             deploy_code.clone(),
+        //             libs,
+        //             (filter, include_fuzz_tests),
+        //         )?;
+        //         Ok((id.identifier(), result))
+        //     })
+        //     .filter_map(Result::<_>::ok)
+        //     .filter(|(_, results)| !results.is_empty())
+        //     .map_with(stream_result, |stream_result, (name, result)| {
+        //         if let Some(stream_result) = stream_result.as_ref() {
+        //             stream_result.send((name.clone(), result.clone())).unwrap();
+        //         }
+        //         (name, result)
+        //     })
+        //     .collect::<BTreeMap<_, _>>();
+        // Ok(results)
+        todo!()
     }
 
     // The _name field is unused because we only want it for tracing
@@ -293,6 +363,7 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
+            fork2: None,
         })
     }
 

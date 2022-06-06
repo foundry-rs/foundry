@@ -1,8 +1,10 @@
 use crate::executor::{fork::SharedBackend, Fork};
+use bytes::Bytes;
 use ethers::prelude::{H160, H256, U256};
+use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    AccountInfo, Env,
+    Account, AccountInfo, Database, DatabaseCommit, Env,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
@@ -91,6 +93,18 @@ impl Backend2 {
         Self { forks, db, created_forks: Default::default(), snapshots: Default::default() }
     }
 
+    /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
+    pub fn clone_empty(&self) -> Self {
+        let mut db = self.db.clone();
+        *db.db_mut() = BackendDatabase::InMemory(EmptyDB());
+        Self {
+            forks: self.forks.clone(),
+            created_forks: Default::default(),
+            db,
+            snapshots: Default::default(),
+        }
+    }
+
     /// Creates a new snapshot
     pub fn snapshot(&mut self) -> U256 {
         let id = self.snapshots.insert(self.db.clone());
@@ -136,6 +150,50 @@ impl Backend2 {
             .ok_or_else(|| eyre::eyre!("Fork Id {} does not exist", id))?;
         *self.db.db_mut() = BackendDatabase::Forked(fork, id);
         Ok(())
+    }
+}
+
+// a bunch of delegate revm trait implementations
+
+impl DatabaseRef for Backend2 {
+    fn basic(&self, address: H160) -> AccountInfo {
+        self.db.basic(address)
+    }
+
+    fn code_by_hash(&self, address: H256) -> bytes::Bytes {
+        self.db.code_by_hash(address)
+    }
+
+    fn storage(&self, address: H160, index: U256) -> U256 {
+        DatabaseRef::storage(&self.db, address, index)
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        self.db.block_hash(number)
+    }
+}
+
+impl DatabaseCommit for Backend2 {
+    fn commit(&mut self, changes: Map<H160, Account>) {
+        self.db.commit(changes)
+    }
+}
+
+impl Database for Backend2 {
+    fn basic(&mut self, address: H160) -> AccountInfo {
+        self.db.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
+        self.db.code_by_hash(address)
+    }
+
+    fn storage(&mut self, address: H160, index: U256) -> U256 {
+        Database::storage(&mut self.db, address, index)
+    }
+
+    fn block_hash(&mut self, number: U256) -> H256 {
+        self.db.block_hash(number)
     }
 }
 
