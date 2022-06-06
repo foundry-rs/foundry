@@ -2,8 +2,9 @@ use super::{Cheatcodes, Debugger, LogCollector, Tracer};
 use crate::{debug::DebugArena, trace::CallTraceArena};
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
-use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
+use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 use std::collections::BTreeMap;
+use crate::executor::backend::BackendTrait;
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -55,7 +56,7 @@ impl InspectorStack {
 
 impl<DB> Inspector<DB> for InspectorStack
 where
-    DB: Database,
+    DB: BackendTrait,
 {
     fn initialize_interp(
         &mut self,

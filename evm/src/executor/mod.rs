@@ -17,7 +17,7 @@ use hashbrown::HashMap;
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
 use revm::{
-    db::{CacheDB, DatabaseCommit, EmptyDB},
+    db::{DatabaseCommit},
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::{BTreeMap, VecDeque};
@@ -475,7 +475,7 @@ impl Executor {
         backend.insert_cache(address, self.backend.basic(address));
         backend.commit(state_changeset);
         let executor =
-            Executor::new(db, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
+            Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
 
         let mut success = !reverted;
         if success {

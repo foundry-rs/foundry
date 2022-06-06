@@ -8,7 +8,7 @@ use ethers::{
 };
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use revm::db::DatabaseRef;
+
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
@@ -60,7 +60,7 @@ impl<'a> FuzzedExecutor<'a> {
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
-        let state: EvmFuzzState = build_initial_state(&self.executor.backend);
+        let state: EvmFuzzState = build_initial_state(&self.executor.backend.db);
 
         // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
         // have that, we should add a way to configure strategy weights

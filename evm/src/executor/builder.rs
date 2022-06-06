@@ -4,7 +4,7 @@ use super::{
     Executor,
 };
 use crate::executor::{
-    backend::{Backend, Backend2},
+    backend::{Backend2},
     fork::{BlockchainDb, BlockchainDbMeta},
 };
 use ethers::{
@@ -41,7 +41,7 @@ impl ExecutorBuilder {
 
     /// Enables tracing
     #[must_use]
-    pub fn with_tracing(mut self) -> Self {
+    pub fn with_tracing(self) -> Self {
         self.set_tracing(true)
     }
 

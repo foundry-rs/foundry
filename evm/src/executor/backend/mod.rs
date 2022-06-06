@@ -7,6 +7,7 @@ use revm::{
     Account, AccountInfo, Database, DatabaseCommit, Env,
 };
 use std::collections::HashMap;
+use revm::db::RefDBWrapper;
 use tracing::{trace, warn};
 
 mod in_memory_db;
@@ -15,6 +16,17 @@ use crate::executor::{
     snapshot::Snapshots,
 };
 pub use in_memory_db::MemDb;
+
+#[auto_impl::auto_impl(&mut, Box)]
+pub trait BackendTrait : Database {
+
+}
+
+impl BackendTrait for Backend2 {}
+
+impl<'a> BackendTrait for RefDBWrapper<'a> {
+
+}
 
 /// Provides the underlying `revm::Database` implementation.
 ///
@@ -151,7 +163,12 @@ impl Backend2 {
         *self.db.db_mut() = BackendDatabase::Forked(fork, id);
         Ok(())
     }
+
+    pub fn insert_cache(&mut self, address: H160, account: AccountInfo) {
+        self.db.insert_cache(address, account)
+    }
 }
+
 
 // a bunch of delegate revm trait implementations
 
@@ -160,8 +177,8 @@ impl DatabaseRef for Backend2 {
         self.db.basic(address)
     }
 
-    fn code_by_hash(&self, address: H256) -> bytes::Bytes {
-        self.db.code_by_hash(address)
+    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+        self.db.code_by_hash(code_hash)
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
@@ -185,7 +202,7 @@ impl Database for Backend2 {
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
-        self.db.code_by_hash(address)
+        self.db.code_by_hash(code_hash)
     }
 
     fn storage(&mut self, address: H160, index: U256) -> U256 {
