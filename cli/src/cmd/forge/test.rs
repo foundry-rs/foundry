@@ -259,7 +259,7 @@ pub struct TestArgs {
         long,
         env = "ETHERSCAN_API_KEY",
         help = "Set etherscan api key to better decode traces",
-        value_name = "KEY"
+        value_name = "ETHERSCAN_KEY"
     )]
     etherscan_api_key: Option<String>,
 

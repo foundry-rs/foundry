@@ -4,12 +4,12 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
     compile,
     opts::{forge::ContractInfo, EthereumOpts, WalletType},
-    utils::{parse_ether_value, parse_u256},
+    utils::{get_http_provider, parse_ether_value, parse_u256},
 };
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
-    prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
     solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
@@ -164,9 +164,10 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = Config::from(&self.eth);
-        let provider = Provider::<Http>::try_from(
-            config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-        )?;
+        let provider = get_http_provider(
+            &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            false,
+        );
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =

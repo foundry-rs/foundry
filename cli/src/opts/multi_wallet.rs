@@ -1,9 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::{Http, Middleware, Provider, Signer},
+    prelude::{Http, Middleware, Provider, RetryClient, Signer},
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
@@ -188,7 +191,7 @@ impl MultiWallet {
     /// error, if it can't find all.
     pub async fn find_all(
         &self,
-        provider: &Provider<Http>,
+        provider: Arc<Provider<RetryClient<Http>>>,
         mut addresses: HashSet<Address>,
     ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");

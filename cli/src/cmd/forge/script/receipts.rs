@@ -1,90 +1,76 @@
-use crate::{cmd::ScriptSequence, utils::print_receipt};
-use ethers::prelude::{Http, Middleware, Provider, TransactionReceipt, H256, U256};
-use futures::future::join_all;
+use std::sync::Arc;
 
-use super::broadcast::BroadcastError;
+use crate::{cmd::ScriptSequence, init_progress, update_progress, utils::print_receipt};
+use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Gets the receipts of previously pending transactions.
 pub async fn wait_for_pending(
-    provider: &Provider<Http>,
+    provider: Arc<Provider<RetryClient<Http>>>,
     deployment_sequence: &mut ScriptSequence,
 ) -> eyre::Result<()> {
     if !deployment_sequence.pending.is_empty() {
         println!("##\nChecking previously pending transactions.");
-        let future_receipts = deployment_sequence
-            .pending
-            .iter()
-            .map(|tx_hash| pending_receipt(provider, *tx_hash))
-            .collect();
-        wait_for_receipts(future_receipts, deployment_sequence).await?;
+        wait_for_receipts(deployment_sequence.pending.clone(), deployment_sequence, provider)
+            .await?;
     }
     Ok(())
-}
-
-/// Waits for a pending receipt, and gets its nonce to return (receipt, nonce).
-async fn pending_receipt(
-    provider: &Provider<Http>,
-    tx_hash: H256,
-) -> Result<(TransactionReceipt, U256), BroadcastError> {
-    let pending_err =
-        || BroadcastError::Simple(format!("Failed to get pending transaction {tx_hash:?}."));
-
-    let receipt = provider
-        .get_transaction_receipt(tx_hash)
-        .await
-        .map_err(|_| pending_err())?
-        .ok_or_else(pending_err)?;
-
-    let tx = provider
-        .get_transaction(tx_hash)
-        .await
-        .map_err(|_| pending_err())?
-        .ok_or_else(pending_err)?;
-
-    Ok((receipt, tx.nonce))
 }
 
 /// Waits for a list of receipts. If it fails, it tries to retrieve the transaction hash that can be
 /// used on a later run with `--resume`.
 pub async fn wait_for_receipts(
-    tasks: Vec<impl futures::Future<Output = Result<(TransactionReceipt, U256), BroadcastError>>>,
+    tx_hashes: Vec<TxHash>,
     deployment_sequence: &mut ScriptSequence,
+    provider: Arc<Provider<RetryClient<Http>>>,
 ) -> eyre::Result<()> {
-    let res = join_all(tasks).await;
+    let mut tasks = futures::stream::iter(
+        tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
+    )
+    .buffer_unordered(10);
 
     let mut receipts = vec![];
     let mut errors: Vec<String> = vec![];
+    let pb = init_progress!(tx_hashes, "receipts");
+    update_progress!(pb, -1);
 
-    for receipt in res {
-        match receipt {
-            Ok(ret) => {
-                if let Some(status) = ret.0.status {
-                    if status.is_zero() {
-                        errors.push(format!("Transaction Failure: {}", ret.0.transaction_hash));
+    for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
+        if let Some(receipt) = tasks.next().await {
+            match receipt {
+                Ok(Some(receipt)) => {
+                    if let Some(status) = receipt.status {
+                        if status.is_zero() {
+                            errors
+                                .push(format!("Transaction Failure: {}", receipt.transaction_hash));
+                        }
                     }
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    receipts.push(receipt)
                 }
-                deployment_sequence.remove_pending(ret.0.transaction_hash);
-                let _ = print_receipt(&ret.0, ret.1);
-                receipts.push(ret)
-            }
-            Err(e) => {
-                if let BroadcastError::ErrorWithTxHash(_, tx_hash) = e {
-                    deployment_sequence.add_pending(tx_hash);
+                Ok(None) => {
+                    errors.push(format!("Received an empty receipt for {}", tx_hash));
                 }
-                errors.push(format!("{e}"));
+                Err(err) => {
+                    errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
+                }
             }
-        };
+            update_progress!(pb, index);
+        } else {
+            break
+        }
     }
 
-    for (receipt, nonce) in receipts {
-        print_receipt(&receipt, nonce)?;
+    for receipt in receipts {
+        print_receipt(&receipt);
         deployment_sequence.add_receipt(receipt);
     }
 
     if !errors.is_empty() {
         let mut error_msg = format!("{:?}", errors);
         if !deployment_sequence.pending.is_empty() {
-            error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting the transactions."
+            error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting
+    the transactions."
         }
         eyre::bail!(error_msg);
     }

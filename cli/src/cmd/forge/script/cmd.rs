@@ -46,7 +46,7 @@ impl ScriptArgs {
                 .expect("You must provide an RPC URL (see --fork-url).")
                 .clone();
 
-            let provider = get_http_provider(&fork_url);
+            let provider = get_http_provider(&fork_url, true);
             let chain = provider.get_chainid().await?.as_u64();
 
             let mut deployment_sequence = ScriptSequence::load(
@@ -56,7 +56,7 @@ impl ScriptArgs {
                 chain,
             )?;
 
-            receipts::wait_for_pending(&provider, &mut deployment_sequence).await?;
+            receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
                 self.send_transactions(&mut deployment_sequence, &fork_url).await?;
