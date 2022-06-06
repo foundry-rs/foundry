@@ -40,6 +40,8 @@ pub struct Fork {
     pub pin_block: Option<u64>,
     /// chain id retrieved from the endpoint
     pub chain_id: u64,
+    /// The initial retry backoff
+    pub initial_backoff: u64,
 }
 
 impl Fork {
@@ -51,10 +53,10 @@ impl Fork {
     /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
     /// required. See also [crate::executor::fork::SharedBackend]
     pub async fn spawn_backend(self, env: &Env) -> SharedBackend {
-        let Fork { cache_path, url, pin_block, chain_id } = self;
+        let Fork { cache_path, url, pin_block, chain_id, initial_backoff } = self;
 
         let provider = Arc::new(
-            Provider::<RetryClient<Http>>::new_client(url.clone().as_str(), 10, 1000)
+            Provider::<RetryClient<Http>>::new_client(url.clone().as_str(), 10, initial_backoff)
                 .expect("Failed to establish provider"),
         );
 

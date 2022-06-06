@@ -217,6 +217,7 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
             pin_block: evm_opts.fork_block_number,
             cache_path: cache_storage,
             chain_id,
+            initial_backoff: evm_opts.fork_retry_backoff.unwrap_or(50),
         };
         return Some(fork)
     }
