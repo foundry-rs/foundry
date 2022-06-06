@@ -653,6 +653,7 @@ contract Foo {
 
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     prj.insert_ds_test();
 
     prj.inner()
