@@ -48,9 +48,16 @@ impl ScriptArgs {
             let sequential_broadcast = local_wallets.len() != 1 || self.slow;
 
             // Make a one-time gas price estimation
-            let gas_price = provider.get_gas_price().await?;
-            let eip1559_fees = provider.estimate_eip1559_fees(None).await.ok();
-            let chain_id = provider.get_chainid().await?;
+            let (gas_price, eip1559_fees) = {
+                match deployment_sequence.transactions.front().unwrap() {
+                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+                        (provider.get_gas_price().await.ok(), None)
+                    }
+                    TypedTransaction::Eip1559(_) => {
+                        (None, provider.estimate_eip1559_fees(None).await.ok())
+                    }
+                }
+            };
 
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
@@ -64,7 +71,7 @@ impl ScriptArgs {
 
                     let mut tx = tx.clone();
 
-                    tx.set_chain_id(chain_id.as_u64());
+                    tx.set_chain_id(signer.chain_id());
 
                     if let Some(gas_price) = self.with_gas_price {
                         tx.set_gas_price(gas_price);
@@ -72,7 +79,7 @@ impl ScriptArgs {
                         // fill gas price
                         match tx {
                             TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
-                                tx.set_gas_price(gas_price);
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
                             }
                             TypedTransaction::Eip1559(ref mut inner) => {
                                 let eip1559_fees =

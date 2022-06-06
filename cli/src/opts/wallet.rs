@@ -3,7 +3,7 @@ use std::{str::FromStr, sync::Arc};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::RetryClient,
+    prelude::{RetryClient, Signer},
     providers::{Http, Provider},
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
@@ -35,6 +35,16 @@ impl From<SignerClient<Trezor>> for WalletType {
 impl From<SignerClient<LocalWallet>> for WalletType {
     fn from(wallet: SignerClient<LocalWallet>) -> WalletType {
         WalletType::Local(wallet)
+    }
+}
+
+impl WalletType {
+    pub fn chain_id(&self) -> u64 {
+        match self {
+            WalletType::Local(inner) => inner.signer().chain_id(),
+            WalletType::Ledger(inner) => inner.signer().chain_id(),
+            WalletType::Trezor(inner) => inner.signer().chain_id(),
+        }
     }
 }
 
