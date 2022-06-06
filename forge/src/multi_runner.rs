@@ -358,7 +358,13 @@ mod tests {
         opts.fork_url = Some(rpc.to_string());
         let chain_id = opts.get_chain_id();
 
-        let fork = Some(Fork { cache_path: None, url: rpc.to_string(), pin_block: None, chain_id });
+        let fork = Some(Fork {
+            cache_path: None,
+            url: rpc.to_string(),
+            pin_block: None,
+            chain_id,
+            initial_backoff: 50,
+        });
         base_runner()
             .with_fork(fork)
             .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)

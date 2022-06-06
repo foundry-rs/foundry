@@ -22,6 +22,9 @@ pub struct EvmOpts {
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
 
+    /// initial retry backoff
+    pub fork_retry_backoff: Option<u64>,
+
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
 
