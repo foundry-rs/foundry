@@ -277,7 +277,18 @@ pub fn print_receipt(receipt: &TransactionReceipt) {
 
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price.unwrap_or_default();
-    let paid = format_units(gas_used.mul(gas_price), 18).expect("");
+
+    let gas_details = if gas_price.is_zero() {
+        format!("Gas Used: {gas_used}")
+    } else {
+        let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
+        let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+        format!(
+            "Paid: {} ETH ({gas_used} gas * {} gwei)",
+            paid.trim_end_matches('0'),
+            gas_price.trim_end_matches('0').trim_end_matches('.')
+        )
+    };
 
     let check = if receipt.status.unwrap_or_default().is_zero() {
         Emoji("❌ ", " [Failed] ")
@@ -286,14 +297,12 @@ pub fn print_receipt(receipt: &TransactionReceipt) {
     };
 
     println!(
-        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nPaid: {} ETH ({} gas * {} gwei)\n",
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
         receipt.block_number.unwrap_or_default(),
-        paid.trim_end_matches('0'),
-        gas_used,
-        format_units(gas_price, 9).expect("").trim_end_matches('0').trim_end_matches('.')
+        gas_details
     );
 }
 
