@@ -604,6 +604,7 @@ mod tests {
             url: ENDPOINT.to_string(),
             pin_block: Some(block_num),
             chain_id: 1,
+            initial_backoff: 50,
         };
 
         let backend = runtime.block_on(fork.spawn_backend(&env));
