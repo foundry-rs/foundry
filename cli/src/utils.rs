@@ -269,7 +269,7 @@ pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClien
     })
 }
 
-pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
+pub fn print_receipt(receipt: &TransactionReceipt) {
     let mut contract_address = "".to_string();
     if let Some(addr) = receipt.contract_address {
         contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
@@ -277,7 +277,7 @@ pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
 
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price.unwrap_or_default();
-    let paid = format_units(gas_used.mul(gas_price), 18)?;
+    let paid = format_units(gas_used.mul(gas_price), 18).expect("");
 
     let check = if receipt.status.unwrap_or_default().is_zero() {
         Emoji("❌ ", " [Failed] ")
@@ -293,9 +293,8 @@ pub fn print_receipt(receipt: &TransactionReceipt) -> eyre::Result<()> {
         receipt.block_number.unwrap_or_default(),
         paid.trim_end_matches('0'),
         gas_used,
-        format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
+        format_units(gas_price, 9).expect("").trim_end_matches('0').trim_end_matches('.')
     );
-    Ok(())
 }
 
 /// Useful extensions to [`std::process::Command`].

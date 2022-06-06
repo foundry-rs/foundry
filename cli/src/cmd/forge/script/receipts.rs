@@ -62,7 +62,7 @@ pub async fn wait_for_receipts(
     }
 
     for receipt in receipts {
-        let _ = print_receipt(&receipt);
+        print_receipt(&receipt);
         deployment_sequence.add_receipt(receipt);
     }
 
