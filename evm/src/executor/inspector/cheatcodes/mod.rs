@@ -34,6 +34,7 @@ use revm::{
     Return,
 };
 use std::collections::{BTreeMap, VecDeque};
+use crate::executor::backend::Backend2;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -98,9 +99,9 @@ impl Cheatcodes {
         }
     }
 
-    fn apply_cheatcode<DB: Database>(
+    fn apply_cheatcode<Backend2: Database>(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, Backend2>,
         caller: Address,
         call: &CallInputs,
     ) -> Result<Bytes, Bytes> {
@@ -117,13 +118,74 @@ impl Cheatcodes {
     }
 }
 
-impl<DB> Inspector<DB> for Cheatcodes
-where
-    DB: Database,
+impl Inspector<Backend2> for Cheatcodes
 {
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, Backend2>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
+        }
+
+        Return::Continue
+    }
+
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, Backend2>, _: bool) -> Return {
+        // Record writes and reads if `record` has been called
+        if let Some(storage_accesses) = &mut self.accesses {
+            match interpreter.contract.code[interpreter.program_counter()] {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    // An SSTORE does an SLOAD internally
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                    storage_accesses
+                        .writes
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                _ => (),
+            }
+        }
+
+        Return::Continue
+    }
+
+    fn log(&mut self, _: &mut EVMData<'_, Backend2>, address: &Address, topics: &[H256], data: &Bytes) {
+        // Match logs if `expectEmit` has been called
+        if !self.expected_emits.is_empty() {
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
+        }
+    }
+
     fn call(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, Backend2>,
         call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
@@ -233,72 +295,9 @@ where
         }
     }
 
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _: bool,
-    ) -> Return {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            data.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
-        }
-
-        Return::Continue
-    }
-
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
-        // Record writes and reads if `record` has been called
-        if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.code[interpreter.program_counter()] {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-
-                    // An SSTORE does an SLOAD internally
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                    storage_accesses
-                        .writes
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                _ => (),
-            }
-        }
-
-        Return::Continue
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
-        // Match logs if `expectEmit` has been called
-        if !self.expected_emits.is_empty() {
-            handle_expect_emit(
-                self,
-                RawLog { topics: topics.to_vec(), data: data.to_vec() },
-                address,
-            );
-        }
-    }
-
     fn call_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, Backend2>,
         call: &CallInputs,
         remaining_gas: Gas,
         status: Return,
@@ -392,7 +391,7 @@ where
 
     fn create(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, Backend2>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // Apply our prank
@@ -438,7 +437,7 @@ where
 
     fn create_end(
         &mut self,
-        data: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, Backend2>,
         _: &CreateInputs,
         status: Return,
         address: Option<Address>,
