@@ -34,13 +34,15 @@
 #[macro_export]
 macro_rules! forgetest {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -48,13 +50,15 @@ macro_rules! forgetest {
 #[macro_export]
 macro_rules! forgetest_async {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_async!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest_async!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[tokio::test(flavor = "multi_thread")]
+        $(#[$meta])*
         async fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $fun(prj, cmd).await;
+            let f = $fun;
+            f(prj, cmd).await;
         }
     };
 }
@@ -62,13 +66,15 @@ macro_rules! forgetest_async {
 #[macro_export]
 macro_rules! casttest {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::casttest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -77,14 +83,16 @@ macro_rules! casttest {
 #[macro_export]
 macro_rules! forgetest_ignore {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_ignore!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest_ignore!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
         #[ignore]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -93,14 +101,16 @@ macro_rules! forgetest_ignore {
 #[macro_export]
 macro_rules! forgetest_init {
     ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_init!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+        $crate::forgetest_init!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
     ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize(prj.root());
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -112,11 +122,12 @@ macro_rules! forgetest_init {
 macro_rules! forgetest_external {
     // forgetest_external!(test_name, "owner/repo");
     ($(#[$meta:meta])* $test:ident, $repo:literal) => {
-        $crate::forgetest_external!($test, $repo, 0, Vec::<String>::new());
+        $crate::forgetest_external!($(#[$meta])* $test, $repo, 0, Vec::<String>::new());
     };
     // forgetest_external!(test_name, "owner/repo", 1234);
     ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal) => {
         $crate::forgetest_external!(
+            $(#[$meta])*
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
@@ -126,11 +137,12 @@ macro_rules! forgetest_external {
     };
     // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
     ($(#[$meta:meta])* $test:ident, $repo:literal, $forge_opts:expr) => {
-        $crate::forgetest_external!($test, $repo, 0, $forge_opts);
+        $crate::forgetest_external!($(#[$meta])* $test, $repo, 0, $forge_opts);
     };
     // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
     ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
         $crate::forgetest_external!(
+            $(#[$meta])*
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
@@ -141,6 +153,7 @@ macro_rules! forgetest_external {
     // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
     ($(#[$meta:meta])* $test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             use std::process::{Command, Stdio};
 
