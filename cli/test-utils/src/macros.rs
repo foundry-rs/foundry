@@ -33,10 +33,10 @@
 /// });
 #[macro_export]
 macro_rules! forgetest {
-    ($test:ident, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
         $crate::forgetest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
@@ -47,10 +47,10 @@ macro_rules! forgetest {
 
 #[macro_export]
 macro_rules! forgetest_async {
-    ($test:ident, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
         $crate::forgetest_async!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[tokio::test(flavor = "multi_thread")]
         async fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
@@ -61,10 +61,10 @@ macro_rules! forgetest_async {
 
 #[macro_export]
 macro_rules! casttest {
-    ($test:ident, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
         $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
             let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
@@ -76,10 +76,10 @@ macro_rules! casttest {
 /// A helper macro to ignore `forgetest!` that should not run on CI
 #[macro_export]
 macro_rules! forgetest_ignore {
-    ($test:ident, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
         $crate::forgetest_ignore!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
         #[ignore]
         fn $test() {
@@ -92,10 +92,10 @@ macro_rules! forgetest_ignore {
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
 macro_rules! forgetest_init {
-    ($test:ident, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
         $crate::forgetest_init!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
@@ -111,11 +111,11 @@ macro_rules! forgetest_init {
 #[macro_export]
 macro_rules! forgetest_external {
     // forgetest_external!(test_name, "owner/repo");
-    ($test:ident, $repo:literal) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal) => {
         $crate::forgetest_external!($test, $repo, 0, Vec::<String>::new());
     };
     // forgetest_external!(test_name, "owner/repo", 1234);
-    ($test:ident, $repo:literal, $fork_block:literal) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal) => {
         $crate::forgetest_external!(
             $test,
             $repo,
@@ -125,11 +125,11 @@ macro_rules! forgetest_external {
         );
     };
     // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
-    ($test:ident, $repo:literal, $forge_opts:expr) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $forge_opts:expr) => {
         $crate::forgetest_external!($test, $repo, 0, $forge_opts);
     };
     // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
-    ($test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
         $crate::forgetest_external!(
             $test,
             $repo,
@@ -139,7 +139,7 @@ macro_rules! forgetest_external {
         );
     };
     // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
-    ($test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
         #[test]
         fn $test() {
             use std::process::{Command, Stdio};
