@@ -231,11 +231,10 @@ Chain ID:       {}
         let mut wallet_description = HashMap::new();
         let mut available_accounts = Vec::with_capacity(self.genesis_accounts.len());
         let mut private_keys = Vec::with_capacity(self.genesis_accounts.len());
-        let balance = format_ether(self.genesis_balance);
 
-        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            available_accounts.push(format!("({}) {:?} ({} ETH)", idx, wallet.address(), balance));
-            private_keys.push(format!("({}) 0x{}", idx, hex::encode(wallet.signer().to_bytes())));
+        for (_, wallet) in self.genesis_accounts.iter().enumerate() {
+            available_accounts.push(format!("{:?}", wallet.address()));
+            private_keys.push(format!("0x{}", hex::encode(wallet.signer().to_bytes())));
         }
 
         if let Some(ref gen) = self.account_generator {
@@ -501,10 +500,12 @@ impl NodeConfig {
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
         if self.config_out.is_some() {
-            let f = File::create(self.config_out.as_deref().unwrap())
-                .expect("Unable to create anvil config description file");
+            let config_out = self.config_out.as_deref().unwrap();
+            let f =
+                File::create(config_out).expect("Unable to create anvil config description file");
             let mut f = BufWriter::new(f);
-            f.write_all(self.as_json(fork).as_bytes()).expect("Unable to write data");
+            f.write_all(self.as_json(fork).as_bytes())
+                .expect(&format!("Unable to write to anvil config file at {}", config_out));
         }
         if self.silent {
             return
