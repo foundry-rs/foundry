@@ -1978,6 +1978,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         _loc: Loc,
         declaration: &mut VariableDeclaration,
         expr: &mut Option<Expression>,
+        semicolon: bool,
     ) -> Result<()> {
         declaration.visit(self)?;
         expr.as_mut()
@@ -1986,7 +1987,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 expr.visit(self)
             })
             .transpose()?;
-        self.write_semicolon()?;
+        if semicolon {
+            self.write_semicolon()?;
+        }
         Ok(())
     }
 
@@ -2004,10 +2007,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 init.as_mut()
                     .map(|stmt| {
                         match **stmt {
-                            Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-                                decl.visit(fmt)?;
-                                expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-                                Ok(())
+                            Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
                             }
                             Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
                             _ => stmt.visit(fmt), // unreachable
@@ -2028,9 +2029,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     .map(|stmt| {
                         match **stmt {
                             Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-                                decl.visit(fmt)?;
-                                expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-                                Ok(())
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
                             }
                             Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
                             _ => stmt.visit(fmt), // unreachable
@@ -2217,24 +2216,24 @@ mod tests {
         };
     }
 
-    // test_directory! { ConstructorDefinition }
-    // test_directory! { ContractDefinition }
-    // test_directory! { DocComments }
-    // test_directory! { EnumDefinition }
-    // test_directory! { ErrorDefinition }
-    // test_directory! { EventDefinition }
-    // test_directory! { FunctionDefinition }
-    // test_directory! { FunctionType }
-    // test_directory! { ImportDirective }
-    // test_directory! { ModifierDefinition }
-    // test_directory! { StatementBlock }
-    // test_directory! { StructDefinition }
-    // test_directory! { TypeDefinition }
-    // test_directory! { UsingDirective }
-    // test_directory! { VariableDefinition }
-    // test_directory! { SimpleComments }
-    // test_directory! { ExpressionPrecedence }
-    // test_directory! { FunctionDefinitionWithComments }
+    test_directory! { ConstructorDefinition }
+    test_directory! { ContractDefinition }
+    test_directory! { DocComments }
+    test_directory! { EnumDefinition }
+    test_directory! { ErrorDefinition }
+    test_directory! { EventDefinition }
+    test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
+    test_directory! { ImportDirective }
+    test_directory! { ModifierDefinition }
+    test_directory! { StatementBlock }
+    test_directory! { StructDefinition }
+    test_directory! { TypeDefinition }
+    test_directory! { UsingDirective }
+    test_directory! { VariableDefinition }
+    test_directory! { SimpleComments }
+    test_directory! { ExpressionPrecedence }
+    test_directory! { FunctionDefinitionWithComments }
     test_directory! { WhileStatement }
     test_directory! { ForStatement }
 }

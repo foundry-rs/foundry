@@ -115,6 +115,7 @@ pub trait Visitor {
         loc: Loc,
         _declaration: &mut VariableDeclaration,
         _expr: &mut Option<Expression>,
+        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -400,7 +401,7 @@ impl Visitable for Statement {
                 v.visit_stray_semicolon()
             }
             Statement::VariableDefinition(loc, declaration, expr) => {
-                v.visit_var_definition_stmt(*loc, declaration, expr)
+                v.visit_var_definition_stmt(*loc, declaration, expr, true)
             }
             Statement::For(loc, init, cond, update, body) => {
                 v.visit_for(*loc, init, cond, update, body)
