@@ -2043,36 +2043,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if multiline {
                 write_for_loop_header(fmt, true)?;
             }
-            // init.as_mut()
-            //     .map(|stmt| {
-            //         match **stmt {
-            //             Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-            //                 decl.visit(fmt)?;
-            //                 expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-            //                 Ok(())
-            //             }
-            //             Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
-            //             _ => stmt.visit(fmt), // unreachable
-            //         }
-            //     })
-            //     .transpose()?;
-            // fmt.write_semicolon()?;
-            // cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-            // fmt.write_semicolon()?;
-            // update
-            //     .as_mut()
-            //     .map(|stmt| {
-            //         match **stmt {
-            //             Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-            //                 decl.visit(fmt)?;
-            //                 expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-            //                 Ok(())
-            //             }
-            //             Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
-            //             _ => stmt.visit(fmt), // unreachable
-            //         }
-            //     })
-            //     .transpose()?;
             Ok(())
         })?;
         match body {
