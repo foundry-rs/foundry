@@ -311,52 +311,9 @@ impl Executor {
             self.backend_mut().inspect_ref(env, &mut inspector);
 
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
-        let call_result = self.convert_executed_call(inspector, executed_call)?;
+        let call_result = convert_executed_call(inspector, executed_call)?;
 
         convert_call_result(abi, &func, call_result)
-    }
-
-    /// Performs a raw call to an account on the current state of the VM.
-    ///
-    /// The state after the call is not persisted.
-    fn convert_executed_call(
-        &self,
-        mut inspector: InspectorStack,
-        call: ExecutedCall,
-    ) -> eyre::Result<RawCallResult> {
-        let ExecutedCall { status, out, gas, state_changeset, stipend, .. } = call;
-
-        let result = match out {
-            TransactOut::Call(data) => data,
-            _ => Bytes::default(),
-        };
-
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
-            inspector.collect_inspector_states();
-
-        let transactions = if let Some(cheats) = cheatcodes {
-            if !cheats.broadcastable_transactions.is_empty() {
-                Some(cheats.broadcastable_transactions)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        Ok(RawCallResult {
-            status,
-            reverted: !matches!(status, return_ok!()),
-            result,
-            gas,
-            stipend,
-            logs: logs.to_vec(),
-            labels,
-            traces,
-            debug,
-            transactions,
-            state_changeset: Some(state_changeset),
-        })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -396,7 +353,7 @@ impl Executor {
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
-        self.convert_executed_call(inspector, executed_call)
+        convert_executed_call(inspector, executed_call)
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -661,6 +618,46 @@ struct ExecutedCall {
 fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
     let non_zero_data_cost = if SpecId::enabled(spec, SpecId::ISTANBUL) { 16 } else { 68 };
     calldata.iter().fold(21000, |sum, byte| sum + if *byte == 0 { 4 } else { non_zero_data_cost })
+}
+
+/// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
+fn convert_executed_call(
+    inspector: InspectorStack,
+    call: ExecutedCall,
+) -> eyre::Result<RawCallResult> {
+    let ExecutedCall { status, out, gas, state_changeset, stipend, .. } = call;
+
+    let result = match out {
+        TransactOut::Call(data) => data,
+        _ => Bytes::default(),
+    };
+
+    let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        inspector.collect_inspector_states();
+
+    let transactions = if let Some(cheats) = cheatcodes {
+        if !cheats.broadcastable_transactions.is_empty() {
+            Some(cheats.broadcastable_transactions)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(RawCallResult {
+        status,
+        reverted: !matches!(status, return_ok!()),
+        result,
+        gas,
+        stipend,
+        logs: logs.to_vec(),
+        labels,
+        traces,
+        debug,
+        transactions,
+        state_changeset: Some(state_changeset),
+    })
 }
 
 fn convert_call_result<D: Detokenize>(
