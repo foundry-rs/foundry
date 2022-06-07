@@ -1087,8 +1087,13 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
-        // all logs that are already available that match the filter
-        let historic = self.backend.logs(filter.clone()).await?;
+        // all logs that are already available that match the filter if the filter's block range is
+        // in the past
+        let historic = if filter.from_block.is_some() {
+            self.backend.logs(filter.clone()).await?
+        } else {
+            vec![]
+        };
         let filter = EthFilter::Logs(Box::new(LogsFilter {
             blocks: self.new_block_notifications(),
             storage: self.storage_info(),
