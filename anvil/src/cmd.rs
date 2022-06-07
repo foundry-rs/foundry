@@ -89,9 +89,9 @@ pub struct NodeArgs {
     pub block_time: Option<u64>,
 
     #[clap(
-    long,
-    help = "Writes output of `anvil` as json to user-specified file",
-    value_name = "OUT_FILE"
+        long,
+        help = "Writes output of `anvil` as json to user-specified file",
+        value_name = "OUT_FILE"
     )]
     pub config_out: Option<String>,
 

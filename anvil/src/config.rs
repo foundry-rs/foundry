@@ -33,7 +33,17 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use serde_json::{json, Value};
-use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration, fs::File, io::BufWriter, io::Write, collections::HashMap};
+use std::{
+    collections::HashMap,
+    fmt::Write as FmtWrite,
+    fs::File,
+    io::{BufWriter, Write},
+    net::IpAddr,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use yansi::Paint;
 
 /// Default port the rpc will open
@@ -114,37 +124,44 @@ pub struct NodeConfig {
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
         let mut config_string: String = "".to_owned();
-        config_string.push_str(&format!("\n{}", Paint::green(BANNER)));
-        config_string.push_str(&format!("\n    {}", VERSION_MESSAGE));
-        config_string.push_str(&format!("\n    {}", Paint::green("https://github.com/foundry-rs/foundry")));
+        let _ = write!(config_string, "\n{}", Paint::green(BANNER));
+        let _ = write!(config_string, "\n    {}", VERSION_MESSAGE);
+        let _ = write!(
+            config_string,
+            "\n    {}",
+            Paint::green("https://github.com/foundry-rs/foundry")
+        );
 
-        config_string.push_str(&format!(
+        let _ = write!(
+            config_string,
             r#"
 
 Available Accounts
 ==================
 "#
-        ));
+        );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            config_string.push_str(&format!("\n({}) {:?} ({} ETH)", idx, wallet.address(), balance));
+            let _ = write!(config_string, "\n({}) {:?} ({} ETH)", idx, wallet.address(), balance);
         }
 
-        config_string.push_str(&format!(
+        let _ = write!(
+            config_string,
             r#"
 
 Private Keys
 ==================
 "#
-        ));
+        );
 
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
             let hex = hex::encode(wallet.signer().to_bytes());
-            config_string.push_str(&format!("\n({}) 0x{}", idx, hex));
+            let _ = write!(config_string, "\n({}) 0x{}", idx, hex);
         }
 
         if let Some(ref gen) = self.account_generator {
-            config_string.push_str(&format!(
+            let _ = write!(
+                config_string,
                 r#"
 
 Wallet
@@ -154,10 +171,11 @@ Derivation path:   {}
 "#,
                 gen.phrase,
                 gen.get_derivation_path()
-            ));
+            );
         }
 
-        config_string.push_str(&format!(
+        let _ = write!(
+            config_string,
             r#"
 
 Base Fee
@@ -165,27 +183,30 @@ Base Fee
 {}
 "#,
             Paint::green(format!("\n{}", self.base_fee))
-        ));
-        config_string.push_str(&format!(
+        );
+        let _ = write!(
+            config_string,
             r#"
 Gas Price
 ==================
 {}
 "#,
             Paint::green(format!("\n{}", self.gas_price))
-        ));
+        );
 
-        config_string.push_str(&format!(
+        let _ = write!(
+            config_string,
             r#"
 Gas Limit
 ==================
 {}
 "#,
             Paint::green(format!("\n{}", self.gas_limit))
-        ));
+        );
 
         if let Some(fork) = fork {
-            config_string.push_str(&format!(
+            let _ = write!(
+                config_string,
                 r#"
 Fork
 ==================
@@ -199,7 +220,7 @@ Chain ID:       {}
                 fork.block_number(),
                 fork.block_hash(),
                 fork.chain_id()
-            ));
+            );
         }
 
         config_string
@@ -218,8 +239,8 @@ Chain ID:       {}
         }
 
         if let Some(ref gen) = self.account_generator {
-            let phrase = format!("{}", gen.get_phrase());
-            let derivation_path = format!("{}", gen.get_derivation_path());
+            let phrase = gen.get_phrase().to_string();
+            let derivation_path = gen.get_derivation_path().to_string();
 
             wallet_description.insert("derivation_path".to_string(), derivation_path);
             wallet_description.insert("mnemonic".to_string(), phrase);
@@ -421,7 +442,7 @@ impl NodeConfig {
     /// Sets file to write config info to
     #[must_use]
     pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
-        self.config_out = Option::from(config_out);
+        self.config_out = config_out;
         self
     }
 
@@ -480,7 +501,8 @@ impl NodeConfig {
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
         if self.config_out.is_some() {
-            let f = File::create(self.config_out.as_deref().unwrap()).expect("Unable to create anvil config description file");
+            let f = File::create(self.config_out.as_deref().unwrap())
+                .expect("Unable to create anvil config description file");
             let mut f = BufWriter::new(f);
             f.write_all(self.as_json(fork).as_bytes()).expect("Unable to write data");
         }
