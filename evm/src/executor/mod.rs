@@ -290,9 +290,7 @@ impl Executor {
         })
     }
 
-    /// Performs a call to an account on the current state of the VM.
-    ///
-    /// The state after the call is not persisted.
+    /// Executes the test function call
     pub fn execute<D: Detokenize, T: Tokenize, F: IntoFunction>(
         mut self,
         from: Address,
@@ -304,62 +302,29 @@ impl Executor {
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult {
-            result,
-            status,
-            reverted,
-            gas,
-            stipend,
-            logs,
-            labels,
-            traces,
-            debug,
-            transactions,
-            state_changeset,
-        } = self.call_raw(from, to, calldata, value)?;
-        match status {
-            return_ok!() => {
-                let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult {
-                    reverted,
-                    result,
-                    gas,
-                    stipend,
-                    logs,
-                    labels,
-                    traces,
-                    debug,
-                    transactions,
-                    state_changeset,
-                })
-            }
-            _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
-                    .unwrap_or_else(|_| format!("{:?}", status));
-                Err(EvmError::Execution {
-                    reverted,
-                    reason,
-                    gas,
-                    stipend,
-                    logs,
-                    traces,
-                    debug,
-                    labels,
-                    transactions,
-                    state_changeset,
-                })
-            }
-        }
+
+        // execute the call
+        let mut inspector = self.inspector_config.stack();
+        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
+        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        let (status, out, gas, state_changeset, logs) =
+            self.backend_mut().inspect_ref(env, &mut inspector);
+
+        let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
+        let call_result = self.convert_executed_call(inspector, executed_call)?;
+
+        convert_call_result(abi, &func, call_result)
     }
 
     /// Performs a raw call to an account on the current state of the VM.
     ///
     /// The state after the call is not persisted.
-    fn execute_with<F>(&self, mut inspector: InspectorStack, f: F) -> eyre::Result<RawCallResult>
-    where
-        F: FnOnce(&mut InspectorStack) -> ExecutedCall,
-    {
-        let ExecutedCall { status, out, gas, state_changeset, stipend, .. } = f(&mut inspector);
+    fn convert_executed_call(
+        &self,
+        mut inspector: InspectorStack,
+        call: ExecutedCall,
+    ) -> eyre::Result<RawCallResult> {
+        let ExecutedCall { status, out, gas, state_changeset, stipend, .. } = call;
 
         let result = match out {
             TransactOut::Call(data) => data,
@@ -424,15 +389,14 @@ impl Executor {
         value: U256,
     ) -> eyre::Result<RawCallResult> {
         // execute the call
-        let inspector = self.inspector_config.stack();
-        self.execute_with(inspector, |inspector| {
-            let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
-            // Build VM
-            let env = self.build_env(from, TransactTo::Call(to), calldata, value);
-            let mut db = FuzzBackendWrapper::new(self.backend());
-            let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, inspector);
-            ExecutedCall { status, out, gas, state_changeset, logs, stipend }
-        })
+        let mut inspector = self.inspector_config.stack();
+        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
+        // Build VM
+        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        let mut db = FuzzBackendWrapper::new(self.backend());
+        let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+        let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
+        self.convert_executed_call(inspector, executed_call)
     }
 
     /// Deploys a contract and commits the new state to the underlying database.

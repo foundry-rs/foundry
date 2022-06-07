@@ -169,6 +169,17 @@ impl Backend {
     pub fn insert_cache(&mut self, address: H160, account: AccountInfo) {
         self.db.insert_cache(address, account)
     }
+
+    pub fn inspect_ref<INSP>(
+        &mut self,
+        mut env: Env,
+        mut inspector: INSP,
+    ) -> (Return, TransactOut, u64, Map<Address, Account>, Vec<Log>)
+    where
+        INSP: Inspector<Self>,
+    {
+        revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+    }
 }
 
 // a bunch of delegate revm trait implementations
@@ -188,6 +199,24 @@ impl DatabaseRef for Backend {
 
     fn block_hash(&self, number: U256) -> H256 {
         self.db.block_hash(number)
+    }
+}
+
+impl<'a> DatabaseRef for &'a mut Backend {
+    fn basic(&self, address: H160) -> AccountInfo {
+        DatabaseRef::basic(&self.db, address)
+    }
+
+    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+        DatabaseRef::code_by_hash(&self.db, code_hash)
+    }
+
+    fn storage(&self, address: H160, index: U256) -> U256 {
+        DatabaseRef::storage(&self.db, address, index)
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        DatabaseRef::block_hash(&self.db, number)
     }
 }
 
