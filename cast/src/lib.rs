@@ -1,6 +1,7 @@
 //! Cast
 //!
 //! TODO
+use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -8,7 +9,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units},
+    utils::{self, get_contract_address, keccak256, parse_units, rlp},
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -17,11 +18,13 @@ pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
+use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 mod print_utils;
+mod rlp_converter;
 mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -1079,6 +1082,46 @@ impl SimpleCast {
             "eth" | "ether" => ethers_core::utils::format_units(value, 18),
             _ => ethers_core::utils::format_units(value, 18),
         }?)
+    }
+
+    /// Encodes hex data or list of hex data to hexadecimal rlp
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
+    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
+    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_rlp(value: &str) -> Result<String> {
+        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let item = Item::value_to_item(&val)?;
+        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    }
+
+    /// Decodes rlp encoded list with hex data
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
+    ///     assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
+    ///     assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
+    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_rlp(value: String) -> Result<String> {
+        let striped_value = strip_0x(&value);
+        let bytes = hex::decode(striped_value).expect("Could not decode hex");
+        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
+        Ok(format!("{}", item))
     }
 
     /// Converts an Ethereum address to its checksum format

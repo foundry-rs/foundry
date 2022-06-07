@@ -80,3 +80,15 @@ casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains("Function decimals(): 0x313ce567"), "{}", output);
     assert!(output.contains("Function allowance(address,address): 0xdd62ed3e"), "{}", output);
 });
+
+// tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
+casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]);
+    let out = cmd.stdout_lossy();
+    assert!(out.contains("0xc881aac3c281bb81cc"), "{}", out);
+
+    cmd.cast_fuse();
+    cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]);
+    let out = cmd.stdout_lossy();
+    assert!(out.contains("[[\"0x55556666\"],[],[],[[[]]]]"), "{}", out);
+});
