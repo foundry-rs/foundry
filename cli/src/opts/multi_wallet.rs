@@ -323,7 +323,7 @@ impl MultiWallet {
             None => TrezorHDPath::TrezorLive(mnemonic_index.unwrap_or(0)),
         };
 
-        return Ok(Some(Trezor::new(derivation, chain_id, None).await?))
+        Ok(Some(Trezor::new(derivation, chain_id, None).await?))
     }
 
     async fn get_from_ledger(
@@ -337,6 +337,6 @@ impl MultiWallet {
             None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
         };
 
-        return Ok(Some(Ledger::new(derivation, chain_id).await?))
+        Ok(Some(Ledger::new(derivation, chain_id).await?))
     }
 }
