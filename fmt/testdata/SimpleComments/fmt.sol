@@ -21,7 +21,7 @@ contract SampleContract {
         // comment 16
         external /* comment 17 */
         pure
-        returns(uint256)
+        returns (uint256)
     // comment 18
     { // comment 19
         return arg1 > arg2 ? arg1 : arg2;
