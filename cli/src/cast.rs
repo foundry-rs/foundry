@@ -178,7 +178,10 @@ async fn main() -> eyre::Result<()> {
             )?;
 
             let chain_id = Cast::new(&provider).chain_id().await?;
-            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+            let chain = Chain::try_from(chain_id.as_u64()).wrap_err(format!(
+                "Unknown chain detected: chain-id={}\nPlease report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml",
+                chain_id.as_u64()
+            ))?;
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, chain, false).await?;
