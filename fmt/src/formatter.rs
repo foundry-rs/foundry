@@ -110,7 +110,7 @@ impl<W: Sized> FormatBuffer<W> {
 
     fn create_temp_buf(&self) -> FormatBuffer<String> {
         let mut new = FormatBuffer::new(String::new(), self.tab_width);
-        new.base_indent_len = self.level() * self.tab_width;
+        new.base_indent_len = self.current_indent_len();
         new.last_indent = " ".repeat(self.last_indent_len().saturating_sub(new.base_indent_len));
         new.current_line_len = self.current_line_len();
         new.restrict_to_single_line = self.restrict_to_single_line;
@@ -147,6 +147,10 @@ impl<W: Sized> FormatBuffer<W> {
         self.last_indent.len() + self.base_indent_len
     }
 
+    fn current_indent_len(&self) -> usize {
+        self.level() + self.tab_width
+    }
+
     fn set_current_line_len(&mut self, len: usize) {
         self.current_line_len = len
     }
@@ -181,7 +185,7 @@ impl<W: Write> FormatBuffer<W> {
             // later on
             let line_start = line
                 .char_indices()
-                .take(self.base_indent_len + 1)
+                .take(self.base_indent_len)
                 .take_while(|(_, ch)| ch.is_whitespace())
                 .last()
                 .map(|(idx, _)| idx)
@@ -524,13 +528,18 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
-        if text.as_ref().contains('\n') {
+        let text = text.as_ref();
+        if text.is_empty() {
+            return true
+        }
+        if text.contains('\n') {
             return false
         }
-        self.config.line_length >
+        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
+        self.config.line_length >=
             self.last_indent_len()
                 .saturating_add(self.current_line_len())
-                .saturating_add(text.as_ref().len())
+                .saturating_add(text.len() + space)
     }
 
     fn write_chunks_separated<'b>(
@@ -689,7 +698,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         if !content.is_empty() {
             // add whitespace if necessary
             if self.next_chunk_needs_space(content.chars().next().unwrap()) {
-                if self.will_it_fit(format!(" {content}")) {
+                if self.will_it_fit(&content) {
                     write!(self.buf(), " ")?;
                 } else {
                     writeln!(self.buf())?;
@@ -738,7 +747,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                 Ok(None)
             }
             Err(err) => Err(err),
-            Ok(buf) => Ok(Some(buf.w)),
+            Ok(buf) => {
+                if self.will_it_fit(&buf.w) {
+                    Ok(Some(buf.w))
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -763,9 +778,37 @@ impl<'a, W: Write> Formatter<'a, W> {
                 }
             }
             Ok(buf) => {
-                write_chunk!(self, "{}", buf.w)?;
-                Ok(true)
+                if self.will_it_fit(&buf.w) {
+                    write_chunk!(self, "{}", buf.w)?;
+                    Ok(true)
+                } else {
+                    self.comments = comments;
+                    Ok(false)
+                }
             }
+        }
+    }
+
+    fn revertible(&mut self, mut fun: impl FnMut(&mut Self) -> Result<bool>) -> Result<bool> {
+        let comments = self.comments.clone();
+
+        let mut should_commit = false;
+        let res = self.with_temp_buf(|fmt| {
+            should_commit = fun(fmt)?;
+            Ok(())
+        });
+
+        match res {
+            Ok(buf) => {
+                if should_commit {
+                    write_chunk!(self, "{}", buf.w)?;
+                    Ok(true)
+                } else {
+                    self.comments = comments;
+                    Ok(false)
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 
@@ -817,15 +860,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     where
         E: Visitable + LineOfCode,
     {
-        let simulated = self.simulate_to_string(|fmt| {
-            fmt.visit_flattened_expr_multiline(flattened, false)?;
-            Ok(())
-        })?;
-        if !self.will_it_fit(simulated) {
-            self.visit_flattened_expr_multiline(flattened, true)?;
-        } else {
-            // TODO we can probably reuse simulated here
-            self.visit_flattened_expr_multiline(flattened, false)?;
+        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
+            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
         }
         Ok(())
     }
@@ -885,8 +921,56 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_operator_expr(&mut self, expr: &mut Expression) -> Result<()> {
-        self.visit_flattened_expr(&mut expr.flatten())
+    fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
+        use Expression::*;
+
+        if self.try_on_single_line(|fmt| expr.visit(fmt))? {
+            return Ok(())
+        }
+
+        self.write_postfix_comments_before(expr.loc().start())?;
+        self.write_prefix_comments_before(expr.loc().start())?;
+
+        if self.is_beginning_of_line() &&
+            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
+        {
+            return Ok(())
+        } else {
+            let mut fit_on_next_line = false;
+            self.indented(1, |fmt| {
+                fmt.revertible(|fmt| {
+                    writeln!(fmt.buf())?;
+                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
+                    Ok(fit_on_next_line)
+                })?;
+                Ok(())
+            })?;
+            if fit_on_next_line {
+                return Ok(())
+            }
+        }
+
+        let unsplittable = matches!(
+            expr,
+            BoolLiteral(..) |
+                NumberLiteral(..) |
+                RationalNumberLiteral(..) |
+                HexNumberLiteral(..) |
+                StringLiteral(..) |
+                HexLiteral(..) |
+                AddressLiteral(..) |
+                Variable(..) |
+                Unit(..) |
+                This(..)
+        );
+        if unsplittable {
+            self.indented(1, |fmt| expr.visit(fmt))?;
+            return Ok(())
+        }
+
+        expr.visit(self)?;
+
+        Ok(())
     }
 
     fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
@@ -1328,7 +1412,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::And(..) |
             Expression::Or(..) |
             Expression::Equal(..) |
-            Expression::NotEqual(..) => self.visit_operator_expr(expr)?,
+            Expression::NotEqual(..) => {
+                self.visit_flattened_expr(&mut expr.flatten())?;
+            }
             Expression::Variable(ident) => {
                 ident.visit(self)?;
             }
@@ -1960,20 +2046,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             name.content.push_str(" =");
         }
 
+        let mut multiline = false;
         self.indented(1, |fmt| {
-            let multiline = fmt.are_chunks_separated_multiline("{}", &attrs, "")?;
-            fmt.write_chunks_separated(&attrs, "", multiline)?;
-            fmt.write_chunk(&name)?;
+            if !fmt.try_on_single_line(|fmt| fmt.write_chunks_separated(&attrs, "", false))? {
+                multiline = true;
+                fmt.write_chunks_separated(&attrs, "", true)?;
+            }
+            if !fmt.try_on_single_line(|fmt| fmt.write_chunk(&name))? {
+                multiline = true;
+                fmt.write_chunk(&name)?;
+            }
             Ok(())
         })?;
 
         if let Some(init) = &mut var.initializer {
-            // TODO check if this should actually be indented or not. Function calls, member access
-            // and things may not need to be indented
-            self.indented(1, |fmt| {
-                init.visit(fmt)?;
-                Ok(())
-            })?;
+            self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(init))?;
         }
 
         self.write_semicolon()?;

@@ -5,7 +5,7 @@ use super::{LineOfCode, OptionalLineOfCode};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Precedence {
-    Literal,
+    P00,
     P01,
     P02,
     P03,
@@ -131,7 +131,7 @@ impl Operator for &mut Expression {
             List(..) |
             ArrayLiteral(..) |
             Unit(..) |
-            This(..) => Literal,
+            This(..) => P00,
             ArraySubscript(..) |
             ArraySlice(..) |
             FunctionCall(..) |
