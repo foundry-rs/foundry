@@ -19,5 +19,9 @@ contract ForStatement {
         }
 
         for (type(uint256).min;;) {}
+
+        for (;;) {
+            "test";
+        }
     }
 }

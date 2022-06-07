@@ -21,5 +21,7 @@ contract ForStatement {
         { i3 ++ ; }
 
         for (type(uint256).min;;) {}
+
+        for (;;) { "test" ; }
     }
 }

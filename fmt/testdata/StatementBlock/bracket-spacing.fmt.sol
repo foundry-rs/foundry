@@ -1,7 +1,9 @@
 // config: bracket-spacing=true
 contract Contract {
     function test() {
-        unchecked { a += 1; }
+        unchecked {
+            a += 1;
+        }
 
         unchecked {
             a += 1;
