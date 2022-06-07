@@ -2055,14 +2055,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         body: &mut Statement,
         cond: &mut Expression,
     ) -> Result<(), Self::Error> {
-        // TODO:
         write_chunk!(self, loc.start(), "do ")?;
         body.visit(self)?;
         self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
             cond.visit(fmt)
         })
-        // self.surrounded(loc.start(), "do {{", "}}", next_byte_end, fun)
-        // self.visit_source(loc)
     }
 }
 
