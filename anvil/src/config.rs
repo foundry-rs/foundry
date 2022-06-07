@@ -237,7 +237,7 @@ Chain ID:       {}
             wallet_description.insert("mnemonic".to_string(), phrase);
         };
 
-        let config = if let Some(fork) = fork {
+        if let Some(fork) = fork {
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
@@ -259,9 +259,7 @@ Chain ID:       {}
               "gas_price": format!("{}", self.gas_price),
               "gas_limit": format!("{}", self.gas_limit),
             })
-        };
-
-        config
+        }
     }
 }
 
