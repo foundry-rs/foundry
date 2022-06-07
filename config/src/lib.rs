@@ -478,8 +478,7 @@ impl Config {
     pub fn install_lib_dir(&self) -> PathBuf {
         self.libs
             .iter()
-            .filter(|p| !p.ends_with("node_modules"))
-            .next()
+            .find(|p| !p.ends_with("node_modules"))
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("lib"))
     }
