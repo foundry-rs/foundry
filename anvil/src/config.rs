@@ -71,7 +71,7 @@ pub struct NodeConfig {
     /// Default gas price for all txs
     pub gas_price: U256,
     /// Default base fee
-    pub base_fee: U256,
+    pub base_fee: Option<U256>,
     /// The hardfork to use
     pub hardfork: Hardfork,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
@@ -140,7 +140,7 @@ impl Default for NodeConfig {
             eth_rpc_url: None,
             fork_block_number: None,
             account_generator: None,
-            base_fee: INITIAL_BASE_FEE.into(),
+            base_fee: None,
             enable_tracing: true,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -155,6 +155,11 @@ impl NodeConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns the base fee to use
+    pub fn get_base_fee(&self) -> U256 {
+        self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
     }
 
     /// Sets the chain ID
@@ -196,9 +201,7 @@ impl NodeConfig {
     /// Sets the base fee
     #[must_use]
     pub fn with_base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
-        if let Some(base_fee) = base_fee {
-            self.base_fee = base_fee.into();
-        }
+        self.base_fee = base_fee.map(Into::into);
         self
     }
 
@@ -375,7 +378,7 @@ Base Fee
 ==================
 {}
 "#,
-            Paint::green(format!("{}", self.base_fee))
+            Paint::green(format!("{}", self.get_base_fee()))
         );
         print!(
             r#"
@@ -443,12 +446,12 @@ Chain ID:       {}
             },
             block: BlockEnv {
                 gas_limit: self.gas_limit,
-                basefee: self.base_fee,
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
-        let fees = FeeManager::new(self.base_fee, self.gas_price);
+        let fees = FeeManager::new(self.get_base_fee(), self.gas_price);
         let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
@@ -474,6 +477,15 @@ Chain ID:       {}
 
             env.block.number = fork_block_number.into();
             fork_timestamp = Some(block.timestamp);
+
+            // if not set explicitly we use the base fee of the latest block
+            if self.base_fee.is_none() {
+                if let Some(base_fee) = block.base_fee_per_gas {
+                    self.base_fee = Some(base_fee);
+                    fees.set_base_fee(base_fee);
+                    env.block.basefee = base_fee;
+                }
+            }
 
             let block_hash = block.hash.unwrap();
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
