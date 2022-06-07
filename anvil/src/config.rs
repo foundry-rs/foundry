@@ -32,17 +32,10 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
-use serde_json::{json, Value};
+use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap,
-    fmt::Write as FmtWrite,
-    fs::File,
-    io::{BufWriter, Write},
-    net::IpAddr,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
+    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf,
+    str::FromStr, sync::Arc, time::Duration,
 };
 use yansi::Paint;
 
@@ -226,13 +219,12 @@ Chain ID:       {}
         config_string
     }
 
-    fn as_json(&self, fork: Option<&ClientFork>) -> String {
-        let config_as_json: Value;
+    fn as_json(&self, fork: Option<&ClientFork>) -> Value {
         let mut wallet_description = HashMap::new();
         let mut available_accounts = Vec::with_capacity(self.genesis_accounts.len());
         let mut private_keys = Vec::with_capacity(self.genesis_accounts.len());
 
-        for (_, wallet) in self.genesis_accounts.iter().enumerate() {
+        for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
             private_keys.push(format!("0x{}", hex::encode(wallet.signer().to_bytes())));
         }
@@ -245,8 +237,8 @@ Chain ID:       {}
             wallet_description.insert("mnemonic".to_string(), phrase);
         };
 
-        if let Some(fork) = fork {
-            config_as_json = json!({
+        let config = if let Some(fork) = fork {
+            json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
               "endpoint": fork.eth_rpc_url(),
@@ -257,19 +249,19 @@ Chain ID:       {}
               "base_fee": format!("{}", self.base_fee),
               "gas_price": format!("{}", self.gas_price),
               "gas_limit": format!("{}", self.gas_limit),
-            });
+            })
         } else {
-            config_as_json = json!({
+            json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
               "wallet": wallet_description,
               "base_fee": format!("{}", self.base_fee),
               "gas_price": format!("{}", self.gas_price),
               "gas_limit": format!("{}", self.gas_limit),
-            });
-        }
+            })
+        };
 
-        serde_json::to_string(&config_as_json).unwrap()
+        config
     }
 }
 
@@ -438,7 +430,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets file to write config info to
+    /// Sets the file path to write the Anvil node's config info to.
     #[must_use]
     pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
         self.config_out = config_out;
@@ -501,11 +493,11 @@ impl NodeConfig {
     pub fn print(&self, fork: Option<&ClientFork>) {
         if self.config_out.is_some() {
             let config_out = self.config_out.as_deref().unwrap();
-            let f =
-                File::create(config_out).expect("Unable to create anvil config description file");
-            let mut f = BufWriter::new(f);
-            f.write_all(self.as_json(fork).as_bytes())
-                .expect(&format!("Unable to write to anvil config file at {}", config_out));
+            to_writer(
+                &File::create(config_out).expect("Unable to create anvil config description file"),
+                &self.as_json(fork),
+            )
+            .expect("Failed writing json");
         }
         if self.silent {
             return
