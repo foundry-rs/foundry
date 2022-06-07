@@ -47,13 +47,13 @@ macro_rules! format_err {
 #[allow(unused_macros)]
 macro_rules! bail {
     ($msg:literal $(,)?) => {
-        return Err($crate::formatter::format_err!($msg));
+        return Err($crate::formatter::format_err!($msg))
     };
     ($err:expr $(,)?) => {
-        return Err($err);
+        return Err($err)
     };
     ($fmt:expr, $($arg:tt)*) => {
-        return Err($crate::formatter::format_err!($fmt, $(arg)*));
+        return Err($crate::formatter::format_err!($fmt, $(arg)*))
     };
 }
 
@@ -145,6 +145,10 @@ impl<W: Sized> FormatBuffer<W> {
 
     fn last_indent_len(&self) -> usize {
         self.last_indent.len() + self.base_indent_len
+    }
+
+    fn set_current_line_len(&mut self, len: usize) {
+        self.current_line_len = len
     }
 
     fn current_line_len(&self) -> usize {
@@ -383,6 +387,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn end_group(&mut self) }
     buf_fn! { fn create_temp_buf(&self) -> FormatBuffer<String> }
     buf_fn! { fn restrict_to_single_line(&mut self, restricted: bool) }
+    buf_fn! { fn set_current_line_len(&mut self, len: usize) }
     buf_fn! { fn current_line_len(&self) -> usize }
     buf_fn! { fn last_indent_len(&self) -> usize }
     buf_fn! { fn is_beginning_of_line(&self) -> bool }
@@ -393,10 +398,9 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn with_temp_buf(
         &mut self,
-        buffer: FormatBuffer<String>,
         mut fun: impl FnMut(&mut Self) -> Result<()>,
     ) -> Result<FormatBuffer<String>> {
-        self.temp_bufs.push(buffer);
+        self.temp_bufs.push(self.create_temp_buf());
         let res = fun(self);
         let out = self.temp_bufs.pop().unwrap();
         res?;
@@ -641,7 +645,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     ) -> Result<Chunk> {
         let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
         let prefixes = self.comments.remove_prefixes_before(byte_offset);
-        let content = self.with_temp_buf(self.create_temp_buf(), fun)?.w;
+        let content = self.with_temp_buf(fun)?.w;
         let postfixes = next_byte_offset
             .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
             .unwrap_or_default();
@@ -706,7 +710,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn simulate_to_string(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<String> {
         let comments = self.comments.clone();
-        let contents = self.with_temp_buf(self.create_temp_buf(), fun)?.w;
+        let contents = self.with_temp_buf(fun)?.w;
         self.comments = comments;
         Ok(contents)
     }
@@ -717,13 +721,14 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn simulate_to_single_line(
         &mut self,
-        fun: impl FnMut(&mut Self) -> Result<()>,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
     ) -> Result<Option<String>> {
         let comments = self.comments.clone();
 
-        let mut buffer = self.create_temp_buf();
-        buffer.restrict_to_single_line(true);
-        let res = self.with_temp_buf(buffer, fun);
+        let res = self.with_temp_buf(|fmt| {
+            fmt.restrict_to_single_line(true);
+            fun(fmt)
+        });
         self.comments = comments;
 
         match res {
@@ -737,12 +742,13 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    fn try_on_single_line(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
+    fn try_on_single_line(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         let comments = self.comments.clone();
 
-        let mut buffer = self.create_temp_buf();
-        buffer.restrict_to_single_line(true);
-        let res = self.with_temp_buf(buffer, fun);
+        let res = self.with_temp_buf(|fmt| {
+            fmt.restrict_to_single_line(true);
+            fun(fmt)
+        });
 
         match res {
             Err(err) => {
@@ -907,9 +913,12 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         if multiline {
             self.indented(1, |fmt| {
-                let mut buffer = fmt.create_temp_buf();
-                buffer.current_line_len = 0;
-                let contents = fmt.with_temp_buf(buffer, |fmt| fun(fmt, true))?.w;
+                let contents = fmt
+                    .with_temp_buf(|fmt| {
+                        fmt.set_current_line_len(0);
+                        fun(fmt, true)
+                    })?
+                    .w;
                 if contents.chars().next().map(|ch| !ch.is_whitespace()).unwrap_or(false) {
                     fmt.write_whitespace_separator(true)?;
                 }
