@@ -130,7 +130,7 @@ impl Decodable for TypedReceipt {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let slice = rlp.data()?;
 
-        let first = *slice.get(0).ok_or(DecoderError::Custom("empty receipt"))?;
+        let first = *slice.first().ok_or(DecoderError::Custom("empty receipt"))?;
 
         if rlp.is_list() {
             return Ok(TypedReceipt::Legacy(Decodable::decode(rlp)?))

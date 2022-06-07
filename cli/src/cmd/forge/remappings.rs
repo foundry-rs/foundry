@@ -22,7 +22,8 @@ impl Cmd for RemappingArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let root = self.root.unwrap_or_else(|| find_project_root_path().unwrap());
-        let config = Config::load_with_root(root);
+        let mut config = Config::load_with_root(root);
+        config.sanitize_remappings();
         config.remappings.iter().for_each(|x| println!("{x}"));
         Ok(())
     }

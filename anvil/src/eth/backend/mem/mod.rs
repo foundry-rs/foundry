@@ -868,7 +868,7 @@ impl Backend {
             nonce,
         } = header;
 
-        let block = EthersBlock {
+        EthersBlock {
             hash: Some(hash),
             parent_hash,
             uncles_hash: ommers_hash,
@@ -896,9 +896,7 @@ impl Backend {
             nonce: Some(nonce),
             // TODO check
             base_fee_per_gas: Some(self.base_fee()),
-        };
-
-        block
+        }
     }
 
     /// Converts the `BlockNumber` into a numeric value

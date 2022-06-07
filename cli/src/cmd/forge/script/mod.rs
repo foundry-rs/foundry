@@ -13,7 +13,7 @@ mod executor;
 
 mod receipts;
 
-use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet};
+use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Function},
@@ -119,6 +119,15 @@ pub struct ScriptArgs {
 
     #[clap(long, help = "Output results in JSON format.")]
     pub json: bool,
+
+    #[clap(
+        long,
+        help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
+        env = "ETH_GAS_PRICE",
+        parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
+    )]
+    pub with_gas_price: Option<U256>,
 }
 
 pub struct ScriptResult {
@@ -164,8 +173,8 @@ impl ScriptArgs {
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &etherscan_identifier);
             decoder.identify(trace, &local_identifier);
+            decoder.identify(trace, &etherscan_identifier);
         }
         Ok(decoder)
     }

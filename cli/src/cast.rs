@@ -7,6 +7,7 @@ mod utils;
 
 use cast::{Cast, SimpleCast, TxBuilder};
 use foundry_config::Config;
+use utils::get_http_provider;
 mod opts;
 use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::InterfacePath;
@@ -162,6 +163,14 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::ToRlp { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_rlp(&val)?);
+        }
+        Subcommands::FromRlp { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_rlp(val)?);
+        }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let config = Config::from(&eth);
             let provider = Provider::try_from(
@@ -262,9 +271,10 @@ async fn main() -> eyre::Result<()> {
             resend,
         } => {
             let config = Config::from(&eth);
-            let provider = Provider::try_from(
-                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            )?;
+            let provider = get_http_provider(
+                &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+                false,
+            );
             let chain_id = Cast::new(&provider).chain_id().await?;
             let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
             let sig = sig.unwrap_or_default();

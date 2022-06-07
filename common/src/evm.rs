@@ -49,6 +49,13 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Initial retry backoff on encountering errors.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_retry_backoff: Option<u64>,
+
     /// Explicitly disables the use of RPC caching.
     ///
     /// All storage slots are read entirely from the endpoint.

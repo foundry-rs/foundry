@@ -3,6 +3,7 @@ use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use clap::Parser;
 use ethers::{
     abi::{Abi, Address},
+    core::types::Chain,
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     solc::{
         artifacts::{
@@ -367,6 +368,9 @@ impl ScriptSequence {
             let mut future_verifications = vec![];
             let mut create2 = self.create2_contracts.clone().into_iter();
 
+            // Make sure the receipts have the right order first.
+            self.sort_receipts();
+
             for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
                 let mut create2_offset = 0;
 
@@ -444,4 +448,37 @@ impl Drop for ScriptSequence {
         self.sort_receipts();
         self.save().expect("not able to save deployment sequence");
     }
+}
+
+#[macro_export]
+macro_rules! init_progress {
+    ($local:expr, $label:expr) => {{
+        let pb = ProgressBar::new($local.len() as u64);
+        let mut template =
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+        template += $label;
+        template += " ({eta})";
+        pb.set_style(
+            ProgressStyle::with_template(&template)
+                .unwrap()
+                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .progress_chars("#>-"),
+        );
+        pb
+    }};
+}
+
+#[macro_export]
+macro_rules! update_progress {
+    ($pb:ident, $index:expr) => {
+        $pb.set_position(($index + 1) as u64);
+    };
+}
+
+/// True if the network calculates gas costs differently.
+pub fn has_different_gas_calc(chain: u64) -> bool {
+    matches!(
+        Chain::try_from(chain).unwrap_or(Chain::Mainnet),
+        Chain::Arbitrum | Chain::ArbitrumTestnet
+    )
 }
