@@ -19,6 +19,11 @@ impl<T> Snapshots<T> {
         id
     }
 
+    /// Returns the snapshot with the given id `id`
+    pub fn get(&self, id: U256) -> Option<&T> {
+        self.snapshots.get(&id)
+    }
+
     /// Removes the snapshot with the given `id`
     pub fn remove(&mut self, id: U256) -> Option<T> {
         self.snapshots.remove(&id)

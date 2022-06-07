@@ -9,7 +9,7 @@ pub use abi::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{Abi, Detokenize, Tokenize},
+    abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
     types::{transaction::eip2718::TypedTransaction, Log},
 };
@@ -21,10 +21,7 @@ use revm::{
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
-use std::{
-    cell::{Ref, RefCell},
-    collections::{BTreeMap, VecDeque},
-};
+use std::collections::{BTreeMap, VecDeque};
 
 /// custom revm database implementations
 pub mod backend;
@@ -39,8 +36,8 @@ pub mod opts;
 pub mod snapshot;
 
 use crate::executor::{
-    backend::{Backend, RefBackendWrapper},
-    inspector::DEFAULT_CREATE2_DEPLOYER,
+    backend::{Backend, FuzzBackendWrapper},
+    inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
 };
 pub use builder::{ExecutorBuilder, Fork};
 
@@ -55,10 +52,6 @@ pub type StateChangeset = HashMap<Address, Account>;
 ///   - `committing`: any state changes made during the call are recorded and are persisting
 ///  - `raw`: state changes only exist for the duration of the call and are discarded afterwards, in
 ///    other words: the state of the underlying database remains unchanged.
-///
-/// Some more advanced cheatcodes (`fork`, `snapshot`) always require mutable access in the
-/// `Backend`. However, the constraint `committing`/`raw` still applies.
-/// Therefore, this type is not thread-safe.
 #[derive(Debug, Clone)]
 pub struct Executor {
     /// The underlying `revm::Database` that contains the EVM storage
@@ -66,7 +59,7 @@ pub struct Executor {
     // only interested in the database. REVM's `EVM` is a thin
     // wrapper around spawning a new EVM on every call anyway,
     // so the performance difference should be negligible.
-    backend: RefCell<Backend>,
+    backend: Backend,
     env: Env,
     inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
@@ -91,16 +84,16 @@ impl Executor {
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
 
-        Executor { backend: RefCell::new(backend), env, inspector_config, gas_limit }
+        Executor { backend, env, inspector_config, gas_limit }
     }
 
     /// Returns a mutable reference to the Backend
     pub fn backend_mut(&mut self) -> &mut Backend {
-        self.backend.get_mut()
+        &mut self.backend
     }
 
-    pub fn backend(&self) -> Ref<'_, Backend> {
-        self.backend.borrow()
+    pub fn backend(&self) -> &Backend {
+        &self.backend
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
@@ -242,7 +235,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
-        let stipend = stipend(&calldata, self.env.cfg.spec_id);
+        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
 
         // Build VM
         let mut evm = EVM::new();
@@ -300,8 +293,8 @@ impl Executor {
     /// Performs a call to an account on the current state of the VM.
     ///
     /// The state after the call is not persisted.
-    pub fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
-        &self,
+    pub fn execute<D: Detokenize, T: Tokenize, F: IntoFunction>(
+        mut self,
         from: Address,
         to: Address,
         func: F,
@@ -362,23 +355,12 @@ impl Executor {
     /// Performs a raw call to an account on the current state of the VM.
     ///
     /// The state after the call is not persisted.
-    pub fn call_raw(
-        &self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let stipend = stipend(&calldata, self.env.cfg.spec_id);
+    fn execute_with<F>(&self, mut inspector: InspectorStack, f: F) -> eyre::Result<RawCallResult>
+    where
+        F: FnOnce(&mut InspectorStack) -> ExecutedCall,
+    {
+        let ExecutedCall { status, out, gas, state_changeset, stipend, .. } = f(&mut inspector);
 
-        // Build VM
-        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        let mut db = self.backend.borrow_mut();
-        let mut db = RefBackendWrapper::new(&mut *db);
-
-        // Run the call
-        let mut inspector = self.inspector_config.stack();
-        let (status, out, gas, state_changeset, _) = db.inspect_ref(env, &mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
@@ -409,6 +391,47 @@ impl Executor {
             debug,
             transactions,
             state_changeset: Some(state_changeset),
+        })
+    }
+
+    /// Performs a call to an account on the current state of the VM.
+    ///
+    /// The state after the call is not persisted.
+    pub fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
+        &self,
+        from: Address,
+        to: Address,
+        func: F,
+        args: T,
+        value: U256,
+        abi: Option<&Abi>,
+    ) -> std::result::Result<CallResult<D>, EvmError> {
+        let func = func.into();
+        let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
+        let call_result = self.call_raw(from, to, calldata, value)?;
+
+        convert_call_result(abi, &func, call_result)
+    }
+
+    /// Performs a raw call to an account on the current state of the VM.
+    ///
+    /// The state after the call is not persisted.
+    pub fn call_raw(
+        &self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult> {
+        // execute the call
+        let inspector = self.inspector_config.stack();
+        self.execute_with(inspector, |inspector| {
+            let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
+            // Build VM
+            let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+            let mut db = FuzzBackendWrapper::new(self.backend());
+            let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, inspector);
+            ExecutedCall { status, out, gas, state_changeset, logs, stipend }
         })
     }
 
@@ -659,8 +682,73 @@ impl Default for RawCallResult {
     }
 }
 
+/// Helper type to bundle all call related items
+struct ExecutedCall {
+    status: Return,
+    out: TransactOut,
+    gas: u64,
+    state_changeset: HashMap<Address, Account>,
+    #[allow(unused)]
+    logs: Vec<revm::Log>,
+    stipend: u64,
+}
+
 /// Calculates the initial gas stipend for a transaction
-fn stipend(calldata: &[u8], spec: SpecId) -> u64 {
+fn calc_stipend(calldata: &[u8], spec: SpecId) -> u64 {
     let non_zero_data_cost = if SpecId::enabled(spec, SpecId::ISTANBUL) { 16 } else { 68 };
     calldata.iter().fold(21000, |sum, byte| sum + if *byte == 0 { 4 } else { non_zero_data_cost })
+}
+
+fn convert_call_result<D: Detokenize>(
+    abi: Option<&Contract>,
+    func: &Function,
+    call_result: RawCallResult,
+) -> Result<CallResult<D>, EvmError> {
+    let RawCallResult {
+        result,
+        status,
+        reverted,
+        gas,
+        stipend,
+        logs,
+        labels,
+        traces,
+        debug,
+        transactions,
+        state_changeset,
+    } = call_result;
+
+    match status {
+        return_ok!() => {
+            let result = decode_function_data(func, result, false)?;
+            Ok(CallResult {
+                reverted,
+                result,
+                gas,
+                stipend,
+                logs,
+                labels,
+                traces,
+                debug,
+                transactions,
+                state_changeset,
+            })
+        }
+        _ => {
+            let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                .unwrap_or_else(|_| format!("{:?}", status));
+            Err(EvmError::Execution {
+                reverted,
+                reason,
+                gas,
+                stipend,
+                logs,
+                traces,
+                debug,
+                labels,
+                transactions,
+                state_changeset,
+            })
+        }
+    }
 }
