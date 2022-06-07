@@ -522,7 +522,7 @@ impl Encodable for TypedTransaction {
 impl Decodable for TypedTransaction {
     fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let data = rlp.data()?;
-        let first = *data.get(0).ok_or(DecoderError::Custom("empty slice"))?;
+        let first = *data.first().ok_or(DecoderError::Custom("empty slice"))?;
         if rlp.is_list() {
             return Ok(TypedTransaction::Legacy(rlp.as_val()?))
         }

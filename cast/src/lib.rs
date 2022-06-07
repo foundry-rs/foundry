@@ -994,7 +994,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
-        let (sign, value) = match value.as_bytes().get(0) {
+        let (sign, value) = match value.as_bytes().first() {
             Some(b'+') => (Sign::Positive, &value[1..]),
             Some(b'-') => (Sign::Negative, &value[1..]),
             _ => (Sign::Positive, value),
