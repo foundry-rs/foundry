@@ -416,6 +416,7 @@ impl Config {
 
         self.src = p(&root, &self.src);
         self.test = p(&root, &self.test);
+        self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
