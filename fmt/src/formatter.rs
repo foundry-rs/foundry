@@ -787,22 +787,17 @@ impl<'a, W: Write> Formatter<'a, W> {
         let comments = self.comments.clone();
 
         let mut should_commit = false;
-        let res = self.with_temp_buf(|fmt| {
+        let buf = self.with_temp_buf(|fmt| {
             should_commit = fun(fmt)?;
             Ok(())
-        });
+        })?;
 
-        match res {
-            Ok(buf) => {
-                if should_commit {
-                    write_chunk!(self, "{}", buf.w)?;
-                    Ok(true)
-                } else {
-                    self.comments = comments;
-                    Ok(false)
-                }
-            }
-            Err(err) => Err(err),
+        if should_commit {
+            write_chunk!(self, "{}", buf.w)?;
+            Ok(true)
+        } else {
+            self.comments = comments;
+            Ok(false)
         }
     }
 
