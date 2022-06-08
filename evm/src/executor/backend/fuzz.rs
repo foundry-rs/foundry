@@ -14,6 +14,7 @@ use revm::{
     Account, AccountInfo, Database, Env, Inspector, Log, Return, TransactOut,
 };
 use std::collections::HashMap;
+use tracing::{trace, warn};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -29,7 +30,7 @@ use std::collections::HashMap;
 /// don't make use of them. Alternatively each test case would require its own `Backend` clone,
 /// which would add significant overhead for large fuzz sets even if the Database is not big after
 /// setup.
-pub(crate) struct FuzzBackendWrapper<'a> {
+pub struct FuzzBackendWrapper<'a> {
     pub inner: &'a Backend,
     /// active database clone that holds the currently active db, like reverted snapshots, selected
     /// fork, etc.

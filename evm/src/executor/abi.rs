@@ -69,7 +69,10 @@ ethers::contract::abigen!(
             startBroadcast(address)
             stopBroadcast()
             snapshot()(uint256)
-            revertTo(uint256)
+            revertTo(uint256)(bool)
+            createFork(string,uint256)(string)
+            createFork(string)(string)
+            selectFork(string)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

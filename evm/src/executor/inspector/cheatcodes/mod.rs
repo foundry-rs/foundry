@@ -1,17 +1,3 @@
-/// Cheatcodes related to the execution environment.
-mod env;
-pub use env::{Prank, RecordAccess};
-/// Assertion helpers (such as `expectEmit`)
-mod expect;
-pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
-/// Cheatcodes that interact with the external environment (FFI etc.)
-mod ext;
-/// Cheatcodes that configure the fuzzer
-mod fuzz;
-/// Utility cheatcodes (`sign` etc.)
-mod util;
-pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
-
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
@@ -30,10 +16,25 @@ use ethers::{
     },
 };
 use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
-    Return,
+    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
 };
 use std::collections::{BTreeMap, VecDeque};
+
+/// Cheatcodes related to the execution environment.
+mod env;
+pub use env::{Prank, RecordAccess};
+/// Assertion helpers (such as `expectEmit`)
+mod expect;
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+/// Cheatcodes that interact with the external environment (FFI etc.)
+mod ext;
+/// Fork related cheatcodes
+mod fork;
+/// Cheatcodes that configure the fuzzer
+mod fuzz;
+/// Utility cheatcodes (`sign` etc.)
+mod util;
+pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -98,7 +99,7 @@ impl Cheatcodes {
         }
     }
 
-    fn apply_cheatcode<DB: Database>(
+    fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
         caller: Address,
@@ -113,6 +114,7 @@ impl Cheatcodes {
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
             .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }

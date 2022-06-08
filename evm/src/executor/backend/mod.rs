@@ -15,8 +15,8 @@ use revm::{
 use std::collections::HashMap;
 use tracing::{trace, warn};
 mod fuzz;
+pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
-
 pub use in_memory_db::MemDb;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities

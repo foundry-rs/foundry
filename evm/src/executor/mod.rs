@@ -7,7 +7,7 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
-use backend::fuzz::FuzzBackendWrapper;
+use backend::FuzzBackendWrapper;
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
@@ -155,6 +155,8 @@ impl Executor {
     }
 
     /// Calls the `setUp()` function on a contract.
+    ///
+    /// This will commit any state changes to the underlying database
     pub fn setup(
         &mut self,
         from: Option<Address>,
@@ -338,7 +340,7 @@ impl Executor {
 
     /// Performs a raw call to an account on the current state of the VM.
     ///
-    /// The state after the call is not persisted.
+    /// Any state modifications made by the call are not committed.
     pub fn call_raw(
         &self,
         from: Address,
@@ -358,6 +360,9 @@ impl Executor {
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
+    ///
+    /// Executes a CREATE transaction with the contract `code` and persistent database state
+    /// modifications
     pub fn deploy(
         &mut self,
         from: Address,

@@ -109,13 +109,13 @@ interface Cheats {
     function snapshot() external returns(uint256);
     // Revert the state of the evm to a previous snapshot
     // takes the snapshot id to revert to. This deletes the snapshot and all snapshots taken after the given snapshot id.
-    function revertTo(uint256) external;
+    function revertTo(uint256) external returns(bool);
     // Creates a new fork with the given endpoint and block and returns the identifier of the fork
-    function createFork(string calldata,uint256) external returns(uint256);
+    function createFork(string calldata,uint256) external returns(string memory);
     // Creates a new fork with the given endpoint and the latest block and returns the identifier of the fork
-    function createFork(string calldata) external returns(uint256);
+    function createFork(string calldata) external returns(string memory);
     // takes a fork identifier created by `createFork` and changes the state
-    function switchFork(uint256) external;
+    function selectFork(string calldata) external;
     // forks the `block` variable from the given endpoint
     function forkBlockVariable(string calldata, uint256) external;
 }

@@ -1,0 +1,49 @@
+use super::Cheatcodes;
+use crate::{
+    abi::HEVMCalls,
+    executor::{backend::DatabaseExt, fork::CreateFork},
+};
+use bytes::Bytes;
+use ethers::{abi::AbiEncode, types::BlockNumber};
+use revm::EVMData;
+
+/// Handles fork related cheatcodes
+pub fn apply<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    call: &HEVMCalls,
+) -> Option<Result<Bytes, Bytes>> {
+    Some(match call {
+        HEVMCalls::Snapshot(_) => Ok(data.db.snapshot().encode().into()),
+        HEVMCalls::RevertTo(snapshot) => Ok(data.db.revert(snapshot.0).encode().into()),
+        HEVMCalls::CreateFork0(fork) => {
+            create_fork(state, data, fork.0.clone(), BlockNumber::Latest)
+        }
+        HEVMCalls::CreateFork1(fork) => {
+            create_fork(state, data, fork.0.clone(), fork.1.as_u64().into())
+        }
+        HEVMCalls::SelectFork(fork_id) => match data.db.select_fork(fork_id.0.clone()) {
+            Ok(_) => Ok(Bytes::new()),
+            Err(err) => Err(err.to_string().encode().into()),
+        },
+        _ => return None,
+    })
+}
+
+/// Creates a new fork
+fn create_fork<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url: String,
+    block: BlockNumber,
+) -> Result<Bytes, Bytes> {
+    let create = CreateFork {
+        // TODO refactor rpc cache config
+        cache_path: None,
+        url,
+        block,
+        chain_id: None,
+        env: data.env.clone(),
+    };
+    todo!()
+}
