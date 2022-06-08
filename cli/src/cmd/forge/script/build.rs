@@ -44,12 +44,15 @@ impl ScriptArgs {
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
         for (id, artifact) in output.into_artifacts() {
-            let source = artifact.source_file().ok_or(eyre::eyre!("Artifact has no source."))?;
-            sources.insert(
-                source.id,
-                source.ast.ok_or(eyre::eyre!("Source from artifact has no AST."))?.absolute_path,
-            );
-
+            if let Some(source) = artifact.source_file() {
+                sources.insert(
+                    source.id,
+                    source
+                        .ast
+                        .ok_or(eyre::eyre!("Source from artifact has no AST."))?
+                        .absolute_path,
+                );
+            }
             contracts.insert(id, artifact.into());
         }
 
