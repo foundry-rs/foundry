@@ -1116,7 +1116,7 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
 
         let mut cumulative_gas_used = U256::zero();
-        for receipt in receipts.iter().take(index) {
+        for receipt in receipts.iter().take(index + 1) {
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
         }
 
