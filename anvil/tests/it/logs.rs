@@ -7,6 +7,7 @@ use ethers::{
     prelude::{BlockNumber, Filter, FilterKind, Middleware, Signer, H256},
     types::Log,
 };
+use futures::StreamExt;
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -123,4 +124,52 @@ async fn can_install_filter() {
         .unwrap();
 
     assert_eq!(all_logs.len(), num_logs + 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_events() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+
+    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    // We spawn the event listener:
+    let event = contract.event::<ValueChanged>();
+    let mut stream = event.stream().await.unwrap();
+
+    // Also set up a subscription for the same thing
+    let ws = Arc::new(handle.ws_provider().await);
+    let contract2 = SimpleStorage::new(contract.address(), ws);
+    let event2 = contract2.event::<ValueChanged>();
+    let mut subscription = event2.subscribe().await.unwrap();
+
+    let mut subscription_meta = event2.subscribe().await.unwrap().with_meta();
+
+    let num_calls = 3u64;
+
+    // and we make a few calls
+    let num = client.get_block_number().await.unwrap();
+    for i in 0..num_calls {
+        let call = contract.method::<_, H256>("setValue", i.to_string()).unwrap().legacy();
+        let pending_tx = call.send().await.unwrap();
+        let _receipt = pending_tx.await.unwrap();
+    }
+
+    for i in 0..num_calls {
+        // unwrap the option of the stream, then unwrap the decoding result
+        let log = stream.next().await.unwrap().unwrap();
+        let log2 = subscription.next().await.unwrap().unwrap();
+        let (log3, meta) = subscription_meta.next().await.unwrap().unwrap();
+        assert_eq!(log.new_value, log3.new_value);
+        assert_eq!(log.new_value, log2.new_value);
+        assert_eq!(log.new_value, i.to_string());
+        assert_eq!(meta.block_number, num + i + 1);
+        let hash = client.get_block(num + i + 1).await.unwrap().unwrap().hash.unwrap();
+        assert_eq!(meta.block_hash, hash);
+    }
 }

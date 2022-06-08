@@ -296,7 +296,7 @@ impl BuildArgs {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test]
+            vec![config.src, config.test, config.script]
         })
     }
 }

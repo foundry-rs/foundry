@@ -217,6 +217,7 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
+    #[track_caller]
     pub fn forge_command(&self) -> TestCommand {
         let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
@@ -279,7 +280,9 @@ impl TestProject {
 impl Drop for TestCommand {
     fn drop(&mut self) {
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
-        let _ = std::env::set_current_dir(&self.saved_cwd);
+        if self.saved_cwd.exists() {
+            let _ = std::env::set_current_dir(&self.saved_cwd);
+        }
     }
 }
 
