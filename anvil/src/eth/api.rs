@@ -70,7 +70,7 @@ pub struct EthApi {
     pool: Arc<Pool>,
     /// Holds all blockchain related data
     /// In-Memory only for now
-    backend: Arc<backend::mem::Backend>, 
+    backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
     is_mining: bool,
     /// available signers
@@ -375,7 +375,7 @@ impl EthApi {
         node_info!("eth_networkId");
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
-    
+
     /// Returns true if client is actively listening for network connections.
     ///
     /// Handler for ETH RPC call: `net_listening`
