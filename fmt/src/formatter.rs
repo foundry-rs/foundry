@@ -2061,29 +2061,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_definition_stmt(
-        &mut self,
-        _loc: Loc,
-        declaration: &mut VariableDeclaration,
-        expr: &mut Option<Expression>,
-        semicolon: bool,
-    ) -> Result<()> {
-        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
-            fmt.visit_var_declaration(declaration, expr.is_some())
-        })?;
-        let multiline = declaration.content.contains('\n');
-        self.write_chunk(&declaration)?;
-
-        expr.as_mut()
-            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
-            .transpose()?;
-
-        if semicolon {
-            self.write_semicolon()?;
-        }
-        Ok(())
-    }
-
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         var.ty.visit(self)?;
 
@@ -2125,13 +2102,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         expr: &mut Option<Expression>,
         semicolon: bool,
     ) -> Result<()> {
-        declaration.visit(self)?;
+        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
+            fmt.visit_var_declaration(declaration, expr.is_some())
+        })?;
+        let multiline = declaration.content.contains('\n');
+        self.write_chunk(&declaration)?;
+
         expr.as_mut()
-            .map(|expr| {
-                write!(self.buf(), " = ")?;
-                expr.visit(self)
-            })
+            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
             .transpose()?;
+
         if semicolon {
             self.write_semicolon()?;
         }
