@@ -2002,6 +2002,7 @@ dependencies = [
  "ethers",
  "eyre",
  "foundry-common",
+ "foundry-config",
  "foundry-utils",
  "futures",
  "hashbrown 0.12.0",

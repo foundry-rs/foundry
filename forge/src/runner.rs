@@ -19,9 +19,9 @@ use std::{collections::BTreeMap, time::Instant};
 
 /// A type that executes all tests of a contract
 #[derive(Debug)]
-pub struct ContractRunner<'a, DB: DatabaseRef> {
+pub struct ContractRunner<'a> {
     /// The executor used by the runner.
-    pub executor: Executor<DB>,
+    pub executor: Executor,
 
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
@@ -38,10 +38,10 @@ pub struct ContractRunner<'a, DB: DatabaseRef> {
     pub sender: Address,
 }
 
-impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
+impl<'a> ContractRunner<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        executor: Executor<DB>,
+        executor: Executor,
         contract: &'a Abi,
         code: Bytes,
         initial_balance: U256,
@@ -61,7 +61,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
     }
 }
 
-impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
+impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {

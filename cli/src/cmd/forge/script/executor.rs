@@ -156,8 +156,11 @@ impl ScriptArgs {
         )
         .await;
 
-        let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(script_config.evm_opts.ffi)
+        let mut builder = ExecutorBuilder::default()
+            .with_cheatcodes(
+                script_config.evm_opts.ffi,
+                script_config.config.rpc_storage_caching.clone(),
+            )
             .with_config(env)
             .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit());

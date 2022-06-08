@@ -12,6 +12,7 @@ use ethers::{
     providers::{Http, Provider, RetryClient},
     types::{BlockId, BlockNumber, U256},
 };
+use foundry_config::Config;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
@@ -280,7 +281,7 @@ async fn create_fork(
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(SharedBackend, Handler)> {
-    let CreateFork { cache_path, url, block: block_number, env, chain_id } = fork;
+    let CreateFork { enable_caching, url, block: block_number, env, chain_id } = fork;
     let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
         url.clone().as_str(),
         retries,
@@ -302,6 +303,13 @@ async fn create_fork(
         BlockNumber::Number(num) => num.as_u64(),
     };
     meta.block_env.number = number.into();
+
+    // determine the cache path if caching is enabled
+    let cache_path = if enable_caching {
+        Config::foundry_block_cache_dir(meta.cfg_env.chain_id.as_u64(), number)
+    } else {
+        None
+    };
 
     let db = BlockchainDb::new(meta, cache_path);
     Ok(SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into())))))

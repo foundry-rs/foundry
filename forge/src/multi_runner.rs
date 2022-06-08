@@ -6,6 +6,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_config::cache::StorageCachingConfig;
 use foundry_evm::executor::{
     backend::Backend,
     fork::{CreateFork, MultiFork},
@@ -43,6 +44,8 @@ pub struct MultiContractRunner {
     pub fork: Option<Fork>,
     /// The fork to use at launch
     pub fork2: Option<CreateFork>,
+    /// RPC storage caching settings determines what chains and endpoints to cache
+    pub rpc_storage_caching: StorageCachingConfig,
 }
 
 impl MultiContractRunner {
@@ -134,8 +137,8 @@ impl MultiContractRunner {
                     abi.functions().any(|func| filter.matches_test(&func.name))
                 })
                 .map(|(id, (abi, deploy_code, libs))| {
-                    let mut executor = ExecutorBuilder::new()
-                        .with_cheatcodes(self.evm_opts.ffi)
+                    let mut executor = ExecutorBuilder::default()
+                        .with_cheatcodes(self.evm_opts.ffi, self.rpc_storage_caching.clone())
                         .with_config(env.clone())
                         .with_spec(self.evm_spec)
                         .with_gas_limit(self.evm_opts.gas_limit())
@@ -233,11 +236,11 @@ impl MultiContractRunner {
         err,
         fields(name = %_name)
     )]
-    fn run_tests<DB: DatabaseRef + Send + Sync>(
+    fn run_tests(
         &self,
         _name: &str,
         contract: &Abi,
-        executor: Executor<DB>,
+        executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
         (filter, include_fuzz_tests): (&impl TestFilter, bool),
@@ -269,6 +272,10 @@ pub struct MultiContractRunnerBuilder {
     pub evm_spec: Option<SpecId>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// The fork to use at launch
+    pub fork2: Option<CreateFork>,
+    /// RPC storage caching settings determines what chains and endpoints to cache
+    pub rpc_storage_caching: StorageCachingConfig,
 }
 
 impl MultiContractRunnerBuilder {
@@ -363,7 +370,8 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
-            fork2: None,
+            fork2: self.fork2,
+            rpc_storage_caching: self.rpc_storage_caching,
         })
     }
 

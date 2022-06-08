@@ -11,6 +11,7 @@ use ethers::{
     providers::{Http, Provider, RetryClient},
     types::U256,
 };
+use foundry_config::cache::StorageCachingConfig;
 use revm::{Env, SpecId};
 use std::{path::PathBuf, sync::Arc};
 
@@ -26,16 +27,15 @@ pub struct ExecutorBuilder {
 // === impl ExecutorBuilder ===
 
 impl ExecutorBuilder {
-    #[must_use]
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
+    pub fn with_cheatcodes(mut self, ffi: bool, rpc_storage_caching: StorageCachingConfig) -> Self {
+        self.inspector_config.cheatcodes = Some(Cheatcodes::new(
+            ffi,
+            self.env.block.clone(),
+            self.env.tx.gas_price,
+            rpc_storage_caching,
+        ));
         self
     }
 

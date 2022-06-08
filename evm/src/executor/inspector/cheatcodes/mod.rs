@@ -26,6 +26,8 @@ pub use env::{Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+use foundry_config::cache::StorageCachingConfig;
+
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
 /// Fork related cheatcodes
@@ -86,15 +88,24 @@ pub struct Cheatcodes {
 
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
+
+    /// RPC storage caching settings determines what chains and endpoints to cache
+    pub rpc_storage_caching: StorageCachingConfig,
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
+    pub fn new(
+        ffi: bool,
+        block: BlockEnv,
+        gas_price: U256,
+        rpc_storage_caching: StorageCachingConfig,
+    ) -> Self {
         Self {
             ffi,
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
+            rpc_storage_caching,
             ..Default::default()
         }
     }

@@ -5,6 +5,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{abi::AbiEncode, types::BlockNumber};
+
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -37,13 +38,15 @@ fn create_fork<DB: DatabaseExt>(
     url: String,
     block: BlockNumber,
 ) -> Result<Bytes, Bytes> {
-    let create = CreateFork {
-        // TODO refactor rpc cache config
-        cache_path: None,
+    let fork = CreateFork {
+        enable_caching: state.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         block,
         chain_id: None,
         env: data.env.clone(),
     };
-    todo!()
+    match data.db.create_fork(fork) {
+        Ok(id) => Ok(id.encode().into()),
+        Err(err) => Err(err.to_string().encode().into()),
+    }
 }
