@@ -16,6 +16,7 @@ use ethers::{
 
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, str::FromStr};
+use tracing::warn;
 
 use super::*;
 
@@ -44,6 +45,8 @@ impl ScriptArgs {
         let mut sources: BTreeMap<u32, String> = BTreeMap::new();
 
         for (id, artifact) in output.into_artifacts() {
+            // Sources are only required for the debugger, but it *might* mean that there's something
+            // wrong with the build and/or artifacts.
             if let Some(source) = artifact.source_file() {
                 sources.insert(
                     source.id,
@@ -52,6 +55,8 @@ impl ScriptArgs {
                         .ok_or(eyre::eyre!("Source from artifact has no AST."))?
                         .absolute_path,
                 );
+            } else {
+                warn!("source not found for artifact={:?}", id);
             }
             contracts.insert(id, artifact.into());
         }
