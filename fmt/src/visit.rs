@@ -115,6 +115,7 @@ pub trait Visitor {
         loc: Loc,
         _declaration: &mut VariableDeclaration,
         _expr: &mut Option<Expression>,
+        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -124,7 +125,11 @@ pub trait Visitor {
 
     /// Don't write semicolon at the end because variable declarations can appear in both
     /// struct definition and function body as a statement
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<(), Self::Error> {
+    fn visit_var_declaration(
+        &mut self,
+        var: &mut VariableDeclaration,
+        _is_assignment: bool,
+    ) -> Result<(), Self::Error> {
         self.visit_source(var.loc)
     }
 
@@ -412,7 +417,7 @@ impl Visitable for Statement {
                 v.visit_stray_semicolon()
             }
             Statement::VariableDefinition(loc, declaration, expr) => {
-                v.visit_var_definition_stmt(*loc, declaration, expr)
+                v.visit_var_definition_stmt(*loc, declaration, expr, true)
             }
             Statement::For(loc, init, cond, update, body) => {
                 v.visit_for(*loc, init, cond, update, body)
@@ -461,6 +466,15 @@ impl Visitable for Identifier {
     }
 }
 
+impl Visitable for VariableDeclaration {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        v.visit_var_declaration(self, false)
+    }
+}
+
 macro_rules! impl_visitable {
     ($type:ty, $func:ident) => {
         impl Visitable for $type {
@@ -476,7 +490,6 @@ macro_rules! impl_visitable {
 
 impl_visitable!(DocComment, visit_doc_comment);
 impl_visitable!(SourceUnit, visit_source_unit);
-impl_visitable!(VariableDeclaration, visit_var_declaration);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
 impl_visitable!(VariableAttribute, visit_var_attribute);
 impl_visitable!(Parameter, visit_parameter);

@@ -973,11 +973,12 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
+    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         self.start_group();
         fun(self)?;
+        let indented = !self.last_indent_group_skipped();
         self.end_group();
-        Ok(())
+        Ok(indented)
     }
 
     fn surrounded(
@@ -1301,7 +1302,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 alias.visit(fmt)?;
                             }
                             Ok(())
-                        })
+                        })?;
+                        Ok(())
                     },
                 )?);
             }
@@ -1461,13 +1463,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<()> {
+    fn visit_var_declaration(
+        &mut self,
+        var: &mut VariableDeclaration,
+        is_assignment: bool,
+    ) -> Result<()> {
         self.grouped(|fmt| {
             var.ty.visit(fmt)?;
             if let Some(storage) = &var.storage {
                 write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
             }
-            write_chunk!(fmt, var.name.loc.end(), "{}", var.name.name)?;
+            write_chunk!(
+                fmt,
+                var.name.loc.end(),
+                "{}{}",
+                var.name.name,
+                if is_assignment { " =" } else { "" }
+            )?;
             Ok(())
         })?;
         Ok(())
@@ -1664,7 +1676,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             fmt.grouped(|fmt| {
                 fmt.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
                 Ok(())
-            })
+            })?;
+            Ok(())
         })?;
 
         if base.args.is_none() || base.args.as_ref().unwrap().is_empty() {
@@ -1940,7 +1953,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 while let Some(func) = funcs.next() {
                     let next_byte_end = funcs.peek().map(|func| func.loc().start());
                     chunks.push(self.chunked(func.loc().start(), next_byte_end, |fmt| {
-                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))
+                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))?;
+                        Ok(())
                     })?);
                 }
                 (false, chunks)
@@ -2027,41 +2041,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_var_definition_stmt(
+        &mut self,
+        _loc: Loc,
+        declaration: &mut VariableDeclaration,
+        expr: &mut Option<Expression>,
+        semicolon: bool,
+    ) -> Result<()> {
+        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
+            fmt.visit_var_declaration(declaration, expr.is_some())?;
+            Ok(())
+        })?;
+        let multiline = declaration.content.contains('\n');
+        self.write_chunk(&declaration)?;
+
+        expr.as_mut()
+            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
+            .transpose()?;
+
+        if semicolon {
+            self.write_semicolon()?;
+        }
+        Ok(())
+    }
+
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         var.ty.visit(self)?;
 
-        let name_start = var.name.loc.start();
-        let init_start = var.initializer.as_ref().map(|init| LineOfCode::loc(init).start());
+        let multiline = self.grouped(|fmt| {
+            let name_start = var.name.loc.start();
 
-        let attrs = self.items_to_chunks_sorted(
-            Some(name_start),
-            var.attrs.iter_mut().map(|attr| Ok((attr.loc(), attr))),
-        )?;
-        let mut name = self.visit_to_chunk(
-            name_start,
-            Some(init_start.unwrap_or_else(|| var.loc.end())),
-            &mut var.name,
-        )?;
-        if var.initializer.is_some() {
-            name.content.push_str(" =");
-        }
-
-        let mut multiline = false;
-        self.indented(1, |fmt| {
+            let attrs = fmt.items_to_chunks_sorted(
+                Some(name_start),
+                var.attrs.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+            )?;
             if !fmt.try_on_single_line(|fmt| fmt.write_chunks_separated(&attrs, "", false))? {
-                multiline = true;
                 fmt.write_chunks_separated(&attrs, "", true)?;
             }
-            if !fmt.try_on_single_line(|fmt| fmt.write_chunk(&name))? {
-                multiline = true;
-                fmt.write_chunk(&name)?;
+
+            let mut name =
+                fmt.visit_to_chunk(name_start, Some(var.name.loc.end()), &mut var.name)?;
+            if var.initializer.is_some() {
+                name.content.push_str(" =");
             }
+            fmt.write_chunk(&name)?;
+
             Ok(())
         })?;
 
-        if let Some(init) = &mut var.initializer {
-            self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(init))?;
-        }
+        var.initializer
+            .as_mut()
+            .map(|init| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(init)))
+            .transpose()?;
 
         self.write_semicolon()?;
 
