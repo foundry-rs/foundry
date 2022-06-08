@@ -90,6 +90,8 @@ pub struct EthApi {
     filters: Filters,
     /// How transactions are ordered in the pool
     transaction_order: Arc<RwLock<TransactionOrder>>,
+    /// Whether we're listening for RPC calls
+    net_listening: bool,
 }
 
 // === impl Eth RPC API ===
@@ -118,6 +120,7 @@ impl EthApi {
             miner,
             logger,
             filters,
+            net_listening: true,
             transaction_order: Arc::new(RwLock::new(transactions_order)),
         }
     }
@@ -139,6 +142,7 @@ impl EthApi {
             }
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
+            EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
@@ -370,6 +374,14 @@ impl EthApi {
     pub fn network_id(&self) -> Result<Option<U64>> {
         node_info!("eth_networkId");
         Ok(Some(self.backend.chain_id().as_u64().into()))
+    }
+
+    /// Returns true if client is actively listening for network connections.
+    ///
+    /// Handler for ETH RPC call: `net_listening`
+    pub fn net_listening(&self) -> Result<bool> {
+        node_info!("net_listening");
+        Ok(self.net_listening)
     }
 
     /// Returns the current gas price
