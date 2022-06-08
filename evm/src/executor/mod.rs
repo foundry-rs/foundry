@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 /// custom revm database implementations
 pub mod backend;
+pub use backend::Backend;
 /// Executor builder
 pub mod builder;
 /// Forking provider
@@ -37,7 +38,6 @@ pub mod opts;
 pub mod snapshot;
 
 use crate::executor::{
-    backend::Backend,
     inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
 };
 pub use builder::{ExecutorBuilder, Fork};

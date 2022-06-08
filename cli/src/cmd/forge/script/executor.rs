@@ -133,7 +133,7 @@ impl ScriptArgs {
             });
 
         if failed {
-            Err(eyre::Report::msg("Simulated execution failed"))
+            eyre::bail!("Simulated execution failed")
         } else {
             Ok((final_txs, create2_contracts))
         }
@@ -144,11 +144,8 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = Backend::new(
-            utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
-            &env,
-        )
-        .await;
+        // utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
+        let db = Backend::spawn(None);
 
         let mut builder = ExecutorBuilder::default()
             .with_cheatcodes(
