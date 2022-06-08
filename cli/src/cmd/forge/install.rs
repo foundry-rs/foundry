@@ -63,12 +63,6 @@ impl Cmd for InstallArgs {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
         install(&root, self.dependencies, self.opts)?;
-        let mut config = Config::load_with_root(root);
-        let lib = PathBuf::from("lib");
-        if !config.libs.contains(&lib) {
-            config.libs.push(lib);
-            config.update_libs()?;
-        }
         Ok(())
     }
 }
@@ -90,7 +84,10 @@ pub(crate) fn install(
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
     let root = root.as_ref();
-    let libs = root.join("lib");
+    let mut config = Config::load_with_root(root);
+
+    let install_lib_dir = config.install_lib_dir();
+    let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() {
         Command::new("git")
@@ -122,6 +119,12 @@ pub(crate) fn install(
         }
 
         p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
+    }
+
+    // update `libs` in config if not included yet
+    if !config.libs.contains(&install_lib_dir) {
+        config.libs.push(install_lib_dir);
+        config.update_libs()?;
     }
     Ok(())
 }
