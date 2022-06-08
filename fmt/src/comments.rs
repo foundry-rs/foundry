@@ -2,49 +2,6 @@ use crate::solang_ext::*;
 use itertools::Itertools;
 use solang_parser::pt::*;
 
-fn trim_comments(s: &str) -> String {
-    enum CommentState {
-        None,
-        Line,
-        Block,
-    }
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    let mut state = CommentState::None;
-    while let Some(ch) = chars.next() {
-        match state {
-            CommentState::None => match ch {
-                '/' => match chars.peek() {
-                    Some('/') => {
-                        chars.next();
-                        state = CommentState::Line;
-                    }
-                    Some('*') => {
-                        chars.next();
-                        state = CommentState::Block;
-                    }
-                    _ => out.push(ch),
-                },
-                _ => out.push(ch),
-            },
-            CommentState::Line => {
-                if ch == '\n' {
-                    state = CommentState::None;
-                    out.push('\n')
-                }
-            }
-            CommentState::Block => {
-                if ch == '*' {
-                    if let Some('/') = chars.next() {
-                        state = CommentState::None
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum CommentType {
     Line,
@@ -94,7 +51,7 @@ impl CommentWithMetadata {
                             // line has something
                             let next_code = src[comment.loc().end()..]
                                 .lines()
-                                .find(|line| !trim_comments(line).trim().is_empty());
+                                .find(|line| !line.trim_comments().trim().is_empty());
                             if let Some(next_code) = next_code {
                                 let next_indent =
                                     next_code.chars().position(|ch| !ch.is_whitespace()).unwrap();
@@ -185,5 +142,76 @@ impl Comments {
         out.append(&mut self.remove_postfixes_before(byte));
         out.sort_by_key(|comment| comment.loc.start());
         out
+    }
+}
+
+enum CommentState {
+    None,
+    Line,
+    Block,
+}
+
+pub struct NonCommentChars<'a> {
+    iter: std::iter::Peekable<std::str::Chars<'a>>,
+    state: CommentState,
+}
+
+impl<'a> Iterator for NonCommentChars<'a> {
+    type Item = char;
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(ch) = self.iter.next() {
+            match self.state {
+                CommentState::None => match ch {
+                    '/' => match self.iter.peek() {
+                        Some('/') => {
+                            self.iter.next();
+                            self.state = CommentState::Line;
+                        }
+                        Some('*') => {
+                            self.iter.next();
+                            self.state = CommentState::Block;
+                        }
+                        _ => return Some(ch),
+                    },
+                    _ => return Some(ch),
+                },
+                CommentState::Line => {
+                    if ch == '\n' {
+                        self.state = CommentState::None;
+                        return Some('\n')
+                    }
+                }
+                CommentState::Block => {
+                    if ch == '*' {
+                        if let Some('/') = self.iter.next() {
+                            self.state = CommentState::None
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+pub trait CommentStringExt {
+    fn non_comment_chars(&self) -> NonCommentChars;
+    fn trim_comments(&self) -> String {
+        self.non_comment_chars().collect()
+    }
+}
+
+impl<T> CommentStringExt for T
+where
+    T: AsRef<str>,
+{
+    fn non_comment_chars(&self) -> NonCommentChars {
+        NonCommentChars { iter: self.as_ref().chars().peekable(), state: CommentState::None }
+    }
+}
+
+impl CommentStringExt for str {
+    fn non_comment_chars(&self) -> NonCommentChars {
+        NonCommentChars { iter: self.chars().peekable(), state: CommentState::None }
     }
 }

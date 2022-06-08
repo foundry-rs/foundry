@@ -36,4 +36,13 @@ contract Contract {
         10 ** 27;
     uint256 constant ADDED_EXPRESSION =
         1 + 2;
+
+    // comment 1
+    uint256 constant example1 = 1;
+
+    // comment 2
+    // comment 3
+    uint256 constant example2 = 2; // comment 4
+    uint256 constant example3 = /* comment 5 */
+        3; // comment 6
 }

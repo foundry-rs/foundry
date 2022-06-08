@@ -8,7 +8,7 @@ use solang_parser::pt::*;
 use thiserror::Error;
 
 use crate::{
-    comments::{CommentWithMetadata, Comments},
+    comments::{CommentStringExt, CommentWithMetadata, Comments},
     helpers,
     solang_ext::*,
     visit::{Visitable, Visitor},
@@ -420,9 +420,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         match last_char {
             '{' | '[' => match next_char {
                 '{' | '[' | '(' => false,
+                '/' => true,
                 _ => self.config.bracket_spacing,
             },
             '(' | '.' => false,
+            '/' => true,
             _ => match next_char {
                 '}' | ']' => self.config.bracket_spacing,
                 ')' => false,
@@ -432,36 +434,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    /// Write opening bracket with respect to `config.bracket_spacing` setting:
-    /// `"{ "` if `true`, `"{"` if `false`
-    fn write_opening_bracket(&mut self) -> Result<()> {
-        let space = if self.next_chunk_needs_space('{') { " " } else { "" };
-        write!(self.buf(), "{space}{{")?;
-        Ok(())
-    }
-
-    /// Write closing bracket with respect to `config.bracket_spacing` setting:
-    /// `" }"` if `true`, `"}"` if `false`
-    fn write_closing_bracket(&mut self) -> Result<()> {
-        let bracket = if self.config.bracket_spacing {
-            if self.next_chunk_needs_space('}') {
-                " }"
-            } else {
-                "}"
-            }
-        } else {
-            "}"
-        };
-        write!(self.buf(), "{bracket}")?;
-        Ok(())
-    }
-
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> Result<()> {
-        let space = if self.next_chunk_needs_space('{') { " " } else { "" };
         let brackets = if self.config.bracket_spacing { "{ }" } else { "{}" };
-        write!(self.buf(), "{space}{brackets}")?;
+        write_chunk!(self, "{brackets}")?;
         Ok(())
     }
 
@@ -581,6 +558,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Returns number of blank lines between two LOCs
     fn blank_lines(&self, a: Loc, b: Loc) -> usize {
         self.source[a.end()..b.start()].matches('\n').count()
+    }
+
+    fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
+        self.source[byte_offset..]
+            .non_comment_chars()
+            .position(|ch| needle == ch)
+            .map(|p| byte_offset + p)
     }
 
     fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
@@ -1163,25 +1147,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             })?;
         }
 
-        if contract.parts.is_empty() {
-            self.write_empty_brackets()?;
-            return Ok(())
-        }
-
-        self.write_opening_bracket()?;
-        writeln!(self.buf())?;
+        write_chunk!(self, "{{")?;
 
         self.indented(1, |fmt| {
+            if let Some(first) = contract.parts.first() {
+                fmt.write_postfix_comments_before(first.loc().start())?;
+                fmt.write_whitespace_separator(true)?;
+            } else {
+                return Ok(())
+            }
+
             let mut contract_parts_iter = contract.parts.iter_mut().peekable();
             while let Some(part) = contract_parts_iter.next() {
                 part.visit(fmt)?;
-                writeln!(fmt.buf())?;
 
                 // If source has zero blank lines between parts and the current part is not a
                 // function, leave it as is. If it has one or more blank lines or
                 // the current part is a function, separate parts with one blank
                 // line.
                 if let Some(next_part) = contract_parts_iter.peek() {
+                    fmt.write_postfix_comments_before(next_part.loc().start())?;
+                    fmt.write_whitespace_separator(true)?;
                     let blank_lines = fmt.blank_lines(part.loc(), next_part.loc());
                     let is_function = match part {
                         ContractPart::FunctionDefinition(function_definition) => matches!(
@@ -1196,14 +1182,30 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         _ => false,
                     };
                     if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln!(fmt.buf())?;
+                        writeln_chunk!(fmt)?;
                     }
                 }
             }
             Ok(())
         })?;
 
-        self.write_closing_bracket()?;
+        // the end of the contract location doesn't actually contain the }, this will change in
+        // future versions of solang_parser
+        let contract_end = {
+            let last_byte = contract
+                .parts
+                .last()
+                .map(|p| p.loc())
+                .or_else(|| contract.base.last().map(|b| b.loc))
+                .unwrap_or(contract.loc)
+                .end();
+            self.find_next_in_src(last_byte, '}').unwrap_or(last_byte)
+        };
+        self.write_postfix_comments_before(contract_end)?;
+        if !contract.parts.is_empty() {
+            self.write_whitespace_separator(true)?;
+        }
+        write_chunk!(self, contract_end, "}}")?;
 
         self.context.contract = None;
 
@@ -1819,23 +1821,24 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if unchecked {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
-
-        if statements.is_empty() {
-            self.write_empty_brackets()?;
-            return Ok(())
-        }
-
-        writeln_chunk!(self, "{{")?;
+        write_chunk!(self, "{{")?;
 
         self.indented(1, |fmt| {
+            if let Some(statement) = statements.first() {
+                fmt.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
+                fmt.write_whitespace_separator(true)?;
+            } else {
+                return Ok(())
+            }
             let mut statements_iter = statements.iter_mut().peekable();
             while let Some(stmt) = statements_iter.next() {
                 stmt.visit(fmt)?;
-                writeln_chunk!(fmt)?;
 
                 // If source has zero blank lines between statements, leave it as is. If one
                 //  or more, separate statements with one blank line.
                 if let Some(next_stmt) = statements_iter.peek() {
+                    fmt.write_postfix_comments_before(LineOfCode::loc(next_stmt).start())?;
+                    fmt.write_whitespace_separator(true)?;
                     if fmt.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
                         writeln_chunk!(fmt)?;
                     }
@@ -1844,7 +1847,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         })?;
 
-        write_chunk!(self, "}}")?;
+        self.write_postfix_comments_before(loc.end())?;
+        if !statements.is_empty() {
+            self.write_whitespace_separator(true)?;
+        }
+        write_chunk!(self, loc.end(), "}}")?;
 
         Ok(())
     }
@@ -2353,9 +2360,7 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
-    test_directory! { SimpleComments }
     test_directory! { ExpressionPrecedence }
-    test_directory! { FunctionDefinitionWithComments }
     test_directory! { WhileStatement }
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }
