@@ -1696,20 +1696,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let mut statements_iter = statements.iter_mut().peekable();
             while let Some(stmt) = statements_iter.next() {
                 stmt.visit(fmt)?;
-                writeln!(fmt.buf())?;
+                writeln_chunk!(fmt)?;
 
                 // If source has zero blank lines between statements, leave it as is. If one
                 //  or more, separate statements with one blank line.
                 if let Some(next_stmt) = statements_iter.peek() {
                     if fmt.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
-                        writeln!(fmt.buf())?;
+                        writeln_chunk!(fmt)?;
                     }
                 }
             }
             Ok(())
         })?;
 
-        write!(self.buf(), "}}")?;
+        write_chunk!(self, "}}")?;
 
         Ok(())
     }
