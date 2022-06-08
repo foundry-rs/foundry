@@ -7,6 +7,7 @@ pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
+use backend::fuzz::FuzzBackendWrapper;
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
@@ -36,7 +37,7 @@ pub mod opts;
 pub mod snapshot;
 
 use crate::executor::{
-    backend::{Backend, FuzzBackendWrapper},
+    backend::Backend,
     inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
 };
 pub use builder::{ExecutorBuilder, Fork};
