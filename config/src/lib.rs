@@ -416,6 +416,7 @@ impl Config {
 
         self.src = p(&root, &self.src);
         self.test = p(&root, &self.test);
+        self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
@@ -594,6 +595,7 @@ impl Config {
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
+            .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.clone())
             .remappings(self.get_all_remappings())
