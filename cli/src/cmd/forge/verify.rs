@@ -4,7 +4,7 @@ use super::build::{CoreBuildArgs, ProjectPathsArgs};
 use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
 use clap::Parser;
 use ethers::{
-    abi::Address,
+    abi::{AbiEncode, Address},
     etherscan::{
         contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
@@ -23,6 +23,7 @@ use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use reqwest::get;
 use semver::{BuildMetadata, Version};
 use std::{
     collections::BTreeMap,
@@ -30,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
 use tracing::{trace, warn};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
@@ -221,7 +223,37 @@ impl VerifyArgs {
                 Ok(())
             }
             VerificationProvider::Sourcify => {
-                /// TODO
+                let url = format!(
+                    "https://sourcify.dev/server/check-by-addresses?addresses={}&chainIds={}",
+                    hex::encode(self.address.as_bytes()),
+                    self.chain.id(),
+                );
+                let response = get(url).await?;
+                if !response.status().is_success() {
+                    return Err(eyre!(
+                        "Sourcify verification request for address ({}) failed with status code {}",
+                        self.address.encode_hex(),
+                        response.status()
+                    ))
+                };
+
+                // Response looks like:
+                // `[{"address":"0x68B1D87F95878fE05B998F19b66F4baba5De1aed","status":"false"}]`
+                let parsed_response = response.json::<serde_json::Value>().await?;
+                let status =
+                    parsed_response.get(0).and_then(|value| value.get("status")).expect(&format!(
+                        "Failed to retrieve status from Sourcify response ({})",
+                        parsed_response
+                    ));
+                let status_str = status.as_str().unwrap();
+                if status_str != "perfect" {
+                    eprintln!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`",
+                        parsed_response
+                    );
+                    std::process::exit(1);
+                }
+
                 Ok(())
             }
         }

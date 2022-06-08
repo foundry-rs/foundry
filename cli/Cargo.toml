@@ -24,6 +24,7 @@ foundry-common = { path = "../common" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 
+
 # eth
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 solang-parser = "0.1.11"
@@ -44,6 +45,7 @@ console = "0.15.0"
 watchexec = "2.0.0-pre.14"
 atty = "0.2.14"
 comfy-table = "5.0.0"
+reqwest = "0.11.8"
 
 # async / parallel
 tokio = { version = "1.11.0", features = ["macros"] }
@@ -74,6 +76,7 @@ bytes = "1.1.0"
 strum = { version = "0.24", features = ["derive"] }
 thiserror = "1.0.30"
 indicatif = "0.17.0-rc.11"
+
 
 [dev-dependencies]
 anvil = { path = "../anvil" }

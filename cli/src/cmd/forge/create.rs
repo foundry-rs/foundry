@@ -127,7 +127,8 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 
     #[clap(
         long = "verification-provider",
-        help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]"
+        help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
+        default_value = "etherscan"
     )]
     verification_provider: verify::VerificationProvider,
 }
