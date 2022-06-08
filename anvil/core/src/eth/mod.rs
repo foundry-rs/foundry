@@ -38,6 +38,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_networkId", alias = "net_version", with = "empty_params")]
     EthNetworkId(()),
 
+    #[serde(rename = "net_listening", with = "empty_params")]
+    NetListening(()),
+
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
@@ -494,6 +497,13 @@ mod tests {
     #[test]
     fn test_eth_chain_id() {
         let s = r#"{"method": "eth_chainId", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_net_listening() {
+        let s = r#"{"method": "net_listening", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
