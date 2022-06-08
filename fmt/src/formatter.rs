@@ -1417,6 +1417,44 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::NotEqual(..) => {
                 self.visit_flattened_expr(&mut expr.flatten())?;
             }
+            Expression::Assign(..) |
+            Expression::AssignOr(..) |
+            Expression::AssignAnd(..) |
+            Expression::AssignXor(..) |
+            Expression::AssignShiftLeft(..) |
+            Expression::AssignShiftRight(..) |
+            Expression::AssignAdd(..) |
+            Expression::AssignSubtract(..) |
+            Expression::AssignMultiply(..) |
+            Expression::AssignDivide(..) |
+            Expression::AssignModulo(..) => {
+                let precedence = expr.precedence();
+                let op = expr.operator().unwrap();
+                let (left, right) = expr.into_components();
+                let left = left.unwrap();
+                let right = right.unwrap();
+
+                // we shouldn't need parentheses on the left as assignment should always have the
+                // lowest priority
+                let left_chunked = self.chunked(left.loc().start(), None, |fmt| left.visit(fmt))?;
+                // TODO we use the operator presence as a short hand for whether and indent was
+                // introduced if multiline, but this may not always be the case
+                let left_is_indented =
+                    left_chunked.content.contains('\n') && left.operator().is_some();
+                self.write_chunk(&left_chunked)?;
+
+                self.indented_if(left_is_indented || !self.will_it_fit(op), 1, |fmt| {
+                    write_chunk!(fmt, "{}", op)?;
+                    if precedence.is_evaluated_first(right.precedence()) {
+                        fmt.surrounded(right.loc().start(), "(", ")", None, |fmt, _multiline| {
+                            right.visit(fmt)
+                        })?;
+                    } else {
+                        fmt.visit_assignment(right)?;
+                    }
+                    Ok(())
+                })?;
+            }
             Expression::Variable(ident) => {
                 ident.visit(self)?;
             }
@@ -2049,8 +2087,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         semicolon: bool,
     ) -> Result<()> {
         let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
-            fmt.visit_var_declaration(declaration, expr.is_some())?;
-            Ok(())
+            fmt.visit_var_declaration(declaration, expr.is_some())
         })?;
         let multiline = declaration.content.contains('\n');
         self.write_chunk(&declaration)?;
