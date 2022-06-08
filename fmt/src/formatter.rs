@@ -214,13 +214,7 @@ impl<W: Write> Write for FormatBuffer<W> {
 
         let mut level = self.level();
 
-        // TODO:
-        // println!(
-        //     "str: {}. line: {}. group: {}",
-        //     s, self.is_beginning_of_line, self.is_beginning_of_group
-        // );
         if self.is_beginning_of_line && !s.trim_start().is_empty() {
-            // TODO: println!("str: {}. level: {}", s, level);
             let indent = " ".repeat(self.tab_width * level);
             self.w.write_str(&indent)?;
             self.last_indent = indent;
@@ -1828,7 +1822,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         statements: &mut Vec<Statement>,
     ) -> Result<()> {
         if unchecked {
-            write!(self.buf(), "unchecked ")?;
+            write_chunk!(self, loc.start(), "unchecked ")?;
         }
 
         if statements.is_empty() {
@@ -1836,38 +1830,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             return Ok(())
         }
 
-        let multiline = self.source[loc.start()..loc.end()].contains('\n');
+        writeln_chunk!(self, "{{")?;
 
-        if multiline {
-            writeln!(self.buf(), "{{")?;
-        } else {
-            self.write_opening_bracket()?;
-        }
-
-        self.indented_if(multiline, 1, |fmt| {
+        self.indented(1, |fmt| {
             let mut statements_iter = statements.iter_mut().peekable();
             while let Some(stmt) = statements_iter.next() {
                 stmt.visit(fmt)?;
-                if multiline {
-                    writeln!(fmt.buf())?;
-                }
+                writeln_chunk!(fmt)?;
 
                 // If source has zero blank lines between statements, leave it as is. If one
                 //  or more, separate statements with one blank line.
                 if let Some(next_stmt) = statements_iter.peek() {
                     if fmt.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
-                        writeln!(fmt.buf())?;
+                        writeln_chunk!(fmt)?;
                     }
                 }
             }
             Ok(())
         })?;
 
-        if multiline {
-            write!(self.buf(), "}}")?;
-        } else {
-            self.write_closing_bracket()?;
-        }
+        write_chunk!(self, "}}")?;
 
         Ok(())
     }
@@ -2135,6 +2117,108 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_var_definition_stmt(
+        &mut self,
+        _loc: Loc,
+        declaration: &mut VariableDeclaration,
+        expr: &mut Option<Expression>,
+        semicolon: bool,
+    ) -> Result<()> {
+        declaration.visit(self)?;
+        expr.as_mut()
+            .map(|expr| {
+                write!(self.buf(), " = ")?;
+                expr.visit(self)
+            })
+            .transpose()?;
+        if semicolon {
+            self.write_semicolon()?;
+        }
+        Ok(())
+    }
+
+    fn visit_for(
+        &mut self,
+        loc: Loc,
+        init: &mut Option<Box<Statement>>,
+        cond: &mut Option<Box<Expression>>,
+        update: &mut Option<Box<Statement>>,
+        body: &mut Option<Box<Statement>>,
+    ) -> Result<(), Self::Error> {
+        let next_byte_end = update.as_ref().map(|u| u.loc().end());
+        self.surrounded(loc.start(), "for (", ") ", next_byte_end, |fmt, _| {
+            let mut write_for_loop_header = |fmt: &mut Self, multiline: bool| -> Result<()> {
+                init.as_mut()
+                    .map(|stmt| {
+                        match **stmt {
+                            Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                            }
+                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            _ => stmt.visit(fmt), // unreachable
+                        }
+                    })
+                    .transpose()?;
+                fmt.write_semicolon()?;
+                if multiline {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
+                fmt.write_semicolon()?;
+                if multiline {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                update
+                    .as_mut()
+                    .map(|stmt| {
+                        match **stmt {
+                            Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                            }
+                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            _ => stmt.visit(fmt), // unreachable
+                        }
+                    })
+                    .transpose()?;
+                Ok(())
+            };
+            let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;
+            if multiline {
+                write_for_loop_header(fmt, true)?;
+            }
+            Ok(())
+        })?;
+        match body {
+            Some(body) => body.visit(self),
+            None => self.write_empty_brackets(),
+        }
+    }
+
+    fn visit_while(
+        &mut self,
+        loc: Loc,
+        cond: &mut Expression,
+        body: &mut Statement,
+    ) -> Result<(), Self::Error> {
+        self.surrounded(loc.start(), "while (", ") ", Some(cond.loc().end()), |fmt, _| {
+            cond.visit(fmt)
+        })?;
+        body.visit(self)
+    }
+
+    fn visit_do_while(
+        &mut self,
+        loc: Loc,
+        body: &mut Statement,
+        cond: &mut Expression,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "do ")?;
+        body.visit(self)?;
+        self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
+            cond.visit(fmt)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2297,4 +2381,7 @@ mod tests {
     test_directory! { SimpleComments }
     test_directory! { ExpressionPrecedence }
     test_directory! { FunctionDefinitionWithComments }
+    test_directory! { WhileStatement }
+    test_directory! { DoWhileStatement }
+    test_directory! { ForStatement }
 }
