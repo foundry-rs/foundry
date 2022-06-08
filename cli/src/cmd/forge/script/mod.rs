@@ -1,18 +1,4 @@
-mod build;
-use build::BuildOutput;
-
-mod runner;
-use runner::Runner;
-
-mod broadcast;
-use ui::{TUIExitReason, Tui, Ui};
-
-mod cmd;
-
-mod executor;
-
-mod receipts;
-
+//! script command
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use clap::{Parser, ValueHint};
 use ethers::{
@@ -32,20 +18,29 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-
 use foundry_common::evm::EvmArgs;
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
-
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
     time::Duration,
 };
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use yansi::Paint;
+
+mod build;
+use build::BuildOutput;
+
+mod runner;
+use runner::ScriptRunner;
+
+mod broadcast;
+use ui::{TUIExitReason, Tui, Ui};
+
+mod cmd;
+mod executor;
+mod receipts;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -130,29 +125,7 @@ pub struct ScriptArgs {
     pub with_gas_price: Option<U256>,
 }
 
-pub struct ScriptResult {
-    pub success: bool,
-    pub logs: Vec<Log>,
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
-    pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
-    pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<TypedTransaction>>,
-    pub returned: bytes::Bytes,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct JsonResult {
-    pub logs: Vec<String>,
-    pub gas_used: u64,
-    pub results: HashMap<String, NestedValue>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
-}
+// === impl ScriptArgs ===
 
 impl ScriptArgs {
     pub fn decode_traces(
@@ -418,6 +391,30 @@ impl ScriptArgs {
         };
         Ok((func.clone(), data))
     }
+}
+
+pub struct ScriptResult {
+    pub success: bool,
+    pub logs: Vec<Log>,
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub debug: Option<Vec<DebugArena>>,
+    pub gas: u64,
+    pub labeled_addresses: BTreeMap<Address, String>,
+    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub returned: bytes::Bytes,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsonResult {
+    pub logs: Vec<String>,
+    pub gas_used: u64,
+    pub results: HashMap<String, NestedValue>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NestedValue {
+    pub internal_type: String,
+    pub value: String,
 }
 
 pub struct ScriptConfig {

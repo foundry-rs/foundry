@@ -3,10 +3,7 @@ use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::H256,
 };
-use std::{
-    collections::{BTreeMap},
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// Represents a solidity Contract that's a test target
 #[derive(Debug, Clone)]

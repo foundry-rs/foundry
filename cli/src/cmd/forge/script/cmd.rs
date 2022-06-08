@@ -13,6 +13,7 @@ use foundry_config::{figment::Figment, Config};
 use super::*;
 
 impl ScriptArgs {
+    /// Exxecutes the script
     pub async fn run_script(mut self) -> eyre::Result<()> {
         let figment: Figment = From::from(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;

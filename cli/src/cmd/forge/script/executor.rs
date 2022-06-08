@@ -1,5 +1,8 @@
-use crate::{cmd::needs_setup, utils};
-
+use super::*;
+use crate::{
+    cmd::{forge::script::*, needs_setup},
+    utils,
+};
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     prelude::NameOrAddress,
@@ -10,10 +13,7 @@ use forge::{
     executor::{Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
-
 use std::collections::VecDeque;
-
-use crate::cmd::forge::script::*;
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -139,11 +139,8 @@ impl ScriptArgs {
         }
     }
 
-    async fn prepare_runner(
-        &self,
-        script_config: &ScriptConfig,
-        sender: Address,
-    ) -> Runner<Backend> {
+    /// Creates the Runner that drives script execution
+    async fn prepare_runner(&self, script_config: &ScriptConfig, sender: Address) -> ScriptRunner {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
@@ -159,17 +156,14 @@ impl ScriptArgs {
                 script_config.config.rpc_storage_caching.clone(),
             )
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
+            .with_spec(utils::evm_spec(&script_config.config.evm_version))
+            .set_tracing(script_config.evm_opts.verbosity >= 3)
             .with_gas_limit(script_config.evm_opts.gas_limit());
-
-        if script_config.evm_opts.verbosity >= 3 {
-            builder = builder.with_tracing();
-        }
 
         if self.debug {
             builder = builder.with_tracing().with_debugger();
         }
 
-        Runner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
     }
 }

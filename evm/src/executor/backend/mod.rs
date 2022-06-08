@@ -105,6 +105,11 @@ pub struct Backend {
 // === impl Backend ===
 
 impl Backend {
+    /// Creates a new Backend with a spawned multi fork thread
+    pub fn spawn(fork: Option<CreateFork>) -> Self {
+        Self::new(MultiFork::spawn(), fork)
+    }
+
     /// Creates a new instance of `Backend`
     ///
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory

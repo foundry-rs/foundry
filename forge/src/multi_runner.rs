@@ -8,9 +8,7 @@ use ethers::{
 use eyre::Result;
 use foundry_config::cache::StorageCachingConfig;
 use foundry_evm::executor::{
-    backend::Backend,
-    fork::{CreateFork, MultiFork},
-    opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId,
+    backend::Backend, fork::CreateFork, opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
@@ -119,11 +117,10 @@ impl MultiContractRunner {
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(self.evm_opts.evm_env());
 
-        let (forks, fork_handler) = MultiFork::spawn();
+        let db = Backend::spawn(self.fork2.take());
 
-        let results = {
+        let results =
             // the db backend that serves all the data, each contract gets its own instance
-            let db = Backend::new(forks, self.fork2.take());
 
              self
                 .contracts
@@ -163,12 +160,7 @@ impl MultiContractRunner {
                     (name, result)
                 })
                 .collect::<BTreeMap<_, _>>()
-        };
-
-        // the spawned handler contains some resources, rpc caches, that will get flushed on drop,
-        // in order to ensure everything is flushed properly we wait for the thread to finish which
-        // will happen when all the channels (MultiFork) are dropped
-        fork_handler.join().unwrap();
+        ;
 
         Ok(results)
     }

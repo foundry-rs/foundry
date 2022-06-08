@@ -6,14 +6,16 @@ use forge::{
 };
 
 use super::*;
-pub struct Runner<DB: DatabaseRef> {
-    pub executor: Executor<DB>,
+
+/// Drives script execution
+pub struct ScriptRunner {
+    pub executor: Executor,
     pub initial_balance: U256,
     pub sender: Address,
 }
 
-impl<DB: DatabaseRef> Runner<DB> {
-    pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
+impl ScriptRunner {
+    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
 

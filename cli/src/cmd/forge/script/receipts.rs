@@ -1,9 +1,8 @@
-use std::sync::Arc;
-
 use crate::{cmd::ScriptSequence, init_progress, update_progress, utils::print_receipt};
 use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::Arc;
 
 /// Gets the receipts of previously pending transactions.
 pub async fn wait_for_pending(

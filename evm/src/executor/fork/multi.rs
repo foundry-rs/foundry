@@ -65,6 +65,8 @@ impl AbiDecode for ForkId {
 pub struct MultiFork {
     /// Channel to send `Request`s to the handler
     handler: Sender<Request>,
+    /// Ensures that all rpc resources get flushed properly
+    _shutdown: Arc<ShutDownMultiFork>,
 }
 
 // === impl MultiForkBackend ===
@@ -73,17 +75,18 @@ impl MultiFork {
     /// Creates a new pair multi fork pair
     pub fn new() -> (Self, MultiForkHandler) {
         let (handler, handler_rx) = channel(1);
-        (Self { handler }, MultiForkHandler::new(handler_rx))
+        let _shutdown = Arc::new(ShutDownMultiFork { handler: Some(handler.clone()) });
+        (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
     }
 
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread
     ///
     /// Also returns the `JoinHandle` of the spawned thread.
-    pub fn spawn() -> (Self, std::thread::JoinHandle<()>) {
+    pub fn spawn() -> Self {
         let (fork, handler) = Self::new();
         // spawn a light-weight thread with a thread-local async runtime just for
         // sending and receiving data from the remote client(s)
-        let handle = std::thread::Builder::new()
+        let _ = std::thread::Builder::new()
             .name("multi-fork-backend-thread".to_string())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -95,7 +98,7 @@ impl MultiFork {
             })
             .expect("failed to spawn multi fork handler thread");
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
-        (fork, handle)
+        fork
     }
 
     /// Returns a fork backend
@@ -132,6 +135,8 @@ enum Request {
     CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
+    /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
+    ShutDown(OneshotSender<()>),
 }
 
 enum ForkTask {
@@ -195,6 +200,13 @@ impl MultiForkHandler {
             Request::GetFork(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).cloned();
                 let _ = sender.send(fork);
+            }
+            Request::ShutDown(sender) => {
+                trace!(target: "fork::multi", "received shutdown signal");
+                // we're emptying all fork backends, this way we ensure all caches get flushed
+                self.forks.clear();
+                self.handlers.clear();
+                let _ = sender.send(());
             }
         }
     }
@@ -265,6 +277,31 @@ impl Future for MultiForkHandler {
         }
 
         Poll::Pending
+    }
+}
+
+/// A type that's used to signaling the `MultiForkHandler` when it's time to shutdown.
+///
+/// This is essentially a sync on drop, so that the `MultiForkHandler` can flush all rpc cashes
+///
+/// This type intentionally does not implement `Clone` since it's intended that there's only once
+/// instance.
+#[derive(Debug)]
+struct ShutDownMultiFork {
+    handler: Option<Sender<Request>>,
+}
+
+impl Drop for ShutDownMultiFork {
+    fn drop(&mut self) {
+        trace!(target: "fork::multi", "initiating shutdown");
+        let (sender, rx) = oneshot_channel();
+        let req = Request::ShutDown(sender);
+        if let Some(mut handler) = self.handler.take() {
+            if handler.try_send(req).is_ok() {
+                let _ = rx.recv();
+                trace!(target: "fork::cache", "multifork backend shutdown");
+            }
+        }
     }
 }
 
