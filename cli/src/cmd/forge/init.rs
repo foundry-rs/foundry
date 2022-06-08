@@ -102,12 +102,18 @@ impl Cmd for InitArgs {
             let test = root.join("test");
             std::fs::create_dir_all(&test)?;
 
+            let script = root.join("script");
+            std::fs::create_dir_all(&script)?;
+
             // write the contract file
             let contract_path = src.join("Contract.sol");
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
             // write the tests
             let contract_path = test.join("Contract.t.sol");
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
+            // write the script
+            let contract_path = script.join("Contract.s.sol");
+            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.s.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {

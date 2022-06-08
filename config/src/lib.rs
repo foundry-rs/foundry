@@ -583,6 +583,7 @@ impl Config {
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
+            .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.clone())
             .remappings(self.get_all_remappings())
