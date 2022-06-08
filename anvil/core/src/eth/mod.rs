@@ -258,16 +258,20 @@ pub enum EthRequest {
     SetLogging(bool),
 
     /// Set the minimum gas price for the node
-    #[serde(rename = "anvil_setMinGasPrice", alias = "hardhat_setMinGasPrice", with = "sequence")]
-    SetMinGasPrice(#[serde(deserialize_with = "deserialize_number")] U256),
+    #[serde(
+        rename = "anvil_setMinGasPrice",
+        alias = "hardhat_setMinGasPrice",
+        deserialize_with = "deserialize_number_seq"
+    )]
+    SetMinGasPrice(U256),
 
     /// Sets the base fee of the next block
     #[serde(
         rename = "anvil_setNextBlockBaseFeePerGas",
         alias = "hardhat_setNextBlockBaseFeePerGas",
-        with = "sequence"
+        deserialize_with = "deserialize_number_seq"
     )]
-    SetNextBlockBaseFeePerGas(#[serde(deserialize_with = "deserialize_number")] U256),
+    SetNextBlockBaseFeePerGas(U256),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
@@ -276,12 +280,12 @@ pub enum EthRequest {
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
-    #[serde(rename = "evm_revert", with = "sequence")]
-    EvmRevert(#[serde(deserialize_with = "deserialize_number")] U256),
+    #[serde(rename = "evm_revert", deserialize_with = "deserialize_number_seq")]
+    EvmRevert(U256),
 
     /// Jump forward in time by the given amount of time, in seconds.
-    #[serde(rename = "evm_increaseTime", with = "sequence")]
-    EvmIncreaseTime(#[serde(deserialize_with = "deserialize_number")] U256),
+    #[serde(rename = "evm_increaseTime", deserialize_with = "deserialize_number_seq")]
+    EvmIncreaseTime(U256),
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
     #[serde(rename = "evm_setNextBlockTimestamp", with = "sequence")]
@@ -340,36 +344,55 @@ pub enum EthRpcCall {
     PubSub(EthPubSub),
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Numeric {
+    U256(U256),
+    Num(u64),
+}
+
+impl From<Numeric> for U256 {
+    fn from(n: Numeric) -> U256 {
+        match n {
+            Numeric::U256(n) => n,
+            Numeric::Num(n) => U256::from(n),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NumericSeq {
+    Seq([Numeric; 1]),
+    U256(U256),
+    Num(u64),
+}
+
+/// Deserializes single integer params: `1, [1], ["0x01"]`
+fn deserialize_number_seq<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let num = match NumericSeq::deserialize(deserializer)? {
+        NumericSeq::Seq(seq) => seq.into_iter().next().unwrap().into(),
+        NumericSeq::U256(n) => n,
+        NumericSeq::Num(n) => U256::from(n),
+    };
+
+    Ok(num)
+}
+
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Numeric {
-        U256(U256),
-        Num(u64),
-    }
-
-    let num = match Numeric::deserialize(deserializer)? {
-        Numeric::U256(n) => n,
-        Numeric::Num(n) => U256::from(n),
-    };
-
-    Ok(num)
+    Numeric::deserialize(deserializer).map(Into::into)
 }
 
 fn deserialize_number_opt<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Numeric {
-        U256(U256),
-        Num(u64),
-    }
-
     let num = match Option::<Numeric>::deserialize(deserializer)? {
         Some(Numeric::U256(n)) => Some(n),
         Some(Numeric::Num(n)) => Some(U256::from(n)),
@@ -725,6 +748,14 @@ mod tests {
     #[test]
     fn test_serde_custom_increase_time() {
         let s = r#"{"method": "evm_increaseTime", "params": ["0x0"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "evm_increaseTime", "params": [1]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "evm_increaseTime", "params": 1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
