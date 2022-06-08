@@ -1690,7 +1690,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             return Ok(())
         }
 
-        writeln!(self.buf(), "{{")?;
+        writeln_chunk!(self, "{{")?;
 
         self.indented(1, |fmt| {
             let mut statements_iter = statements.iter_mut().peekable();
@@ -2004,12 +2004,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     .transpose()?;
                 fmt.write_semicolon()?;
                 if multiline {
-                    writeln!(fmt.buf())?;
+                    fmt.write_whitespace_separator(true)?;
                 }
                 cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
                 fmt.write_semicolon()?;
                 if multiline {
-                    writeln!(fmt.buf())?;
+                    fmt.write_whitespace_separator(true)?;
                 }
                 update
                     .as_mut()
