@@ -4,7 +4,7 @@ use super::build::{CoreBuildArgs, ProjectPathsArgs};
 use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
 use clap::Parser;
 use ethers::{
-    abi::{AbiEncode, Address},
+    abi::Address,
     etherscan::{
         contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
@@ -157,106 +157,110 @@ pub struct VerifyArgs {
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(mut self) -> eyre::Result<()> {
+    pub async fn run(self) -> eyre::Result<()> {
         match self.provider {
-            VerificationProvider::Etherscan => {
-                let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
-                    .wrap_err("Failed to create etherscan client")?;
+            VerificationProvider::Etherscan => self.verify_with_etherscan().await,
+            VerificationProvider::Sourcify => self.verify_with_sourcify().await,
+        }
+    }
 
-                let verify_args = self.create_verify_request().await?;
+    async fn verify_with_etherscan(mut self) -> eyre::Result<()> {
+        let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
+            .wrap_err("Failed to create etherscan client")?;
 
-                trace!("submitting verification request {:?}", verify_args);
+        let verify_args = self.create_verify_request().await?;
 
-                let retry: Retry = self.retry.into();
-                let resp = retry.run_async(|| {
-                    async {
-                        println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
-                        let resp = etherscan
-                            .submit_contract_verification(&verify_args)
-                            .await
-                            .wrap_err("Failed to submit contract verification")?;
+        trace!("submitting verification request {:?}", verify_args);
 
-                        if resp.status == "0" {
-                            if resp.result == "Contract source code already verified" {
-                                return Ok(None)
-                            }
+        let retry: Retry = self.retry.into();
+        let resp = retry.run_async(|| {
+            async {
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
+                let resp = etherscan
+                    .submit_contract_verification(&verify_args)
+                    .await
+                    .wrap_err("Failed to submit contract verification")?;
 
-                            if resp.result.starts_with("Unable to locate ContractCode at") {
-                                warn!("{}", resp.result);
-                                return Err(eyre!("Etherscan could not detect the deployment."))
-                            }
-
-                            warn!("Failed verify submission: {:?}", resp);
-                            eprintln!(
-                                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                                resp.message, resp.result
-                            );
-                            std::process::exit(1);
-                        }
-
-                        Ok(Some(resp))
+                if resp.status == "0" {
+                    if resp.result == "Contract source code already verified" {
+                        return Ok(None)
                     }
-                        .boxed()
-                }).await?;
 
-                if let Some(resp) = resp {
-                    println!(
-                        "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
-                        resp.message,
-                        resp.result,
-                        etherscan.address_url(self.address)
-                    );
-
-                    if self.watch {
-                        let check_args = VerifyCheckArgs {
-                            guid: resp.result,
-                            chain: self.chain,
-                            retry: RETRY_CHECK_ON_VERIFY,
-                            etherscan_key: self.etherscan_key,
-                        };
-                        return check_args.run().await
+                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                        warn!("{}", resp.result);
+                        return Err(eyre!("Etherscan could not detect the deployment."))
                     }
-                } else {
-                    println!("Contract source code already verified");
-                }
 
-                Ok(())
-            }
-            VerificationProvider::Sourcify => {
-                let url = format!(
-                    "https://sourcify.dev/server/check-by-addresses?addresses={}&chainIds={}",
-                    hex::encode(self.address.as_bytes()),
-                    self.chain.id(),
-                );
-                let response = get(url).await?;
-                if !response.status().is_success() {
-                    return Err(eyre!(
-                        "Sourcify verification request for address ({}) failed with status code {}",
-                        self.address.encode_hex(),
-                        response.status()
-                    ))
-                };
-
-                // Response looks like:
-                // `[{"address":"0x68B1D87F95878fE05B998F19b66F4baba5De1aed","status":"false"}]`
-                let parsed_response = response.json::<serde_json::Value>().await?;
-                let status =
-                    parsed_response.get(0).and_then(|value| value.get("status")).expect(&format!(
-                        "Failed to retrieve status from Sourcify response ({})",
-                        parsed_response
-                    ));
-                let status_str = status.as_str().unwrap();
-                if status_str != "perfect" {
+                    warn!("Failed verify submission: {:?}", resp);
                     eprintln!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`",
-                        parsed_response
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                        resp.message, resp.result
                     );
                     std::process::exit(1);
                 }
 
-                Ok(())
+                Ok(Some(resp))
             }
+                .boxed()
+        }).await?;
+
+        if let Some(resp) = resp {
+            println!(
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
+                resp.message,
+                resp.result,
+                etherscan.address_url(self.address)
+            );
+
+            if self.watch {
+                let check_args = VerifyCheckArgs {
+                    guid: resp.result,
+                    chain: self.chain,
+                    retry: RETRY_CHECK_ON_VERIFY,
+                    etherscan_key: self.etherscan_key,
+                };
+                return check_args.run().await
+            }
+        } else {
+            println!("Contract source code already verified");
         }
+
+        Ok(())
+    }
+
+    async fn verify_with_sourcify(self) -> eyre::Result<()> {
+        let url = format!(
+            "https://sourcify.dev/server/check-by-addresses?addresses={}&chainIds={}",
+            hex::encode(self.address.as_bytes()),
+            self.chain.id(),
+        );
+        let response = get(url).await?;
+        if !response.status().is_success() {
+            eprintln!(
+                "Sourcify verification request for address ({}) failed with status code {}",
+                hex::encode(self.address.as_bytes()),
+                response.status()
+            );
+            std::process::exit(1);
+        };
+
+        // Response looks like:
+        // `[{"address":"0x68B1D87F95878fE05B998F19b66F4baba5De1aed","status":"false"}]`
+        let parsed_response = response.json::<serde_json::Value>().await?;
+        let status =
+            parsed_response.get(0).and_then(|value| value.get("status")).unwrap_or_else(|| {
+                panic!("Failed to retrieve status from Sourcify response ({})", parsed_response)
+            });
+        let status_str = status.as_str().unwrap();
+        if status_str != "perfect" {
+            eprintln!(
+                "Encountered an error verifying this contract:\nResponse: `{}`",
+                parsed_response
+            );
+            std::process::exit(1);
+        }
+
+        Ok(())
     }
 
     /// Creates the `VerifyContract` etherescan request in order to verify the contract
