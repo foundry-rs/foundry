@@ -12,79 +12,63 @@ use std::{path::PathBuf, str::FromStr};
 mod forge_utils;
 
 // tests that test filters are handled correctly
-forgetest!(
-    #[serial_test::serial]
-    can_set_filter_values,
-    |prj: TestProject, mut cmd: TestCommand| {
-        let patt = regex::Regex::new("test*").unwrap();
-        let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
+forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
+    let patt = regex::Regex::new("test*").unwrap();
+    let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
 
-        // explicitly set patterns
-        let config = Config {
-            test_pattern: Some(patt.clone().into()),
-            test_pattern_inverse: None,
-            contract_pattern: Some(patt.clone().into()),
-            contract_pattern_inverse: None,
-            path_pattern: Some(glob.clone()),
-            path_pattern_inverse: None,
-            ..Default::default()
-        };
-        prj.write_config(config);
+    // explicitly set patterns
+    let config = Config {
+        test_pattern: Some(patt.clone().into()),
+        test_pattern_inverse: None,
+        contract_pattern: Some(patt.clone().into()),
+        contract_pattern_inverse: None,
+        path_pattern: Some(glob.clone()),
+        path_pattern_inverse: None,
+        ..Default::default()
+    };
+    prj.write_config(config);
 
-        let config = cmd.config();
+    let config = cmd.config();
 
-        assert_eq!(config.test_pattern.unwrap().as_str(), patt.as_str());
-        assert_eq!(config.test_pattern_inverse, None);
-        assert_eq!(config.contract_pattern.unwrap().as_str(), patt.as_str());
-        assert_eq!(config.contract_pattern_inverse, None);
-        assert_eq!(config.path_pattern.unwrap(), glob);
-        assert_eq!(config.path_pattern_inverse, None);
-    }
-);
+    assert_eq!(config.test_pattern.unwrap().as_str(), patt.as_str());
+    assert_eq!(config.test_pattern_inverse, None);
+    assert_eq!(config.contract_pattern.unwrap().as_str(), patt.as_str());
+    assert_eq!(config.contract_pattern_inverse, None);
+    assert_eq!(config.path_pattern.unwrap(), glob);
+    assert_eq!(config.path_pattern_inverse, None);
+});
 
 // tests that warning is displayed when there are no tests in project
-forgetest!(
-    #[serial_test::serial]
-    warn_no_tests,
-    |_prj: TestProject, mut cmd: TestCommand| {
-        // set up command
-        cmd.args(["test"]);
+forgetest!(warn_no_tests, |_prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.args(["test"]);
 
-        // run command and assert
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
-        );
-    }
-);
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests.stdout"),
+    );
+});
 
 // tests that warning is displayed with pattern when no tests match
-forgetest!(
-    #[serial_test::serial]
-    warn_no_tests_match,
-    |_prj: TestProject, mut cmd: TestCommand| {
-        // set up command
-        cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
-        cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
-        cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+forgetest!(warn_no_tests_match, |_prj: TestProject, mut cmd: TestCommand| {
+    // set up command
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
-        // run command and assert
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/warn_no_tests_match.stdout"),
-        );
-    }
-);
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/warn_no_tests_match.stdout"),
+    );
+});
 
 // tests that suggestion is provided with pattern when no tests match
-forgetest!(
-    #[serial_test::serial]
-    suggest_when_no_tests_match,
-    |prj: TestProject, mut cmd: TestCommand| {
-        // set up project
-        prj.inner()
-            .add_source(
-                "TestE.t.sol",
-                r#"
+forgetest!(suggest_when_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    // set up project
+    prj.inner()
+        .add_source(
+            "TestE.t.sol",
+            r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 
@@ -93,21 +77,20 @@ contract TestC {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        // set up command
-        cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
-        cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
-        cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
+    // set up command
+    cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
+    cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
+    cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
 
-        // run command and assert
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
-        );
-    }
-);
+    // run command and assert
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/suggest_when_no_tests_match.stdout"),
+    );
+});
 
 // tests that direct import paths are handled correctly
 forgetest!(can_fuzz_array_params, |prj: TestProject, mut cmd: TestCommand| {
@@ -199,22 +182,19 @@ contract FailTest is DSTest {
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
-forgetest!(
-    #[serial_test::serial]
-    can_run_test_in_custom_test_folder,
-    |prj: TestProject, mut cmd: TestCommand| {
-        prj.insert_ds_test();
+forgetest!(can_run_test_in_custom_test_folder, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
 
-        // explicitly set the test folder
-        let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
-        prj.write_config(config);
-        let config = cmd.config();
-        assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
+    // explicitly set the test folder
+    let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
+    prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
 
-        prj.inner()
-            .add_source(
-                "nested/forge-tests/MyTest.t.sol",
-                r#"
+    prj.inner()
+        .add_source(
+            "nested/forge-tests/MyTest.t.sol",
+            r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "../../test.sol";
@@ -224,16 +204,15 @@ contract MyTest is DSTest {
     }
 }
    "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
-        cmd.arg("test");
-        cmd.unchecked_output().stdout_matches_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
-        );
-    }
-);
+    cmd.arg("test");
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
+    );
+});
 
 // checks that forge test repeatedly produces the same output
 forgetest_init!(can_test_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {

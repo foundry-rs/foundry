@@ -187,20 +187,16 @@ forgetest_ignore!(can_cache_clean_chain_etherscan, |_: TestProject, mut cmd: Tes
 });
 
 // checks that init works
-forgetest!(
-    #[serial_test::serial]
-    can_init_repo_with_config,
-    |prj: TestProject, mut cmd: TestCommand| {
-        let foundry_toml = prj.root().join(Config::FILE_NAME);
-        assert!(!foundry_toml.exists());
+forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
 
-        cmd.args(["init", "--force"]).arg(prj.root());
-        cmd.assert_non_empty_stdout();
+    cmd.args(["init", "--force"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
 
-        let s = read_string(&foundry_toml);
-        let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-    }
-);
+    let s = read_string(&foundry_toml);
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
 
 // checks that init works repeatedly
 forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
@@ -316,83 +312,71 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
 });
 
 // checks that `clean` also works with the "out" value set in Config
-forgetest_init!(
-    #[serial_test::serial]
-    can_clean_config,
-    |prj: TestProject, mut cmd: TestCommand| {
-        let config = Config { out: "custom-out".into(), ..Default::default() };
-        prj.write_config(config);
-        cmd.arg("build");
-        cmd.assert_non_empty_stdout();
+forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
+    let config = Config { out: "custom-out".into(), ..Default::default() };
+    prj.write_config(config);
+    cmd.arg("build");
+    cmd.assert_non_empty_stdout();
 
-        // default test contract is written in custom out directory
-        let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
-        assert!(artifact.exists());
+    // default test contract is written in custom out directory
+    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    assert!(artifact.exists());
 
-        cmd.forge_fuse().arg("clean");
-        cmd.output();
-        assert!(!artifact.exists());
-    }
-);
+    cmd.forge_fuse().arg("clean");
+    cmd.output();
+    assert!(!artifact.exists());
+});
 
 // checks that extra output works
-forgetest_init!(
-    #[serial_test::serial]
-    can_emit_extra_output,
-    |prj: TestProject, mut cmd: TestCommand| {
-        cmd.args(["build", "--extra-output", "metadata"]);
-        cmd.assert_non_empty_stdout();
+forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--extra-output", "metadata"]);
+    cmd.assert_non_empty_stdout();
 
-        let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
-        let artifact: ConfigurableContractArtifact =
-            ethers::solc::utils::read_json_file(artifact_path).unwrap();
-        assert!(artifact.metadata.is_some());
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
 
-        cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
-        cmd.assert_non_empty_stdout();
+    cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
+    cmd.assert_non_empty_stdout();
 
-        let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
-        let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
-    }
-);
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+});
 
 // checks that extra output works
-forgetest_init!(
-    #[serial_test::serial]
-    can_emit_multiple_extra_output,
-    |prj: TestProject, mut cmd: TestCommand| {
-        cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
-        cmd.assert_non_empty_stdout();
+forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
+    cmd.assert_non_empty_stdout();
 
-        let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
-        let artifact: ConfigurableContractArtifact =
-            ethers::solc::utils::read_json_file(artifact_path).unwrap();
-        assert!(artifact.metadata.is_some());
-        assert!(artifact.ir.is_some());
-        assert!(artifact.ir_optimized.is_some());
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
+    assert!(artifact.ir.is_some());
+    assert!(artifact.ir_optimized.is_some());
 
-        cmd.forge_fuse()
-            .args([
-                "build",
-                "--extra-output-files",
-                "metadata",
-                "ir-optimized",
-                "evm.bytecode.sourceMap",
-                "--force",
-            ])
-            .root_arg();
-        cmd.assert_non_empty_stdout();
+    cmd.forge_fuse()
+        .args([
+            "build",
+            "--extra-output-files",
+            "metadata",
+            "ir-optimized",
+            "evm.bytecode.sourceMap",
+            "--force",
+        ])
+        .root_arg();
+    cmd.assert_non_empty_stdout();
 
-        let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
-        let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-        let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
-        std::fs::read_to_string(iropt).unwrap();
+    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    std::fs::read_to_string(iropt).unwrap();
 
-        let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
-        std::fs::read_to_string(sourcemap).unwrap();
-    }
-);
+    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    std::fs::read_to_string(sourcemap).unwrap();
+});
 
 forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
