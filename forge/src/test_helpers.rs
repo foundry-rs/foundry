@@ -75,15 +75,7 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     ..Default::default()
 });
 
-pub fn test_executor() -> Executor<Backend> {
-    let env = RuntimeOrHandle::new().block_on((*EVM_OPTS).evm_env());
-    ExecutorBuilder::default()
-        .with_cheatcodes(false, Default::default())
-        .with_config(env)
-        .build(Backend::simple())
-}
-
-pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {
+pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
     FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)

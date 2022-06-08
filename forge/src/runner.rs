@@ -8,7 +8,7 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::{
-    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
+    executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::FuzzedExecutor,
     trace::TraceKind,
     CALLER,

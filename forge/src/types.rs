@@ -1,10 +1,10 @@
 use ethers::{
-    abi::{Abi, AbiError, Event, Function},
+    abi::{Event, Function},
     solc::artifacts::CompactContractBytecode,
     types::H256,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap},
     path::PathBuf,
 };
 
@@ -24,7 +24,7 @@ pub struct TestContract {
     pub events: BTreeMap<H256, Event>,
 
     /// all errors of the contract
-    pub errors: BTreeMap<String, Vec<AbiError>>,
+    pub errors: BTreeMap<String, Vec<()>>,
 }
 
 /// A solidity function that can be tested

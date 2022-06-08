@@ -10,13 +10,12 @@ use foundry_config::cache::StorageCachingConfig;
 use foundry_evm::executor::{
     backend::Backend,
     fork::{CreateFork, MultiFork},
-    opts::EvmOpts,
-    Backend, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+    opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
+use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
@@ -122,11 +121,11 @@ impl MultiContractRunner {
 
         let (forks, fork_handler) = MultiFork::spawn();
 
-        {
+        let results = {
             // the db backend that serves all the data, each contract gets its own instance
             let db = Backend::new(forks, self.fork2.take());
 
-            let results = self
+             self
                 .contracts
                 .par_iter()
                 .filter(|(id, _)| {
@@ -137,7 +136,7 @@ impl MultiContractRunner {
                     abi.functions().any(|func| filter.matches_test(&func.name))
                 })
                 .map(|(id, (abi, deploy_code, libs))| {
-                    let mut executor = ExecutorBuilder::default()
+                    let executor = ExecutorBuilder::default()
                         .with_cheatcodes(self.evm_opts.ffi, self.rpc_storage_caching.clone())
                         .with_config(env.clone())
                         .with_spec(self.evm_spec)
@@ -163,22 +162,22 @@ impl MultiContractRunner {
                     }
                     (name, result)
                 })
-                .collect::<BTreeMap<_, _>>();
-        }
+                .collect::<BTreeMap<_, _>>()
+        };
 
         // the spawned handler contains some resources, rpc caches, that will get flushed on drop,
         // in order to ensure everything is flushed properly we wait for the thread to finish which
         // will happen when all the channels (MultiFork) are dropped
-        fork_handler.join()?;
+        fork_handler.join().unwrap();
 
         Ok(results)
     }
 
     pub fn test(
         &mut self,
-        filter: &impl TestFilter,
-        stream_result: Option<Sender<(String, SuiteResult)>>,
-        include_fuzz_tests: bool,
+        _filter: &impl TestFilter,
+        _stream_result: Option<Sender<(String, SuiteResult)>>,
+        _include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
         // let runtime = RuntimeOrHandle::new();
         // let env = runtime.block_on(self.evm_opts.evm_env());
