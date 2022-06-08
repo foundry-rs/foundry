@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    cmd::{forge::script::*, needs_setup},
-    utils,
-};
+use crate::{cmd::needs_setup, utils};
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     prelude::NameOrAddress,

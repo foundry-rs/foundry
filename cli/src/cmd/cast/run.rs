@@ -72,8 +72,7 @@ impl RunArgs {
             let env = evm_opts.evm_env().await;
             // TODO(mattsse)
             // utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env
-            let db =
-                Backend::spawn(None);
+            let db = Backend::spawn(None);
 
             let builder = ExecutorBuilder::default()
                 .with_config(env)
@@ -108,11 +107,7 @@ impl RunArgs {
 
             // Execute our transaction
             let mut result = {
-                executor.set_tracing(true).set_gas_limit(tx.gas);
-
-                if self.debug {
-                    executor.set_debugger(true);
-                }
+                executor.set_tracing(true).set_gas_limit(tx.gas).set_debugger(self.debug);
 
                 if let Some(to) = tx.to {
                     let RawCallResult { reverted, gas, traces, debug: run_debug, .. } =

@@ -37,9 +37,7 @@ pub mod inspector;
 pub mod opts;
 pub mod snapshot;
 
-use crate::executor::{
-    inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
-};
+use crate::executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER};
 pub use builder::{ExecutorBuilder, Fork};
 
 /// A mapping of addresses to their changed state.

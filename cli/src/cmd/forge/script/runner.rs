@@ -1,6 +1,6 @@
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor, RawCallResult},
+    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
