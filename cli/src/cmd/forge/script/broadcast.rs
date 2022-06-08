@@ -295,7 +295,8 @@ impl ScriptArgs {
         println!(
             "\nAmount required: {} ETH",
             format_units(total_gas.saturating_mul(per_gas), 18)
-                .unwrap_or_else(|_| "[Could not calculate]".to_string()).trim_end_matches('0')
+                .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                .trim_end_matches('0')
         );
         println!("\n==========================");
         Ok(new_txes)
