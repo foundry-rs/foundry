@@ -110,7 +110,7 @@ impl<W: Sized> FormatBuffer<W> {
 
     fn create_temp_buf(&self) -> FormatBuffer<String> {
         let mut new = FormatBuffer::new(String::new(), self.tab_width);
-        new.base_indent_len = self.level() * self.tab_width;
+        new.base_indent_len = self.current_indent_len();
         new.last_indent = " ".repeat(self.last_indent_len().saturating_sub(new.base_indent_len));
         new.current_line_len = self.current_line_len();
         new.restrict_to_single_line = self.restrict_to_single_line;
@@ -147,6 +147,10 @@ impl<W: Sized> FormatBuffer<W> {
         self.last_indent.len() + self.base_indent_len
     }
 
+    fn current_indent_len(&self) -> usize {
+        self.level() + self.tab_width
+    }
+
     fn set_current_line_len(&mut self, len: usize) {
         self.current_line_len = len
     }
@@ -181,7 +185,7 @@ impl<W: Write> FormatBuffer<W> {
             // later on
             let line_start = line
                 .char_indices()
-                .take(self.base_indent_len + 1)
+                .take(self.base_indent_len)
                 .take_while(|(_, ch)| ch.is_whitespace())
                 .last()
                 .map(|(idx, _)| idx)
@@ -518,13 +522,18 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
-        if text.as_ref().contains('\n') {
+        let text = text.as_ref();
+        if text.is_empty() {
+            return true
+        }
+        if text.contains('\n') {
             return false
         }
-        self.config.line_length >
+        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
+        self.config.line_length >=
             self.last_indent_len()
                 .saturating_add(self.current_line_len())
-                .saturating_add(text.as_ref().len())
+                .saturating_add(text.len() + space)
     }
 
     fn write_chunks_separated<'b>(
@@ -683,7 +692,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         if !content.is_empty() {
             // add whitespace if necessary
             if self.next_chunk_needs_space(content.chars().next().unwrap()) {
-                if self.will_it_fit(format!(" {content}")) {
+                if self.will_it_fit(&content) {
                     write!(self.buf(), " ")?;
                 } else {
                     writeln!(self.buf())?;
@@ -732,7 +741,13 @@ impl<'a, W: Write> Formatter<'a, W> {
                 Ok(None)
             }
             Err(err) => Err(err),
-            Ok(buf) => Ok(Some(buf.w)),
+            Ok(buf) => {
+                if self.will_it_fit(&buf.w) {
+                    Ok(Some(buf.w))
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -757,9 +772,32 @@ impl<'a, W: Write> Formatter<'a, W> {
                 }
             }
             Ok(buf) => {
-                write_chunk!(self, "{}", buf.w)?;
-                Ok(true)
+                if self.will_it_fit(&buf.w) {
+                    write_chunk!(self, "{}", buf.w)?;
+                    Ok(true)
+                } else {
+                    self.comments = comments;
+                    Ok(false)
+                }
             }
+        }
+    }
+
+    fn revertible(&mut self, mut fun: impl FnMut(&mut Self) -> Result<bool>) -> Result<bool> {
+        let comments = self.comments.clone();
+
+        let mut should_commit = false;
+        let buf = self.with_temp_buf(|fmt| {
+            should_commit = fun(fmt)?;
+            Ok(())
+        })?;
+
+        if should_commit {
+            write_chunk!(self, "{}", buf.w)?;
+            Ok(true)
+        } else {
+            self.comments = comments;
+            Ok(false)
         }
     }
 
@@ -807,84 +845,129 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_operator_expr(
+    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
+            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
+        }
+        Ok(())
+    }
+
+    fn visit_flattened_expr_multiline<E>(
         &mut self,
-        expr: &mut (impl Operator + Visitable + CodeLocation),
-    ) -> Result<()> {
-        let op = expr.operator().unwrap();
-        let has_space_around = expr.has_space_around();
-        let op_precedence = expr.precedence();
-        let loc = expr.loc();
-        let left_loc = expr.left_mut().map(|expr| expr.loc());
-        let right_loc = expr.right_mut().map(|expr| expr.loc());
+        flattened: &mut [FlatExpression<&mut E>],
+        multiline: bool,
+    ) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        let mut flattened = flattened.iter_mut().peekable();
+        let mut prefix_ops = String::new();
+        while let Some(item) = flattened.next() {
+            let loc = item.loc();
+            match item {
+                FlatExpression::Expression(expr) => {
+                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
 
-        if let Some(left) = expr.left_mut() {
-            let left_start = left_loc.unwrap().start();
-            let left_end = right_loc.map(|loc| loc.start()).unwrap_or_else(|| loc.end());
-            let needs_paren = !left.precedence().is_evaluated_first(op_precedence);
+                    chunk.content.insert_str(0, &prefix_ops);
+                    prefix_ops.clear();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        chunk.content.push_str(op);
+                        flattened.next();
+                    }
 
-            let mut write_left = |fmt: &mut Self, _multiline| {
-                let mut chunk = fmt.visit_to_chunk(left_start, Some(left_end), left)?;
-                if !has_space_around {
-                    chunk.content.push_str(op);
+                    self.write_chunk(&chunk)?;
+                    if multiline && flattened.peek().is_some() {
+                        self.write_whitespace_separator(true)?;
+                    }
                 }
-                fmt.write_chunk(&chunk)?;
-                Ok(())
-            };
-            if needs_paren {
-                self.surrounded(left_start, "(", ")", Some(left_end), write_left)?;
-            } else {
-                write_left(self, false)?;
-            }
-
-            if has_space_around {
-                write_chunk!(self, left_start, left_end, "{op}")?;
-            }
-
-            if let Some(right) = expr.right_mut() {
-                assert!(has_space_around, "Only unary operators don't have spacing");
-
-                let right_start = right_loc.unwrap().start();
-                let needs_paren = op_precedence.is_evaluated_first(right.precedence());
-
-                if needs_paren {
-                    self.surrounded(right_start, "(", ")", Some(loc.end()), |fmt, _multiline| {
-                        right.visit(fmt)
-                    })?;
-                } else {
-                    right.visit(self)?;
+                FlatExpression::SpacedOp(op) => {
+                    write_chunk!(self, "{op}")?;
                 }
-            }
-        } else if let Some(right) = expr.right_mut() {
-            let right_start = right_loc.unwrap().start();
-            let needs_paren = op_precedence.is_evaluated_first(right.precedence());
-
-            if has_space_around {
-                write_chunk!(self, right_start, "{op}")?;
-            }
-            let mut write_right = |fmt: &mut Self, _multiline| {
-                let mut chunk = fmt.visit_to_chunk(right_start, Some(loc.end()), right)?;
-                if !has_space_around {
-                    chunk.content = format!("{op}{}", chunk.content);
+                FlatExpression::UnspacedOp(op) => {
+                    prefix_ops.push_str(op);
                 }
-                fmt.write_chunk(&chunk)?;
-                Ok(())
-            };
-            if needs_paren {
-                self.surrounded(right_start, "(", ")", Some(loc.end()), write_right)?;
-            } else {
-                write_right(self, false)?;
+                FlatExpression::Group(group) => {
+                    let mut prefix = std::mem::take(&mut prefix_ops);
+                    prefix.push('(');
+                    let mut suffix = ")".to_string();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        suffix.push_str(op);
+                        flattened.next();
+                    }
+                    self.surrounded(
+                        loc.map(|loc| loc.start()).unwrap_or(0),
+                        prefix,
+                        suffix,
+                        loc.map(|loc| loc.end()),
+                        |fmt, _multiline| fmt.visit_flattened_expr(group),
+                    )?;
+                }
             }
         }
+        Ok(())
+    }
+
+    fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
+        use Expression::*;
+
+        if self.try_on_single_line(|fmt| expr.visit(fmt))? {
+            return Ok(())
+        }
+
+        self.write_postfix_comments_before(expr.loc().start())?;
+        self.write_prefix_comments_before(expr.loc().start())?;
+
+        if self.is_beginning_of_line() &&
+            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
+        {
+            return Ok(())
+        } else {
+            let mut fit_on_next_line = false;
+            self.indented(1, |fmt| {
+                fmt.revertible(|fmt| {
+                    writeln!(fmt.buf())?;
+                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
+                    Ok(fit_on_next_line)
+                })?;
+                Ok(())
+            })?;
+            if fit_on_next_line {
+                return Ok(())
+            }
+        }
+
+        let unsplittable = matches!(
+            expr,
+            BoolLiteral(..) |
+                NumberLiteral(..) |
+                RationalNumberLiteral(..) |
+                HexNumberLiteral(..) |
+                StringLiteral(..) |
+                HexLiteral(..) |
+                AddressLiteral(..) |
+                Variable(..) |
+                Unit(..) |
+                This(..)
+        );
+        if unsplittable {
+            self.indented(1, |fmt| expr.visit(fmt))?;
+            return Ok(())
+        }
+
+        expr.visit(self)?;
 
         Ok(())
     }
 
-    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
+    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         self.start_group();
         fun(self)?;
+        let indented = !self.last_indent_group_skipped();
         self.end_group();
-        Ok(())
+        Ok(indented)
     }
 
     fn surrounded(
@@ -1208,7 +1291,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 alias.visit(fmt)?;
                             }
                             Ok(())
-                        })
+                        })?;
+                        Ok(())
                     },
                 )?);
             }
@@ -1319,7 +1403,47 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::And(..) |
             Expression::Or(..) |
             Expression::Equal(..) |
-            Expression::NotEqual(..) => self.visit_operator_expr(expr)?,
+            Expression::NotEqual(..) => {
+                self.visit_flattened_expr(&mut expr.flatten())?;
+            }
+            Expression::Assign(..) |
+            Expression::AssignOr(..) |
+            Expression::AssignAnd(..) |
+            Expression::AssignXor(..) |
+            Expression::AssignShiftLeft(..) |
+            Expression::AssignShiftRight(..) |
+            Expression::AssignAdd(..) |
+            Expression::AssignSubtract(..) |
+            Expression::AssignMultiply(..) |
+            Expression::AssignDivide(..) |
+            Expression::AssignModulo(..) => {
+                let precedence = expr.precedence();
+                let op = expr.operator().unwrap();
+                let (left, right) = expr.into_components();
+                let left = left.unwrap();
+                let right = right.unwrap();
+
+                // we shouldn't need parentheses on the left as assignment should always have the
+                // lowest priority
+                let left_chunked = self.chunked(left.loc().start(), None, |fmt| left.visit(fmt))?;
+                // TODO we use the operator presence as a short hand for whether and indent was
+                // introduced if multiline, but this may not always be the case
+                let left_is_indented =
+                    left_chunked.content.contains('\n') && left.operator().is_some();
+                self.write_chunk(&left_chunked)?;
+
+                self.indented_if(left_is_indented || !self.will_it_fit(op), 1, |fmt| {
+                    write_chunk!(fmt, "{}", op)?;
+                    if precedence.is_evaluated_first(right.precedence()) {
+                        fmt.surrounded(right.loc().start(), "(", ")", None, |fmt, _multiline| {
+                            right.visit(fmt)
+                        })?;
+                    } else {
+                        fmt.visit_assignment(right)?;
+                    }
+                    Ok(())
+                })?;
+            }
             Expression::Variable(ident) => {
                 ident.visit(self)?;
             }
@@ -1366,13 +1490,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> Result<()> {
+    fn visit_var_declaration(
+        &mut self,
+        var: &mut VariableDeclaration,
+        is_assignment: bool,
+    ) -> Result<()> {
         self.grouped(|fmt| {
             var.ty.visit(fmt)?;
             if let Some(storage) = &var.storage {
                 write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
             }
-            write_chunk!(fmt, var.name.loc.end(), "{}", var.name.name)?;
+            write_chunk!(
+                fmt,
+                var.name.loc.end(),
+                "{}{}",
+                var.name.name,
+                if is_assignment { " =" } else { "" }
+            )?;
             Ok(())
         })?;
         Ok(())
@@ -1569,7 +1703,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             fmt.grouped(|fmt| {
                 fmt.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
                 Ok(())
-            })
+            })?;
+            Ok(())
         })?;
 
         if base.args.is_none() || base.args.as_ref().unwrap().is_empty() {
@@ -1833,7 +1968,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 while let Some(func) = funcs.next() {
                     let next_byte_end = funcs.peek().map(|func| func.loc().start());
                     chunks.push(self.chunked(func.loc().start(), next_byte_end, |fmt| {
-                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))
+                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))?;
+                        Ok(())
                     })?);
                 }
                 (false, chunks)
@@ -1923,37 +2059,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         var.ty.visit(self)?;
 
-        let name_start = var.name.loc.start();
-        let init_start = var.initializer.as_ref().map(|init| LineOfCode::loc(init).start());
+        let multiline = self.grouped(|fmt| {
+            let name_start = var.name.loc.start();
 
-        let attrs = self.items_to_chunks_sorted(
-            Some(name_start),
-            var.attrs.iter_mut().map(|attr| Ok((attr.loc(), attr))),
-        )?;
-        let mut name = self.visit_to_chunk(
-            name_start,
-            Some(init_start.unwrap_or_else(|| var.loc.end())),
-            &mut var.name,
-        )?;
-        if var.initializer.is_some() {
-            name.content.push_str(" =");
-        }
+            let attrs = fmt.items_to_chunks_sorted(
+                Some(name_start),
+                var.attrs.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+            )?;
+            if !fmt.try_on_single_line(|fmt| fmt.write_chunks_separated(&attrs, "", false))? {
+                fmt.write_chunks_separated(&attrs, "", true)?;
+            }
 
-        self.indented(1, |fmt| {
-            let multiline = fmt.are_chunks_separated_multiline("{}", &attrs, "")?;
-            fmt.write_chunks_separated(&attrs, "", multiline)?;
+            let mut name =
+                fmt.visit_to_chunk(name_start, Some(var.name.loc.end()), &mut var.name)?;
+            if var.initializer.is_some() {
+                name.content.push_str(" =");
+            }
             fmt.write_chunk(&name)?;
+
             Ok(())
         })?;
 
-        if let Some(init) = &mut var.initializer {
-            // TODO check if this should actually be indented or not. Function calls, member access
-            // and things may not need to be indented
-            self.indented(1, |fmt| {
-                init.visit(fmt)?;
-                Ok(())
-            })?;
-        }
+        var.initializer
+            .as_mut()
+            .map(|init| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(init)))
+            .transpose()?;
 
         self.write_semicolon()?;
 
@@ -1967,13 +2097,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         expr: &mut Option<Expression>,
         semicolon: bool,
     ) -> Result<()> {
-        declaration.visit(self)?;
+        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
+            fmt.visit_var_declaration(declaration, expr.is_some())
+        })?;
+        let multiline = declaration.content.contains('\n');
+        self.write_chunk(&declaration)?;
+
         expr.as_mut()
-            .map(|expr| {
-                write!(self.buf(), " = ")?;
-                expr.visit(self)
-            })
+            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
             .transpose()?;
+
         if semicolon {
             self.write_semicolon()?;
         }
