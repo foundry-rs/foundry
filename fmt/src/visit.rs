@@ -115,6 +115,7 @@ pub trait Visitor {
         loc: Loc,
         _declaration: &mut VariableDeclaration,
         _expr: &mut Option<Expression>,
+        _semicolon: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -195,8 +196,8 @@ pub trait Visitor {
     fn visit_do_while(
         &mut self,
         loc: Loc,
-        _cond: &mut Statement,
-        _body: &mut Expression,
+        _body: &mut Statement,
+        _cond: &mut Expression,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
@@ -400,12 +401,12 @@ impl Visitable for Statement {
                 v.visit_stray_semicolon()
             }
             Statement::VariableDefinition(loc, declaration, expr) => {
-                v.visit_var_definition_stmt(*loc, declaration, expr)
+                v.visit_var_definition_stmt(*loc, declaration, expr, true)
             }
             Statement::For(loc, init, cond, update, body) => {
                 v.visit_for(*loc, init, cond, update, body)
             }
-            Statement::DoWhile(loc, cond, body) => v.visit_do_while(*loc, cond, body),
+            Statement::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
             Statement::Continue(_) => v.visit_continue(),
             Statement::Break(_) => v.visit_break(),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
