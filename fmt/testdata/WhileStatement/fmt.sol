@@ -24,8 +24,12 @@ contract WhileStatement {
 
         uint256 someLongVariableName;
         while (
-            someLongVariableName < 10 && someLongVariableName < 11 &&
-            someLongVariableName < 12
+            someLongVariableName
+                < 10
+                && someLongVariableName
+                < 11
+                && someLongVariableName
+                < 12
         ) {
             someLongVariableName++;
         }
