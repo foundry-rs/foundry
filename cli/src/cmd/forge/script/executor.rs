@@ -135,9 +135,6 @@ impl ScriptArgs {
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))
         } else {
-            println!("\n==========================\n");
-            println!("Estimated total gas used for script: {}", sum_gas);
-            println!("==========================");
             Ok((final_txs, create2_contracts))
         }
     }
