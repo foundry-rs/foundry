@@ -9,13 +9,14 @@ use crate::{
     utils::get_http_provider,
 };
 use ethers::{
-    prelude::{Signer, SignerMiddleware, TxHash},
+    prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
     providers::Middleware,
     types::{transaction::eip2718::TypedTransaction, Chain},
+    utils::format_units,
 };
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt};
+use std::{cmp::min, fmt, sync::Arc};
 
 use super::*;
 
@@ -193,7 +194,7 @@ impl ScriptArgs {
         }
     }
 
-    /// Executes the passed transactions in sequence, and if no error has occurred, it broadcasts
+    /// Executes the passed transactions in sequence, and if no error has occurred, broadcasts
     /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
@@ -216,23 +217,16 @@ impl ScriptArgs {
 
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
-                let chain = get_http_provider(&fork_url, false).get_chainid().await?.as_u64();
-                let is_legacy = self.legacy ||
-                    Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+                let provider = get_http_provider(&fork_url, false);
+                let chain = provider.get_chainid().await?.as_u64();
 
-                let txes = gas_filled_txs
-                    .into_iter()
-                    .map(|tx| {
-                        if is_legacy {
-                            TypedTransaction::Legacy(tx.into())
-                        } else {
-                            TypedTransaction::Eip1559(tx.into())
-                        }
-                    })
-                    .collect();
-
-                let mut deployment_sequence =
-                    ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
+                let mut deployment_sequence = ScriptSequence::new(
+                    self.handle_chain_requirements(gas_filled_txs, provider, chain).await?,
+                    &self.sig,
+                    target,
+                    &script_config.config,
+                    chain,
+                )?;
 
                 deployment_sequence.add_libraries(libraries);
 
@@ -255,6 +249,57 @@ impl ScriptArgs {
             eyre::bail!("No onchain transactions generated in script");
         }
         Ok(())
+    }
+
+    /// Modify each transaction according to the specific chain requirements (transaction type
+    /// and/or gas calculations).
+    async fn handle_chain_requirements(
+        &self,
+        txes: VecDeque<TypedTransaction>,
+        provider: Arc<Provider<RetryClient<Http>>>,
+        chain: u64,
+    ) -> eyre::Result<VecDeque<TypedTransaction>> {
+        let is_legacy =
+            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+
+        let mut new_txes: VecDeque<TypedTransaction> = VecDeque::new();
+        let mut total_gas = U256::zero();
+        for tx in txes.into_iter() {
+            let mut tx = if is_legacy {
+                TypedTransaction::Legacy(tx.into())
+            } else {
+                TypedTransaction::Eip1559(tx.into())
+            };
+
+            if has_different_gas_calc(chain) {
+                tx.set_gas(provider.estimate_gas(&tx).await?);
+            }
+
+            total_gas += *tx.gas().expect("");
+
+            new_txes.push_back(tx);
+        }
+
+        // We don't store it in the transactions, since we want the most updated value. Right before
+        // broadcasting.
+        let per_gas = {
+            match new_txes.front().unwrap() {
+                TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+                    provider.get_gas_price().await?
+                }
+                TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
+            }
+        };
+        println!("\n==========================");
+        println!("\nEstimated total gas used for script: {}", total_gas);
+        println!(
+            "\nAmount required: {} ETH",
+            format_units(total_gas.saturating_mul(per_gas), 18)
+                .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                .trim_end_matches('0')
+        );
+        println!("\n==========================");
+        Ok(new_txes)
     }
 }
 
@@ -279,28 +324,13 @@ impl fmt::Display for BroadcastError {
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    mut legacy_or_1559: TypedTransaction,
+    legacy_or_1559: TypedTransaction,
 ) -> Result<TxHash, BroadcastError>
 where
     T: Middleware,
     U: Signer,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-
-    if has_different_gas_calc(signer.signer().chain_id()) {
-        match legacy_or_1559 {
-            TypedTransaction::Legacy(ref mut inner) => inner.gas = None,
-            TypedTransaction::Eip1559(ref mut inner) => inner.gas = None,
-            TypedTransaction::Eip2930(ref mut inner) => inner.tx.gas = None,
-        };
-
-        legacy_or_1559.set_gas(
-            signer
-                .estimate_gas(&legacy_or_1559)
-                .await
-                .map_err(|err| BroadcastError::Simple(err.to_string()))?,
-        );
-    }
 
     // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
     let signature = signer
