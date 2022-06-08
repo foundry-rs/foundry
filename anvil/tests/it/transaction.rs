@@ -703,3 +703,25 @@ async fn can_get_historic_info() {
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_pre.saturating_add(amount), to_balance);
 }
+
+// <https://github.com/eth-brownie/brownie/issues/1549>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tx_receipt() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert!(tx.to.is_some());
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
+    assert!(tx.to.is_none());
+    assert!(tx.contract_address.is_some());
+}
