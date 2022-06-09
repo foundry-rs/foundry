@@ -117,8 +117,9 @@ impl ScriptSequence {
         });
     }
 
-    pub fn add_pending(&mut self, tx_hash: TxHash) {
+    pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
         if !self.pending.contains(&tx_hash) {
+            self.transactions.get_mut(index).expect("").hash = Some(tx_hash);
             self.pending.push(tx_hash);
         }
     }
@@ -328,7 +329,7 @@ impl TransactionWithMetadata {
                     if let Some(function) =
                         abi.functions().find(|function| function.short_signature() == data.0[0..4])
                     {
-                        self.function = Some(function.signature().clone());
+                        self.function = Some(function.signature());
                         self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
                             tokens.iter().map(|token| format!("{token}")).collect()
                         })?;

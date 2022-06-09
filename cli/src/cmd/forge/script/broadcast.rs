@@ -118,12 +118,12 @@ impl ScriptArgs {
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        wait_for_receipts(
-                            vec![tx_hash.await?],
-                            deployment_sequence,
-                            provider.clone(),
-                        )
-                        .await?;
+                        let tx_hash = tx_hash.await?;
+
+                        deployment_sequence.add_pending(index, tx_hash);
+
+                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
+                            .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
@@ -138,7 +138,7 @@ impl ScriptArgs {
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
                         let tx_hash = tx_hash?;
-                        deployment_sequence.add_pending(tx_hash);
+                        deployment_sequence.add_pending(index, tx_hash);
                         tx_hashes.push(tx_hash);
                     }
 
