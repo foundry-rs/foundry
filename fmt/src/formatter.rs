@@ -1639,13 +1639,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
             // write attributes
             if !func.attributes.is_empty() {
+                let byte_offset = attrs_loc.unwrap().start();
+                fmt.write_postfix_comments_before(byte_offset)?;
+                fmt.write_whitespace_separator(multiline)?;
                 let attributes = fmt.items_to_chunks_sorted(
                     attrs_end,
                     func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
                 )?;
-                let byte_offset = attrs_loc.unwrap().start();
-                fmt.write_postfix_comments_before(byte_offset)?;
-                fmt.write_whitespace_separator(multiline)?;
                 fmt.indented(1, |fmt| {
                     fmt.write_chunks_separated(&attributes, "", multiline)?;
                     Ok(())
