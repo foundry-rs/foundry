@@ -328,7 +328,7 @@ impl TransactionWithMetadata {
                     if let Some(function) =
                         abi.functions().find(|function| function.short_signature() == data.0[0..4])
                     {
-                        self.function = Some(function.name.clone());
+                        self.function = Some(function.signature().clone());
                         self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
                             tokens.iter().map(|token| format!("{token}")).collect()
                         })?;
