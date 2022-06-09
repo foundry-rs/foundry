@@ -12,11 +12,10 @@ use crate::{
     },
     utils::CommandUtils,
 };
-use opts::forge::{Dependency, Opts, Subcommands};
-use std::process::Command;
-
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
+use opts::forge::{Opts, Subcommands};
+use std::process::Command;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -82,8 +81,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Install(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Remove { dependencies } => {
-            remove(std::env::current_dir()?, dependencies)?;
+        Subcommands::Remove(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Remappings(cmd) => {
             cmd.run()?;
@@ -126,36 +125,4 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
-}
-
-fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
-    let libs = std::path::Path::new("lib");
-    let git_mod_root = std::path::Path::new(".git/modules");
-
-    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
-        let path = libs.join(&target_dir);
-        let git_mod_path = git_mod_root.join(&path);
-        println!("Removing {} in {:?}, (url: {:?}, tag: {:?})", dep.name, path, dep.url, dep.tag);
-
-        // remove submodule entry from .git/config
-        Command::new("git")
-            .args(&["submodule", "deinit", "-f", &path.display().to_string()])
-            .current_dir(&root)
-            .exec()?;
-
-        // remove the submodule repository from .git/modules directory
-        Command::new("rm")
-            .args(&["-rf", &git_mod_path.display().to_string()])
-            .current_dir(&root)
-            .exec()?;
-
-        // remove the leftover submodule directory
-        Command::new("git")
-            .args(&["rm", "-f", &path.display().to_string()])
-            .current_dir(&root)
-            .exec()?;
-
-        Ok(())
-    })
 }
