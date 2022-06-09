@@ -23,6 +23,7 @@ use crate::cmd::forge::{
 };
 use serde::Serialize;
 
+use crate::cmd::forge::remove::RemoveArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -91,10 +92,7 @@ pub enum Subcommands {
     Install(InstallArgs),
 
     #[clap(visible_alias = "rm", about = "Remove one or multiple dependencies.")]
-    Remove {
-        #[clap(help = "The path to the dependency you want to remove.")]
-        dependencies: Vec<Dependency>,
-    },
+    Remove(RemoveArgs),
 
     #[clap(
         visible_alias = "re",
