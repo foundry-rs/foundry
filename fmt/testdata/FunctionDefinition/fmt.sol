@@ -332,13 +332,10 @@ interface FunctionInterfaces {
 
 contract FunctionDefinitions {
     function() external {}
-
     fallback() external {}
 
     function() external payable {}
-
     fallback() external payable {}
-
     receive() external payable {}
 
     function noParamsNoModifiersNoReturns() {
@@ -708,6 +705,5 @@ contract FunctionDefinitions {
     }
 
     fallback() external payable virtual {}
-
     receive() external payable virtual {}
 }

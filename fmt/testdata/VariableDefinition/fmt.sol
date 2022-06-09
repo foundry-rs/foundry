@@ -39,7 +39,6 @@ contract Contract {
 
     // comment 1
     uint256 constant example1 = 1;
-
     // comment 2
     // comment 3
     uint256 constant example2 = 2; // comment 4

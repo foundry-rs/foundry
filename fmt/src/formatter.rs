@@ -1045,10 +1045,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         //     _ => usize::MAX,
         // });
 
-        let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
-
         let mut last_unit: Option<&SourceUnitPart> = None;
         let mut last_byte_written = 0;
+        let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
+
         while let Some(unit) = source_unit_parts_iter.next() {
             // check if the next block requires space
             let mut needs_space = match last_unit {
@@ -1091,8 +1091,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             last_unit = Some(unit);
 
             // write postfix comments
-            if source_unit_parts_iter.peek().is_some() {
-                let comments = self.comments.remove_postfixes_before(unit.loc().start());
+            if let Some(next_unit) = source_unit_parts_iter.peek() {
+                let comments = self.comments.remove_postfixes_before(next_unit.loc().start());
                 for comment in comments {
                     self.write_comment(&comment)?;
                     last_byte_written = comment.loc.end();
@@ -1194,33 +1194,74 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 return Ok(())
             }
 
+            let mut last_part: Option<&ContractPart> = None;
+            let mut last_byte_written =
+                contract.base.first().map(|base| base.loc).unwrap_or(contract.name.loc).end();
             let mut contract_parts_iter = contract.parts.iter_mut().peekable();
-            while let Some(part) = contract_parts_iter.next() {
-                part.visit(fmt)?;
 
-                // If source has zero blank lines between parts and the current part is not a
-                // function, leave it as is. If it has one or more blank lines or
-                // the current part is a function, separate parts with one blank
-                // line.
-                if let Some(next_part) = contract_parts_iter.peek() {
-                    fmt.write_postfix_comments_before(next_part.loc().start())?;
-                    fmt.write_whitespace_separator(true)?;
-                    let blank_lines = fmt.blank_lines(part.loc().end(), next_part.loc().start());
-                    let is_function = match part {
-                        ContractPart::FunctionDefinition(function_definition) => matches!(
-                            **function_definition,
-                            FunctionDefinition {
-                                ty: FunctionTy::Function |
-                                    FunctionTy::Receive |
-                                    FunctionTy::Fallback,
-                                ..
+            while let Some(part) = contract_parts_iter.next() {
+                let mut needs_space = match last_part {
+                    Some(last_part) => match last_part {
+                        ContractPart::ErrorDefinition(_) => {
+                            !matches!(part, ContractPart::ErrorDefinition(_))
+                        }
+                        ContractPart::EventDefinition(_) => {
+                            !matches!(part, ContractPart::EventDefinition(_))
+                        }
+                        ContractPart::VariableDefinition(_) => {
+                            !matches!(part, ContractPart::VariableDefinition(_))
+                        }
+                        ContractPart::TypeDefinition(_) => {
+                            !matches!(part, ContractPart::TypeDefinition(_))
+                        }
+                        ContractPart::EnumDefinition(_) => {
+                            !matches!(part, ContractPart::EnumDefinition(_))
+                        }
+                        ContractPart::Using(_) => !matches!(part, ContractPart::Using(_)),
+                        ContractPart::FunctionDefinition(last_def) => {
+                            if last_def.is_empty() {
+                                match part {
+                                    ContractPart::FunctionDefinition(def) => !def.is_empty(),
+                                    _ => true,
+                                }
+                            } else {
+                                true
                             }
-                        ),
-                        _ => false,
-                    };
-                    if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln_chunk!(fmt)?;
+                        }
+                        ContractPart::DocComment(_) => false,
+                        _ => true,
+                    },
+                    None => false,
+                };
+
+                // write prefix comments
+                let comments = fmt.comments.remove_prefixes_before(part.loc().start());
+                for comment in &comments {
+                    if needs_space || comment.has_newline_before {
+                        writeln!(fmt.buf())?;
+                        needs_space = false;
                     }
+                    fmt.write_comment(comment)?;
+                    last_byte_written = comment.loc.end();
+                }
+
+                // write space if required or if there are blank lines in between
+                if needs_space || fmt.blank_lines(last_byte_written, part.loc().start()) > 1 {
+                    writeln!(fmt.buf())?;
+                }
+
+                // write part
+                part.visit(fmt)?;
+                last_byte_written = part.loc().end();
+                last_part = Some(part);
+
+                if let Some(next_part) = contract_parts_iter.peek() {
+                    let comments = fmt.comments.remove_postfixes_before(next_part.loc().start());
+                    for comment in comments {
+                        fmt.write_comment(&comment)?;
+                        last_byte_written = comment.loc.end();
+                    }
+                    fmt.write_whitespace_separator(true)?;
                 }
             }
             Ok(())
