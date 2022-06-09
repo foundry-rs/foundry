@@ -13,6 +13,7 @@ use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
 use foundry_config::Config;
 
+use crate::cmd::forge::verify::VerificationProvider;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -219,6 +220,7 @@ impl ScriptSequence {
                                 watch: true,
                                 retry: RETRY_VERIFY_ON_CREATE,
                                 libraries: self.libraries.clone(),
+                                verifier: VerificationProvider::Etherscan,
                             };
 
                             future_verifications.push(verify.run());

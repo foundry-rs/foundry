@@ -199,14 +199,14 @@ impl VerifyArgs {
     async fn verify_with_sourcify(self) -> eyre::Result<()> {
         let url = format!(
             "https://sourcify.dev/server/check-by-addresses?addresses={}&chainIds={}",
-            format!("{:?}", self.address),
+            format_args!("{:?}", self.address),
             self.chain.id(),
         );
         let response = reqwest::get(url).await?;
         if !response.status().is_success() {
             eprintln!(
                 "Sourcify verification request for address ({}) failed with status code {}",
-                format!("{:?}", self.address),
+                format_args!("{:?}", self.address),
                 response.status()
             );
             std::process::exit(1);
@@ -591,10 +591,10 @@ impl Display for VerificationProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             VerificationProvider::Etherscan => {
-                write!(f, "Etherscan")?;
+                write!(f, "etherscan")?;
             }
             VerificationProvider::Sourcify => {
-                write!(f, "Sourcify")?;
+                write!(f, "sourcify")?;
             }
         };
         Ok(())
