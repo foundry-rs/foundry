@@ -1,7 +1,4 @@
-use crate::{
-    cmd::{unwrap_contracts, ScriptSequence},
-    utils::get_http_provider,
-};
+use crate::{cmd::unwrap_contracts, utils::get_http_provider};
 
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
@@ -10,7 +7,7 @@ use ethers::{
 use forge::executor::opts::EvmOpts;
 use foundry_config::{figment::Figment, Config};
 
-use super::*;
+use super::{sequence::ScriptSequence, *};
 
 impl ScriptArgs {
     pub async fn run_script(mut self) -> eyre::Result<()> {

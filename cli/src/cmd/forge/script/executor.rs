@@ -1,7 +1,4 @@
-use crate::{
-    cmd::{needs_setup, TransactionWithMetadata},
-    utils,
-};
+use crate::{cmd::needs_setup, utils};
 
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
@@ -16,7 +13,7 @@ use forge::{
 
 use std::collections::VecDeque;
 
-use crate::cmd::forge::script::*;
+use crate::cmd::forge::script::{sequence::TransactionWithMetadata, *};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable

@@ -1,8 +1,5 @@
 use crate::{
-    cmd::{
-        forge::script::receipts::wait_for_receipts, has_different_gas_calc, ScriptSequence,
-        TransactionWithMetadata, VerifyBundle,
-    },
+    cmd::{forge::script::receipts::wait_for_receipts, has_different_gas_calc},
     init_progress,
     opts::WalletType,
     update_progress,
@@ -18,7 +15,10 @@ use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, sync::Arc};
 
-use super::*;
+use super::{
+    sequence::{ScriptSequence, TransactionWithMetadata},
+    *,
+};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.

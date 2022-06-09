@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{get_cached_entry_by_name, unwrap_contracts, VerifyBundle},
+    cmd::{get_cached_entry_by_name, unwrap_contracts},
     compile,
     opts::forge::ContractInfo,
 };
