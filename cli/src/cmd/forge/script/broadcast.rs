@@ -115,12 +115,11 @@ impl ScriptArgs {
                     let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                     if sequential_broadcast {
+                        let tx_hash = tx_hash.await?;
+                        deployment_sequence.add_pending(index, tx_hash);
+
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
-
-                        let tx_hash = tx_hash.await?;
-
-                        deployment_sequence.add_pending(index, tx_hash);
 
                         wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
                             .await?;
@@ -135,11 +134,12 @@ impl ScriptArgs {
                     let mut tx_hashes = vec![];
 
                     while let Some(tx_hash) = buffer.next().await {
-                        update_progress!(pb, (index + already_broadcasted));
-                        index += 1;
                         let tx_hash = tx_hash?;
                         deployment_sequence.add_pending(index, tx_hash);
                         tx_hashes.push(tx_hash);
+
+                        update_progress!(pb, (index + already_broadcasted));
+                        index += 1;
                     }
 
                     // Checkpoint save
