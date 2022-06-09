@@ -139,6 +139,7 @@ pub struct ScriptResult {
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
+    pub address: Option<Address>,
 }
 
 #[derive(Serialize, Deserialize)]

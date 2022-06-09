@@ -29,6 +29,7 @@ use yansi::Paint;
 use super::forge::{
     build::ProjectPathsArgs,
     create::RETRY_VERIFY_ON_CREATE,
+    script::ScriptResult,
     verify::{self},
 };
 
@@ -223,7 +224,7 @@ impl VerifyBundle {
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
-    pub transactions: VecDeque<TypedTransaction>,
+    pub transactions: VecDeque<TransactionWithMetadata>,
     pub receipts: Vec<TransactionReceipt>,
     pub pending: Vec<TxHash>,
     pub create2_contracts: Vec<Address>,
@@ -232,9 +233,123 @@ pub struct ScriptSequence {
     pub libraries: Vec<String>,
 }
 
+#[derive(Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionWithMetadata {
+    pub hash: Option<TxHash>,
+    #[serde(rename = "type")]
+    pub opcode: String,
+    pub contract_name: Option<String>,
+    pub contract_address: Option<String>,
+    pub function: Option<String>,
+    pub arguments: Vec<String>,
+    pub tx: TypedTransaction,
+}
+
+impl TransactionWithMetadata {
+    pub fn new(
+        tx: TypedTransaction,
+        result: &ScriptResult,
+        contracts: &BTreeMap<Address, (String, &Abi)>,
+    ) -> eyre::Result<Self> {
+        let mut metadata = Self { tx, ..Default::default() };
+
+        if let Some(NameOrAddress::Address(to)) = metadata.tx.to().cloned() {
+            if to == DEFAULT_CREATE2_DEPLOYER {
+                metadata.set_create(true, Address::from_slice(&result.returned), contracts)
+            } else if to == Address::zero() {
+                metadata.set_create(
+                    false,
+                    result.address.expect("There should be a contract address."),
+                    contracts,
+                );
+            } else {
+                metadata.set_call(to, contracts)?;
+            }
+        } else if metadata.tx.to().is_none() {
+            metadata.set_create(
+                false,
+                result.address.expect("There should be a contract address."),
+                contracts,
+            );
+        }
+        Ok(metadata)
+    }
+
+    fn set_create(
+        &mut self,
+        is_create2: bool,
+        address: Address,
+        contracts: &BTreeMap<Address, (String, &Abi)>,
+    ) {
+        if is_create2 {
+            self.opcode = "CREATE2".to_string();
+        } else {
+            self.opcode = "CREATE".to_string();
+        }
+
+        self.contract_name = contracts.get(&address).map(|(name, _)| name.clone());
+        self.contract_address = Some(format!("0x{:?}", address));
+    }
+
+    fn set_call(
+        &mut self,
+        target: Address,
+        contracts: &BTreeMap<Address, (String, &Abi)>,
+    ) -> eyre::Result<()> {
+        self.opcode = "CALL".to_string();
+
+        if let Some(data) = self.tx.data() {
+            if data.0.len() >= 4 {
+                if let Some(known_contract) = contracts.get(&target) {
+                    self.contract_name = contracts.get(&target).map(|(name, _)| name.clone());
+                    let abi = known_contract.1;
+
+                    if let Some(function) =
+                        abi.functions().find(|function| function.short_signature() == data.0[0..4])
+                    {
+                        self.function = Some(function.name.clone());
+                        self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
+                            tokens.iter().map(|token| format!("{token}")).collect()
+                        })?;
+                    } else {
+                        self.function = Some(format!("0x{:?}", hex::encode(&data.0[0..4])));
+                        self.arguments = vec![format!("0x{:?}", hex::encode(&data.0[4..]))];
+                    }
+                } else {
+                    self.function = Some(format!("0x{:?}", hex::encode(&data.0[0..4])));
+                    self.arguments = vec![format!("0x{:?}", hex::encode(&data.0[4..]))];
+                }
+                self.contract_address = Some(format!("0x{:?}", target));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_tx(&mut self, tx: TypedTransaction) {
+        self.tx = tx;
+    }
+
+    pub fn change_type(&mut self, is_legacy: bool) {
+        self.tx = if is_legacy {
+            TypedTransaction::Legacy(self.tx.clone().into())
+        } else {
+            TypedTransaction::Eip1559(self.tx.clone().into())
+        };
+    }
+
+    pub fn typed_tx(&self) -> &TypedTransaction {
+        &self.tx
+    }
+
+    pub fn typed_tx_mut(&mut self) -> &mut TypedTransaction {
+        &mut self.tx
+    }
+}
+
 impl ScriptSequence {
     pub fn new(
-        transactions: VecDeque<TypedTransaction>,
+        transactions: VecDeque<TransactionWithMetadata>,
         sig: &str,
         target: &ArtifactId,
         config: &Config,
@@ -375,14 +490,15 @@ impl ScriptSequence {
                 let mut create2_offset = 0;
 
                 // CREATE2 contract addresses do not come in the receipt.
-                if let Some(&NameOrAddress::Address(to)) = tx.to() {
+                if let Some(&NameOrAddress::Address(to)) = tx.typed_tx().to() {
                     if to == DEFAULT_CREATE2_DEPLOYER {
                         receipt.contract_address = create2.next();
                         create2_offset = 32;
                     }
                 }
 
-                if let (Some(contract_address), Some(data)) = (receipt.contract_address, tx.data())
+                if let (Some(contract_address), Some(data)) =
+                    (receipt.contract_address, tx.typed_tx().data())
                 {
                     for (artifact, (_contract, bytecode)) in &verify.known_contracts {
                         // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
@@ -440,6 +556,11 @@ impl ScriptSequence {
         }
 
         Ok(())
+    }
+
+    /// Returns the list of the transactions without the metadata.
+    pub fn typed_transactions(&self) -> Vec<&TypedTransaction> {
+        self.transactions.iter().map(|tx| tx.typed_tx()).collect()
     }
 }
 

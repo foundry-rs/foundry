@@ -127,6 +127,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                 logs,
                 traces,
                 debug,
+                address: None,
             },
         ))
     }
@@ -147,7 +148,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address: _, gas, logs, traces, debug } = self.executor.deploy(
+            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
@@ -169,6 +170,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                 debug: vec![debug].into_iter().collect(),
                 labeled_addresses: Default::default(),
                 transactions: Default::default(),
+                address: Some(address),
             })
         } else {
             eyre::bail!("ENS not supported.");
@@ -217,6 +219,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             debug: vec![debug].into_iter().collect(),
             labeled_addresses: labels,
             transactions,
+            address: None,
         })
     }
 }

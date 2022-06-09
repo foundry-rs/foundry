@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         forge::script::receipts::wait_for_receipts, has_different_gas_calc, ScriptSequence,
-        VerifyBundle,
+        TransactionWithMetadata, VerifyBundle,
     },
     init_progress,
     opts::WalletType,
@@ -32,8 +32,8 @@ impl ScriptArgs {
 
         if already_broadcasted < deployment_sequence.transactions.len() {
             let required_addresses = deployment_sequence
-                .transactions
-                .iter()
+                .typed_transactions()
+                .into_iter()
                 .skip(already_broadcasted)
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
@@ -50,7 +50,7 @@ impl ScriptArgs {
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
-                match deployment_sequence.transactions.front().unwrap() {
+                match deployment_sequence.transactions.front().unwrap().typed_tx() {
                     TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
                         (provider.get_gas_price().await.ok(), None)
                     }
@@ -63,8 +63,8 @@ impl ScriptArgs {
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
             let sequence = deployment_sequence
-                .transactions
-                .iter()
+                .typed_transactions()
+                .into_iter()
                 .skip(already_broadcasted)
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
@@ -207,8 +207,10 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let (gas_filled_txs, create2_contracts) =
-                    self.execute_transactions(txs, script_config, decoder).await.map_err(|_| {
+                let (gas_filled_txs, create2_contracts) = self
+                    .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
+                    .await
+                    .map_err(|_| {
                         eyre::eyre!(
                             "One or more transactions failed when simulating the
                 on-chain version. Check the trace by re-running with `-vvv`"
@@ -255,27 +257,25 @@ impl ScriptArgs {
     /// and/or gas calculations).
     async fn handle_chain_requirements(
         &self,
-        txes: VecDeque<TypedTransaction>,
+        txes: VecDeque<TransactionWithMetadata>,
         provider: Arc<Provider<RetryClient<Http>>>,
         chain: u64,
-    ) -> eyre::Result<VecDeque<TypedTransaction>> {
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
 
-        let mut new_txes: VecDeque<TypedTransaction> = VecDeque::new();
+        let mut new_txes: VecDeque<TransactionWithMetadata> = VecDeque::new();
         let mut total_gas = U256::zero();
-        for tx in txes.into_iter() {
-            let mut tx = if is_legacy {
-                TypedTransaction::Legacy(tx.into())
-            } else {
-                TypedTransaction::Eip1559(tx.into())
-            };
+        for mut tx in txes.into_iter() {
+            tx.change_type(is_legacy);
+
+            let typed_tx = tx.typed_tx_mut();
 
             if has_different_gas_calc(chain) {
-                tx.set_gas(provider.estimate_gas(&tx).await?);
+                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
             }
 
-            total_gas += *tx.gas().expect("");
+            total_gas += *typed_tx.gas().expect("");
 
             new_txes.push_back(tx);
         }
@@ -283,7 +283,7 @@ impl ScriptArgs {
         // We don't store it in the transactions, since we want the most updated value. Right before
         // broadcasting.
         let per_gas = {
-            match new_txes.front().unwrap() {
+            match new_txes.front().unwrap().typed_tx() {
                 TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
                     provider.get_gas_price().await?
                 }
