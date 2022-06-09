@@ -573,10 +573,13 @@ impl<'a, W: Write> Formatter<'a, W> {
             if !self.is_beginning_of_line() {
                 writeln!(self.buf())?;
             }
-            for line in comment.comment.lines() {
-                writeln!(self.buf(), "{}", line)?;
-                self.set_last_indent_group_skipped(true);
+            let mut lines = comment.comment.splitn(2, '\n');
+            write!(self.buf(), "{}", lines.next().unwrap())?;
+            if let Some(line) = lines.next() {
+                writeln!(self.buf())?;
+                self.write_raw(line)?;
             }
+            writeln!(self.buf())?;
             self.set_last_indent_group_skipped(last_indent_group_skipped);
         } else {
             let indented = self.is_beginning_of_line();
@@ -584,10 +587,14 @@ impl<'a, W: Write> Formatter<'a, W> {
                 if !indented && fmt.next_chunk_needs_space('/') {
                     write!(fmt.buf(), " ")?;
                 }
+                let mut lines = comment.comment.splitn(2, '\n');
+                write!(fmt.buf(), "{}", lines.next().unwrap())?;
+                if let Some(line) = lines.next() {
+                    writeln!(fmt.buf())?;
+                    fmt.write_raw(line)?;
+                }
                 if comment.is_line() {
-                    writeln!(fmt.buf(), "{}", comment.comment)?;
-                } else {
-                    write!(fmt.buf(), "{}", comment.comment)?;
+                    writeln!(fmt.buf())?;
                 }
                 Ok(())
             })?;

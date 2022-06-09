@@ -49,22 +49,25 @@ impl CommentWithMetadata {
                             (CommentPosition::Prefix, true)
                         } else {
                             // line has something
-                            let next_code = src[comment.loc().end()..]
-                                .lines()
-                                .find(|line| !line.trim_comments().trim().is_empty());
-                            if let Some(next_code) = next_code {
-                                let next_indent =
-                                    next_code.chars().position(|ch| !ch.is_whitespace()).unwrap();
-                                if this_line.len() > next_indent {
-                                    // next line has a smaller indent
-                                    (CommentPosition::Postfix, false)
+                            let this_indent = this_line.len();
+                            let mut this_indent_larger = this_indent > 0;
+                            let mut next_indent = this_indent;
+                            for ch in src[comment.loc().end()..].non_comment_chars() {
+                                if ch == '\n' {
+                                    next_indent = 0;
+                                } else if ch.is_whitespace() {
+                                    next_indent += 1;
                                 } else {
-                                    // next line has same or equal indent
-                                    (CommentPosition::Prefix, false)
+                                    this_indent_larger = this_indent > next_indent;
+                                    break
                                 }
-                            } else {
-                                // end of file
+                            }
+                            if this_indent_larger {
+                                // next line has a smaller indent
                                 (CommentPosition::Postfix, false)
+                            } else {
+                                // next line has same or equal indent
+                                (CommentPosition::Prefix, false)
                             }
                         }
                     } else {
