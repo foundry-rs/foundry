@@ -15,7 +15,9 @@ interface FunctionInterfaces {
         // x2 prefix
             uint256 x2, // x2 postfix
                 // x2 postfix2
-        // x3 prefix
+        /*
+            multi-line x3 prefix
+        */
         uint256 x3 // x3 postfix
 
     )
@@ -26,7 +28,9 @@ interface FunctionInterfaces {
     // public prefix
     public // public postfix
         // modifier2 prefix
-        modifier2 // modifier2 postfix
+        modifier2 /*
+                    mutliline modifier2 postfix
+                    */
             // modifier3 prefix
             modifier3 // modifier3 postfix
         returns (
