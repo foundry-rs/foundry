@@ -9,6 +9,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
+use forge::trace::CallTraceDecoder;
 use foundry_config::Config;
 
 use semver::Version;
@@ -29,10 +30,12 @@ use super::{ScriptResult, VerifyBundle};
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     pub receipts: Vec<TransactionReceipt>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<TxHash>,
     pub path: PathBuf,
     pub timestamp: u64,
-    pub libraries: Vec<String>,
 }
 
 impl ScriptSequence {
@@ -260,9 +263,13 @@ pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
     #[serde(rename = "type")]
     pub opcode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<String>,
     pub tx: TypedTransaction,
 }
@@ -271,21 +278,22 @@ impl TransactionWithMetadata {
     pub fn new(
         tx: TypedTransaction,
         result: &ScriptResult,
-        contracts: &BTreeMap<Address, (String, &Abi)>,
+        local_contracts: &BTreeMap<Address, (String, &Abi)>,
+        decoder: &CallTraceDecoder,
     ) -> eyre::Result<Self> {
         let mut metadata = Self { tx, ..Default::default() };
 
         if let Some(NameOrAddress::Address(to)) = metadata.tx.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                metadata.set_create(true, Address::from_slice(&result.returned), contracts)
+                metadata.set_create(true, Address::from_slice(&result.returned), local_contracts)
             } else {
-                metadata.set_call(to, contracts)?;
+                metadata.set_call(to, local_contracts, decoder)?;
             }
         } else if metadata.tx.to().is_none() {
             metadata.set_create(
                 false,
                 result.address.expect("There should be a contract address."),
-                contracts,
+                local_contracts,
             );
         }
         Ok(metadata)
@@ -310,16 +318,17 @@ impl TransactionWithMetadata {
     fn set_call(
         &mut self,
         target: Address,
-        contracts: &BTreeMap<Address, (String, &Abi)>,
+        local_contracts: &BTreeMap<Address, (String, &Abi)>,
+        decoder: &CallTraceDecoder,
     ) -> eyre::Result<()> {
         self.opcode = "CALL".to_string();
 
         if let Some(data) = self.tx.data() {
             if data.0.len() >= 4 {
-                if let Some(known_contract) = contracts.get(&target) {
-                    self.contract_name = contracts.get(&target).map(|(name, _)| name.clone());
-                    let abi = known_contract.1;
+                if let Some((contract_name, abi)) = local_contracts.get(&target) {
+                    // This CALL is made to a local contract.
 
+                    self.contract_name = Some(contract_name.clone());
                     if let Some(function) =
                         abi.functions().find(|function| function.short_signature() == data.0[0..4])
                     {
@@ -327,13 +336,21 @@ impl TransactionWithMetadata {
                         self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
                             tokens.iter().map(|token| format!("{token}")).collect()
                         })?;
-                    } else {
-                        self.function = Some(format!("0x{:?}", hex::encode(&data.0[0..4])));
-                        self.arguments = vec![format!("0x{:?}", hex::encode(&data.0[4..]))];
                     }
                 } else {
-                    self.function = Some(format!("0x{:?}", hex::encode(&data.0[0..4])));
-                    self.arguments = vec![format!("0x{:?}", hex::encode(&data.0[4..]))];
+                    // This CALL is made to an external contract. We can only decode it, if it has
+                    // been verified and identified by etherscan.
+
+                    if let Some(Some(function)) =
+                        decoder.functions.get(&data.0[0..4]).map(|functions| functions.first())
+                    {
+                        self.contract_name = decoder.contracts.get(&target).cloned();
+
+                        self.function = Some(function.signature());
+                        self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
+                            tokens.iter().map(|token| format!("{token}")).collect()
+                        })?;
+                    }
                 }
                 self.contract_address = Some(format!("0x{:?}", target));
             }

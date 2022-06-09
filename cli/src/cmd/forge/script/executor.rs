@@ -126,7 +126,8 @@ impl ScriptArgs {
                         }
                     }
 
-                    TransactionWithMetadata::new(tx.into(), &result, &address_to_abi).unwrap()
+                    TransactionWithMetadata::new(tx.into(), &result, &address_to_abi, decoder)
+                        .unwrap()
                 }
                 _ => unreachable!(),
             })
