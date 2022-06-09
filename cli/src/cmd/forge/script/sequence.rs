@@ -120,7 +120,7 @@ impl ScriptSequence {
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
         if !self.pending.contains(&tx_hash) {
-            self.transactions.get_mut(index).expect("").hash = Some(tx_hash);
+            self.transactions[index].hash = Some(tx_hash);
             self.pending.push(tx_hash);
         }
     }
@@ -130,15 +130,15 @@ impl ScriptSequence {
     }
 
     pub fn add_libraries(&mut self, libraries: Libraries) {
-        self.libraries = {
-            let mut str_libs = vec![];
-            for (file, libs) in libraries.libs {
-                for (name, address) in libs {
-                    str_libs.push(format!("{}:{}:{}", file.to_string_lossy(), name, address));
-                }
-            }
-            str_libs
-        };
+        self.libraries = libraries
+            .libs
+            .iter()
+            .flat_map(|(file, libs)| {
+                libs.iter().map(|(name, address)| {
+                    format!("{}:{}:{}", file.to_string_lossy(), name, address)
+                })
+            })
+            .collect();
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
@@ -154,7 +154,7 @@ impl ScriptSequence {
         out.push(target_fname);
         out.push(format!("{chain_id}"));
 
-        std::fs::create_dir_all(out.clone())?;
+        std::fs::create_dir_all(&out)?;
 
         let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
         out.push(format!("{filename}-latest.json"));
