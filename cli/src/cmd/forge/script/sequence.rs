@@ -267,7 +267,8 @@ pub struct TransactionWithMetadata {
     pub contract_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
-    pub arguments: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<String>>,
     pub tx: TypedTransaction,
 }
 
@@ -330,9 +331,10 @@ impl TransactionWithMetadata {
                         abi.functions().find(|function| function.short_signature() == data.0[0..4])
                     {
                         self.function = Some(function.signature());
-                        self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
-                            tokens.iter().map(|token| format!("{token}")).collect()
-                        })?;
+                        self.arguments =
+                            Some(function.decode_input(&data.0[4..]).map(|tokens| {
+                                tokens.iter().map(|token| format!("{token}")).collect()
+                            })?);
                     }
                 } else {
                     // This CALL is made to an external contract. We can only decode it, if it has
@@ -344,9 +346,10 @@ impl TransactionWithMetadata {
                         self.contract_name = decoder.contracts.get(&target).cloned();
 
                         self.function = Some(function.signature());
-                        self.arguments = function.decode_input(&data.0[4..]).map(|tokens| {
-                            tokens.iter().map(|token| format!("{token}")).collect()
-                        })?;
+                        self.arguments =
+                            Some(function.decode_input(&data.0[4..]).map(|tokens| {
+                                tokens.iter().map(|token| format!("{token}")).collect()
+                            })?);
                     }
                 }
                 self.contract_address = Some(format!("0x{:?}", target));
