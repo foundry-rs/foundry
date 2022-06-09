@@ -278,12 +278,6 @@ impl TransactionWithMetadata {
         if let Some(NameOrAddress::Address(to)) = metadata.tx.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(true, Address::from_slice(&result.returned), contracts)
-            } else if to == Address::zero() {
-                metadata.set_create(
-                    false,
-                    result.address.expect("There should be a contract address."),
-                    contracts,
-                );
             } else {
                 metadata.set_call(to, contracts)?;
             }
