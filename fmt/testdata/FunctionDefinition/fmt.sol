@@ -15,7 +15,9 @@ interface FunctionInterfaces {
         // x2 prefix
         uint256 x2, // x2 postfix
             // x2 postfix2
-        // x3 prefix
+        /*
+            multi-line x3 prefix
+        */
         uint256 x3 // x3 postfix
     )
         // public prefix
@@ -25,7 +27,9 @@ interface FunctionInterfaces {
         // modifier1 prefix
         modifier1 // modifier1 postfix
         // modifier2 prefix
-        modifier2 // modifier2 postfix
+        modifier2 /*
+                    mutliline modifier2 postfix
+                    */
         // modifier3 prefix
         modifier3 // modifier3 postfix
         returns (
@@ -38,6 +42,9 @@ interface FunctionInterfaces {
         ); // y3 postfix
         // function postfix
 
+    /*//////////////////////////////////////////////////////////////////////////
+                                    TEST
+    //////////////////////////////////////////////////////////////////////////*/
     function manyParams(
         uint256 x1,
         uint256 x2,

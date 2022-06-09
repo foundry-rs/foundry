@@ -148,7 +148,7 @@ impl<W: Sized> FormatBuffer<W> {
     }
 
     fn current_indent_len(&self) -> usize {
-        self.level() + self.tab_width
+        self.level() * self.tab_width
     }
 
     fn set_current_line_len(&mut self, len: usize) {
@@ -188,14 +188,19 @@ impl<W: Write> FormatBuffer<W> {
                 .take(self.base_indent_len)
                 .take_while(|(_, ch)| ch.is_whitespace())
                 .last()
-                .map(|(idx, _)| idx)
+                .map(|(idx, _)| idx + 1)
                 .unwrap_or(0);
-            self.w.write_str(&line[line_start..])?;
+            let trimmed_line = &line[line_start..];
+            if !trimmed_line.is_empty() {
+                self.w.write_str(trimmed_line)?;
+                self.is_beginning_of_line = false;
+            }
             if lines.peek().is_some() {
                 if self.restrict_to_single_line {
                     return Err(std::fmt::Error)
                 }
                 self.w.write_char('\n')?;
+                self.is_beginning_of_line = true;
             }
         }
         Ok(())
@@ -572,24 +577,34 @@ impl<'a, W: Write> Formatter<'a, W> {
             let last_indent_group_skipped = self.last_indent_group_skipped();
             if !self.is_beginning_of_line() {
                 writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
             }
-            writeln!(self.buf(), "{}", comment.comment)?;
+            let mut lines = comment.comment.splitn(2, '\n');
+            write!(self.buf(), "{}", lines.next().unwrap())?;
+            if let Some(line) = lines.next() {
+                writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
+                self.write_raw(line)?;
+            }
+            writeln!(self.buf())?;
             self.set_last_indent_group_skipped(last_indent_group_skipped);
         } else {
             let indented = self.is_beginning_of_line();
-            if indented {
-                self.indent(1);
-            } else if self.next_chunk_needs_space('/') {
-                write!(self.buf(), " ")?;
-            }
-            if comment.is_line() {
-                writeln!(self.buf(), "{}", comment.comment)?;
-            } else {
-                write!(self.buf(), "{}", comment.comment)?;
-            }
-            if indented {
-                self.dedent(1);
-            }
+            self.indented_if(indented, 1, |fmt| {
+                if !indented && fmt.next_chunk_needs_space('/') {
+                    write!(fmt.buf(), " ")?;
+                }
+                let mut lines = comment.comment.splitn(2, '\n');
+                write!(fmt.buf(), "{}", lines.next().unwrap())?;
+                if let Some(line) = lines.next() {
+                    writeln!(fmt.buf())?;
+                    fmt.write_raw(line)?;
+                }
+                if comment.is_line() {
+                    writeln!(fmt.buf())?;
+                }
+                Ok(())
+            })?;
         }
         Ok(())
     }
