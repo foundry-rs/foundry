@@ -1,8 +1,6 @@
 use crate::{cmd::needs_setup, utils};
 
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
-    prelude::NameOrAddress,
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
@@ -74,13 +72,10 @@ impl ScriptArgs {
         script_config: &ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
-    ) -> eyre::Result<(VecDeque<TransactionWithMetadata>, Vec<Address>)> {
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
-
         let mut failed = false;
         let mut sum_gas = 0;
-        let mut create2_contracts = vec![];
-        // let mut metadata_list = vec![];
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -115,21 +110,9 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
-                    // We store the CREATE2 address, since it's hard to get it otherwise
-                    if let Some(NameOrAddress::Address(to)) = tx.to {
-                        if to == DEFAULT_CREATE2_DEPLOYER {
-                            let address = Address::from_slice(&result.returned);
-                            create2_contracts.push(address);
-                        }
-                    }
-
                     // We inflate the gas used by the transaction by x1.3 since the estimation
                     // might be off
                     tx.gas = Some(U256::from(result.gas * 13 / 10));
-
-                    // final_txs.push_back(
-                    //     ,
-                    // );
 
                     sum_gas += result.gas;
                     if !result.success {
@@ -152,7 +135,7 @@ impl ScriptArgs {
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))
         } else {
-            Ok((final_txs, create2_contracts))
+            Ok(final_txs)
         }
     }
 

@@ -207,7 +207,7 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let (gas_filled_txs, create2_contracts) = self
+                let gas_filled_txs = self
                     .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
                     .await
                     .map_err(|_| {
@@ -231,10 +231,6 @@ impl ScriptArgs {
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
-
-                create2_contracts
-                    .into_iter()
-                    .for_each(|addr| deployment_sequence.add_create2(addr));
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;

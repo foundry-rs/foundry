@@ -17,6 +17,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
+    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -29,7 +30,6 @@ pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     pub receipts: Vec<TransactionReceipt>,
     pub pending: Vec<TxHash>,
-    pub create2_contracts: Vec<Address>,
     pub path: PathBuf,
     pub timestamp: u64,
     pub libraries: Vec<String>,
@@ -49,7 +49,6 @@ impl ScriptSequence {
             transactions,
             receipts: vec![],
             pending: vec![],
-            create2_contracts: vec![],
             path,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -128,10 +127,6 @@ impl ScriptSequence {
         self.pending.retain(|element| element != &tx_hash);
     }
 
-    pub fn add_create2(&mut self, address: Address) {
-        self.create2_contracts.push(address);
-    }
-
     pub fn add_libraries(&mut self, libraries: Libraries) {
         self.libraries = {
             let mut str_libs = vec![];
@@ -169,7 +164,6 @@ impl ScriptSequence {
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         if let Some(etherscan_key) = &verify.etherscan_key {
             let mut future_verifications = vec![];
-            let mut create2 = self.create2_contracts.clone().into_iter();
 
             // Make sure the receipts have the right order first.
             self.sort_receipts();
@@ -177,12 +171,12 @@ impl ScriptSequence {
             for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
                 let mut create2_offset = 0;
 
-                // CREATE2 contract addresses do not come in the receipt.
-                if let Some(&NameOrAddress::Address(to)) = tx.typed_tx().to() {
-                    if to == DEFAULT_CREATE2_DEPLOYER {
-                        receipt.contract_address = create2.next();
-                        create2_offset = 32;
-                    }
+                if tx.is_create2() {
+                    receipt.contract_address = Address::from_str(
+                        tx.contract_address.as_ref().expect("There should be a contract address."),
+                    )
+                    .ok();
+                    create2_offset = 32;
                 }
 
                 if let (Some(contract_address), Some(data)) =
@@ -370,5 +364,9 @@ impl TransactionWithMetadata {
 
     pub fn typed_tx_mut(&mut self) -> &mut TypedTransaction {
         &mut self.tx
+    }
+
+    pub fn is_create2(&self) -> bool {
+        self.opcode == "CREATE2"
     }
 }
