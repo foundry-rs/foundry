@@ -1930,22 +1930,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             let formatted_name = self.chunk_to_string(&name)?;
 
-            self.surrounded(params_start, &formatted_name, ")", None, |fmt, _multiline| {
+            self.surrounded(params_start, &formatted_name, ")", None, |fmt, multiline| {
                 let params = fmt
                     .items_to_chunks(None, event.fields.iter_mut().map(|arg| Ok((arg.loc, arg))))?;
-                let multiline = fmt.are_chunks_separated_multiline("{}", &params, ",")?;
                 fmt.write_chunks_separated(&params, ",", multiline)?;
                 Ok(())
             })?;
         }
 
-        write_chunk!(
-            self,
-            event.loc.start(),
-            event.loc.end(),
-            "{}",
-            if event.anonymous { "anonymous" } else { "" }
-        )?;
+        self.grouped(|fmt| {
+            write_chunk!(
+                fmt,
+                event.loc.start(),
+                event.loc.end(),
+                "{}",
+                if event.anonymous { "anonymous" } else { "" }
+            )
+        })?;
 
         self.write_semicolon()?;
 
