@@ -1047,6 +1047,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let mut last_unit: Option<&SourceUnitPart> = None;
         let mut last_byte_written = 0;
+        let mut is_first_line = true;
         let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
 
         while let Some(unit) = source_unit_parts_iter.next() {
@@ -1072,16 +1073,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // write prefix comments
             let comments = self.comments.remove_prefixes_before(unit.loc().start());
             for comment in &comments {
-                if needs_space || comment.has_newline_before {
+                if !is_first_line && (needs_space || comment.has_newline_before) {
                     writeln!(self.buf())?;
                     needs_space = false;
                 }
                 self.write_comment(comment)?;
+                is_first_line = false;
                 last_byte_written = comment.loc.end();
             }
 
             // write space if required or if there are blank lines in between
-            if needs_space || self.blank_lines(last_byte_written, unit.loc().start()) > 1 {
+            if !is_first_line &&
+                (needs_space || self.blank_lines(last_byte_written, unit.loc().start()) > 1)
+            {
                 writeln!(self.buf())?;
             }
 
@@ -1089,6 +1093,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             unit.visit(self)?;
             last_byte_written = unit.loc().end();
             last_unit = Some(unit);
+            is_first_line = false;
 
             // write postfix comments
             if let Some(next_unit) = source_unit_parts_iter.peek() {
@@ -1195,6 +1200,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
 
             let mut last_part: Option<&ContractPart> = None;
+            let mut is_first_line = true;
             let mut last_byte_written =
                 contract.base.first().map(|base| base.loc).unwrap_or(contract.name.loc).end();
             let mut contract_parts_iter = contract.parts.iter_mut().peekable();
@@ -1237,16 +1243,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // write prefix comments
                 let comments = fmt.comments.remove_prefixes_before(part.loc().start());
                 for comment in &comments {
-                    if needs_space || comment.has_newline_before {
+                    if !is_first_line && (needs_space || comment.has_newline_before) {
                         writeln!(fmt.buf())?;
                         needs_space = false;
                     }
                     fmt.write_comment(comment)?;
+                    is_first_line = false;
                     last_byte_written = comment.loc.end();
                 }
 
                 // write space if required or if there are blank lines in between
-                if needs_space || fmt.blank_lines(last_byte_written, part.loc().start()) > 1 {
+                if !is_first_line &&
+                    (needs_space || fmt.blank_lines(last_byte_written, part.loc().start()) > 1)
+                {
                     writeln!(fmt.buf())?;
                 }
 
@@ -1254,6 +1263,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 part.visit(fmt)?;
                 last_byte_written = part.loc().end();
                 last_part = Some(part);
+                is_first_line = false;
 
                 if let Some(next_part) = contract_parts_iter.peek() {
                     let comments = fmt.comments.remove_postfixes_before(next_part.loc().start());
@@ -1908,22 +1918,40 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             } else {
                 return Ok(())
             }
+
             let mut statements_iter = statements.iter_mut().peekable();
+            let mut last_byte_written = loc.start();
+            let mut is_first_line = true;
+
             while let Some(stmt) = statements_iter.next() {
+                // write prefix comments
+                let comments = fmt.comments.remove_prefixes_before(stmt.loc().start());
+                for comment in &comments {
+                    if !is_first_line && comment.has_newline_before {
+                        writeln!(fmt.buf())?;
+                    }
+                    fmt.write_comment(comment)?;
+                    is_first_line = false;
+                    last_byte_written = comment.loc.end();
+                }
+
+                // write space if required or if there are blank lines in between
+                if !is_first_line && fmt.blank_lines(last_byte_written, stmt.loc().start()) > 1 {
+                    writeln!(fmt.buf())?;
+                }
                 stmt.visit(fmt)?;
+                last_byte_written = stmt.loc().end();
+                is_first_line = false;
 
                 // If source has zero blank lines between statements, leave it as is. If one
                 //  or more, separate statements with one blank line.
                 if let Some(next_stmt) = statements_iter.peek() {
-                    fmt.write_postfix_comments_before(LineOfCode::loc(next_stmt).start())?;
-                    fmt.write_whitespace_separator(true)?;
-                    if fmt.blank_lines(
-                        LineOfCode::loc(stmt).end(),
-                        LineOfCode::loc(next_stmt).start(),
-                    ) > 1
-                    {
-                        writeln_chunk!(fmt)?;
+                    let comments = fmt.comments.remove_postfixes_before(next_stmt.loc().start());
+                    for comment in comments {
+                        fmt.write_comment(&comment)?;
+                        last_byte_written = comment.loc.end();
                     }
+                    fmt.write_whitespace_separator(true)?;
                 }
             }
             Ok(())
