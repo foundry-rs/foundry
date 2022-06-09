@@ -83,20 +83,15 @@ impl ScriptSequence {
 
             //../run-latest.json
             serde_json::to_writer(BufWriter::new(std::fs::File::create(path)?), &self)?;
-            //../run-timestamp.json
+            //../run-[timestamp].json
             serde_json::to_writer(
                 BufWriter::new(std::fs::File::create(
-                    &path.replace("latest.json", &format!("{}.json", self.timestamp)),
+                    path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
                 &self,
             )?;
 
-            println!(
-                "\nTransactions saved to: {}\n",
-                self.path.to_str().wrap_err(
-                    "Couldn't convert path to string. Transactions were written to file though."
-                )?
-            );
+            println!("\nTransactions saved to: {path}\n");
         }
 
         Ok(())
