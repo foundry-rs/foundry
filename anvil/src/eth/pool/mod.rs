@@ -116,7 +116,11 @@ impl Pool {
     pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         let added = self.inner.write().add_transaction(tx)?;
         if let AddedTransaction::Ready(ref ready) = added {
-            self.notify_listener(ready.hash)
+            self.notify_listener(ready.hash);
+            // also notify promoted transactions
+            for promoted in ready.promoted.iter().copied() {
+                self.notify_listener(promoted);
+            }
         }
         Ok(added)
     }
