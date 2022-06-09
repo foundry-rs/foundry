@@ -1078,7 +1078,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             .map_err(FormatterError::custom)?;
         let mut lines = source.splitn(2, '\n');
 
-        write_chunk!(self, loc.end(), "{}", lines.next().unwrap())?;
+        write_chunk!(self, loc.start(), "{}", lines.next().unwrap())?;
         if let Some(remainder) = lines.next() {
             // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
             // without triggering an indentation
@@ -2410,4 +2410,5 @@ mod tests {
     test_directory! { WhileStatement }
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }
+    test_directory! { IfStatement }
 }
