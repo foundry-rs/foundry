@@ -415,7 +415,7 @@ impl ScriptSequence {
                                 watch: true,
                                 retry: RETRY_VERIFY_ON_CREATE,
                                 libraries: self.libraries.clone(),
-                                provider: verify::VerificationProvider::Etherscan,
+                                verifier: verify::VerificationProvider::Etherscan,
                             };
 
                             future_verifications.push(verify.run());

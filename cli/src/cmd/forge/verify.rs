@@ -23,8 +23,8 @@ use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use reqwest::get;
 use semver::{BuildMetadata, Version};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter},
@@ -38,38 +38,6 @@ pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
 pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some(10) };
-
-#[derive(Debug, Clone)]
-pub enum VerificationProvider {
-    Etherscan,
-    Sourcify,
-}
-
-impl FromStr for VerificationProvider {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "e" | "etherscan" => Ok(VerificationProvider::Etherscan),
-            "s" | "sourcify" => Ok(VerificationProvider::Sourcify),
-            _ => Err(format!("Unknown field: {s}")),
-        }
-    }
-}
-
-impl Display for VerificationProvider {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VerificationProvider::Etherscan => {
-                write!(f, "Etherscan")?;
-            }
-            VerificationProvider::Sourcify => {
-                write!(f, "Sourcify")?;
-            }
-        };
-        Ok(())
-    }
-}
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -147,18 +115,18 @@ pub struct VerifyArgs {
     pub libraries: Vec<String>,
 
     #[clap(
-        long = "provider",
+        long = "verifier",
         help_heading = "VERIFICATION PROVIDER",
         help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
         default_value = "etherscan"
     )]
-    pub provider: VerificationProvider,
+    pub verifier: VerificationProvider,
 }
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
-        match self.provider {
+        match self.verifier {
             VerificationProvider::Etherscan => self.verify_with_etherscan().await,
             VerificationProvider::Sourcify => self.verify_with_sourcify().await,
         }
@@ -231,30 +199,23 @@ impl VerifyArgs {
     async fn verify_with_sourcify(self) -> eyre::Result<()> {
         let url = format!(
             "https://sourcify.dev/server/check-by-addresses?addresses={}&chainIds={}",
-            hex::encode(self.address.as_bytes()),
+            format!("{:?}", self.address),
             self.chain.id(),
         );
-        let response = get(url).await?;
+        let response = reqwest::get(url).await?;
         if !response.status().is_success() {
             eprintln!(
                 "Sourcify verification request for address ({}) failed with status code {}",
-                hex::encode(self.address.as_bytes()),
+                format!("{:?}", self.address),
                 response.status()
             );
             std::process::exit(1);
         };
 
-        // Response looks like:
-        // `[{"address":"0x68B1D87F95878fE05B998F19b66F4baba5De1aed","status":"false"}]`
-        let parsed_response = response.json::<serde_json::Value>().await?;
-        let status =
-            parsed_response.get(0).and_then(|value| value.get("status")).unwrap_or_else(|| {
-                panic!("Failed to retrieve status from Sourcify response ({})", parsed_response)
-            });
-        let status_str = status.as_str().unwrap();
-        if status_str != "perfect" {
+        let parsed_response = response.json::<SourcifyVerificationResponse>().await?;
+        if parsed_response.get(0).unwrap().status != "perfect" {
             eprintln!(
-                "Encountered an error verifying this contract:\nResponse: `{}`",
+                "Encountered an error verifying this contract:\nResponse: `{:?}`",
                 parsed_response
             );
             std::process::exit(1);
@@ -606,4 +567,44 @@ impl VerifyCheckArgs {
             .await
             .wrap_err("Checking verification result failed:")
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum VerificationProvider {
+    Etherscan,
+    Sourcify,
+}
+
+impl FromStr for VerificationProvider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "e" | "etherscan" => Ok(VerificationProvider::Etherscan),
+            "s" | "sourcify" => Ok(VerificationProvider::Sourcify),
+            _ => Err(format!("Unknown field: {s}")),
+        }
+    }
+}
+
+impl Display for VerificationProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationProvider::Etherscan => {
+                write!(f, "Etherscan")?;
+            }
+            VerificationProvider::Sourcify => {
+                write!(f, "Sourcify")?;
+            }
+        };
+        Ok(())
+    }
+}
+
+pub type SourcifyVerificationResponse = Vec<SourcifyResponseElement>;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SourcifyResponseElement {
+    address: String,
+    status: String,
 }

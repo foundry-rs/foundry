@@ -326,7 +326,7 @@ impl CreateArgs {
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
-            provider: self.verification_provider,
+            verifier: self.verification_provider,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
