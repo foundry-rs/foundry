@@ -30,9 +30,7 @@ use super::{ScriptResult, VerifyBundle};
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     pub receipts: Vec<TransactionReceipt>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<TxHash>,
     pub path: PathBuf,
     pub timestamp: u64,
@@ -269,7 +267,6 @@ pub struct TransactionWithMetadata {
     pub contract_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<String>,
     pub tx: TypedTransaction,
 }
