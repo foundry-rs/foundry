@@ -561,8 +561,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Returns number of blank lines between two LOCs
-    fn blank_lines(&self, a: Loc, b: Loc) -> usize {
-        self.source[a.end()..b.start()].matches('\n').count()
+    fn blank_lines(&self, start: usize, end: usize) -> usize {
+        self.source[start..end].matches('\n').count()
     }
 
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
@@ -1046,36 +1046,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         // });
 
         let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
+
+        let mut last_unit: Option<&SourceUnitPart> = None;
+        let mut last_byte_written = 0;
         while let Some(unit) = source_unit_parts_iter.next() {
-            let is_pragma =
-                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _));
-            let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_));
-            let is_error = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ErrorDefinition(_));
-            let is_declaration =
-                |u: &SourceUnitPart| !(is_pragma(u) || is_import(u) || is_error(u));
-            let is_comment = |u: &SourceUnitPart| matches!(u, SourceUnitPart::DocComment(_));
+            // check if the next block requires space
+            let mut needs_space = match last_unit {
+                Some(last_unit) => match last_unit {
+                    SourceUnitPart::ImportDirective(_) => {
+                        !matches!(unit, SourceUnitPart::ImportDirective(_))
+                    }
+                    SourceUnitPart::ErrorDefinition(_) => {
+                        !matches!(unit, SourceUnitPart::ErrorDefinition(_))
+                    }
+                    SourceUnitPart::Using(_) => !matches!(unit, SourceUnitPart::Using(_)),
+                    SourceUnitPart::VariableDefinition(_) => {
+                        !matches!(unit, SourceUnitPart::VariableDefinition(_))
+                    }
+                    SourceUnitPart::DocComment(_) => false,
+                    _ => true,
+                },
+                None => false,
+            };
 
+            // write prefix comments
+            let comments = self.comments.remove_prefixes_before(unit.loc().start());
+            for comment in &comments {
+                if needs_space || comment.has_newline_before {
+                    writeln!(self.buf())?;
+                    needs_space = false;
+                }
+                self.write_comment(comment)?;
+                last_byte_written = comment.loc.end();
+            }
+
+            // write space if required or if there are blank lines in between
+            if needs_space || self.blank_lines(last_byte_written, unit.loc().start()) > 1 {
+                writeln!(self.buf())?;
+            }
+
+            // write source unit part
             unit.visit(self)?;
+            last_byte_written = unit.loc().end();
+            last_unit = Some(unit);
 
-            if let Some(next_unit) = source_unit_parts_iter.peek() {
-                self.write_postfix_comments_before(next_unit.loc().start())?;
-
-                if !is_comment(unit) && !self.is_beginning_of_line() {
-                    writeln!(self.buf())?;
+            // write postfix comments
+            if source_unit_parts_iter.peek().is_some() {
+                let comments = self.comments.remove_postfixes_before(unit.loc().start());
+                for comment in comments {
+                    self.write_comment(&comment)?;
+                    last_byte_written = comment.loc.end();
                 }
-
-                // If source has zero blank lines between imports or errors, leave it as is. If one
-                // or more, separate with one blank line.
-                let separate = (is_import(unit) || is_error(unit)) &&
-                    (is_import(next_unit) || is_error(next_unit)) &&
-                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
-
-                if (is_declaration(unit) || is_declaration(next_unit)) ||
-                    (is_pragma(unit) || is_pragma(next_unit)) ||
-                    separate
-                {
-                    writeln!(self.buf())?;
-                }
+                self.write_whitespace_separator(true)?;
             }
         }
 
@@ -1183,7 +1205,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if let Some(next_part) = contract_parts_iter.peek() {
                     fmt.write_postfix_comments_before(next_part.loc().start())?;
                     fmt.write_whitespace_separator(true)?;
-                    let blank_lines = fmt.blank_lines(part.loc(), next_part.loc());
+                    let blank_lines = fmt.blank_lines(part.loc().end(), next_part.loc().start());
                     let is_function = match part {
                         ContractPart::FunctionDefinition(function_definition) => matches!(
                             **function_definition,
@@ -1854,7 +1876,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if let Some(next_stmt) = statements_iter.peek() {
                     fmt.write_postfix_comments_before(LineOfCode::loc(next_stmt).start())?;
                     fmt.write_whitespace_separator(true)?;
-                    if fmt.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
+                    if fmt.blank_lines(
+                        LineOfCode::loc(stmt).end(),
+                        LineOfCode::loc(next_stmt).start(),
+                    ) > 1
+                    {
                         writeln_chunk!(fmt)?;
                     }
                 }
