@@ -260,7 +260,7 @@ impl ScriptArgs {
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
 
-        let mut new_txes: VecDeque<TransactionWithMetadata> = VecDeque::new();
+        let mut new_txes = VecDeque::new();
         let mut total_gas = U256::zero();
         for mut tx in txes.into_iter() {
             tx.change_type(is_legacy);

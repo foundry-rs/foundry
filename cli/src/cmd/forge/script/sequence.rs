@@ -9,6 +9,7 @@ use ethers::{
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
     types::transaction::eip2718::TypedTransaction,
 };
+use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
 use foundry_config::Config;
 
@@ -76,10 +77,9 @@ impl ScriptSequence {
 
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.transactions.is_empty() {
-            self.timestamp =
-                SystemTime::now().duration_since(UNIX_EPOCH).expect("Wrong system time.").as_secs();
+            self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-            let path = self.path.to_str().expect("Invalid path.");
+            let path = self.path.to_str().wrap_err("Invalid path.")?;
 
             //../run-latest.json
             serde_json::to_writer(BufWriter::new(std::fs::File::create(path)?), &self)?;
@@ -93,9 +93,9 @@ impl ScriptSequence {
 
             println!(
                 "\nTransactions saved to: {}\n",
-                self.path.to_str().expect(
+                self.path.to_str().wrap_err(
                     "Couldn't convert path to string. Transactions were written to file though."
-                )
+                )?
             );
         }
 
@@ -150,13 +150,13 @@ impl ScriptSequence {
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
 
-        let target_fname = target.source.file_name().expect("No file name");
+        let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
         out.push(format!("{chain_id}"));
 
         std::fs::create_dir_all(out.clone())?;
 
-        let filename = sig.split_once('(').expect("Sig is invalid").0.to_owned();
+        let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
         out.push(format!("{filename}-latest.json"));
         Ok(out)
     }
