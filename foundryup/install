@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-echo Installing foundryup...
+# runs with Makefile to generate hash on CI
+# shellcheck disable=SC2034
+SCRIPT_COMMIT_SHA="${LOAD_SCRIPT_COMMIT_SHA}"
+
+echo "Installing foundryup..."
 
 FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
@@ -11,12 +15,12 @@ BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/f
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
-mkdir -p $FOUNDRY_BIN_DIR
-curl -# -L $BIN_URL -o $BIN_PATH
-chmod +x $BIN_PATH
+mkdir -p "$FOUNDRY_BIN_DIR"
+curl -# -L $BIN_URL -o "$BIN_PATH"
+chmod +x "$BIN_PATH"
 
 # Create the man directory for future man files if it doesn't exist.
-mkdir -p $FOUNDRY_MAN_DIR
+mkdir -p "$FOUNDRY_MAN_DIR"
 
 # Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
 case $SHELL in
@@ -37,10 +41,28 @@ case $SHELL in
     exit 1
 esac
 
+
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
-    # Add the foundryup directory to the path and ensure the old PATH variables remain.
-    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
+	if [[ $PLATFORM == 'darwin'* ]]; then
+		echo >>"$HOME"/.bash_profile && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >>"$HOME"/.bash_profile
+	fi
+	# Add the foundryup directory to the path and ensure the old PATH variables remain.
+	echo >>"$PROFILE" && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >>"$PROFILE"
+fi
+
+
+if [[ $SHELL == 'bash'* && ! -f /usr/local/etc/bash_completion.d ]]; then
+echo "Configuring bash completions for forge and cast..."
+forge completions bash > /usr/local/etc/bash_completion.d/forge
+cast completions bash > /usr/local/etc/bash_completion.d/cast
+
+if [[ $PLATFORM == 'darwin'* ]]; then
+echo "source /usr/local/etc/bash_completion.d/cast" >> ~/.bash_profile
+echo "source /usr/local/etc/bash_completion.d/forge" >> ~/.bash_profile
+fi
+echo "source /usr/local/etc/bash_completion.d/cast" >> ~/.bashrc
+echo "source /usr/local/etc/bash_completion.d/forge" >> ~/.bashrc
 fi
 
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
