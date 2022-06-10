@@ -6,7 +6,7 @@ use crate::{
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
         },
-        fees::INITIAL_BASE_FEE,
+        fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
     mem,
@@ -73,7 +73,7 @@ pub struct NodeConfig {
     /// Default gas limit for all txs
     pub gas_limit: U256,
     /// Default gas price for all txs
-    pub gas_price: U256,
+    pub gas_price: Option<U256>,
     /// Default base fee
     pub base_fee: Option<U256>,
     /// The hardfork to use
@@ -184,7 +184,7 @@ Gas Price
 ==================
 {}
 "#,
-            Paint::green(format!("\n{}", self.gas_price))
+            Paint::green(format!("\n{}", self.get_gas_price()))
         );
 
         let _ = write!(
@@ -246,8 +246,8 @@ Chain ID:       {}
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
               "wallet": wallet_description,
-              "base_fee": format!("{}", self.base_fee),
-              "gas_price": format!("{}", self.gas_price),
+              "base_fee": format!("{}", self.get_base_fee()),
+              "gas_price": format!("{}", self.get_gas_price()),
               "gas_limit": format!("{}", self.gas_limit),
             })
         } else {
@@ -255,8 +255,8 @@ Chain ID:       {}
               "available_accounts": available_accounts,
               "private_keys": private_keys,
               "wallet": wallet_description,
-              "base_fee": format!("{}", self.base_fee),
-              "gas_price": format!("{}", self.gas_price),
+              "base_fee": format!("{}", self.get_base_fee()),
+              "gas_price": format!("{}", self.get_gas_price()),
               "gas_limit": format!("{}", self.gas_limit),
             })
         }
@@ -280,7 +280,7 @@ impl Default for NodeConfig {
         Self {
             chain_id: CHAIN_ID,
             gas_limit: U256::from(30_000_000),
-            gas_price: U256::from(20_000_000_000u64),
+            gas_price: None,
             hardfork: Hardfork::default(),
             signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
@@ -318,6 +318,11 @@ impl NodeConfig {
         self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
     }
 
+    /// Returns the base fee to use
+    pub fn get_gas_price(&self) -> U256 {
+        self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
+    }
+
     /// Sets the chain ID
     #[must_use]
     pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
@@ -348,9 +353,7 @@ impl NodeConfig {
     /// Sets the gas price
     #[must_use]
     pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
-        if let Some(gas_price) = gas_price {
-            self.gas_price = gas_price.into();
-        }
+        self.gas_price = gas_price.map(Into::into);
         self
     }
 
@@ -540,7 +543,7 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
-        let fees = FeeManager::new(self.get_base_fee(), self.gas_price);
+        let fees = FeeManager::new(self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
@@ -573,6 +576,14 @@ impl NodeConfig {
                     self.base_fee = Some(base_fee);
                     fees.set_base_fee(base_fee);
                     env.block.basefee = base_fee;
+                }
+            }
+
+            // use remote gas price
+            if self.gas_price.is_none() {
+                if let Ok(gas_price) = provider.get_gas_price().await {
+                    self.gas_price = Some(gas_price);
+                    fees.set_gas_price(gas_price);
                 }
             }
 

@@ -229,7 +229,7 @@ impl NodeHandle {
 
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
-        self.config.gas_price
+        self.config.get_gas_price()
     }
 }
 
