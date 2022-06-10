@@ -1864,7 +1864,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
-                    contract.base.iter().any(|contract_base| contract_base.name.ast_eq(&base.name))
+                    contract.base.iter().any(|contract_base| {
+                        contract_base
+                            .name
+                            .identifiers
+                            .iter()
+                            .zip(&base.name.identifiers)
+                            .all(|(l, r)| l.name == r.name)
+                    })
                 });
                 if base.name.identifiers.iter().any(|i| i.name == "Ownable") {}
 
