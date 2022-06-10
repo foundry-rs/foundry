@@ -5,7 +5,7 @@ contract UsingExampleContract {
     using {M.g, M.f} for uint256;
     using UsingExampleLibrary for uint256 global;
     using {
-        Theses,
+        These,
         Are,
         MultipleLibraries,
         ThatNeedToBePut,

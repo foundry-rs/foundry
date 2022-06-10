@@ -205,3 +205,14 @@ contract FunctionDefinitions {
     fallback() external payable virtual {}
     receive() external payable virtual {}
 }
+
+contract FunctionOverrides is FunctionInterfaces, FunctionDefinitions {
+    function noParamsNoModifiersNoReturns() override {
+        a = 1;
+    }
+
+    function oneParam(uint256 x) override(FunctionInterfaces, FunctionDefinitions, SomeOtherFunctionContract, SomeImport.AndAnotherFunctionContract) {
+        a = 1;
+    }
+}
+

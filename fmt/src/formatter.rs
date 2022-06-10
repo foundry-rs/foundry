@@ -9,7 +9,6 @@ use thiserror::Error;
 
 use crate::{
     comments::{CommentStringExt, CommentWithMetadata, Comments},
-    helpers,
     solang_ext::*,
     visit::{Visitable, Visitor},
 };
@@ -1149,6 +1148,27 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_ident_list(
+        &mut self,
+        loc: &mut Loc,
+        prefix: &str,
+        idents: &mut Vec<IdentifierPath>,
+    ) -> Result<()> {
+        write_chunk!(self, loc.start(), "{}", prefix)?;
+        if !idents.is_empty() {
+            self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _multiline| {
+                let args = fmt.items_to_chunks(
+                    Some(loc.end()),
+                    idents.iter_mut().map(|arg| Ok((arg.loc, arg))),
+                )?;
+                let multiline = fmt.are_chunks_separated_multiline("{}", &args, ", ")?;
+                fmt.write_chunks_separated(&args, ",", multiline)?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1642,6 +1662,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
+        idents.identifiers.iter_mut().skip(1).for_each(|chunk| {
+            if !chunk.name.starts_with('.') {
+                chunk.name.insert(0, '.')
+            }
+        });
+        let chunks = self.items_to_chunks(
+            Some(idents.loc.end()),
+            idents.identifiers.iter_mut().map(|ident| Ok((ident.loc, ident))),
+        )?;
+        self.grouped(|fmt| {
+            let multiline = fmt.are_chunks_separated_multiline("{}", &chunks, "")?;
+            fmt.write_chunks_separated(&chunks, "", multiline)
+        })?;
+        Ok(())
+    }
+
     fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), "emit")?;
@@ -1821,23 +1858,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(loc, args) => {
-                write_chunk!(self, loc.start(), "override")?;
-                if !args.is_empty() {
-                    self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _multiline| {
-                        let args = fmt.items_to_chunks(
-                            Some(loc.end()),
-                            args.iter_mut().map(|arg| Ok((arg.loc, arg))),
-                        )?;
-                        let multiline = fmt.are_chunks_separated_multiline("{}", &args, ", ")?;
-                        fmt.write_chunks_separated(&args, ",", multiline)?;
-                        Ok(())
-                    })?;
-                }
+                self.visit_ident_list(loc, "override", args)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract.base.iter().any(|contract_base| {
-                        helpers::namespace_matches(&contract_base.name, &base.name)
+                        contract_base
+                            .name
+                            .identifiers
+                            .iter()
+                            .zip(&base.name.identifiers)
+                            .all(|(l, r)| l.name == r.name)
                     })
                 });
 
@@ -1858,12 +1889,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_base(&mut self, base: &mut Base) -> Result<()> {
-        let name_loc = LineOfCode::loc(&base.name);
+        let name_loc = &base.name.loc;
         let mut name = self.chunked(name_loc.start(), Some(name_loc.end()), |fmt| {
-            fmt.grouped(|fmt| {
-                fmt.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
-                Ok(())
-            })?;
+            fmt.visit_ident_path(&mut base.name)?;
             Ok(())
         })?;
 
@@ -2114,15 +2142,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let (is_library, mut list_chunks) = match &mut using.list {
             UsingList::Library(library) => {
-                (true, vec![self.visit_to_chunk(library.loc().start(), None, library)?])
+                (true, vec![self.visit_to_chunk(library.loc.start(), None, library)?])
             }
             UsingList::Functions(funcs) => {
                 let mut funcs = funcs.iter_mut().peekable();
                 let mut chunks = Vec::new();
                 while let Some(func) = funcs.next() {
-                    let next_byte_end = funcs.peek().map(|func| func.loc().start());
-                    chunks.push(self.chunked(func.loc().start(), next_byte_end, |fmt| {
-                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))?;
+                    let next_byte_end = funcs.peek().map(|func| func.loc.start());
+                    chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
+                        fmt.visit_ident_path(func)?;
                         Ok(())
                     })?);
                 }
@@ -2200,13 +2228,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> Result<()> {
         let token = match attribute {
-            VariableAttribute::Visibility(visibility) => visibility.to_string(),
-            VariableAttribute::Constant(_) => "constant".to_string(),
-            VariableAttribute::Immutable(_) => "immutable".to_string(),
-            VariableAttribute::Override(_) => "override".to_string(),
+            VariableAttribute::Visibility(visibility) => Some(visibility.to_string()),
+            VariableAttribute::Constant(_) => Some("constant".to_string()),
+            VariableAttribute::Immutable(_) => Some("immutable".to_string()),
+            VariableAttribute::Override(loc, idents) => {
+                self.visit_ident_list(loc, "override", idents)?;
+                None
+            }
         };
-        let loc = attribute.loc();
-        write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
+        if let Some(token) = token {
+            let loc = attribute.loc();
+            write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
+        }
         Ok(())
     }
 

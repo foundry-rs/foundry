@@ -130,7 +130,7 @@ impl LineOfCode for YulExpression {
             YulExpression::BoolLiteral(loc, _, _) |
             YulExpression::NumberLiteral(loc, _, _, _) |
             YulExpression::HexNumberLiteral(loc, _, _) |
-            YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::SuffixAccess(loc, _, _) => *loc,
             YulExpression::StringLiteral(literal, _) => literal.loc,
             YulExpression::Variable(ident) => ident.loc,
             YulExpression::FunctionCall(f) => f.loc,
@@ -157,7 +157,7 @@ impl LineOfCode for Statement {
         use Statement::*;
         match self {
             Block { loc, unchecked: _checked, statements: _statements } => *loc,
-            Assembly { loc, dialect: _dialect, block: _block } => *loc,
+            Assembly { loc, dialect: _dialect, block: _block, flags: _flags } => *loc,
             Args(loc, _) => *loc,
             If(loc, _, _, _) => *loc,
             While(loc, _, _) => *loc,
@@ -409,7 +409,7 @@ impl LineOfCode for VariableAttribute {
             VariableAttribute::Visibility(visibility) => visibility.loc().unwrap(),
             VariableAttribute::Constant(loc) |
             VariableAttribute::Immutable(loc) |
-            VariableAttribute::Override(loc) => *loc,
+            VariableAttribute::Override(loc, _) => *loc,
         }
     }
 }

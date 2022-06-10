@@ -2,7 +2,6 @@
 
 mod comments;
 mod formatter;
-mod helpers;
 pub mod solang_ext;
 mod visit;
 

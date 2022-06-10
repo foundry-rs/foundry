@@ -13,6 +13,12 @@ impl AstEq for Loc {
     }
 }
 
+impl AstEq for IdentifierPath {
+    fn ast_eq(&self, other: &Self) -> bool {
+        self.identifiers.ast_eq(&other.identifiers)
+    }
+}
+
 impl AstEq for SourceUnit {
     fn ast_eq(&self, other: &Self) -> bool {
         self.0.ast_eq(&other.0)
@@ -321,6 +327,7 @@ derive_ast_eq! { enum Statement {
         loc,
         dialect,
         block,
+        flags,
     },
 }}
 derive_ast_eq! { enum Expression {
@@ -422,7 +429,7 @@ derive_ast_eq! { enum YulExpression {
     StringLiteral(string, ident),
     Variable(ident),
     FunctionCall(func),
-    Member(loc, expr, ident),
+    SuffixAccess(loc, expr, ident),
     _
 }}
 derive_ast_eq! { enum YulSwitchOptions {
@@ -491,6 +498,6 @@ derive_ast_eq! { enum VariableAttribute {
     Visibility(visi),
     Constant(loc),
     Immutable(loc),
-    Override(loc),
+    Override(loc, idents),
     _
 }}
