@@ -1668,7 +1668,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
         idents.identifiers.iter_mut().skip(1).for_each(|chunk| {
-            if !chunk.name.starts_with(".") {
+            if !chunk.name.starts_with('.') {
                 chunk.name.insert(0, '.')
             }
         });
@@ -1676,8 +1676,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Some(idents.loc.end()),
             idents.identifiers.iter_mut().map(|ident| Ok((ident.loc, ident))),
         )?;
-        let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
-        self.write_chunks_separated(&chunks, "", multiline)?;
+        self.grouped(|fmt| {
+            let multiline = fmt.are_chunks_separated_multiline("{}", &chunks, "")?;
+            fmt.write_chunks_separated(&chunks, "", multiline)
+        })?;
         Ok(())
     }
 
@@ -1893,10 +1895,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_base(&mut self, base: &mut Base) -> Result<()> {
         let name_loc = &base.name.loc;
         let mut name = self.chunked(name_loc.start(), Some(name_loc.end()), |fmt| {
-            fmt.grouped(|fmt| {
-                fmt.visit_ident_path(&mut base.name)?;
-                Ok(())
-            })?;
+            fmt.visit_ident_path(&mut base.name)?;
             Ok(())
         })?;
 
@@ -2155,7 +2154,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 while let Some(func) = funcs.next() {
                     let next_byte_end = funcs.peek().map(|func| func.loc.start());
                     chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
-                        fmt.grouped(|fmt| fmt.visit_ident_path(func))?;
+                        fmt.visit_ident_path(func)?;
                         Ok(())
                     })?);
                 }
