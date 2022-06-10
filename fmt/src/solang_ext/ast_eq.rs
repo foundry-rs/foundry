@@ -1,6 +1,8 @@
 use super::AttrSortKeyIteratorExt;
 use solang_parser::pt::*;
 
+/// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
+/// not matter
 pub trait AstEq {
     fn ast_eq(&self, other: &Self) -> bool;
 }

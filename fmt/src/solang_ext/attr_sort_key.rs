@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use solang_parser::pt::*;
 
+/// Describes the default sort of attributes
 pub trait AttrSortKey {
     fn attr_sort_key(&self) -> usize;
 }

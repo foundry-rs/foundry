@@ -2,6 +2,9 @@ use solang_parser::pt::*;
 
 use super::{LineOfCode, OptionalLineOfCode};
 
+/// The precedence of an Operator.
+/// The lower the level, the sooner it will be evaluated.
+/// E.g. P01 should be evaluated before P02
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Precedence {
@@ -24,10 +27,12 @@ pub enum Precedence {
 }
 
 impl Precedence {
+    /// Is the precedence level evaluated from left to right
     fn is_left_to_right(self) -> bool {
         !matches!(self, Self::P03)
     }
 
+    /// Is `self` as the left hand side evaluated before the right hand side
     pub fn is_evaluated_first(self, rhs: Precedence) -> bool {
         if self == rhs {
             self.is_left_to_right()
@@ -37,6 +42,8 @@ impl Precedence {
     }
 }
 
+/// A simplified list of expressions grouped by operation precedence.
+/// All expressions with groups will be evaluated first and then from left to right
 pub enum FlatExpression<Expr> {
     Expression(Expr),
     SpacedOp(&'static str),
@@ -63,6 +70,7 @@ where
     }
 }
 
+/// Describes the precedence and the operator token of an Expression if it has one
 pub trait Operator: Sized {
     fn precedence(&self) -> Precedence;
     fn operator(&self) -> Option<&'static str>;

@@ -1,5 +1,7 @@
 use solang_parser::pt::*;
 
+/// Check if the namespace matches another. This should be removed by a future version of
+/// solang_parser which implements IdentifierPath's directly
 pub fn namespace_matches(left: &Expression, right: &Expression) -> bool {
     match (left, right) {
         (

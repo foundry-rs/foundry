@@ -1,9 +1,11 @@
 use solang_parser::pt::*;
 
+/// Get the location of an Enum
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
 }
 
+/// Get the location of an Enum if it has one
 pub trait OptionalLineOfCode {
     fn loc(&self) -> Option<Loc>;
 }

@@ -2,18 +2,25 @@ use crate::solang_ext::*;
 use itertools::Itertools;
 use solang_parser::pt::*;
 
+/// The type of a Comment
 #[derive(Debug, Clone, Copy)]
 pub enum CommentType {
+    /// A Line comment (e.g. `// ...`)
     Line,
+    /// A Block comment (e.g. `/* ... */`)
     Block,
 }
 
+/// The comment position
 #[derive(Debug, Clone, Copy)]
 pub enum CommentPosition {
+    /// Comes before the code it describes
     Prefix,
+    /// Comes after the code it describes
     Postfix,
 }
 
+/// Comment with additional metadata
 #[derive(Debug, Clone)]
 pub struct CommentWithMetadata {
     pub ty: CommentType,
@@ -31,6 +38,8 @@ impl CommentWithMetadata {
         };
         Self { ty, loc, comment, position, has_newline_before }
     }
+
+    /// Construct a comment with metadata by analyzing its surrounding source code
     fn from_comment_and_src(comment: Comment, src: &str) -> Self {
         let (position, has_newline_before) = {
             let src_before = &src[..comment.loc().start()];
@@ -93,7 +102,8 @@ impl CommentWithMetadata {
     }
 }
 
-/// Comments are stored in reverse order for easy removal
+/// A list of comments
+/// NOTE: comments are stored in reverse order for easy removal
 #[derive(Debug, Clone)]
 pub struct Comments {
     prefixes: Vec<CommentWithMetadata>,
@@ -116,6 +126,7 @@ impl Comments {
         Self { prefixes, postfixes }
     }
 
+    /// Remove any prefix comments that occur before the byte offset in the src
     pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         let mut prefixes = self.prefixes.split_off(
             self.prefixes
@@ -128,6 +139,7 @@ impl Comments {
         prefixes
     }
 
+    /// Remove any postfix comments that occur before the byte offset in the src
     pub(crate) fn remove_postfixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         let mut postfixes = self.postfixes.split_off(
             self.postfixes
@@ -140,6 +152,7 @@ impl Comments {
         postfixes
     }
 
+    /// Remove any comments that occur before the byte offset in the src
     pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         let mut out = self.remove_prefixes_before(byte);
         out.append(&mut self.remove_postfixes_before(byte));
@@ -154,6 +167,7 @@ enum CommentState {
     Block,
 }
 
+/// An Iterator over characters in a string slice which are not a apart of comments
 pub struct NonCommentChars<'a> {
     iter: std::iter::Peekable<std::str::Chars<'a>>,
     state: CommentState,
@@ -197,6 +211,7 @@ impl<'a> Iterator for NonCommentChars<'a> {
     }
 }
 
+/// Helpers for iterating over non-comment characters
 pub trait CommentStringExt {
     fn non_comment_chars(&self) -> NonCommentChars;
     fn trim_comments(&self) -> String {

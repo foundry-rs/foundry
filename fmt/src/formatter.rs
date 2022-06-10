@@ -14,10 +14,13 @@ use crate::{
     visit::{Visitable, Visitor},
 };
 
+/// A custom Error thrown by the Formatter
 #[derive(Error, Debug)]
 pub enum FormatterError {
+    /// Error thrown by `std::fmt::Write` interfaces
     #[error(transparent)]
     Fmt(#[from] std::fmt::Error),
+    /// All other errors
     #[error(transparent)]
     Custom(Box<dyn std::error::Error>),
 }
@@ -57,7 +60,7 @@ macro_rules! bail {
     };
 }
 
-pub type Result<T, E = FormatterError> = std::result::Result<T, E>;
+type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// Contains the config and rule set
 #[derive(Debug, Clone)]
@@ -76,11 +79,15 @@ impl Default for FormatterConfig {
     }
 }
 
+/// An indent group. The group may optionally skip the first line
 #[derive(Default, Clone)]
 struct IndentGroup {
     skip_line: bool,
 }
 
+/// A wrapper around a `std::fmt::Write` interface. The wrapper keeps track of indentation as well
+/// as information about the last `write_str` command if available. The formatter may also be
+/// restricted to a single line, in which case it will throw an error on a newline
 struct FormatBuffer<W: Sized> {
     indents: Vec<IndentGroup>,
     base_indent_len: usize,
@@ -108,6 +115,8 @@ impl<W: Sized> FormatBuffer<W> {
         }
     }
 
+    /// Create a new temporary buffer based on an existing buffer which retains information about
+    /// the buffer state, but has a blank String as its underlying `Write` interface
     fn create_temp_buf(&self) -> FormatBuffer<String> {
         let mut new = FormatBuffer::new(String::new(), self.tab_width);
         new.base_indent_len = self.current_indent_len();
@@ -118,66 +127,83 @@ impl<W: Sized> FormatBuffer<W> {
         new
     }
 
+    /// Restrict the buffer to a single line
     fn restrict_to_single_line(&mut self, restricted: bool) {
         self.restrict_to_single_line = restricted;
     }
 
+    /// Indent the buffer by delta
     fn indent(&mut self, delta: usize) {
         self.indents.extend(std::iter::repeat(IndentGroup::default()).take(delta));
     }
 
+    /// Dedent the buffer by delta
     fn dedent(&mut self, delta: usize) {
         self.indents.truncate(self.indents.len() - delta);
     }
 
+    /// Get the current level of the indent. This is multiplied by the tab width to get the
+    /// resulting indent
     fn level(&self) -> usize {
         self.indents.iter().filter(|i| !i.skip_line).count()
     }
 
+    /// Check if the last indent group is being skipped
     fn last_indent_group_skipped(&self) -> bool {
         self.indents.last().map(|i| i.skip_line).unwrap_or(false)
     }
 
+    /// Set whether the last indent group should be skipped
     fn set_last_indent_group_skipped(&mut self, skip_line: bool) {
         if let Some(i) = self.indents.last_mut() {
             i.skip_line = skip_line
         }
     }
 
+    /// Get the indent size of the last indent
     fn last_indent_len(&self) -> usize {
         self.last_indent.len() + self.base_indent_len
     }
 
+    /// Get the current indent size (level * tab_width)
     fn current_indent_len(&self) -> usize {
         self.level() * self.tab_width
     }
 
-    fn set_current_line_len(&mut self, len: usize) {
-        self.current_line_len = len
-    }
-
+    /// Get the current written position (this does not include the indent size)
     fn current_line_len(&self) -> usize {
         self.current_line_len
     }
 
+    /// Set the current position
+    fn set_current_line_len(&mut self, len: usize) {
+        self.current_line_len = len
+    }
+
+    /// Check if the buffer is at the beggining of a new line
     fn is_beginning_of_line(&self) -> bool {
         self.is_beginning_of_line
     }
 
+    /// Start a new indent group (skips first indent)
     fn start_group(&mut self) {
         self.indents.push(IndentGroup { skip_line: true });
     }
 
+    /// End the last indent group
     fn end_group(&mut self) {
         self.indents.pop();
     }
 
+    /// Get the last char written to the buffer
     fn last_char(&self) -> Option<char> {
         self.last_char
     }
 }
 
 impl<W: Write> FormatBuffer<W> {
+    /// Write a raw string to the buffer. This will ignore indents and remove the indents of the
+    /// written string to match the current base indent of this buffer if it is a temp buffer
     fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
         let mut lines = s.as_ref().lines().peekable();
         while let Some(line) = lines.next() {
@@ -254,6 +280,7 @@ impl<W: Write> Write for FormatBuffer<W> {
     }
 }
 
+/// Holds information about a non-whitespace-splittable string, and the surrounding comments
 #[derive(Clone, Debug, Default)]
 struct Chunk {
     postfixes_before: Vec<CommentWithMetadata>,
@@ -275,6 +302,7 @@ impl From<&str> for Chunk {
 }
 
 // TODO: store context entities as references without copying
+/// Current context of the Formatter (e.g. inside Contract or Function definition)
 #[derive(Default)]
 struct Context {
     contract: Option<ContractDefinition>,
@@ -365,6 +393,7 @@ macro_rules! buf_fn {
     };
 }
 
+/// An action which may be committed to a Formatter
 struct Transaction<'f, 'a, W> {
     fmt: &'f mut Formatter<'a, W>,
     buffer: String,
@@ -385,6 +414,7 @@ impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
 }
 
 impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
+    /// Create a new transaction from a callback
     fn new(
         fmt: &'f mut Formatter<'a, W>,
         mut fun: impl FnMut(&mut Formatter<'a, W>) -> Result<()>,
@@ -395,6 +425,7 @@ impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
         Ok(Self { fmt, buffer, comments })
     }
 
+    /// Commit the transaction to the Formatter
     fn commit(self) -> Result<String> {
         self.fmt.comments = self.comments;
         write_chunk!(self.fmt, "{}", self.buffer)?;

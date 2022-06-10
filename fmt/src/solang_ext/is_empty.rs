@@ -1,5 +1,6 @@
 use solang_parser::pt::*;
 
+/// Describes if a block is empty or not
 pub trait IsEmpty {
     fn is_empty(&self) -> bool;
 }
