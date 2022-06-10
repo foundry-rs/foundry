@@ -308,16 +308,12 @@ impl CallTraceDecoder {
                 if let Some(event) =
                     identifier.write().await.identify_event(&raw_log.topics[0].0).await
                 {
-                    events.push(event);
+                    events.push(get_indexed_event(event, raw_log));
                     is_external = true;
                 }
             }
 
-            for mut event in events {
-                if is_external {
-                    event = get_indexed_event(event, raw_log);
-                }
-
+            for event in events {
                 if let Ok(decoded) = event.parse_log(raw_log.clone()) {
                     // We want the user to know that this log was decoded using an external
                     // database, since we just get the first one, and it can be misleading.
