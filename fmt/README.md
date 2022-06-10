@@ -32,11 +32,11 @@ See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86
 - [x] VariableDefinition
 - [x] For
 - [x] DoWhile
-- [ ] Continue (Needs comment support)
-- [ ] Break (Needs comment support)
+- [x] Continue
+- [x] Break
 - [ ] Return
 - [ ] Revert
-- [ ] Emit
+- [x] Emit
 - [ ] Try
 - [x] DocComment
 

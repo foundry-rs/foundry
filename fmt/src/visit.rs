@@ -168,12 +168,12 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_break(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    fn visit_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc)
     }
 
-    fn visit_continue(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    fn visit_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc)
     }
 
     #[allow(clippy::type_complexity)]
@@ -423,8 +423,8 @@ impl Visitable for Statement {
                 v.visit_for(*loc, init, cond, update, body)
             }
             Statement::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
-            Statement::Continue(_) => v.visit_continue(),
-            Statement::Break(_) => v.visit_break(),
+            Statement::Continue(loc) => v.visit_continue(*loc),
+            Statement::Break(loc) => v.visit_break(*loc),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
             Statement::RevertNamedArgs(loc, error, args) => {

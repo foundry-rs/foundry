@@ -1655,14 +1655,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_break(&mut self) -> Result<()> {
-        write_chunk!(self, "break;")?;
-        Ok(())
+    fn visit_break(&mut self, loc: Loc) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "break;")
     }
 
-    fn visit_continue(&mut self) -> Result<()> {
-        write_chunk!(self, "continue;")?;
-        Ok(())
+    fn visit_continue(&mut self, loc: Loc) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "continue;")
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
