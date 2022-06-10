@@ -113,6 +113,7 @@ impl<W: Sized> FormatBuffer<W> {
         new.base_indent_len = self.current_indent_len();
         new.last_indent = " ".repeat(self.last_indent_len().saturating_sub(new.base_indent_len));
         new.current_line_len = self.current_line_len();
+        new.last_char = self.last_char;
         new.restrict_to_single_line = self.restrict_to_single_line;
         new
     }
@@ -291,54 +292,54 @@ pub struct Formatter<'a, W> {
 }
 
 macro_rules! write_chunk {
-    ($self:ident, $format_str:literal) => {{
+    ($self:expr, $format_str:literal) => {{
         write_chunk!($self, $format_str,)
     }};
-    ($self:ident, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
         $self.write_chunk(&format!($format_str, $($arg)*).into())
     }};
-    ($self:ident, $loc:expr) => {{
+    ($self:expr, $loc:expr) => {{
         write_chunk!($self, $loc, "")
     }};
-    ($self:ident, $loc:expr, $format_str:literal) => {{
+    ($self:expr, $loc:expr, $format_str:literal) => {{
         write_chunk!($self, $loc, $format_str,)
     }};
-    ($self:ident, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
         let chunk = $self.chunk_at($loc, None, format_args!($format_str, $($arg)*));
         $self.write_chunk(&chunk)
     }};
-    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
         write_chunk!($self, $loc, $end_loc, $format_str,)
     }};
-    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
         let chunk = $self.chunk_at($loc, Some($end_loc), format_args!($format_str, $($arg)*));
         $self.write_chunk(&chunk)
     }};
 }
 
 macro_rules! writeln_chunk {
-    ($self:ident) => {{
+    ($self:expr) => {{
         writeln_chunk!($self, "")
     }};
-    ($self:ident, $format_str:literal) => {{
+    ($self:expr, $format_str:literal) => {{
         writeln_chunk!($self, $format_str,)
     }};
-    ($self:ident, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
         write_chunk!($self, "{}\n", format_args!($format_str, $($arg)*))
     }};
-    ($self:ident, $loc:expr) => {{
+    ($self:expr, $loc:expr) => {{
         writeln_chunk!($self, $loc, "")
     }};
-    ($self:ident, $loc:expr, $format_str:literal) => {{
+    ($self:expr, $loc:expr, $format_str:literal) => {{
         writeln_chunk!($self, $loc, $format_str,)
     }};
-    ($self:ident, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
         write_chunk!($self, $loc, "{}\n", format_args!($format_str, $($arg)*))
     }};
-    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
         writeln_chunk!($self, $loc, $end_loc, $format_str,)
     }};
-    ($self:ident, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
         write_chunk!($self, $loc, $end_loc, "{}\n", format_args!($format_str, $($arg)*))
     }};
 }
@@ -362,6 +363,43 @@ macro_rules! buf_fn {
             }
         }
     };
+}
+
+struct Transaction<'f, 'a, W> {
+    fmt: &'f mut Formatter<'a, W>,
+    buffer: String,
+    comments: Comments,
+}
+
+impl<'f, 'a, W> std::ops::Deref for Transaction<'f, 'a, W> {
+    type Target = Formatter<'a, W>;
+    fn deref(&self) -> &Self::Target {
+        self.fmt
+    }
+}
+
+impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.fmt
+    }
+}
+
+impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
+    fn new(
+        fmt: &'f mut Formatter<'a, W>,
+        mut fun: impl FnMut(&mut Formatter<'a, W>) -> Result<()>,
+    ) -> Result<Self> {
+        let mut comments = fmt.comments.clone();
+        let buffer = fmt.with_temp_buf(|fmt| fun(fmt))?.w;
+        comments = std::mem::replace(&mut fmt.comments, comments);
+        Ok(Self { fmt, buffer, comments })
+    }
+
+    fn commit(self) -> Result<String> {
+        self.fmt.comments = self.comments;
+        write_chunk!(self.fmt, "{}", self.buffer)?;
+        Ok(self.buffer)
+    }
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
@@ -410,6 +448,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out)
     }
 
+    /// Does the next written character require whitespace before
     fn next_chunk_needs_space(&self, next_char: char) -> bool {
         if self.is_beginning_of_line() {
             return false
@@ -439,6 +478,22 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    /// Is length of the `text` with respect to already written line <= `config.line_length`
+    fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
+        let text = text.as_ref();
+        if text.is_empty() {
+            return true
+        }
+        if text.contains('\n') {
+            return false
+        }
+        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
+        self.config.line_length >=
+            self.last_indent_len()
+                .saturating_add(self.current_line_len())
+                .saturating_add(text.len() + space)
+    }
+
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> Result<()> {
@@ -462,104 +517,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Transform [Visitable] items to the list of chunks
-    fn items_to_chunks<'b>(
-        &mut self,
-        next_byte_offset: Option<usize>,
-        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b))>> + 'b,
-    ) -> Result<Vec<Chunk>> {
-        let mut items = items.into_iter().collect::<Result<Vec<_>>>()?.into_iter().peekable();
-        let mut out = Vec::new();
-        while let Some((loc, item)) = items.next() {
-            let chunk_next_byte_offset =
-                items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
-            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
-        }
-        Ok(out)
-    }
-
-    fn items_to_chunks_sorted<'b>(
-        &mut self,
-        next_byte_offset: Option<usize>,
-        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b))>> + 'b,
-    ) -> Result<Vec<Chunk>> {
-        let mut items = items
-            .into_iter()
-            .map_ok(|(loc, vis)| (vis.attr_sort_key(), loc, vis))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .peekable();
-        let mut out = Vec::new();
-        while let Some((attr_sort_key, loc, item)) = items.next() {
-            let chunk_next_byte_offset =
-                items.peek().map(|(_, loc, _)| loc.start()).or(next_byte_offset);
-            out.push((
-                (attr_sort_key, loc),
-                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?,
-            ));
-        }
-        out.sort_by_key(|(k, _)| *k);
-        Ok(out.into_iter().map(|(_, c)| c).collect_vec())
-    }
-
-    /// Is length of the `text` with respect to already written line <= `config.line_length`
-    fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
-        let text = text.as_ref();
-        if text.is_empty() {
-            return true
-        }
-        if text.contains('\n') {
-            return false
-        }
-        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
-        self.config.line_length >=
-            self.last_indent_len()
-                .saturating_add(self.current_line_len())
-                .saturating_add(text.len() + space)
-    }
-
-    fn write_chunks_separated<'b>(
-        &mut self,
-        chunks: impl IntoIterator<Item = &'b Chunk>,
-        separator: &str,
-        multiline: bool,
-    ) -> Result<()> {
-        let mut chunks = chunks.into_iter().peekable();
-        while let Some(chunk) = chunks.next() {
-            let mut chunk = chunk.clone();
-
-            // handle postfixes before and add newline if necessary
-            let postfixes_before = std::mem::take(&mut chunk.postfixes_before);
-            for comment in postfixes_before {
-                self.write_comment(&comment)?;
-            }
-            if multiline && !self.is_beginning_of_line() {
-                writeln!(self.buf())?;
-            }
-
-            // remove postfixes so we can add separator between
-            let postfixes = std::mem::take(&mut chunk.postfixes);
-
-            self.write_chunk(&chunk)?;
-
-            // add separator
-            if chunks.peek().is_some() {
-                write!(self.buf(), "{}", separator)?;
-                for comment in postfixes {
-                    self.write_comment(&comment)?;
-                }
-                if multiline && !self.is_beginning_of_line() {
-                    writeln!(self.buf())?;
-                }
-            } else {
-                for comment in postfixes {
-                    self.write_comment(&comment)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Returns number of blank lines between two LOCs
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         self.source[start..end].matches('\n').count()
@@ -570,57 +527,6 @@ impl<'a, W: Write> Formatter<'a, W> {
             .non_comment_chars()
             .position(|ch| needle == ch)
             .map(|p| byte_offset + p)
-    }
-
-    fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
-        if comment.is_prefix() {
-            let last_indent_group_skipped = self.last_indent_group_skipped();
-            if !self.is_beginning_of_line() {
-                writeln!(self.buf())?;
-                self.set_last_indent_group_skipped(last_indent_group_skipped);
-            }
-            let mut lines = comment.comment.splitn(2, '\n');
-            write!(self.buf(), "{}", lines.next().unwrap())?;
-            if let Some(line) = lines.next() {
-                writeln!(self.buf())?;
-                self.set_last_indent_group_skipped(last_indent_group_skipped);
-                self.write_raw(line)?;
-            }
-            writeln!(self.buf())?;
-            self.set_last_indent_group_skipped(last_indent_group_skipped);
-        } else {
-            let indented = self.is_beginning_of_line();
-            self.indented_if(indented, 1, |fmt| {
-                if !indented && fmt.next_chunk_needs_space('/') {
-                    write!(fmt.buf(), " ")?;
-                }
-                let mut lines = comment.comment.splitn(2, '\n');
-                write!(fmt.buf(), "{}", lines.next().unwrap())?;
-                if let Some(line) = lines.next() {
-                    writeln!(fmt.buf())?;
-                    fmt.write_raw(line)?;
-                }
-                if comment.is_line() {
-                    writeln!(fmt.buf())?;
-                }
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
-    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for postfix in self.comments.remove_postfixes_before(byte_end) {
-            self.write_comment(&postfix)?;
-        }
-        Ok(())
-    }
-
-    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for prefix in self.comments.remove_prefixes_before(byte_end) {
-            self.write_comment(&prefix)?;
-        }
-        Ok(())
     }
 
     fn chunk_at(
@@ -664,6 +570,121 @@ impl<'a, W: Write> Formatter<'a, W> {
             visitable.visit(fmt)?;
             Ok(())
         })
+    }
+
+    /// Transform [Visitable] items to the list of chunks
+    fn items_to_chunks<'b>(
+        &mut self,
+        next_byte_offset: Option<usize>,
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
+        let mut items = items.into_iter().collect::<Result<Vec<_>>>()?.into_iter().peekable();
+        let mut out = Vec::new();
+        while let Some((loc, item)) = items.next() {
+            let chunk_next_byte_offset =
+                items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
+            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
+        }
+        Ok(out)
+    }
+
+    fn items_to_chunks_sorted<'b>(
+        &mut self,
+        next_byte_offset: Option<usize>,
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
+        let mut items = items
+            .into_iter()
+            .map_ok(|(loc, vis)| (vis.attr_sort_key(), loc, vis))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .peekable();
+        let mut out = Vec::new();
+        while let Some((attr_sort_key, loc, item)) = items.next() {
+            let chunk_next_byte_offset =
+                items.peek().map(|(_, loc, _)| loc.start()).or(next_byte_offset);
+            out.push((
+                (attr_sort_key, loc),
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?,
+            ));
+        }
+        out.sort_by_key(|(k, _)| *k);
+        Ok(out.into_iter().map(|(_, c)| c).collect_vec())
+    }
+
+    fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
+        if comment.is_prefix() {
+            let last_indent_group_skipped = self.last_indent_group_skipped();
+            if !self.is_beginning_of_line() {
+                writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
+            }
+            let mut lines = comment.comment.splitn(2, '\n');
+            write!(self.buf(), "{}", lines.next().unwrap())?;
+            if let Some(line) = lines.next() {
+                writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
+                self.write_raw(line)?;
+            }
+            writeln!(self.buf())?;
+            self.set_last_indent_group_skipped(last_indent_group_skipped);
+        } else {
+            let indented = self.is_beginning_of_line();
+            self.indented_if(indented, 1, |fmt| {
+                if !indented && fmt.next_chunk_needs_space('/') {
+                    write!(fmt.buf(), " ")?;
+                }
+                let mut lines = comment.comment.splitn(2, '\n');
+                write!(fmt.buf(), "{}", lines.next().unwrap())?;
+                if let Some(line) = lines.next() {
+                    writeln!(fmt.buf())?;
+                    fmt.write_raw(line)?;
+                }
+                if comment.is_line() {
+                    writeln!(fmt.buf())?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool> {
+        if let Some(chunk_str) = self.simulate_to_single_line(|fmt| fmt.write_chunk(chunk))? {
+            Ok(self.will_it_fit(format_string.replacen("{}", &chunk_str, 1)))
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn are_chunks_separated_multiline<'b>(
+        &mut self,
+        format_string: &str,
+        items: impl IntoIterator<Item = &'b Chunk>,
+        separator: &str,
+    ) -> Result<bool> {
+        let items = items.into_iter().collect_vec();
+        if let Some(chunks) = self.simulate_to_single_line(|fmt| {
+            fmt.write_chunks_separated(items.iter().copied(), separator, false)
+        })? {
+            Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
+        } else {
+            Ok(true)
+        }
+    }
+
+    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for postfix in self.comments.remove_postfixes_before(byte_end) {
+            self.write_comment(&postfix)?;
+        }
+        Ok(())
+    }
+
+    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for prefix in self.comments.remove_prefixes_before(byte_end) {
+            self.write_comment(&prefix)?;
+        }
+        Ok(())
     }
 
     fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
@@ -710,118 +731,46 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn simulate_to_string(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<String> {
-        let comments = self.comments.clone();
-        let contents = self.with_temp_buf(fun)?.w;
-        self.comments = comments;
-        Ok(contents)
-    }
-
-    fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
-        self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
-    }
-
-    fn simulate_to_single_line(
+    fn write_chunks_separated<'b>(
         &mut self,
-        mut fun: impl FnMut(&mut Self) -> Result<()>,
-    ) -> Result<Option<String>> {
-        let comments = self.comments.clone();
-
-        let res = self.with_temp_buf(|fmt| {
-            fmt.restrict_to_single_line(true);
-            fun(fmt)
-        });
-        self.comments = comments;
-
-        match res {
-            Err(FormatterError::Fmt(_)) => {
-                // this is okay because String::write_str will never throw an error
-                // so we know the error is a multiline errro
-                Ok(None)
-            }
-            Err(err) => Err(err),
-            Ok(buf) => {
-                if self.will_it_fit(&buf.w) {
-                    Ok(Some(buf.w))
-                } else {
-                    Ok(None)
-                }
-            }
-        }
-    }
-
-    fn try_on_single_line(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
-        let comments = self.comments.clone();
-
-        let res = self.with_temp_buf(|fmt| {
-            fmt.restrict_to_single_line(true);
-            fun(fmt)
-        });
-
-        match res {
-            Err(err) => {
-                // only revert comments on error
-                self.comments = comments;
-                if matches!(err, FormatterError::Fmt(_)) {
-                    // this is okay because String::write_str will never throw an error
-                    // so we know the error is a multiline errro
-                    Ok(false)
-                } else {
-                    Err(err)
-                }
-            }
-            Ok(buf) => {
-                if self.will_it_fit(&buf.w) {
-                    write_chunk!(self, "{}", buf.w)?;
-                    Ok(true)
-                } else {
-                    self.comments = comments;
-                    Ok(false)
-                }
-            }
-        }
-    }
-
-    fn revertible(&mut self, mut fun: impl FnMut(&mut Self) -> Result<bool>) -> Result<bool> {
-        let comments = self.comments.clone();
-
-        let mut should_commit = false;
-        let buf = self.with_temp_buf(|fmt| {
-            should_commit = fun(fmt)?;
-            Ok(())
-        })?;
-
-        if should_commit {
-            write_chunk!(self, "{}", buf.w)?;
-            Ok(true)
-        } else {
-            self.comments = comments;
-            Ok(false)
-        }
-    }
-
-    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool> {
-        if let Some(chunk_str) = self.simulate_to_single_line(|fmt| fmt.write_chunk(chunk))? {
-            Ok(self.will_it_fit(format_string.replacen("{}", &chunk_str, 1)))
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn are_chunks_separated_multiline<'b>(
-        &mut self,
-        format_string: &str,
-        items: impl IntoIterator<Item = &'b Chunk>,
+        chunks: impl IntoIterator<Item = &'b Chunk>,
         separator: &str,
-    ) -> Result<bool> {
-        let items = items.into_iter().collect_vec();
-        if let Some(chunks) = self.simulate_to_single_line(|fmt| {
-            fmt.write_chunks_separated(items.iter().copied(), separator, false)
-        })? {
-            Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
-        } else {
-            Ok(true)
+        multiline: bool,
+    ) -> Result<()> {
+        let mut chunks = chunks.into_iter().peekable();
+        while let Some(chunk) = chunks.next() {
+            let mut chunk = chunk.clone();
+
+            // handle postfixes before and add newline if necessary
+            let postfixes_before = std::mem::take(&mut chunk.postfixes_before);
+            for comment in postfixes_before {
+                self.write_comment(&comment)?;
+            }
+            if multiline && !self.is_beginning_of_line() {
+                writeln!(self.buf())?;
+            }
+
+            // remove postfixes so we can add separator between
+            let postfixes = std::mem::take(&mut chunk.postfixes);
+
+            self.write_chunk(&chunk)?;
+
+            // add separator
+            if chunks.peek().is_some() {
+                write!(self.buf(), "{}", separator)?;
+                for comment in postfixes {
+                    self.write_comment(&comment)?;
+                }
+                if multiline && !self.is_beginning_of_line() {
+                    writeln!(self.buf())?;
+                }
+            } else {
+                for comment in postfixes {
+                    self.write_comment(&comment)?;
+                }
+            }
         }
+        Ok(())
     }
 
     fn indented(&mut self, delta: usize, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
@@ -837,136 +786,72 @@ impl<'a, W: Write> Formatter<'a, W> {
         if condition {
             self.indent(delta);
         }
-        fun(self)?;
+        let res = fun(self);
         if condition {
             self.dedent(delta);
         }
-        Ok(())
-    }
-
-    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
-            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
-        }
-        Ok(())
-    }
-
-    fn visit_flattened_expr_multiline<E>(
-        &mut self,
-        flattened: &mut [FlatExpression<&mut E>],
-        multiline: bool,
-    ) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        let mut flattened = flattened.iter_mut().peekable();
-        let mut prefix_ops = String::new();
-        while let Some(item) = flattened.next() {
-            let loc = item.loc();
-            match item {
-                FlatExpression::Expression(expr) => {
-                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
-
-                    chunk.content.insert_str(0, &prefix_ops);
-                    prefix_ops.clear();
-                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
-                        chunk.content.push_str(op);
-                        flattened.next();
-                    }
-
-                    self.write_chunk(&chunk)?;
-                    if multiline && flattened.peek().is_some() {
-                        self.write_whitespace_separator(true)?;
-                    }
-                }
-                FlatExpression::SpacedOp(op) => {
-                    write_chunk!(self, "{op}")?;
-                }
-                FlatExpression::UnspacedOp(op) => {
-                    prefix_ops.push_str(op);
-                }
-                FlatExpression::Group(group) => {
-                    let mut prefix = std::mem::take(&mut prefix_ops);
-                    prefix.push('(');
-                    let mut suffix = ")".to_string();
-                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
-                        suffix.push_str(op);
-                        flattened.next();
-                    }
-                    self.surrounded(
-                        loc.map(|loc| loc.start()).unwrap_or(0),
-                        prefix,
-                        suffix,
-                        loc.map(|loc| loc.end()),
-                        |fmt, _multiline| fmt.visit_flattened_expr(group),
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
-        use Expression::*;
-
-        if self.try_on_single_line(|fmt| expr.visit(fmt))? {
-            return Ok(())
-        }
-
-        self.write_postfix_comments_before(expr.loc().start())?;
-        self.write_prefix_comments_before(expr.loc().start())?;
-
-        if self.is_beginning_of_line() &&
-            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
-        {
-            return Ok(())
-        } else {
-            let mut fit_on_next_line = false;
-            self.indented(1, |fmt| {
-                fmt.revertible(|fmt| {
-                    writeln!(fmt.buf())?;
-                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
-                    Ok(fit_on_next_line)
-                })?;
-                Ok(())
-            })?;
-            if fit_on_next_line {
-                return Ok(())
-            }
-        }
-
-        let unsplittable = matches!(
-            expr,
-            BoolLiteral(..) |
-                NumberLiteral(..) |
-                RationalNumberLiteral(..) |
-                HexNumberLiteral(..) |
-                StringLiteral(..) |
-                HexLiteral(..) |
-                AddressLiteral(..) |
-                Variable(..) |
-                Unit(..) |
-                This(..)
-        );
-        if unsplittable {
-            self.indented(1, |fmt| expr.visit(fmt))?;
-            return Ok(())
-        }
-
-        expr.visit(self)?;
-
+        res?;
         Ok(())
     }
 
     fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         self.start_group();
-        fun(self)?;
+        let res = fun(self);
         let indented = !self.last_indent_group_skipped();
         self.end_group();
+        res?;
         Ok(indented)
+    }
+
+    fn transact<'b>(
+        &'b mut self,
+        fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Transaction<'b, 'a, W>> {
+        Transaction::new(self, fun)
+    }
+
+    fn simulate_to_string(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<String> {
+        Ok(self.transact(fun)?.buffer)
+    }
+
+    fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
+        self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
+    }
+
+    fn simulate_to_single_line(
+        &mut self,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Option<String>> {
+        let mut single_line = false;
+        let tx = self.transact(|fmt| {
+            fmt.restrict_to_single_line(true);
+            single_line = match fun(fmt) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        Ok(if single_line && tx.will_it_fit(&tx.buffer) { Some(tx.buffer) } else { None })
+    }
+
+    fn try_on_single_line(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
+        let mut single_line = false;
+        let tx = self.transact(|fmt| {
+            fmt.restrict_to_single_line(true);
+            single_line = match fun(fmt) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        Ok(if single_line && tx.will_it_fit(&tx.buffer) {
+            tx.commit()?;
+            true
+        } else {
+            false
+        })
     }
 
     fn surrounded(
@@ -1065,6 +950,126 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.write_whitespace_separator(true)?;
             }
         }
+        Ok(())
+    }
+
+    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
+            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
+        }
+        Ok(())
+    }
+
+    fn visit_flattened_expr_multiline<E>(
+        &mut self,
+        flattened: &mut [FlatExpression<&mut E>],
+        multiline: bool,
+    ) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        let mut flattened = flattened.iter_mut().peekable();
+        let mut prefix_ops = String::new();
+        while let Some(item) = flattened.next() {
+            let loc = item.loc();
+            match item {
+                FlatExpression::Expression(expr) => {
+                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
+
+                    chunk.content.insert_str(0, &prefix_ops);
+                    prefix_ops.clear();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        chunk.content.push_str(op);
+                        flattened.next();
+                    }
+
+                    self.write_chunk(&chunk)?;
+                    if multiline && flattened.peek().is_some() {
+                        self.write_whitespace_separator(true)?;
+                    }
+                }
+                FlatExpression::SpacedOp(op) => {
+                    write_chunk!(self, "{op}")?;
+                }
+                FlatExpression::UnspacedOp(op) => {
+                    prefix_ops.push_str(op);
+                }
+                FlatExpression::Group(group) => {
+                    let mut prefix = std::mem::take(&mut prefix_ops);
+                    prefix.push('(');
+                    let mut suffix = ")".to_string();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        suffix.push_str(op);
+                        flattened.next();
+                    }
+                    self.surrounded(
+                        loc.map(|loc| loc.start()).unwrap_or(0),
+                        prefix,
+                        suffix,
+                        loc.map(|loc| loc.end()),
+                        |fmt, _multiline| fmt.visit_flattened_expr(group),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
+        use Expression::*;
+
+        if self.try_on_single_line(|fmt| expr.visit(fmt))? {
+            return Ok(())
+        }
+
+        self.write_postfix_comments_before(expr.loc().start())?;
+        self.write_prefix_comments_before(expr.loc().start())?;
+
+        if self.is_beginning_of_line() &&
+            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
+        {
+            return Ok(())
+        } else {
+            let mut fit_on_next_line = false;
+            self.indented(1, |fmt| {
+                let tx = fmt.transact(|fmt| {
+                    writeln!(fmt.buf())?;
+                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
+                    Ok(())
+                })?;
+                if fit_on_next_line {
+                    tx.commit()?;
+                }
+                Ok(())
+            })?;
+            if fit_on_next_line {
+                return Ok(())
+            }
+        }
+
+        let unsplittable = matches!(
+            expr,
+            BoolLiteral(..) |
+                NumberLiteral(..) |
+                RationalNumberLiteral(..) |
+                HexNumberLiteral(..) |
+                StringLiteral(..) |
+                HexLiteral(..) |
+                AddressLiteral(..) |
+                Variable(..) |
+                Unit(..) |
+                This(..)
+        );
+        if unsplittable {
+            self.indented(1, |fmt| expr.visit(fmt))?;
+            return Ok(())
+        }
+
+        expr.visit(self)?;
+
         Ok(())
     }
 }
