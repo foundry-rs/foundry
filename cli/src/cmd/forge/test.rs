@@ -32,6 +32,7 @@ use std::{
     thread,
     time::Duration,
 };
+use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -100,26 +101,26 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn with_merged_config(&self) -> Self {
-        let config = Config::load();
+    pub fn with_merged_config(&self, config: &Config) -> Self {
         let mut filter = self.clone();
         if filter.test_pattern.is_none() {
-            filter.test_pattern = config.test_pattern.map(|p| p.into());
+            filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
         }
         if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.test_pattern_inverse.map(|p| p.into());
+            filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config.contract_pattern.map(|p| p.into());
+            filter.contract_pattern = config.contract_pattern.clone().map(|p| p.into());
         }
         if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse = config.contract_pattern_inverse.map(|p| p.into());
+            filter.contract_pattern_inverse =
+                config.contract_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.path_pattern.is_none() {
-            filter.path_pattern = config.path_pattern;
+            filter.path_pattern = config.path_pattern.clone();
         }
         if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config.path_pattern_inverse;
+            filter.path_pattern_inverse = config.path_pattern_inverse.clone();
         }
         filter
     }
@@ -281,8 +282,8 @@ impl TestArgs {
     }
 
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
-    pub fn filter(&self) -> Filter {
-        self.filter.with_merged_config()
+    pub fn filter(&self, config: &Config) -> Filter {
+        self.filter.with_merged_config(config)
     }
 
     /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
@@ -318,6 +319,7 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
+        trace!(target: "forge::test", "executing test command");
         custom_run(self, true)
     }
 }
@@ -468,7 +470,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         ..Default::default()
     };
     let fuzzer = proptest::test_runner::TestRunner::new(cfg);
-    let mut filter = args.filter();
+    let mut filter = args.filter(&config);
 
     // Set up the project
     let project = config.project()?;
@@ -589,6 +591,7 @@ fn test(
     include_fuzz_tests: bool,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
+    trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {

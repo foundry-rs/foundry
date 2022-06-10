@@ -46,6 +46,7 @@ pub use chain::Chain;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 use regex::Regex;
+use tracing::trace;
 
 /// Foundry configuration
 ///
@@ -343,6 +344,7 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
+        trace!("load config with provider: {:?}", provider.metadata());
         match Self::try_from(provider) {
             Ok(config) => config,
             Err(errors) => {
@@ -1805,6 +1807,7 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
         fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
@@ -1848,7 +1851,14 @@ impl<'a> RemappingsProvider<'a> {
             insert_closest(&mut lib_remappings, r.name, r.path.into());
         }
         // use auto detection for all libs
-        for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
+        for r in self
+            .lib_paths
+            .iter()
+            .map(|lib| self.root.join(lib))
+            .inspect(|lib| {
+                trace!("find all remappings in lib path: {:?}", lib);
+            })
+            .flat_map(Remapping::find_many)
         {
             // this is an additional safety check for weird auto-detected remappings
             if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
@@ -1872,8 +1882,14 @@ impl<'a> RemappingsProvider<'a> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
-            |lib: PathBuf| {
+        self.lib_paths
+            .iter()
+            .map(|p| self.root.join(p))
+            .flat_map(foundry_toml_dirs)
+            .inspect(|lib| {
+                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
+            })
+            .flat_map(|lib: PathBuf| {
                 // load config, of the nested lib if it exists
                 let config = Config::load_with_root(&lib).sanitized();
 
@@ -1903,8 +1919,7 @@ impl<'a> RemappingsProvider<'a> {
                     remappings.push(r);
                 }
                 remappings
-            },
-        )
+            })
     }
 }
 
