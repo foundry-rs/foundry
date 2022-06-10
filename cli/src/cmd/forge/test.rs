@@ -10,7 +10,7 @@ use crate::{
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
-use ethers::solc::FileFilter;
+use ethers::{prelude::U256, solc::FileFilter};
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
@@ -23,6 +23,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
+use proptest::test_runner::{RngAlgorithm, TestRng};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
@@ -272,6 +273,9 @@ pub struct TestArgs {
     /// List tests instead of running them
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
+
+    #[clap(long, help = "Set seed used to generate randomness during your fuzz runs")]
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
@@ -467,7 +471,22 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         max_global_rejects: config.fuzz_max_global_rejects,
         ..Default::default()
     };
-    let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+
+    let mut fuzz_seed = config.fuzz_seed;
+    // cli arg take priority
+    if args.fuzz_seed.is_some() {
+        fuzz_seed = args.fuzz_seed;
+    }
+
+    let fuzzer = if let Some(ref fuzz_seed) = fuzz_seed {
+        let mut bytes: [u8; 32] = [0; 32];
+        fuzz_seed.to_big_endian(&mut bytes);
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+        proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+    } else {
+        proptest::test_runner::TestRunner::new(cfg)
+    };
+
     let mut filter = args.filter();
 
     // Set up the project
