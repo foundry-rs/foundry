@@ -414,6 +414,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    /// Get the Write interface of the current temp buffer or the underlying Write
     fn buf(&mut self) -> &mut dyn Write {
         if self.temp_bufs.is_empty() {
             &mut self.buf as &mut dyn Write
@@ -437,6 +438,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn set_last_indent_group_skipped(&mut self, skip: bool) }
     buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
 
+    /// Do the callback within the context of a temp buffer
     fn with_temp_buf(
         &mut self,
         mut fun: impl FnMut(&mut Self) -> Result<()>,
@@ -517,11 +519,12 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Returns number of blank lines between two LOCs
+    /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
         self.source[start..end].matches('\n').count()
     }
 
+    /// Find the next instance of the character in source
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
             .non_comment_chars()
@@ -529,6 +532,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             .map(|p| byte_offset + p)
     }
 
+    /// Create a chunk given a string and the location information
     fn chunk_at(
         &mut self,
         byte_offset: usize,
@@ -545,6 +549,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    /// Create a chunk given a callback
     fn chunked(
         &mut self,
         byte_offset: usize,
@@ -560,6 +565,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(Chunk { postfixes_before, prefixes, content, postfixes })
     }
 
+    /// Create a chunk given a [Visitable] item
     fn visit_to_chunk(
         &mut self,
         byte_offset: usize,
@@ -588,6 +594,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out)
     }
 
+    /// Transform [Visitable] items to a list of chunks and then sort those chunks by [AttrSortKey]
     fn items_to_chunks_sorted<'b>(
         &mut self,
         next_byte_offset: Option<usize>,
@@ -612,6 +619,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(out.into_iter().map(|(_, c)| c).collect_vec())
     }
 
+    /// Write a comment to the buffer formatted.
+    /// WARNING: This may introduce a newline if the comment is a Line comment
     fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
         if comment.is_prefix() {
             let last_indent_group_skipped = self.last_indent_group_skipped();
@@ -649,6 +658,23 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write a postfix comments before a given location
+    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for postfix in self.comments.remove_postfixes_before(byte_end) {
+            self.write_comment(&postfix)?;
+        }
+        Ok(())
+    }
+
+    /// Write all prefix comments before a given location
+    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for prefix in self.comments.remove_prefixes_before(byte_end) {
+            self.write_comment(&prefix)?;
+        }
+        Ok(())
+    }
+
+    /// Check if a chunk will fit on the current line
     fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool> {
         if let Some(chunk_str) = self.simulate_to_single_line(|fmt| fmt.write_chunk(chunk))? {
             Ok(self.will_it_fit(format_string.replacen("{}", &chunk_str, 1)))
@@ -657,6 +683,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    /// Check if a separated list of chunks will fit on the current line
     fn are_chunks_separated_multiline<'b>(
         &mut self,
         format_string: &str,
@@ -673,20 +700,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
-    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for postfix in self.comments.remove_postfixes_before(byte_end) {
-            self.write_comment(&postfix)?;
-        }
-        Ok(())
-    }
-
-    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for prefix in self.comments.remove_prefixes_before(byte_end) {
-            self.write_comment(&prefix)?;
-        }
-        Ok(())
-    }
-
+    /// Write the chunk and any surrounding comments into the buffer
+    /// This will automatically add whitespace before the chunk given the rule set in
+    /// `next_chunk_needs_space`. If the chunk does not fit on the current line it will be put on
+    /// to the next line
     fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
         // handle comments before chunk
         for comment in &chunk.postfixes_before {
@@ -731,6 +748,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write chunks separated by a separator. If `multiline`, each chunk will be written to a
+    /// separate line
     fn write_chunks_separated<'b>(
         &mut self,
         chunks: impl IntoIterator<Item = &'b Chunk>,
@@ -773,10 +792,12 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Apply the callback indented by the indent size
     fn indented(&mut self, delta: usize, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
         self.indented_if(true, delta, fun)
     }
 
+    /// Apply the callback indented by the indent size if the condition is true
     fn indented_if(
         &mut self,
         condition: bool,
@@ -794,6 +815,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Apply the callback into an indent group. The first line of the indent group is not
+    /// indented but lines thereafter are
     fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         self.start_group();
         let res = fun(self);
@@ -803,6 +826,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(indented)
     }
 
+    /// Create a transaction. The result of the transaction is not applied to the buffer unless
+    /// `Transacton::commit` is called
     fn transact<'b>(
         &'b mut self,
         fun: impl FnMut(&mut Self) -> Result<()>,
@@ -810,14 +835,18 @@ impl<'a, W: Write> Formatter<'a, W> {
         Transaction::new(self, fun)
     }
 
+    /// Do the callback and return the result on the buffer as a string
     fn simulate_to_string(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<String> {
         Ok(self.transact(fun)?.buffer)
     }
 
+    /// Turn a chunk and its surrounding comments into a a string
     fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
         self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
     }
 
+    /// Try to create a string based on a callback. If the string does not fit on a single line
+    /// this will return `None`
     fn simulate_to_single_line(
         &mut self,
         mut fun: impl FnMut(&mut Self) -> Result<()>,
@@ -835,6 +864,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(if single_line && tx.will_it_fit(&tx.buffer) { Some(tx.buffer) } else { None })
     }
 
+    /// Try to apply a callback to a single line. If the callback cannot be applied to a single
+    /// line the callback will not be applied to the buffer and `false` will be returned. Otherwise
+    /// `true` will be returned
     fn try_on_single_line(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
         let mut single_line = false;
         let tx = self.transact(|fmt| {
@@ -854,6 +886,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
+    /// Surrounds a callback with parentheses. The callback will try to be applied to a single
+    /// line. If the callback cannot be applied to a single line the callback will applied to the
+    /// nextline indented. The callback receives a `multiline` hint as the second argument which
+    /// receives `true` in the latter case
     fn surrounded(
         &mut self,
         byte_offset: usize,
@@ -900,6 +936,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write each [Visitable] item on a separate line. The function will check if there are any
+    /// blank lines between each visitable statement and will apply a single blank line if there
+    /// exists any. The `needs_space` callback can force a newline and is given the last_item if
+    /// any and the next item as arguments
     fn write_lined_visitable<'b, I, V, F>(&mut self, items: I, needs_space_fn: F) -> Result<()>
     where
         I: Iterator<Item = &'b mut V> + 'b,
@@ -953,6 +993,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit a flattened expression. The function will try to be applied to a single line and
+    /// otherwise will be grouped into the next line
     fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
     where
         E: Visitable + LineOfCode,
@@ -963,6 +1005,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit a flattened expression. The function takes a `multiline` hint as a second argument
+    /// If multiline the function will split every spaced operator onto a separate line
     fn visit_flattened_expr_multiline<E>(
         &mut self,
         flattened: &mut [FlatExpression<&mut E>],
@@ -1018,6 +1062,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit the right side of an assignment. The function will try to write the assignment on a
+    /// single line or indented on the next line. If it can't do this it resorts to letting the
+    /// expression decide how to split iself on multiple lines
     fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
         use Expression::*;
 
