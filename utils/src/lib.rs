@@ -471,13 +471,16 @@ pub fn get_indexed_event(mut event: Event, raw_log: &RawLog) -> Event {
             .collect::<Vec<String>>()
             .join(",");
 
+        let num_address_params =
+            event.inputs.iter().filter(|p| p.kind == ParamType::Address).count();
+
         let signature = format!("{}({params})", event.name);
 
         let mut event_signature = None;
-        if signature.matches(',').count() + 1 == indexed_params {
+        if event.inputs.len() == indexed_params {
             // All events are indexed.
             event_signature = Some(signature.replace(',', " indexed,").replace(')', " indexed)"))
-        } else if signature.matches("address").count() == indexed_params {
+        } else if num_address_params == indexed_params {
             // We assume only address parameters are indexed.
             event_signature = Some(signature.replace("address", "address indexed"));
         }
