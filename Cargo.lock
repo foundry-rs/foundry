@@ -1997,6 +1997,7 @@ dependencies = [
 name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
+ "auto_impl 1.0.1",
  "bytes",
  "ethers",
  "eyre",
