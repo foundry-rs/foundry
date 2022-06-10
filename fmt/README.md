@@ -72,7 +72,7 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
     - [x] Mapping
     - [x] Function
 - [x] Variable
-- [ ] List
+- [x] List
 - [ ] ArrayLiteral
 - [ ] Unit
 - [ ] This

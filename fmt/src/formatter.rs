@@ -1612,6 +1612,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
                 self.write_chunks_separated(&chunks, "", multiline)?;
             }
+            Expression::List(loc, items) => {
+                self.surrounded(
+                    items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start()),
+                    "(",
+                    ")",
+                    Some(loc.end()),
+                    |fmt, _| {
+                        let items = fmt.items_to_chunks(
+                            Some(loc.end()),
+                            items
+                                .iter_mut()
+                                .filter_map(|item| item.1.as_mut().map(|param| (item.0, param)))
+                                .map(Ok),
+                        )?;
+                        if !fmt.try_on_single_line(|fmt| {
+                            fmt.write_chunks_separated(&items, ",", false)
+                        })? {
+                            fmt.write_chunks_separated(&items, ",", true)?;
+                        }
+                        Ok(())
+                    },
+                )?;
+            }
             _ => self.visit_source(loc)?,
         };
 
@@ -2493,4 +2516,5 @@ mod tests {
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }
     test_directory! { IfStatement }
+    test_directory! { VariableAssignment }
 }
