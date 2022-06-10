@@ -1,3 +1,7 @@
+use super::{
+    sequence::{ScriptSequence, TransactionWithMetadata},
+    *,
+};
 use crate::{
     cmd::{forge::script::receipts::wait_for_receipts, has_different_gas_calc},
     init_progress,
@@ -8,17 +12,13 @@ use crate::{
 use ethers::{
     prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
     providers::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Chain},
+    types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
+use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, sync::Arc};
-
-use super::{
-    sequence::{ScriptSequence, TransactionWithMetadata},
-    *,
-};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -257,8 +257,10 @@ impl ScriptArgs {
         provider: Arc<Provider<RetryClient<Http>>>,
         chain: u64,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let is_legacy =
-            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let mut is_legacy = self.legacy;
+        if let Chain::Named(chain) = Chain::from(chain) {
+            is_legacy |= chain.is_legacy();
+        };
 
         let mut new_txes = VecDeque::new();
         let mut total_gas = U256::zero();
@@ -271,7 +273,7 @@ impl ScriptArgs {
                 typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
             }
 
-            total_gas += *typed_tx.gas().expect("");
+            total_gas += *typed_tx.gas().expect("gas is set");
 
             new_txes.push_back(tx);
         }

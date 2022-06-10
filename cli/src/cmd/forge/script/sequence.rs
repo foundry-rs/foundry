@@ -78,11 +78,9 @@ impl ScriptSequence {
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-            let path = self.path.to_str().wrap_err("Invalid path.")?;
-
+            let path = self.path.to_string_lossy();
             //../run-latest.json
-            serde_json::to_writer(BufWriter::new(std::fs::File::create(path)?), &self)?;
+            serde_json::to_writer(BufWriter::new(std::fs::File::create(&self.path)?), &self)?;
             //../run-[timestamp].json
             serde_json::to_writer(
                 BufWriter::new(std::fs::File::create(
@@ -103,6 +101,7 @@ impl ScriptSequence {
 
     pub fn sort_receipts(&mut self) {
         self.receipts.sort_by(|a, b| {
+            // Safe since `block_number` is present in receipts.
             let ablock = a.block_number.unwrap();
             let bblock = b.block_number.unwrap();
             if ablock == bblock {
