@@ -44,16 +44,18 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum SelectorType {
     Function,
     Event,
 }
 
 /// Decodes the given function or event selector using sig.eth.samczsun.com
-async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<Vec<String>> {
+pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Decoded {
         name: String,
+        filtered: bool,
     }
 
     #[derive(Deserialize)]
@@ -96,7 +98,12 @@ async fn decode_selector(selector: &str, selector_type: SelectorType) -> Result<
         .get(selector)
         .ok_or(eyre::eyre!("No signature found"))?
         .iter()
-        .map(|d| d.name.clone())
+        .filter_map(|d| {
+            if !d.filtered {
+                return Some(d.name.clone())
+            }
+            None
+        })
         .collect::<Vec<String>>())
 }
 

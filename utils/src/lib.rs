@@ -27,6 +27,7 @@ use std::{
 
 pub mod rpc;
 pub mod selectors;
+pub use selectors::decode_selector;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
@@ -444,6 +445,16 @@ pub fn get_func(sig: &str) -> Result<Function> {
         abi.functions.iter().next().ok_or_else(|| eyre::eyre!("function name not found"))?;
     let func = func.get(0).ok_or_else(|| eyre::eyre!("functions array empty"))?;
     Ok(func.clone())
+}
+
+/// Given an event signature string, it tries to parse it as a `Event`
+pub fn get_event(sig: &str) -> Result<Event> {
+    let sig = if !sig.starts_with("event ") { format!("event {}", sig) } else { sig.to_string() };
+    let abi = parse_abi(&[&sig])?;
+    // get the event
+    let (_, event) = abi.events.iter().next().ok_or_else(|| eyre::eyre!("event name not found"))?;
+    let event = event.get(0).ok_or_else(|| eyre::eyre!("events array empty"))?;
+    Ok(event.clone())
 }
 
 // Given a function name, address, and args, tries to parse it as a `Function` by fetching the
