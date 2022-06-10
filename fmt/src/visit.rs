@@ -339,6 +339,22 @@ where
     }
 }
 
+impl<T> Visitable for Option<T>
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        if let Some(inner) = self.as_mut() {
+            inner.visit(v)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl Visitable for SourceUnitPart {
     fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
     where

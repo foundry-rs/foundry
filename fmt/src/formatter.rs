@@ -504,8 +504,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             '/' => true,
             _ => match next_char {
                 '}' | ']' => self.config.bracket_spacing,
-                ')' => false,
-                '.' => false,
+                ')' | ',' | '.' => false,
                 _ => true,
             },
         }
@@ -1621,10 +1620,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     |fmt, _| {
                         let items = fmt.items_to_chunks(
                             Some(loc.end()),
-                            items
-                                .iter_mut()
-                                .filter_map(|item| item.1.as_mut().map(|param| (item.0, param)))
-                                .map(Ok),
+                            items.iter_mut().map(|item| Ok((item.0, &mut item.1))),
                         )?;
                         if !fmt.try_on_single_line(|fmt| {
                             fmt.write_chunks_separated(&items, ",", false)
