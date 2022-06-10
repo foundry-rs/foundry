@@ -69,6 +69,7 @@ pub trait Visitor {
         loc: Loc,
         _dialect: &mut Option<StringLiteral>,
         _block: &mut YulBlock,
+        _flags: &mut Option<Vec<StringLiteral>>,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
@@ -410,8 +411,8 @@ impl Visitable for Statement {
             Statement::Block { loc, unchecked, statements } => {
                 v.visit_block(*loc, *unchecked, statements)
             }
-            Statement::Assembly { loc, dialect, block, flags /* TODO: */ } => {
-                v.visit_assembly(*loc, dialect, block)
+            Statement::Assembly { loc, dialect, block, flags } => {
+                v.visit_assembly(*loc, dialect, block, flags)
             }
             Statement::Args(loc, args) => v.visit_args(*loc, args),
             Statement::If(loc, cond, if_branch, else_branch) => {

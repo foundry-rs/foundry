@@ -1149,6 +1149,27 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_ident_list(
+        &mut self,
+        loc: &mut Loc,
+        prefix: &str,
+        idents: &mut Vec<IdentifierPath>,
+    ) -> Result<()> {
+        write_chunk!(self, loc.start(), "{}", prefix)?;
+        if !idents.is_empty() {
+            self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _multiline| {
+                let args = fmt.items_to_chunks(
+                    Some(loc.end()),
+                    idents.iter_mut().map(|arg| Ok((arg.loc, arg))),
+                )?;
+                let multiline = fmt.are_chunks_separated_multiline("{}", &args, ", ")?;
+                fmt.write_chunks_separated(&args, ",", multiline)?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1839,18 +1860,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(loc, args) => {
-                write_chunk!(self, loc.start(), "override")?;
-                if !args.is_empty() {
-                    self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _multiline| {
-                        let args = fmt.items_to_chunks(
-                            Some(loc.end()),
-                            args.iter_mut().map(|arg| Ok((arg.loc, arg))),
-                        )?;
-                        let multiline = fmt.are_chunks_separated_multiline("{}", &args, ", ")?;
-                        fmt.write_chunks_separated(&args, ",", multiline)?;
-                        Ok(())
-                    })?;
-                }
+                self.visit_ident_list(loc, "override", args)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
@@ -2217,13 +2227,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> Result<()> {
         let token = match attribute {
-            VariableAttribute::Visibility(visibility) => visibility.to_string(),
-            VariableAttribute::Constant(_) => "constant".to_string(),
-            VariableAttribute::Immutable(_) => "immutable".to_string(),
-            VariableAttribute::Override(_, idents /* TODO: */) => "override".to_string(),
+            VariableAttribute::Visibility(visibility) => Some(visibility.to_string()),
+            VariableAttribute::Constant(_) => Some("constant".to_string()),
+            VariableAttribute::Immutable(_) => Some("immutable".to_string()),
+            VariableAttribute::Override(loc, idents) => {
+                self.visit_ident_list(loc, "override", idents)?;
+                None
+            }
         };
-        let loc = attribute.loc();
-        write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
+        if let Some(token) = token {
+            let loc = attribute.loc();
+            write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
+        }
         Ok(())
     }
 
