@@ -39,7 +39,7 @@ impl SizeReport {
         max_size
     }
 
-    /// Returns true if all contracts are within the size limit, excluding test contracts.
+    /// Returns true if any contract exceeds the size limit, excluding test contracts.
     pub fn exceeds_size_limit(&self) -> bool {
         self.max_size() > CONTRACT_SIZE_LIMIT
     }

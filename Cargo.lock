@@ -1997,12 +1997,10 @@ dependencies = [
 name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
- "auto_impl 1.0.1",
  "bytes",
  "ethers",
  "eyre",
  "foundry-common",
- "foundry-config",
  "foundry-utils",
  "futures",
  "hashbrown 0.12.0",
@@ -4033,9 +4031,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "1.4.1"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7b8f9b89afbb38c33ebe39c3c68faab1b8328b3de404c1a1531dda646897aec"
+checksum = "1affcd38e2d1a4570699f8cf35f0668c886febdba1b857771b20cf81025ada1d"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
