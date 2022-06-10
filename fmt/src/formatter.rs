@@ -9,7 +9,6 @@ use thiserror::Error;
 
 use crate::{
     comments::{CommentStringExt, CommentWithMetadata, Comments},
-    helpers,
     solang_ext::*,
     visit::{Visitable, Visitor},
 };
@@ -1855,9 +1854,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
-                    contract.base.iter().any(|contract_base| {
-                        helpers::namespace_matches(&contract_base.name, &base.name)
-                    })
+                    contract.base.iter().any(|contract_base| contract_base.name.ast_eq(&base.name))
                 });
                 if base.name.identifiers.iter().any(|i| i.name == "Ownable") {}
 
@@ -2478,7 +2475,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        // println!("{}", source_formatted);
+        println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
