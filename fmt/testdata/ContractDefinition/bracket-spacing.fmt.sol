@@ -4,6 +4,11 @@ contract ContractDefinition is Contract1, Contract2, Contract3, Contract4, Contr
 
 // comment 7
 contract SampleContract {
+    // spaced comment 1
+
+    // spaced comment 2
+    // that spans multiple lines
+
     // comment 8
     constructor() { /* comment 9 */ } // comment 10
 

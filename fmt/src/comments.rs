@@ -36,7 +36,7 @@ impl CommentWithMetadata {
             Comment::Line(loc, comment) => (CommentType::Line, loc, comment),
             Comment::Block(loc, comment) => (CommentType::Block, loc, comment),
         };
-        Self { ty, loc, comment, position, has_newline_before }
+        Self { comment: comment.trim_end().to_string(), ty, loc, position, has_newline_before }
     }
 
     /// Construct a comment with metadata by analyzing its surrounding source code

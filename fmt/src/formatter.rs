@@ -1213,7 +1213,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> Result<()> {
         match doc_comment.ty {
             CommentType::Line => {
-                write!(self.buf(), "///{}", doc_comment.comment)?;
+                write!(self.buf(), "///{}", doc_comment.comment.trim_end())?;
             }
             CommentType::Block => {
                 let lines = doc_comment
@@ -1232,12 +1232,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             writeln!(
                                 self.buf(),
                                 " *{}",
-                                doc_comment.comment.lines().next().unwrap()
+                                doc_comment.comment.lines().next().unwrap().trim_end()
                             )?;
                         }
                     }
                     for line in lines {
-                        writeln!(self.buf(), " *{}", &line[1..])?;
+                        writeln!(self.buf(), " *{}", &line[1..].trim_end())?;
                     }
                     write!(self.buf(), " */")?;
                 } else {

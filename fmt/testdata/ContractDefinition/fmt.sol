@@ -8,6 +8,11 @@ contract ContractDefinition is
 
 // comment 7
 contract SampleContract {
+    // spaced comment 1
+
+    // spaced comment 2
+    // that spans multiple lines
+
     // comment 8
     constructor() { /* comment 9 */ } // comment 10
 
