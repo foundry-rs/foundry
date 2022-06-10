@@ -1873,7 +1873,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             .all(|(l, r)| l.name == r.name)
                     })
                 });
-                if base.name.identifiers.iter().any(|i| i.name == "Ownable") {}
 
                 if is_contract_base {
                     base.visit(self)?;
