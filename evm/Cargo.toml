@@ -43,7 +43,10 @@ proptest = "1.0.0"
 
 # Display
 yansi = "0.5.1"
+
+# Misc
 url = "2.2.2"
+auto_impl = "1.0.1"
 
 [dev-dependencies]
 tempfile = "3.3.0"
