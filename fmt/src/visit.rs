@@ -96,6 +96,10 @@ pub trait Visitor {
         self.visit_source(loc)
     }
 
+    fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
+        self.visit_source(idents.loc)
+    }
+
     fn visit_emit(&mut self, loc: Loc, _event: &mut Expression) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
         self.visit_stray_semicolon()?;
@@ -147,7 +151,7 @@ pub trait Visitor {
     fn visit_revert(
         &mut self,
         loc: Loc,
-        _error: &mut Option<Expression>,
+        _error: &mut Option<IdentifierPath>,
         _args: &mut Vec<Expression>,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
@@ -159,7 +163,7 @@ pub trait Visitor {
     fn visit_revert_named_args(
         &mut self,
         loc: Loc,
-        _error: &mut Option<Expression>,
+        _error: &mut Option<IdentifierPath>,
         _args: &mut Vec<NamedArgument>,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)?;
@@ -406,7 +410,9 @@ impl Visitable for Statement {
             Statement::Block { loc, unchecked, statements } => {
                 v.visit_block(*loc, *unchecked, statements)
             }
-            Statement::Assembly { loc, dialect, block } => v.visit_assembly(*loc, dialect, block),
+            Statement::Assembly { loc, dialect, block, flags /* TODO: */ } => {
+                v.visit_assembly(*loc, dialect, block)
+            }
             Statement::Args(loc, args) => v.visit_args(*loc, args),
             Statement::If(loc, cond, if_branch, else_branch) => {
                 v.visit_if(*loc, cond, if_branch, else_branch)
@@ -496,3 +502,4 @@ impl_visitable!(Parameter, visit_parameter);
 impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
+impl_visitable!(IdentifierPath, visit_ident_path);

@@ -1646,6 +1646,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
+        idents.identifiers.iter_mut().skip(1).for_each(|chunk| {
+            if !chunk.name.starts_with(".") {
+                chunk.name.insert(0, '.')
+            }
+        });
+        let chunks = self.items_to_chunks(
+            Some(idents.loc.end()),
+            idents.identifiers.iter_mut().map(|ident| Ok((ident.loc, ident))),
+        )?;
+        let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
+        self.write_chunks_separated(&chunks, "", multiline)?;
+        Ok(())
+    }
+
     fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), "emit")?;
@@ -1844,6 +1859,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         helpers::namespace_matches(&contract_base.name, &base.name)
                     })
                 });
+                if base.name.identifiers.iter().any(|i| i.name == "Ownable") {}
 
                 if is_contract_base {
                     base.visit(self)?;
@@ -1862,10 +1878,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_base(&mut self, base: &mut Base) -> Result<()> {
-        let name_loc = LineOfCode::loc(&base.name);
+        let name_loc = &base.name.loc;
         let mut name = self.chunked(name_loc.start(), Some(name_loc.end()), |fmt| {
             fmt.grouped(|fmt| {
-                fmt.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
+                fmt.visit_ident_path(&mut base.name)?;
                 Ok(())
             })?;
             Ok(())
@@ -2118,15 +2134,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let (is_library, mut list_chunks) = match &mut using.list {
             UsingList::Library(library) => {
-                (true, vec![self.visit_to_chunk(library.loc().start(), None, library)?])
+                (true, vec![self.visit_to_chunk(library.loc.start(), None, library)?])
             }
             UsingList::Functions(funcs) => {
                 let mut funcs = funcs.iter_mut().peekable();
                 let mut chunks = Vec::new();
                 while let Some(func) = funcs.next() {
-                    let next_byte_end = funcs.peek().map(|func| func.loc().start());
-                    chunks.push(self.chunked(func.loc().start(), next_byte_end, |fmt| {
-                        fmt.grouped(|fmt| fmt.visit_expr(func.loc(), func))?;
+                    let next_byte_end = funcs.peek().map(|func| func.loc.start());
+                    chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
+                        fmt.grouped(|fmt| fmt.visit_ident_path(func))?;
                         Ok(())
                     })?);
                 }
@@ -2207,7 +2223,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             VariableAttribute::Visibility(visibility) => visibility.to_string(),
             VariableAttribute::Constant(_) => "constant".to_string(),
             VariableAttribute::Immutable(_) => "immutable".to_string(),
-            VariableAttribute::Override(_) => "override".to_string(),
+            VariableAttribute::Override(_, idents /* TODO: */) => "override".to_string(),
         };
         let loc = attribute.loc();
         write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
@@ -2462,7 +2478,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        println!("{}", source_formatted);
+        // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(

@@ -4,6 +4,6 @@ contract UsingExampleContract {
    using Example.UsingExampleLibrary  for  uint;
         using { M.g, M.f} for uint;
 using UsingExampleLibrary for   uint  global;
-using { Theses, Are, MultipleLibraries, ThatNeedToBePut, OnSeparateLines } for uint;
+using { These, Are, MultipleLibraries, ThatNeedToBePut, OnSeparateLines } for uint;
 using { This.isareally.longmember.access.expression.that.needs.to.besplit.into.lines } for uint;
 }
