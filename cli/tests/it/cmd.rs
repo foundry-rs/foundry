@@ -188,27 +188,14 @@ forgetest_ignore!(can_cache_clean_chain_etherscan, |_: TestProject, mut cmd: Tes
 
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
     cmd.args(["init", "--force"]).arg(prj.root());
     cmd.assert_non_empty_stdout();
 
-    let file = Config::find_config_file().unwrap();
-    assert_eq!(foundry_toml, file);
-
-    let s = read_string(&file);
+    let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-
-    // can detect root
-    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
-    let nested = prj.root().join("nested/nested");
-    pretty_err(&nested, std::fs::create_dir_all(&nested));
-
-    // even if nested
-    cmd.set_current_dir(&nested);
-    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
 });
 
 // checks that init works repeatedly
@@ -326,7 +313,6 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     let config = Config { out: "custom-out".into(), ..Default::default() };
     prj.write_config(config);
     cmd.arg("build");
@@ -343,7 +329,6 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
@@ -361,7 +346,6 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
@@ -652,14 +636,16 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(can_check_snapshot, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-    prj.insert_ds_test();
+forgetest!(
+    #[serial_test::serial]
+    can_check_snapshot,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
+        prj.inner()
+            .add_source(
+                "ATest.t.sol",
+                r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "./test.sol";
@@ -669,18 +655,20 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-    cmd.arg("snapshot");
+        cmd.arg("snapshot");
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
-    );
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_check_snapshot.stdout"),
+        );
 
-    cmd.arg("--check");
-    let _ = cmd.output();
-});
+        cmd.arg("--check");
+        let _ = cmd.output();
+    }
+);
 
 // test that `forge build` does not print `(with warnings)` if there arent any
 forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
@@ -846,147 +834,126 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-forgetest_async!(
-    can_deploy_script_without_lib,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0, 1])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 1), (1, 2)])
-            .await;
-    })
-);
+    tester
+        .load_private_keys(vec![0, 1])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 1), (1, 2)])
+        .await;
+});
 
-forgetest_async!(
-    can_deploy_script_with_lib,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0, 1])
-            .await
-            .add_sig("BroadcastTest", "deploy()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 2), (1, 1)])
-            .await;
-    })
-);
+    tester
+        .load_private_keys(vec![0, 1])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 2), (1, 1)])
+        .await;
+});
 
-forgetest_async!(
-    can_resume_script,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTest", "deploy()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .resume(ScriptOutcome::MissingWallet)
-            // load missing wallet
-            .load_private_keys(vec![1])
-            .await
-            .run(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 2), (1, 1)])
-            .await;
-    })
-);
+    tester
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTest", "deploy()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .resume(ScriptOutcome::MissingWallet)
+        // load missing wallet
+        .load_private_keys(vec![1])
+        .await
+        .run(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 2), (1, 1)])
+        .await;
+});
 
-forgetest_async!(
-    can_deploy_broadcast_wrap,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .add_deployer(2)
-            .load_private_keys(vec![0, 1, 2])
-            .await
-            .add_sig("BroadcastTest", "deployOther()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
-            .await;
-    })
-);
+    tester
+        .add_deployer(2)
+        .load_private_keys(vec![0, 1, 2])
+        .await
+        .add_sig("BroadcastTest", "deployOther()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
+        .await;
+});
 
-forgetest_async!(
-    panic_no_deployer_set,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0, 1])
-            .await
-            .add_sig("BroadcastTest", "deployOther()")
-            .simulate(ScriptOutcome::WarnSpecifyDeployer)
-            .broadcast(ScriptOutcome::MissingSender);
-    })
-);
+    tester
+        .load_private_keys(vec![0, 1])
+        .await
+        .add_sig("BroadcastTest", "deployOther()")
+        .simulate(ScriptOutcome::WarnSpecifyDeployer)
+        .broadcast(ScriptOutcome::MissingSender);
+});
 
-forgetest_async!(
-    can_deploy_no_arg_broadcast,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .add_deployer(0)
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTest", "deployNoArgs()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 3)])
-            .await;
-    })
-);
+    tester
+        .add_deployer(0)
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTest", "deployNoArgs()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 3)])
+        .await;
+});
 
-forgetest_async!(
-    can_deploy_with_create2,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        // Prepare CREATE2 Deployer
-        let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-        let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-        api.anvil_set_code(addr, code).await.unwrap();
+    // Prepare CREATE2 Deployer
+    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+    api.anvil_set_code(addr, code).await.unwrap();
 
-        tester
-            .add_deployer(0)
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployCreate2()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 2)])
-            .await
-            // Running again results in error, since we're repeating the salt passed to CREATE2
-            .run(ScriptOutcome::FailedScript);
-    })
-);
+    tester
+        .add_deployer(0)
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 2)])
+        .await
+        // Running again results in error, since we're repeating the salt passed to CREATE2
+        .run(ScriptOutcome::FailedScript);
+});
 
 forgetest_async!(
     can_deploy_100_txes_concurrently,
-    (|prj: TestProject, cmd: TestCommand| async move {
+    |prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -999,12 +966,12 @@ forgetest_async!(
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 100)])
             .await;
-    })
+    }
 );
 
 forgetest_async!(
     can_deploy_mixed_broadcast_modes,
-    (|prj: TestProject, cmd: TestCommand| async move {
+    |prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
         spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
@@ -1017,38 +984,70 @@ forgetest_async!(
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 15)])
             .await;
-    })
+    }
 );
 
-forgetest_async!(
-    deploy_with_setup,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTestSetup", "run()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 6)])
-            .await;
-    })
-);
+    tester
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTestSetup", "run()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 6)])
+        .await;
+});
 
-forgetest_async!(
-    fail_broadcast_staticcall,
-    (|prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
+forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
 
-        tester
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
-            .simulate(ScriptOutcome::FailedScript);
-    })
-);
+    tester
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
+        .simulate(ScriptOutcome::FailedScript);
+});
+
+// test to check that install/remove works properly
+forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    let remove = |cmd: &mut TestCommand, target: &str| {
+        cmd.forge_fuse().args(["remove", target]);
+        cmd.assert_non_empty_stdout();
+        assert!(!forge_std.exists());
+        assert!(!forge_std_mod.exists());
+        let submods = read_string(&git_mod_file);
+        assert!(!submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    remove(&mut cmd, "forge-std");
+
+    // install again and remove via relative path
+    install(&mut cmd);
+    remove(&mut cmd, "lib/forge-std");
+});

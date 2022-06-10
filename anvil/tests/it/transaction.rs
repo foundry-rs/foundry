@@ -6,11 +6,11 @@ use ethers::{
         signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
-    types::{Address, BlockNumber, H256, U256},
+    types::{Address, BlockNumber, Transaction, TransactionReceipt, H256, U256},
 };
 use ethers_solc::{project_util::TempProject, Artifact};
-use futures::{future::join_all, StreamExt};
-use std::{sync::Arc, time::Duration};
+use futures::{future::join_all, FutureExt, StreamExt};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -702,4 +702,84 @@ async fn can_get_historic_info() {
 
     let to_balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance_pre.saturating_add(amount), to_balance);
+}
+
+// <https://github.com/eth-brownie/brownie/issues/1549>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tx_receipt() {
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert!(tx.to.is_some());
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
+    assert!(tx.to.is_none());
+    assert!(tx.contract_address.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_stream_pending_transactions() {
+    let (_api, handle) = spawn(
+        NodeConfig::test().with_port(next_port()).with_blocktime(Some(Duration::from_secs(2))),
+    )
+    .await;
+    let num_txs = 5;
+    let provider = handle.http_provider();
+    let ws_provider = handle.ws_provider().await;
+
+    let accounts = provider.get_accounts().await.unwrap();
+    let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
+
+    let mut sending = futures::future::join_all(
+        std::iter::repeat(tx.clone())
+            .take(num_txs)
+            .enumerate()
+            .map(|(nonce, tx)| tx.nonce(nonce))
+            .map(|tx| async {
+                provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap()
+            }),
+    )
+    .fuse();
+
+    let mut watch_tx_stream =
+        provider.watch_pending_transactions().await.unwrap().transactions_unordered(num_txs).fuse();
+
+    let mut sub_tx_stream =
+        ws_provider.subscribe_pending_txs().await.unwrap().transactions_unordered(2).fuse();
+
+    let mut sent: Option<Vec<TransactionReceipt>> = None;
+    let mut watch_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+    let mut sub_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+
+    loop {
+        futures::select! {
+            txs = sending => {
+                sent = Some(txs)
+            },
+            tx = watch_tx_stream.next() => {
+                watch_received.push(tx.unwrap().unwrap());
+            },
+            tx = sub_tx_stream.next() => {
+                sub_received.push(tx.unwrap().unwrap());
+            },
+        };
+        if watch_received.len() == num_txs && sub_received.len() == num_txs {
+            if let Some(ref sent) = sent {
+                assert_eq!(sent.len(), watch_received.len());
+                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
+                assert_eq!(sent_txs, watch_received.iter().map(|tx| tx.hash).collect());
+                assert_eq!(sent_txs, sub_received.iter().map(|tx| tx.hash).collect());
+                break
+            }
+        }
+    }
 }

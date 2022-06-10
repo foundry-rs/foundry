@@ -13,8 +13,6 @@ mod forge_utils;
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
-
     let patt = regex::Regex::new("test*").unwrap();
     let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
 
@@ -41,9 +39,8 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that warning is displayed when there are no tests in project
-forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(warn_no_tests, |_prj: TestProject, mut cmd: TestCommand| {
     // set up command
-    cmd.set_current_dir(prj.root());
     cmd.args(["test"]);
 
     // run command and assert
@@ -53,9 +50,8 @@ forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that warning is displayed with pattern when no tests match
-forgetest!(warn_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(warn_no_tests_match, |_prj: TestProject, mut cmd: TestCommand| {
     // set up command
-    cmd.set_current_dir(prj.root());
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
@@ -85,7 +81,6 @@ contract TestC {
         .unwrap();
 
     // set up command
-    cmd.set_current_dir(prj.root());
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
     cmd.args(["--match-path", "*TestE*", "--no-match-path", "*TestF*"]);
@@ -188,7 +183,6 @@ contract FailTest is DSTest {
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     prj.insert_ds_test();
 
     // explicitly set the test folder

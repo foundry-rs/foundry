@@ -169,14 +169,17 @@ pub fn unwrap_contracts(
 ) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
     contracts
         .iter()
-        .map(|(id, c)| {
+        .filter_map(|(id, c)| {
             let bytecode = if deployed_code {
-                c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec()
+                c.deployed_bytecode.clone().into_bytes()
             } else {
-                c.bytecode.clone().object.into_bytes().expect("not bytecode").to_vec()
+                c.bytecode.clone().object.into_bytes()
             };
 
-            (id.clone(), (c.abi.clone(), bytecode))
+            if let Some(bytecode) = bytecode {
+                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+            }
+            None
         })
         .collect()
 }
@@ -479,6 +482,6 @@ macro_rules! update_progress {
 pub fn has_different_gas_calc(chain: u64) -> bool {
     matches!(
         Chain::try_from(chain).unwrap_or(Chain::Mainnet),
-        Chain::Arbitrum | Chain::ArbitrumTestnet
+        Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
     )
 }

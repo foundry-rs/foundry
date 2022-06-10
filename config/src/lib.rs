@@ -416,6 +416,7 @@ impl Config {
 
         self.src = p(&root, &self.src);
         self.test = p(&root, &self.test);
+        self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
@@ -470,6 +471,17 @@ impl Config {
         // remove any potential duplicates
         self.remappings.sort_unstable();
         self.remappings.dedup();
+    }
+
+    /// Returns the directory in which dependencies should be installed
+    ///
+    /// Returns the first dir from `libs` that is not `node_modules` or `lib` if `libs` is empty
+    pub fn install_lib_dir(&self) -> PathBuf {
+        self.libs
+            .iter()
+            .find(|p| !p.ends_with("node_modules"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("lib"))
     }
 
     /// Serves as the entrypoint for obtaining the project.
@@ -583,6 +595,7 @@ impl Config {
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
+            .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.clone())
             .remappings(self.get_all_remappings())
@@ -2013,6 +2026,35 @@ mod tests {
 
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_install_dir() {
+        figment::Jail::expect_with(|jail| {
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['node_modules', 'lib']
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['custom', 'node_modules', 'lib']
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("custom"));
+
+            Ok(())
+        });
+    }
 
     #[test]
     fn test_figment_is_default() {

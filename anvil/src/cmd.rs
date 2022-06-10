@@ -90,6 +90,13 @@ pub struct NodeArgs {
 
     #[clap(
         long,
+        help = "Writes output of `anvil` as json to user-specified file",
+        value_name = "OUT_FILE"
+    )]
+    pub config_out: Option<String>,
+
+    #[clap(
+        long,
         visible_alias = "no-mine",
         help = "Disable auto and interval mining, and mine on demand instead.",
         conflicts_with = "block-time"
@@ -139,6 +146,7 @@ impl NodeArgs {
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(self.silent)
+            .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
             .with_transaction_order(self.order)
     }
