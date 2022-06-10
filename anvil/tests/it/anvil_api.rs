@@ -5,7 +5,6 @@ use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
     types::{Address, TransactionRequest, U256},
-    utils::WEI_IN_ETHER,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -37,7 +36,8 @@ async fn can_impersonate_account() {
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
 
-    let _res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res.from, impersonate);
 
     let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
     assert_eq!(nonce, 1u64.into());
