@@ -4,7 +4,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, RawLog, Token,
     },
     types::*,
 };
@@ -455,6 +455,48 @@ pub fn get_event(sig: &str) -> Result<Event> {
     let (_, event) = abi.events.iter().next().ok_or_else(|| eyre::eyre!("event name not found"))?;
     let event = event.get(0).ok_or_else(|| eyre::eyre!("events array empty"))?;
     Ok(event.clone())
+}
+
+/// Given an event and a rawlog, it tries to return the event with the proper indexed parameters.
+/// Otherwise, it returns the original event.
+pub fn get_indexed_event(mut event: Event, raw_log: &RawLog) -> Event {
+    if !event.anonymous && raw_log.topics.len() > 1 {
+        let indexed_params = raw_log.topics.len() - 1;
+
+        // Build event signature string
+        let params = event
+            .inputs
+            .iter()
+            .map(|param| format!("{}", param.kind))
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let signature = format!("{}({params})", event.name);
+
+        let mut event_signature = None;
+        if signature.matches(',').count() + 1 == indexed_params {
+            // All events are indexed.
+            event_signature = Some(signature.replace(',', " indexed,").replace(')', " indexed)"))
+        } else if signature.matches("address").count() == indexed_params {
+            // We assume only address parameters are indexed.
+            event_signature = Some(signature.replace("address", "address indexed"));
+        }
+
+        if let Some(signature) = event_signature {
+            if let Ok(ev) = get_event(&signature) {
+                event = ev;
+
+                // We have to name them, otherwise `ethabi` cannot `parse_log` them correctly when
+                // using
+                event
+                    .inputs
+                    .iter_mut()
+                    .enumerate()
+                    .for_each(|(index, param)| param.name = format!("param{index}"));
+            }
+        }
+    }
+    event
 }
 
 // Given a function name, address, and args, tries to parse it as a `Function` by fetching the

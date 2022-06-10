@@ -79,10 +79,7 @@ impl SignaturesIdentifier {
 
     /// Identifies `Event` from its cache or `sig.eth.samczsun.com`
     pub async fn identify_event(&mut self, identifier: &[u8]) -> Option<Event> {
-        self.identify(SelectorType::Event, identifier, get_event).await.map(|mut event| {
-            event.name = format!("*{}", event.name);
-            event
-        })
+        self.identify(SelectorType::Event, identifier, get_event).await
     }
 }
 
@@ -128,15 +125,7 @@ mod tests {
                     })
                     .unwrap()
             );
-            assert!(
-                event ==
-                    get_event("Transfer(address,address,uint128)")
-                        .map(|mut ev| {
-                            ev.name = format!("*{}", ev.name);
-                            ev
-                        })
-                        .unwrap()
-            );
+            assert!(event == get_event("Transfer(address,address,uint128)").unwrap());
         }
 
         let sigs = SignaturesIdentifier::new(Some("./".into())).unwrap();

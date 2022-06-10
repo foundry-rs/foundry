@@ -12,6 +12,7 @@ use ethers::{
     solc::utils::RuntimeOrHandle,
     types::H256,
 };
+use foundry_utils::get_indexed_event;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -298,6 +299,8 @@ impl CallTraceDecoder {
 
     async fn decode_event(&self, log: &mut RawOrDecodedLog) {
         if let RawOrDecodedLog::Raw(raw_log) = log {
+            let mut is_external = false;
+
             let mut events = vec![];
             if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
                 events = evs.clone();
@@ -306,13 +309,22 @@ impl CallTraceDecoder {
                     identifier.write().await.identify_event(&raw_log.topics[0].0).await
                 {
                     events.push(event);
+                    is_external = true;
                 }
             }
 
-            for event in events {
+            for mut event in events {
+                if is_external {
+                    event = get_indexed_event(event, raw_log);
+                }
+
                 if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                    // We want the user to know that this log was decoded using an external
+                    // database, since we just get the first one, and it can be misleading.
+                    let name = if is_external { format!("*{}", event.name) } else { event.name };
+
                     *log = RawOrDecodedLog::Decoded(
-                        event.name,
+                        name,
                         decoded
                             .params
                             .into_iter()
