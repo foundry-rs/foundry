@@ -510,10 +510,7 @@ impl DatabaseRef for SharedBackend {
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::{
-        fork::{BlockchainDbMeta, JsonBlockCacheDB},
-        Fork,
-    };
+    use crate::executor::{Backend, fork::{BlockchainDbMeta, JsonBlockCacheDB}};
     use ethers::{
         providers::{Http, Provider},
         solc::utils::RuntimeOrHandle,
@@ -521,6 +518,8 @@ mod tests {
     };
 
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
+    use ethers::types::BlockNumber;
+    use crate::executor::fork::CreateFork;
 
     use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
@@ -587,15 +586,15 @@ mod tests {
         let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
         let env = revm::Env::default();
 
-        let fork = Fork {
-            cache_path: Some(cache_path.clone()),
+        let fork = CreateFork {
+            enable_caching: true,
             url: ENDPOINT.to_string(),
-            pin_block: Some(block_num),
-            chain_id: 1,
-            initial_backoff: 50,
+            block: BlockNumber::Number(block_num.into()),
+            chain_id: Some(1),
+            env
         };
 
-        let backend = runtime.block_on(fork.spawn_backend(&env));
+        let backend = Backend::spawn(Some(fork));
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
