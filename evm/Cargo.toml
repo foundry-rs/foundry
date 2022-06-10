@@ -7,11 +7,10 @@ readme = "../README.md"
 repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "evm"]
 
-# TODO: We can probably reduce dependencies here or in the forge crate
 [dependencies]
 foundry-utils = { path = "./../utils" }
 foundry-common = { path = "./../common" }
-foundry-common = { path = "./../config" }
+foundry-config = { path = "./../config" }
 
 # Encoding/decoding
 serde_json = "1.0.67"

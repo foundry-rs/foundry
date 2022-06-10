@@ -2,13 +2,16 @@ use crate::{result::SuiteResult, ContractRunner, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{utils::RuntimeOrHandle, Artifact, ProjectCompileOutput},
+    solc::{Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_config::cache::StorageCachingConfig;
-use foundry_evm::executor::{
-    backend::Backend, fork::CreateFork, opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId,
+use foundry_evm::{
+    executor::{
+        backend::Backend, fork::CreateFork, opts::EvmOpts, Executor, ExecutorBuilder, SpecId,
+    },
+    revm,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
@@ -27,6 +30,8 @@ pub struct MultiContractRunner {
     pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
+    /// The configured evm
+    pub env: revm::Env,
     /// The EVM spec
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
@@ -37,10 +42,8 @@ pub struct MultiContractRunner {
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
     pub source_paths: BTreeMap<String, String>,
-    /// The fork config
-    pub fork: Option<Fork>,
     /// The fork to use at launch
-    pub fork2: Option<CreateFork>,
+    pub fork: Option<CreateFork>,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
 }
@@ -107,17 +110,13 @@ impl MultiContractRunner {
     /// before executing all contracts and their tests in _parallel_.
     ///
     /// Each Executor gets its own instance of the `Backend`.
-    pub fn test2(
+    pub fn test(
         &mut self,
         filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        // TODO  move to builder
-        let runtime = RuntimeOrHandle::new();
-        let env = runtime.block_on(self.evm_opts.evm_env());
-
-        let db = Backend::spawn(self.fork2.take());
+        let db = Backend::spawn(self.fork.take());
 
         let results =
             // the db backend that serves all the data, each contract gets its own instance
@@ -135,7 +134,7 @@ impl MultiContractRunner {
                 .map(|(id, (abi, deploy_code, libs))| {
                     let executor = ExecutorBuilder::default()
                         .with_cheatcodes(self.evm_opts.ffi, self.rpc_storage_caching.clone())
-                        .with_config(env.clone())
+                        .with_config(self.env.clone())
                         .with_spec(self.evm_spec)
                         .with_gas_limit(self.evm_opts.gas_limit())
                         .set_tracing(self.evm_opts.verbosity >= 3)
@@ -163,61 +162,6 @@ impl MultiContractRunner {
         ;
 
         Ok(results)
-    }
-
-    pub fn test(
-        &mut self,
-        _filter: &impl TestFilter,
-        _stream_result: Option<Sender<(String, SuiteResult)>>,
-        _include_fuzz_tests: bool,
-    ) -> Result<BTreeMap<String, SuiteResult>> {
-        // let runtime = RuntimeOrHandle::new();
-        // let env = runtime.block_on(self.evm_opts.evm_env());
-        //
-        // // the db backend that serves all the data, each contract gets its own clone
-        // let db = runtime.block_on(Backend::new(self.fork.take(), &env));
-        //
-        // let results = self
-        //     .contracts
-        //     .par_iter()
-        //     .filter(|(id, _)| {
-        //         filter.matches_path(id.source.to_string_lossy()) &&
-        //             filter.matches_contract(&id.name)
-        //     })
-        //     .filter(|(_, (abi, _, _))| abi.functions().any(|func|
-        // filter.matches_test(&func.name)))     .map(|(id, (abi, deploy_code, libs))| {
-        //         let mut builder = ExecutorBuilder::new()
-        //             .with_cheatcodes(self.evm_opts.ffi)
-        //             .with_config(env.clone())
-        //             .with_spec(self.evm_spec)
-        //             .with_gas_limit(self.evm_opts.gas_limit());
-        //
-        //         if self.evm_opts.verbosity >= 3 {
-        //             builder = builder.with_tracing();
-        //         }
-        //
-        //         let executor = builder.build(db.clone());
-        //         let result = self.run_tests(
-        //             &id.identifier(),
-        //             abi,
-        //             executor,
-        //             deploy_code.clone(),
-        //             libs,
-        //             (filter, include_fuzz_tests),
-        //         )?;
-        //         Ok((id.identifier(), result))
-        //     })
-        //     .filter_map(Result::<_>::ok)
-        //     .filter(|(_, results)| !results.is_empty())
-        //     .map_with(stream_result, |stream_result, (name, result)| {
-        //         if let Some(stream_result) = stream_result.as_ref() {
-        //             stream_result.send((name.clone(), result.clone())).unwrap();
-        //         }
-        //         (name, result)
-        //     })
-        //     .collect::<BTreeMap<_, _>>();
-        // Ok(results)
-        todo!()
     }
 
     // The _name field is unused because we only want it for tracing
@@ -261,10 +205,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The EVM spec to use
     pub evm_spec: Option<SpecId>,
-    /// The fork config
-    pub fork: Option<Fork>,
     /// The fork to use at launch
-    pub fork2: Option<CreateFork>,
+    pub fork: Option<CreateFork>,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
 }
@@ -276,6 +218,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
+        env: revm::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
@@ -355,13 +298,13 @@ impl MultiContractRunnerBuilder {
             contracts: deployable_contracts,
             known_contracts,
             evm_opts,
+            env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
             fuzzer: self.fuzzer,
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
-            fork2: self.fork2,
             rpc_storage_caching: self.rpc_storage_caching,
         })
     }
@@ -391,7 +334,7 @@ impl MultiContractRunnerBuilder {
     }
 
     #[must_use]
-    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
         self.fork = fork;
         self
     }
@@ -417,14 +360,23 @@ mod tests {
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
-        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.clone()).unwrap()
+        base_runner()
+            .build(
+                &(*PROJECT).paths.root,
+                (*COMPILED).clone(),
+                EVM_OPTS.evm_env_blocking(),
+                EVM_OPTS.clone(),
+            )
+            .unwrap()
     }
 
     /// Builds a tracing runner
     fn tracing_runner() -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
-        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
+        base_runner()
+            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+            .unwrap()
     }
 
     // Builds a runner that runs against forked state
@@ -433,18 +385,13 @@ mod tests {
 
         opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
         opts.fork_url = Some(rpc.to_string());
-        let chain_id = opts.get_chain_id();
 
-        let fork = Some(Fork {
-            cache_path: None,
-            url: rpc.to_string(),
-            pin_block: None,
-            chain_id,
-            initial_backoff: 50,
-        });
+        let env = opts.evm_env_blocking();
+        let fork = opts.get_fork(env.clone());
+
         base_runner()
             .with_fork(fork)
-            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)
+            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
             .unwrap()
     }
 

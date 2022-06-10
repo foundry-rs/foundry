@@ -141,8 +141,7 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        // utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
-        let db = Backend::spawn(None);
+        let db = Backend::spawn(script_config.evm_opts.get_fork(env.clone()));
 
         let mut builder = ExecutorBuilder::default()
             .with_cheatcodes(

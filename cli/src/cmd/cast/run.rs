@@ -70,9 +70,7 @@ impl RunArgs {
 
             // Set up the execution environment
             let env = evm_opts.evm_env().await;
-            // TODO(mattsse)
-            // utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env
-            let db = Backend::spawn(None);
+            let db = Backend::spawn(evm_opts.get_fork(env.clone()));
 
             let builder = ExecutorBuilder::default()
                 .with_config(env)
