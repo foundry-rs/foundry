@@ -226,8 +226,8 @@ impl EthApi {
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
-            EthRequest::StopImpersonatingAccount => {
-                self.anvil_stop_impersonating_account().await.to_rpc_result()
+            EthRequest::StopImpersonatingAccount(addr) => {
+                self.anvil_stop_impersonating_account(addr).await.to_rpc_result()
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
@@ -551,10 +551,9 @@ impl EthApi {
     pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
-        let from =
-            request.from.or_else(|| self.get_impersonated()).map(Ok).unwrap_or_else(|| {
-                self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
-            })?;
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -1204,9 +1203,9 @@ impl EthApi {
     /// Stops impersonating an account if previously set with `anvil_impersonateAccount`.
     ///
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
-    pub async fn anvil_stop_impersonating_account(&self) -> Result<()> {
+    pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.cheats().stop_impersonating();
+        self.backend.cheats().stop_impersonating(&address);
         Ok(())
     }
 
@@ -1487,8 +1486,7 @@ impl EthApi {
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
-        let from =
-            self.get_impersonated().or(request.from).ok_or(BlockchainError::NoSignerAvailable)?;
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -1736,16 +1734,6 @@ impl EthApi {
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
         self.backend.cheats().is_impersonated(addr)
-    }
-
-    /// Returns the sender to associate with this request
-    ///
-    /// If we're currently impersonating an account, see [`EthApi::anvil_impersonate_account()`],
-    /// then this will return the address of the impersonated account.
-    fn get_impersonated(&self) -> Option<Address> {
-        let acc = self.backend.cheats().impersonated_account()?;
-        trace!("using impersonated account {:?}", acc);
-        Some(acc)
     }
 
     /// Returns the nonce of the `address` depending on the `block_number`
