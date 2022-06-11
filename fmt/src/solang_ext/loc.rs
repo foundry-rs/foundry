@@ -1,9 +1,11 @@
 use solang_parser::pt::*;
 
+/// Get the location of an Enum
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
 }
 
+/// Get the location of an Enum if it has one
 pub trait OptionalLineOfCode {
     fn loc(&self) -> Option<Loc>;
 }
@@ -128,7 +130,7 @@ impl LineOfCode for YulExpression {
             YulExpression::BoolLiteral(loc, _, _) |
             YulExpression::NumberLiteral(loc, _, _, _) |
             YulExpression::HexNumberLiteral(loc, _, _) |
-            YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::SuffixAccess(loc, _, _) => *loc,
             YulExpression::StringLiteral(literal, _) => literal.loc,
             YulExpression::Variable(ident) => ident.loc,
             YulExpression::FunctionCall(f) => f.loc,
@@ -155,7 +157,7 @@ impl LineOfCode for Statement {
         use Statement::*;
         match self {
             Block { loc, unchecked: _checked, statements: _statements } => *loc,
-            Assembly { loc, dialect: _dialect, block: _block } => *loc,
+            Assembly { loc, dialect: _dialect, block: _block, flags: _flags } => *loc,
             Args(loc, _) => *loc,
             If(loc, _, _, _) => *loc,
             While(loc, _, _) => *loc,
@@ -377,15 +379,50 @@ impl LineOfCode for Expression {
     }
 }
 
-impl OptionalLineOfCode for FunctionAttribute {
-    fn loc(&self) -> Option<Loc> {
+impl LineOfCode for Comment {
+    fn loc(&self) -> Loc {
         match self {
-            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
-            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            Comment::Line(loc, _) => *loc,
+            Comment::Block(loc, _) => *loc,
+        }
+    }
+}
+
+impl LineOfCode for FunctionAttribute {
+    fn loc(&self) -> Loc {
+        match self {
+            FunctionAttribute::Mutability(mutability) => mutability.loc(),
+            // visibility will always have a location in a function attribute
+            FunctionAttribute::Visibility(visibility) => visibility.loc().unwrap(),
             FunctionAttribute::Virtual(loc) |
             FunctionAttribute::Immutable(loc) |
             FunctionAttribute::Override(loc, _) |
-            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+            FunctionAttribute::BaseOrModifier(loc, _) => *loc,
         }
+    }
+}
+
+impl LineOfCode for VariableAttribute {
+    fn loc(&self) -> Loc {
+        match self {
+            // visibility will always have a location in a function attribute
+            VariableAttribute::Visibility(visibility) => visibility.loc().unwrap(),
+            VariableAttribute::Constant(loc) |
+            VariableAttribute::Immutable(loc) |
+            VariableAttribute::Override(loc, _) => *loc,
+        }
+    }
+}
+
+impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
+    fn loc(&self) -> Option<Loc> {
+        if self.is_empty() {
+            return None
+        }
+        let mut locs = self.iter().map(|(loc, _)| loc).collect::<Vec<_>>();
+        locs.sort();
+        let mut loc = **locs.first().unwrap();
+        loc.use_end_from(locs.pop().unwrap());
+        Some(loc)
     }
 }
