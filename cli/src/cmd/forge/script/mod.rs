@@ -13,6 +13,8 @@ mod executor;
 
 mod receipts;
 
+mod sequence;
+
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use clap::{Parser, ValueHint};
 use ethers::{
@@ -46,6 +48,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use yansi::Paint;
+
+use super::build::ProjectPathsArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -139,6 +143,7 @@ pub struct ScriptResult {
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
+    pub address: Option<Address>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -425,4 +430,43 @@ pub struct ScriptConfig {
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub called_function: Option<Function>,
+}
+
+/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
+pub struct VerifyBundle {
+    pub num_of_optimizations: Option<usize>,
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub etherscan_key: Option<String>,
+    pub project_paths: ProjectPathsArgs,
+}
+
+impl VerifyBundle {
+    pub fn new(
+        project: &Project,
+        config: &Config,
+        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    ) -> Self {
+        let num_of_optimizations =
+            if config.optimizer { Some(config.optimizer_runs) } else { None };
+
+        let config_path = config.get_config_path();
+
+        let project_paths = ProjectPathsArgs {
+            root: Some(project.paths.root.clone()),
+            contracts: Some(project.paths.sources.clone()),
+            remappings: project.paths.remappings.clone(),
+            remappings_env: None,
+            cache_path: Some(project.paths.cache.clone()),
+            lib_paths: project.paths.libraries.clone(),
+            hardhat: config.profile == Config::HARDHAT_PROFILE,
+            config_path: if config_path.exists() { Some(config_path) } else { None },
+        };
+
+        VerifyBundle {
+            num_of_optimizations,
+            known_contracts,
+            etherscan_key: config.etherscan_api_key.clone(),
+            project_paths,
+        }
+    }
 }

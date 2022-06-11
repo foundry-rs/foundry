@@ -19,6 +19,9 @@ contract Test is DSTest {
         changed += 1;
     }
 
+    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {
+    }
+
     function echoSender() public view returns (address) {
         return msg.sender;
     } 
@@ -252,5 +255,28 @@ contract BroadcastTestSetup is DSTest {
         
         cheats.broadcast();
         t.t(3);
+    }
+}
+
+contract BroadcastTestLog is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function run() public {
+        uint256[] memory arr = new uint256[](2);
+        arr[0] = 3;
+        arr[1] = 4;
+
+        cheats.startBroadcast();
+        {
+            Test c1 = new Test();
+            Test c2 = new Test{salt: bytes32(uint256(1337))}();
+
+            c1.multiple_arguments(1, address(0x1337), arr);
+            c1.inc();
+            c2.t(1);
+            
+            payable(address(0x1337)).transfer(0.0001 ether);
+        }
+        cheats.stopBroadcast();
     }
 }

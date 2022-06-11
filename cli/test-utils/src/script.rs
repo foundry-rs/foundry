@@ -177,4 +177,9 @@ impl ScriptTester {
         }
         self
     }
+
+    pub fn slow(&mut self) -> &mut Self {
+        self.cmd.arg("--slow");
+        self
+    }
 }
