@@ -362,3 +362,14 @@ async fn test_fork_timestamp() {
     let diff = block.timestamp - BLOCK_TIMESTAMP;
     assert!(diff <= elapsed.into());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_set_empty_code() {
+    let (api, _handle) = spawn(fork_config()).await;
+    let addr = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984".parse().unwrap();
+    let code = api.get_code(addr, None).await.unwrap();
+    assert!(!code.as_ref().is_empty());
+    api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
+    let code = api.get_code(addr, None).await.unwrap();
+    assert!(code.as_ref().is_empty());
+}
