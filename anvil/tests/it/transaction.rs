@@ -1,14 +1,13 @@
 use crate::{abi::*, next_port};
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::ContractFactory,
     prelude::{
         signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
     types::{Address, BlockNumber, Transaction, TransactionReceipt, H256, U256},
 };
-use ethers_solc::{project_util::TempProject, Artifact};
+
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -374,46 +373,6 @@ async fn can_deploy_get_code() {
 
     let code = client.get_code(greeter_contract.address(), None).await.unwrap();
     assert!(!code.as_ref().is_empty());
-}
-
-#[test]
-fn test_deploy_reverting() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r#"
-pragma solidity 0.8.13;
-contract Contract {
-    constructor() {
-      require(false, "");
-    }
-}
-"#,
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
-    // need to run this in a runtime because svm's blocking install does panic if invoked in another
-    // async runtime
-    tokio::runtime::Runtime::new().unwrap().block_on(async move {
-        let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
-        let provider = handle.ws_provider().await;
-
-        let wallet = handle.dev_wallets().next().unwrap();
-        let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-        let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
-        let contract = factory.deploy(()).unwrap().send().await;
-        assert!(contract.is_err());
-
-        // should catch the revert during estimation which results in an err
-        let err = contract.unwrap_err();
-        assert!(err.to_string().contains("execution reverted:"));
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
