@@ -2,7 +2,7 @@
 
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::prelude::Middleware;
+use ethers::{prelude::Middleware, types::Address};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
@@ -34,4 +34,13 @@ async fn can_get_default_dev_keys() {
     let dev_accounts = handle.dev_accounts().collect::<Vec<_>>();
     let accounts = provider.get_accounts().await.unwrap();
     assert_eq!(dev_accounts, accounts);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_empty_code() {
+    let (api, _handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let addr = Address::random();
+    api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
+    let code = api.get_code(addr, None).await.unwrap();
+    assert!(code.as_ref().is_empty());
 }
