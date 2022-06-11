@@ -120,6 +120,10 @@ pub enum InvalidTransactionError {
     ExhaustsGasResources,
     #[error("Out of gas: required gas exceeds allowance: {0:?}")]
     OutOfGas(U256),
+
+    /// Thrown post London if the transaction's fee is less than the base fee of the block
+    #[error("max fee per gas less than block base fee")]
+    FeeTooLow,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.

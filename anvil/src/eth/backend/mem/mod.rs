@@ -46,7 +46,9 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{
+        db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
+    },
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -1313,6 +1315,12 @@ impl TransactionValidator for Backend {
         if nonce < account.nonce {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
+        }
+
+        if env.cfg.spec_id.to_precompile_id() >= SpecId::LONDON.to_precompile_id() {
+            if tx.gas_price() < self.base_fee() {
+                return Err(InvalidTransactionError::FeeTooLow)
+            }
         }
 
         let max_cost = tx.max_cost();
