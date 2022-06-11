@@ -80,7 +80,8 @@ pub static HARDHAT_CONSOLE_ADDRESS: Address = H160([
     0x2e, 0x6c, 0x6f, 0x67,
 ]);
 
-// Bindings for DS-style event logs
+// Bindings for DS-style event logs. Note that the array logs below are not actually part of DSTest,
+// but are part of forge-std, so are included here to ensure they are decoded in output logs.
 ethers::contract::abigen!(
     Console,
     r#"[
@@ -92,6 +93,8 @@ ethers::contract::abigen!(
             event log_uint               (uint)
             event log_bytes              (bytes)
             event log_string             (string)
+            event log_array              (uint256[] val)
+            event log_array              (int256[] val)
             event log_named_address      (string key, address val)
             event log_named_bytes32      (string key, bytes32 val)
             event log_named_decimal_int  (string key, int val, uint decimals)
@@ -100,6 +103,8 @@ ethers::contract::abigen!(
             event log_named_uint         (string key, uint val)
             event log_named_bytes        (string key, bytes val)
             event log_named_string       (string key, string val)
+            event log_named_array        (string key, uint256[] val)
+            event log_named_array        (string key, int256[] val)
     ]"#
 );
 pub use console_mod::{ConsoleEvents, CONSOLE_ABI};
