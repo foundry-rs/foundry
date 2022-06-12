@@ -186,7 +186,7 @@ impl ScriptArgs {
         Ok(decoder)
     }
 
-    pub fn show_traces(
+    pub async fn show_traces(
         &self,
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
@@ -210,7 +210,7 @@ impl ScriptArgs {
                     };
 
                     if should_include {
-                        decoder.decode(trace);
+                        decoder.decode(trace).await;
                         println!("{trace}");
                     }
                 }

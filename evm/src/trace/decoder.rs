@@ -9,7 +9,6 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
-    solc::utils::RuntimeOrHandle,
     types::H256,
 };
 use foundry_utils::get_indexed_event;
@@ -237,9 +236,7 @@ impl CallTraceDecoder {
         });
     }
 
-    pub fn decode(&self, traces: &mut CallTraceArena) {
-        let rt = RuntimeOrHandle::new();
-
+    pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
             // Set contract name
             if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
@@ -261,9 +258,8 @@ impl CallTraceDecoder {
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data = RawOrDecodedCall::Decoded("create2".to_string(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {
-                        let mut identifier = rt.block_on(identifier.write());
                         if let Some(function) =
-                            rt.block_on(identifier.identify_function(&bytes[0..4]))
+                            identifier.write().await.identify_function(&bytes[0..4]).await
                         {
                             node.decode_function(&[function], &self.labels, &self.errors);
                         }
@@ -287,14 +283,14 @@ impl CallTraceDecoder {
             }
 
             // Decode events
-            self.decode_events(node, &rt);
+            self.decode_events(node).await;
         }
     }
 
-    fn decode_events(&self, node: &mut CallTraceNode, rt: &RuntimeOrHandle) {
-        node.logs.iter_mut().for_each(|log| {
-            rt.block_on(self.decode_event(log));
-        });
+    async fn decode_events(&self, node: &mut CallTraceNode) {
+        for log in node.logs.iter_mut() {
+            self.decode_event(log).await;
+        }
     }
 
     async fn decode_event(&self, log: &mut RawOrDecodedLog) {

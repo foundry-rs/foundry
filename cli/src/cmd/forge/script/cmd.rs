@@ -139,7 +139,7 @@ impl ScriptArgs {
                 if self.json {
                     self.show_json(&script_config, &mut result)?;
                 } else {
-                    self.show_traces(&script_config, &decoder, &mut result)?;
+                    self.show_traces(&script_config, &decoder, &mut result).await?;
                 }
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
