@@ -98,9 +98,9 @@ mod tests {
 
     #[tokio::test]
     async fn can_query_signatures() {
-        let _ = std::fs::remove_file("./signatures");
+        let tmp = tempfile::tempdir().unwrap();
         {
-            let mut sigs = SignaturesIdentifier::new(Some("./".into())).unwrap();
+            let mut sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
 
             assert!(sigs.cached.events.is_empty());
             assert!(sigs.cached.functions.is_empty());
@@ -116,9 +116,11 @@ mod tests {
 
             assert!(func == get_func("transferFrom(address,address,uint256)").unwrap());
             assert!(event == get_event("Transfer(address,address,uint128)").unwrap());
+
+            // dropping saves the cache
         }
 
-        let sigs = SignaturesIdentifier::new(Some("./".into())).unwrap();
+        let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
         assert!(sigs.cached.events.len() == 1);
         assert!(sigs.cached.functions.len() == 1);
     }
