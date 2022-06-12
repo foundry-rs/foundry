@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::BufWriter, path::PathBuf};
 use tracing::warn;
 
-/// As identifier that tries to identify functions and events using their signatures.
+/// An identifier that tries to identify functions and events using signatures found at
+/// `sig.eth.samczsun.com`.
 #[derive(Debug, Default)]
 pub struct SignaturesIdentifier {
     cached: CachedSignatures,

@@ -1130,4 +1130,55 @@ mod tests {
             abi_to_solidity(&contract_abi, "").unwrap()
         );
     }
+
+    #[test]
+    fn test_indexed_only_address() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog { topics: vec![event.signature(), param0, param2], data: param1.clone() };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // Only the address fields get indexed since total_params > num_indexed_params
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 2);
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
+    }
+
+    #[test]
+    fn test_indexed_all() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog {
+            topics: vec![event.signature(), param0, H256::from_slice(&param1), param2],
+            data: vec![],
+        };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // All parameters get indexed since num_indexed_params == total_params
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 3);
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
+    }
 }
