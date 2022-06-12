@@ -122,7 +122,7 @@ async fn test_fork_eth_fee_history() {
     let provider = handle.http_provider();
 
     let count = 10u64;
-    let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).unwrap();
+    let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).await.unwrap();
     let _provider_history = provider.fee_history(count, BlockNumber::Latest, &[]).await.unwrap();
 }
 
