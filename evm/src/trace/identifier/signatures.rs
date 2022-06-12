@@ -56,9 +56,9 @@ impl SignaturesIdentifier {
         let identifier = format!("0x{}", hex::encode(identifier));
 
         if !map.contains_key(&identifier) {
-            if let Ok(mut signatures) = decode_selector(&identifier, selector_type).await {
-                if !signatures.is_empty() {
-                    map.insert(identifier.to_string(), signatures.pop().expect(""));
+            if let Ok(signatures) = decode_selector(&identifier, selector_type).await {
+                if let Some(signature) = signatures.into_iter().next() {
+                    map.insert(identifier.to_string(), signature);
                 }
             }
         }
