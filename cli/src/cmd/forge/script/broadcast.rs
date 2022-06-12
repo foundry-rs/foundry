@@ -1,8 +1,9 @@
+use super::{
+    sequence::{ScriptSequence, TransactionWithMetadata},
+    *,
+};
 use crate::{
-    cmd::{
-        forge::script::receipts::wait_for_receipts, has_different_gas_calc, ScriptSequence,
-        VerifyBundle,
-    },
+    cmd::{forge::script::receipts::wait_for_receipts, has_different_gas_calc},
     init_progress,
     opts::WalletType,
     update_progress,
@@ -11,14 +12,13 @@ use crate::{
 use ethers::{
     prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
     providers::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Chain},
+    types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
+use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{cmp::min, fmt, sync::Arc};
-
-use super::*;
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
@@ -32,8 +32,8 @@ impl ScriptArgs {
 
         if already_broadcasted < deployment_sequence.transactions.len() {
             let required_addresses = deployment_sequence
-                .transactions
-                .iter()
+                .typed_transactions()
+                .into_iter()
                 .skip(already_broadcasted)
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
@@ -50,7 +50,7 @@ impl ScriptArgs {
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
-                match deployment_sequence.transactions.front().unwrap() {
+                match deployment_sequence.transactions.front().unwrap().typed_tx() {
                     TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
                         (provider.get_gas_price().await.ok(), None)
                     }
@@ -63,8 +63,8 @@ impl ScriptArgs {
             // Iterate through transactions, matching the `from` field with the associated
             // wallet. Then send the transaction. Panics if we find a unknown `from`
             let sequence = deployment_sequence
-                .transactions
-                .iter()
+                .typed_transactions()
+                .into_iter()
                 .skip(already_broadcasted)
                 .map(|tx| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
@@ -115,15 +115,14 @@ impl ScriptArgs {
                     let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
 
                     if sequential_broadcast {
+                        let tx_hash = tx_hash.await?;
+                        deployment_sequence.add_pending(index, tx_hash);
+
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
 
-                        wait_for_receipts(
-                            vec![tx_hash.await?],
-                            deployment_sequence,
-                            provider.clone(),
-                        )
-                        .await?;
+                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
+                            .await?;
                     } else {
                         pending_transactions.push(tx_hash);
                     }
@@ -135,11 +134,12 @@ impl ScriptArgs {
                     let mut tx_hashes = vec![];
 
                     while let Some(tx_hash) = buffer.next().await {
+                        let tx_hash = tx_hash?;
+                        deployment_sequence.add_pending(index, tx_hash);
+                        tx_hashes.push(tx_hash);
+
                         update_progress!(pb, (index + already_broadcasted));
                         index += 1;
-                        let tx_hash = tx_hash?;
-                        deployment_sequence.add_pending(tx_hash);
-                        tx_hashes.push(tx_hash);
                     }
 
                     // Checkpoint save
@@ -207,8 +207,10 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let (gas_filled_txs, create2_contracts) =
-                    self.execute_transactions(txs, script_config, decoder).await.map_err(|_| {
+                let gas_filled_txs = self
+                    .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
+                    .await
+                    .map_err(|_| {
                         eyre::eyre!(
                             "One or more transactions failed when simulating the
                 on-chain version. Check the trace by re-running with `-vvv`"
@@ -229,10 +231,6 @@ impl ScriptArgs {
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
-
-                create2_contracts
-                    .into_iter()
-                    .for_each(|addr| deployment_sequence.add_create2(addr));
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
@@ -255,27 +253,27 @@ impl ScriptArgs {
     /// and/or gas calculations).
     async fn handle_chain_requirements(
         &self,
-        txes: VecDeque<TypedTransaction>,
+        txes: VecDeque<TransactionWithMetadata>,
         provider: Arc<Provider<RetryClient<Http>>>,
         chain: u64,
-    ) -> eyre::Result<VecDeque<TypedTransaction>> {
-        let is_legacy =
-            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
+        let mut is_legacy = self.legacy;
+        if let Chain::Named(chain) = Chain::from(chain) {
+            is_legacy |= chain.is_legacy();
+        };
 
-        let mut new_txes: VecDeque<TypedTransaction> = VecDeque::new();
+        let mut new_txes = VecDeque::new();
         let mut total_gas = U256::zero();
-        for tx in txes.into_iter() {
-            let mut tx = if is_legacy {
-                TypedTransaction::Legacy(tx.into())
-            } else {
-                TypedTransaction::Eip1559(tx.into())
-            };
+        for mut tx in txes.into_iter() {
+            tx.change_type(is_legacy);
+
+            let typed_tx = tx.typed_tx_mut();
 
             if has_different_gas_calc(chain) {
-                tx.set_gas(provider.estimate_gas(&tx).await?);
+                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
             }
 
-            total_gas += *tx.gas().expect("");
+            total_gas += *typed_tx.gas().expect("gas is set");
 
             new_txes.push_back(tx);
         }
@@ -283,7 +281,7 @@ impl ScriptArgs {
         // We don't store it in the transactions, since we want the most updated value. Right before
         // broadcasting.
         let per_gas = {
-            match new_txes.front().unwrap() {
+            match new_txes.front().unwrap().typed_tx() {
                 TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
                     provider.get_gas_price().await?
                 }

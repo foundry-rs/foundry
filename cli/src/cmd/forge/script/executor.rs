@@ -1,8 +1,6 @@
 use crate::{cmd::needs_setup, utils};
 
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
-    prelude::NameOrAddress,
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
@@ -13,7 +11,7 @@ use forge::{
 
 use std::collections::VecDeque;
 
-use crate::cmd::forge::script::*;
+use crate::cmd::forge::script::{sequence::TransactionWithMetadata, *};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -73,69 +71,72 @@ impl ScriptArgs {
         transactions: VecDeque<TypedTransaction>,
         script_config: &ScriptConfig,
         decoder: &mut CallTraceDecoder,
-    ) -> eyre::Result<(VecDeque<TypedTransaction>, Vec<Address>)> {
+        contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
-
         let mut failed = false;
         let mut sum_gas = 0;
-        let mut final_txs = transactions.clone();
-        let mut create2_contracts = vec![];
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
             println!("Simulated On-chain Traces:\n");
         }
 
-        transactions
+        let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
+            .contracts
+            .iter()
+            .filter_map(|(addr, contract_name)| {
+                if let Some((_, (abi, _))) =
+                    contracts.iter().find(|(artifact, _)| artifact.name == *contract_name)
+                {
+                    return Some((*addr, (contract_name.clone(), abi)))
+                }
+                None
+            })
+            .collect();
+
+        let final_txs: VecDeque<TransactionWithMetadata> = transactions
             .into_iter()
             .map(|tx| match tx {
-                TypedTransaction::Legacy(tx) => (tx.from, tx.to, tx.data, tx.value),
+                TypedTransaction::Legacy(mut tx) => {
+                    let mut result = runner
+                        .simulate(
+                            tx.from.expect(
+                                "Transaction doesn't have a `from` address at execution time",
+                            ),
+                            tx.to.clone(),
+                            tx.data.clone(),
+                            tx.value,
+                        )
+                        .expect("Internal EVM error");
+
+                    // We inflate the gas used by the transaction by x1.3 since the estimation
+                    // might be off
+                    tx.gas = Some(U256::from(result.gas * 13 / 10));
+
+                    sum_gas += result.gas;
+                    if !result.success {
+                        failed = true;
+                    }
+
+                    if script_config.evm_opts.verbosity > 3 {
+                        for (_kind, trace) in &mut result.traces {
+                            decoder.decode(trace);
+                            println!("{}", trace);
+                        }
+                    }
+
+                    TransactionWithMetadata::new(tx.into(), &result, &address_to_abi, decoder)
+                        .unwrap()
+                }
                 _ => unreachable!(),
             })
-            .map(|(from, to, data, value)| {
-                runner
-                    .simulate(
-                        from.expect("Transaction doesn't have a `from` address at execution time"),
-                        to,
-                        data,
-                        value,
-                    )
-                    .expect("Internal EVM error")
-            })
-            .enumerate()
-            .for_each(|(i, mut result)| {
-                match &mut final_txs[i] {
-                    TypedTransaction::Legacy(tx) => {
-                        // We store the CREATE2 address, since it's hard to get it otherwise
-                        if let Some(NameOrAddress::Address(to)) = tx.to {
-                            if to == DEFAULT_CREATE2_DEPLOYER {
-                                create2_contracts.push(Address::from_slice(&result.returned));
-                            }
-                        }
-                        // We inflate the gas used by the transaction by x1.3 since the estimation
-                        // might be off
-                        tx.gas = Some(U256::from(result.gas * 13 / 10))
-                    }
-                    _ => unreachable!(),
-                }
-
-                sum_gas += result.gas;
-                if !result.success {
-                    failed = true;
-                }
-
-                if script_config.evm_opts.verbosity > 3 {
-                    for (_kind, trace) in &mut result.traces {
-                        decoder.decode(trace);
-                        println!("{}", trace);
-                    }
-                }
-            });
+            .collect();
 
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))
         } else {
-            Ok((final_txs, create2_contracts))
+            Ok(final_txs)
         }
     }
 

@@ -1,6 +1,8 @@
-use itertools::Itertools;
+use super::AttrSortKeyIteratorExt;
 use solang_parser::pt::*;
 
+/// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
+/// not matter
 pub trait AstEq {
     fn ast_eq(&self, other: &Self) -> bool;
 }
@@ -8,6 +10,12 @@ pub trait AstEq {
 impl AstEq for Loc {
     fn ast_eq(&self, _other: &Self) -> bool {
         true
+    }
+}
+
+impl AstEq for IdentifierPath {
+    fn ast_eq(&self, other: &Self) -> bool {
+        self.identifiers.ast_eq(&other.identifiers)
     }
 }
 
@@ -19,18 +27,8 @@ impl AstEq for SourceUnit {
 
 impl AstEq for VariableDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
-        let sort_attrs = |def: &Self| {
-            def.attrs
-                .iter()
-                .sorted_by_key(|attribute| match attribute {
-                    VariableAttribute::Visibility(_) => 0,
-                    VariableAttribute::Constant(_) => 1,
-                    VariableAttribute::Immutable(_) => 2,
-                    VariableAttribute::Override(_) => 3,
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let sort_attrs =
+            |def: &Self| def.attrs.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
         self.ty.ast_eq(&other.ty) &&
@@ -42,20 +40,8 @@ impl AstEq for VariableDefinition {
 
 impl AstEq for FunctionDefinition {
     fn ast_eq(&self, other: &Self) -> bool {
-        let sort_attrs = |def: &Self| {
-            def.attributes
-                .iter()
-                .sorted_by_key(|attribute| match attribute {
-                    FunctionAttribute::Visibility(_) => 0,
-                    FunctionAttribute::Mutability(_) => 1,
-                    FunctionAttribute::Virtual(_) => 2,
-                    FunctionAttribute::Immutable(_) => 3,
-                    FunctionAttribute::Override(_, _) => 4,
-                    FunctionAttribute::BaseOrModifier(_, _) => 5,
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let sort_attrs =
+            |def: &Self| def.attributes.clone().into_iter().attr_sorted().collect::<Vec<_>>();
         let left_sorted_attrs = sort_attrs(self);
         let right_sorted_attrs = sort_attrs(other);
         self.ty.ast_eq(&other.ty) &&
@@ -341,6 +327,7 @@ derive_ast_eq! { enum Statement {
         loc,
         dialect,
         block,
+        flags,
     },
 }}
 derive_ast_eq! { enum Expression {
@@ -442,7 +429,7 @@ derive_ast_eq! { enum YulExpression {
     StringLiteral(string, ident),
     Variable(ident),
     FunctionCall(func),
-    Member(loc, expr, ident),
+    SuffixAccess(loc, expr, ident),
     _
 }}
 derive_ast_eq! { enum YulSwitchOptions {
@@ -511,6 +498,6 @@ derive_ast_eq! { enum VariableAttribute {
     Visibility(visi),
     Constant(loc),
     Immutable(loc),
-    Override(loc),
+    Override(loc, idents),
     _
 }}

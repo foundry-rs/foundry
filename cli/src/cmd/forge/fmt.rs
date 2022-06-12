@@ -12,7 +12,7 @@ use ethers::solc::ProjectPathsConfig;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 
-use forge_fmt::{Formatter, FormatterConfig, Visitable};
+use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
 
 use crate::cmd::Cmd;
 
@@ -74,7 +74,7 @@ impl Cmd for FmtArgs {
                 std::env::current_dir().expect("failed to get current directory")
             });
             if !root.is_dir() {
-                return Err(eyre::eyre!("Root path should be a directory"))
+                eyre::bail!("Root path should be a directory")
             }
 
             ProjectPathsConfig::find_source_dir(&root)
@@ -101,16 +101,17 @@ impl Cmd for FmtArgs {
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let (mut source_unit, _comments) = solang_parser::parse(&source, i)
+                let (mut source_unit, comments) = solang_parser::parse(&source, i)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
+                let comments = Comments::new(comments, &source);
 
                 let mut output = String::new();
                 let mut formatter =
-                    Formatter::new(&mut output, &source, FormatterConfig::default());
+                    Formatter::new(&mut output, &source, comments, FormatterConfig::default());
 
                 source_unit.visit(&mut formatter).unwrap();
 

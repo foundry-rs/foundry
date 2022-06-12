@@ -9,6 +9,7 @@ mod ganache;
 mod geth;
 mod logs;
 mod pubsub;
+mod revert;
 mod traces;
 mod transaction;
 mod txpool;

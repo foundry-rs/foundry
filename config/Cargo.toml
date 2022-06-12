@@ -25,6 +25,7 @@ regex = "1.5.5"
 globset = "0.4.8"
 walkdir = "2.3.2"
 toml_edit = "0.14.3"
+tracing = "0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.1.4"

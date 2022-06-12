@@ -138,14 +138,15 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         }
 
         let now = std::time::Instant::now();
-        tracing::trace!(target : "forge_compile", "start compiling project");
+        tracing::trace!(target : "forge::compile", "start compiling project");
 
         let output = term::with_spinner_reporter(|| f(project))?;
 
         let elapsed = now.elapsed();
-        tracing::trace!(target : "forge_compile", "finished compiling after {:?}", elapsed);
+        tracing::trace!(target : "forge::compile", "finished compiling after {:?}", elapsed);
 
         if output.has_compiler_errors() {
+            tracing::warn!(target: "forge::compile", "compiled with errors");
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");

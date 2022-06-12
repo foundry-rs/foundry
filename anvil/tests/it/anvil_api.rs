@@ -4,8 +4,7 @@ use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
-    types::{Address, TransactionRequest},
-    utils::WEI_IN_ETHER,
+    types::{Address, TransactionRequest, U256},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -19,26 +18,36 @@ async fn can_set_gas_price() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_impersonate() {
+async fn can_impersonate_account() {
     let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
-    let impersonated = Address::random();
+    let impersonate = Address::random();
     let to = Address::random();
+    let val = 1337u64;
 
-    let balance = WEI_IN_ETHER.saturating_mul(10u64.into());
-    api.anvil_set_balance(impersonated, balance).await.unwrap();
-    assert_eq!(balance, provider.get_balance(impersonated, None).await.unwrap());
+    // fund the impersonated account
+    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(balance / 2);
+    let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 
-    let res = provider.send_transaction(tx.clone().from(impersonated), None).await;
+    let res = provider.send_transaction(tx.clone(), None).await;
     assert!(res.is_err());
 
-    api.anvil_impersonate_account(impersonated).await.unwrap();
-    let tx = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    api.anvil_impersonate_account(impersonate).await.unwrap();
 
-    assert_eq!(tx.from, impersonated);
+    let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let nonce = provider.get_transaction_count(impersonate, None).await.unwrap();
+    assert_eq!(nonce, 1u64.into());
+
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, val.into());
+
+    api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx, None).await;
+    assert!(res.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
