@@ -71,10 +71,7 @@ impl SignaturesIdentifier {
 
     /// Identifies `Function` from its cache or `sig.eth.samczsun.com`
     pub async fn identify_function(&mut self, identifier: &[u8]) -> Option<Function> {
-        self.identify(SelectorType::Function, identifier, get_func).await.map(|mut function| {
-            function.name = format!("*{}", function.name);
-            function
-        })
+        self.identify(SelectorType::Function, identifier, get_func).await
     }
 
     /// Identifies `Event` from its cache or `sig.eth.samczsun.com`
@@ -117,14 +114,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert!(
-                func == get_func("transferFrom(address,address,uint256)")
-                    .map(|mut f| {
-                        f.name = format!("*{}", f.name);
-                        f
-                    })
-                    .unwrap()
-            );
+            assert!(func == get_func("transferFrom(address,address,uint256)").unwrap());
             assert!(event == get_event("Transfer(address,address,uint128)").unwrap());
         }
 
