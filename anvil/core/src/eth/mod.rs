@@ -298,6 +298,12 @@ pub enum EthRequest {
     #[serde(rename = "evm_setNextBlockTimestamp", with = "sequence")]
     EvmSetNextBlockTimeStamp(u64),
 
+    /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`
+    ///
+    /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`
+    #[serde(rename = "evm_setBlockTimestampInterval", with = "sequence")]
+    EvmSetBlockTimeStampInterval(u64),
+
     /// Mine a single block
     #[serde(rename = "evm_mine")]
     EvmMine(#[serde(default)] Option<Params<EvmMineOptions>>),
@@ -785,6 +791,13 @@ mod tests {
     #[test]
     fn test_serde_custom_next_timestamp() {
         let s = r#"{"method": "evm_setNextBlockTimestamp", "params": [100]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_custom_timestamp_interval() {
+        let s = r#"{"method": "evm_setBlockTimestampInterval", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

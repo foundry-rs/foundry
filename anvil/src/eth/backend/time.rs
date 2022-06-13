@@ -86,6 +86,15 @@ impl TimeManager {
     }
 }
 
+/// Provides a tick rate for the time manager
+///
+/// While the timestamp is based on the unix epoch, it
+#[derive(Debug, Clone)]
+struct TickRate {
+    tick: Arc<RwLock<u64>>,
+    last_timestamp:Arc<RwLock<u64>>,
+}
+
 /// Returns the current duration since unix epoch.
 pub fn duration_since_unix_epoch() -> Duration {
     use std::time::SystemTime;
