@@ -8,6 +8,7 @@ use ethers::{
         ConfigurableContractArtifact,
     },
 };
+
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_async, forgetest_ignore, forgetest_init,
@@ -15,6 +16,7 @@ use foundry_cli_test_utils::{
     ScriptOutcome, ScriptTester,
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
+use regex::Regex;
 use std::{env, fs, path::PathBuf, str::FromStr};
 use yansi::Paint;
 
@@ -1012,6 +1014,47 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
         .await
         .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
         .simulate(ScriptOutcome::FailedScript);
+});
+
+forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async move {
+    let port = next_port();
+    let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
+    let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+    // Prepare CREATE2 Deployer
+    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
+    api.anvil_set_code(addr, code).await.unwrap();
+
+    tester
+        .load_private_keys(vec![0])
+        .await
+        .add_sig("BroadcastTestLog", "run()")
+        .slow()
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(vec![(0, 7)])
+        .await;
+
+    // Uncomment to recreate log
+    // std::fs::copy("broadcast/Broadcast.t.sol/31337/run-latest.json",
+    // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"));
+
+    // Ignore blockhash since it changes inbetween runs.
+    let re = Regex::new(r"blockHash.*?blockNumber").unwrap();
+
+    let fixtures_log = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"),
+    )
+    .unwrap();
+    let fixtures_log = re.replace_all(&fixtures_log, "");
+
+    let run_log =
+        std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
+    let run_log = re.replace_all(&run_log, "");
+
+    // Ignore timestamp with `-11` since it changes inbetween runs.
+    assert!(&fixtures_log[..(fixtures_log.len() - 11)] == &run_log[..(run_log.len() - 11)]);
 });
 
 // test to check that install/remove works properly

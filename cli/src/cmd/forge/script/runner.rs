@@ -128,6 +128,7 @@ impl ScriptRunner {
                 logs,
                 traces,
                 debug,
+                address: None,
             },
         ))
     }
@@ -148,7 +149,7 @@ impl ScriptRunner {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address: _, gas, logs, traces, debug } = self.executor.deploy(
+            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
@@ -170,6 +171,7 @@ impl ScriptRunner {
                 debug: vec![debug].into_iter().collect(),
                 labeled_addresses: Default::default(),
                 transactions: Default::default(),
+                address: Some(address),
             })
         } else {
             eyre::bail!("ENS not supported.");
@@ -218,6 +220,7 @@ impl ScriptRunner {
             debug: vec![debug].into_iter().collect(),
             labeled_addresses: labels,
             transactions,
+            address: None,
         })
     }
 }

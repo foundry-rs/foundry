@@ -5,12 +5,61 @@ use std::fmt::Write;
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::*;
+use thiserror::Error;
 
 use crate::{
-    helpers,
+    comments::{CommentStringExt, CommentWithMetadata, Comments},
     solang_ext::*,
-    visit::{ParameterList, VResult, Visitable, Visitor},
+    visit::{Visitable, Visitor},
 };
+
+/// A custom Error thrown by the Formatter
+#[derive(Error, Debug)]
+pub enum FormatterError {
+    /// Error thrown by `std::fmt::Write` interfaces
+    #[error(transparent)]
+    Fmt(#[from] std::fmt::Error),
+    /// All other errors
+    #[error(transparent)]
+    Custom(Box<dyn std::error::Error>),
+}
+
+impl FormatterError {
+    fn fmt() -> Self {
+        Self::Fmt(std::fmt::Error)
+    }
+    fn custom(err: impl std::error::Error + 'static) -> Self {
+        Self::Custom(Box::new(err))
+    }
+}
+
+#[allow(unused_macros)]
+macro_rules! format_err {
+    ($msg:literal $(,)?) => {
+        $crate::formatter::FormatterError::custom($msg.to_string())
+    };
+    ($err:expr $(,)?) => {
+        $crate::formatter::FormatterError::custom($err)
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::formatter::FormatterError::custom(format!($fmt, $($arg)*))
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! bail {
+    ($msg:literal $(,)?) => {
+        return Err($crate::formatter::format_err!($msg))
+    };
+    ($err:expr $(,)?) => {
+        return Err($err)
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        return Err($crate::formatter::format_err!($fmt, $(arg)*))
+    };
+}
+
+type Result<T, E = FormatterError> = std::result::Result<T, E>;
 
 /// Contains the config and rule set
 #[derive(Debug, Clone)]
@@ -29,16 +78,230 @@ impl Default for FormatterConfig {
     }
 }
 
-// TODO: use it inside Formatter since they're sharing same fields
-#[derive(Default)]
-struct FormatBuffer {
-    level: usize,
-    current_line: usize,
-    pending_indent: bool,
-    w: String,
+/// An indent group. The group may optionally skip the first line
+#[derive(Default, Clone)]
+struct IndentGroup {
+    skip_line: bool,
+}
+
+/// A wrapper around a `std::fmt::Write` interface. The wrapper keeps track of indentation as well
+/// as information about the last `write_str` command if available. The formatter may also be
+/// restricted to a single line, in which case it will throw an error on a newline
+struct FormatBuffer<W: Sized> {
+    indents: Vec<IndentGroup>,
+    base_indent_len: usize,
+    tab_width: usize,
+    is_beginning_of_line: bool,
+    last_indent: String,
+    last_char: Option<char>,
+    current_line_len: usize,
+    w: W,
+    restrict_to_single_line: bool,
+}
+
+impl<W: Sized> FormatBuffer<W> {
+    fn new(w: W, tab_width: usize) -> Self {
+        Self {
+            w,
+            tab_width,
+            base_indent_len: 0,
+            indents: vec![],
+            current_line_len: 0,
+            is_beginning_of_line: true,
+            last_indent: String::new(),
+            last_char: None,
+            restrict_to_single_line: false,
+        }
+    }
+
+    /// Create a new temporary buffer based on an existing buffer which retains information about
+    /// the buffer state, but has a blank String as its underlying `Write` interface
+    fn create_temp_buf(&self) -> FormatBuffer<String> {
+        let mut new = FormatBuffer::new(String::new(), self.tab_width);
+        new.base_indent_len = self.current_indent_len();
+        new.last_indent = " ".repeat(self.last_indent_len().saturating_sub(new.base_indent_len));
+        new.current_line_len = self.current_line_len();
+        new.last_char = self.last_char;
+        new.restrict_to_single_line = self.restrict_to_single_line;
+        new
+    }
+
+    /// Restrict the buffer to a single line
+    fn restrict_to_single_line(&mut self, restricted: bool) {
+        self.restrict_to_single_line = restricted;
+    }
+
+    /// Indent the buffer by delta
+    fn indent(&mut self, delta: usize) {
+        self.indents.extend(std::iter::repeat(IndentGroup::default()).take(delta));
+    }
+
+    /// Dedent the buffer by delta
+    fn dedent(&mut self, delta: usize) {
+        self.indents.truncate(self.indents.len() - delta);
+    }
+
+    /// Get the current level of the indent. This is multiplied by the tab width to get the
+    /// resulting indent
+    fn level(&self) -> usize {
+        self.indents.iter().filter(|i| !i.skip_line).count()
+    }
+
+    /// Check if the last indent group is being skipped
+    fn last_indent_group_skipped(&self) -> bool {
+        self.indents.last().map(|i| i.skip_line).unwrap_or(false)
+    }
+
+    /// Set whether the last indent group should be skipped
+    fn set_last_indent_group_skipped(&mut self, skip_line: bool) {
+        if let Some(i) = self.indents.last_mut() {
+            i.skip_line = skip_line
+        }
+    }
+
+    /// Get the indent size of the last indent
+    fn last_indent_len(&self) -> usize {
+        self.last_indent.len() + self.base_indent_len
+    }
+
+    /// Get the current indent size (level * tab_width)
+    fn current_indent_len(&self) -> usize {
+        self.level() * self.tab_width
+    }
+
+    /// Get the current written position (this does not include the indent size)
+    fn current_line_len(&self) -> usize {
+        self.current_line_len
+    }
+
+    /// Set the current position
+    fn set_current_line_len(&mut self, len: usize) {
+        self.current_line_len = len
+    }
+
+    /// Check if the buffer is at the beggining of a new line
+    fn is_beginning_of_line(&self) -> bool {
+        self.is_beginning_of_line
+    }
+
+    /// Start a new indent group (skips first indent)
+    fn start_group(&mut self) {
+        self.indents.push(IndentGroup { skip_line: true });
+    }
+
+    /// End the last indent group
+    fn end_group(&mut self) {
+        self.indents.pop();
+    }
+
+    /// Get the last char written to the buffer
+    fn last_char(&self) -> Option<char> {
+        self.last_char
+    }
+}
+
+impl<W: Write> FormatBuffer<W> {
+    /// Write a raw string to the buffer. This will ignore indents and remove the indents of the
+    /// written string to match the current base indent of this buffer if it is a temp buffer
+    fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
+        let mut lines = s.as_ref().lines().peekable();
+        while let Some(line) = lines.next() {
+            // remove the whitespace that covered by the base indent length (this is normally the
+            // case with temporary buffers as this will be readded by the underlying IndentWriter
+            // later on
+            let line_start = line
+                .char_indices()
+                .take(self.base_indent_len)
+                .take_while(|(_, ch)| ch.is_whitespace())
+                .last()
+                .map(|(idx, _)| idx + 1)
+                .unwrap_or(0);
+            let trimmed_line = &line[line_start..];
+            if !trimmed_line.is_empty() {
+                self.w.write_str(trimmed_line)?;
+                self.is_beginning_of_line = false;
+            }
+            if lines.peek().is_some() {
+                if self.restrict_to_single_line {
+                    return Err(std::fmt::Error)
+                }
+                self.w.write_char('\n')?;
+                self.is_beginning_of_line = true;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for FormatBuffer<W> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        if s.is_empty() {
+            return Ok(())
+        }
+        let is_multiline = s.contains('\n');
+        if is_multiline && self.restrict_to_single_line {
+            return Err(std::fmt::Error)
+        }
+
+        let mut level = self.level();
+
+        if self.is_beginning_of_line && !s.trim_start().is_empty() {
+            let indent = " ".repeat(self.tab_width * level);
+            self.w.write_str(&indent)?;
+            self.last_indent = indent;
+        }
+
+        if self.last_indent_group_skipped() {
+            level += 1;
+        }
+        let indent = " ".repeat(self.tab_width * level);
+        IndentWriter::new_skip_initial(&indent, &mut self.w).write_str(s)?;
+
+        if let Some(last_char) = s.chars().next_back() {
+            self.last_char = Some(last_char);
+        }
+
+        if is_multiline {
+            self.set_last_indent_group_skipped(false);
+            self.last_indent = indent;
+            self.is_beginning_of_line = s.ends_with('\n');
+            if self.is_beginning_of_line {
+                self.current_line_len = 0;
+            } else {
+                self.current_line_len = s.lines().last().unwrap().len();
+            }
+        } else {
+            self.is_beginning_of_line = false;
+            self.current_line_len += s.len();
+        }
+
+        Ok(())
+    }
+}
+
+/// Holds information about a non-whitespace-splittable string, and the surrounding comments
+#[derive(Clone, Debug, Default)]
+struct Chunk {
+    postfixes_before: Vec<CommentWithMetadata>,
+    prefixes: Vec<CommentWithMetadata>,
+    content: String,
+    postfixes: Vec<CommentWithMetadata>,
+}
+
+impl From<String> for Chunk {
+    fn from(string: String) -> Self {
+        Chunk { content: string, ..Default::default() }
+    }
+}
+
+impl From<&str> for Chunk {
+    fn from(string: &str) -> Self {
+        Chunk { content: string.to_owned(), ..Default::default() }
+    }
 }
 
 // TODO: store context entities as references without copying
+/// Current context of the Formatter (e.g. inside Contract or Function definition)
 #[derive(Default)]
 struct Context {
     contract: Option<ContractDefinition>,
@@ -47,182 +310,889 @@ struct Context {
 
 /// A Solidity formatter
 pub struct Formatter<'a, W> {
-    w: &'a mut W,
+    buf: FormatBuffer<&'a mut W>,
     source: &'a str,
     config: FormatterConfig,
-    level: usize,
-    pending_indent: bool,
-    current_line: usize,
-    bufs: Vec<FormatBuffer>,
+    temp_bufs: Vec<FormatBuffer<String>>,
     context: Context,
+    comments: Comments,
+}
+
+macro_rules! write_chunk {
+    ($self:expr, $format_str:literal) => {{
+        write_chunk!($self, $format_str,)
+    }};
+    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
+        $self.write_chunk(&format!($format_str, $($arg)*).into())
+    }};
+    ($self:expr, $loc:expr) => {{
+        write_chunk!($self, $loc, "")
+    }};
+    ($self:expr, $loc:expr, $format_str:literal) => {{
+        write_chunk!($self, $loc, $format_str,)
+    }};
+    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        let chunk = $self.chunk_at($loc, None, format_args!($format_str, $($arg)*));
+        $self.write_chunk(&chunk)
+    }};
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+        write_chunk!($self, $loc, $end_loc, $format_str,)
+    }};
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        let chunk = $self.chunk_at($loc, Some($end_loc), format_args!($format_str, $($arg)*));
+        $self.write_chunk(&chunk)
+    }};
+}
+
+macro_rules! writeln_chunk {
+    ($self:expr) => {{
+        writeln_chunk!($self, "")
+    }};
+    ($self:expr, $format_str:literal) => {{
+        writeln_chunk!($self, $format_str,)
+    }};
+    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
+        write_chunk!($self, "{}\n", format_args!($format_str, $($arg)*))
+    }};
+    ($self:expr, $loc:expr) => {{
+        writeln_chunk!($self, $loc, "")
+    }};
+    ($self:expr, $loc:expr, $format_str:literal) => {{
+        writeln_chunk!($self, $loc, $format_str,)
+    }};
+    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        write_chunk!($self, $loc, "{}\n", format_args!($format_str, $($arg)*))
+    }};
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
+        writeln_chunk!($self, $loc, $end_loc, $format_str,)
+    }};
+    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
+        write_chunk!($self, $loc, $end_loc, "{}\n", format_args!($format_str, $($arg)*))
+    }};
+}
+
+macro_rules! buf_fn {
+    ($vis:vis fn $name:ident(&self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
+        $vis fn $name(&self, $($arg_name : $arg_ty),*) $(-> $ret)? {
+            if self.temp_bufs.is_empty() {
+                self.buf.$name($($arg_name),*)
+            } else {
+                self.temp_bufs.last().unwrap().$name($($arg_name),*)
+            }
+        }
+    };
+    ($vis:vis fn $name:ident(&mut self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
+        $vis fn $name(&mut self, $($arg_name : $arg_ty),*) $(-> $ret)? {
+            if self.temp_bufs.is_empty() {
+                self.buf.$name($($arg_name),*)
+            } else {
+                self.temp_bufs.last_mut().unwrap().$name($($arg_name),*)
+            }
+        }
+    };
+}
+
+/// An action which may be committed to a Formatter
+struct Transaction<'f, 'a, W> {
+    fmt: &'f mut Formatter<'a, W>,
+    buffer: String,
+    comments: Comments,
+}
+
+impl<'f, 'a, W> std::ops::Deref for Transaction<'f, 'a, W> {
+    type Target = Formatter<'a, W>;
+    fn deref(&self) -> &Self::Target {
+        self.fmt
+    }
+}
+
+impl<'f, 'a, W> std::ops::DerefMut for Transaction<'f, 'a, W> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.fmt
+    }
+}
+
+impl<'f, 'a, W: Write> Transaction<'f, 'a, W> {
+    /// Create a new transaction from a callback
+    fn new(
+        fmt: &'f mut Formatter<'a, W>,
+        mut fun: impl FnMut(&mut Formatter<'a, W>) -> Result<()>,
+    ) -> Result<Self> {
+        let mut comments = fmt.comments.clone();
+        let buffer = fmt.with_temp_buf(|fmt| fun(fmt))?.w;
+        comments = std::mem::replace(&mut fmt.comments, comments);
+        Ok(Self { fmt, buffer, comments })
+    }
+
+    /// Commit the transaction to the Formatter
+    fn commit(self) -> Result<String> {
+        self.fmt.comments = self.comments;
+        write_chunk!(self.fmt, "{}", self.buffer)?;
+        Ok(self.buffer)
+    }
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
-    pub fn new(w: &'a mut W, source: &'a str, config: FormatterConfig) -> Self {
+    pub fn new(w: &'a mut W, source: &'a str, comments: Comments, config: FormatterConfig) -> Self {
         Self {
-            w,
+            buf: FormatBuffer::new(w, config.tab_width),
             source,
             config,
-            level: 0,
-            pending_indent: true,
-            bufs: Vec::new(),
-            current_line: 0,
+            temp_bufs: Vec::new(),
             context: Context::default(),
+            comments,
         }
     }
 
-    fn level(&mut self) -> &mut usize {
-        if let Some(buf) = self.bufs.last_mut() {
-            &mut buf.level
+    /// Get the Write interface of the current temp buffer or the underlying Write
+    fn buf(&mut self) -> &mut dyn Write {
+        if self.temp_bufs.is_empty() {
+            &mut self.buf as &mut dyn Write
         } else {
-            &mut self.level
+            self.temp_bufs.last_mut().unwrap() as &mut dyn Write
         }
     }
 
-    fn indent(&mut self, delta: usize) {
-        let level = self.level();
+    buf_fn! { fn indent(&mut self, delta: usize) }
+    buf_fn! { fn dedent(&mut self, delta: usize) }
+    buf_fn! { fn start_group(&mut self) }
+    buf_fn! { fn end_group(&mut self) }
+    buf_fn! { fn create_temp_buf(&self) -> FormatBuffer<String> }
+    buf_fn! { fn restrict_to_single_line(&mut self, restricted: bool) }
+    buf_fn! { fn set_current_line_len(&mut self, len: usize) }
+    buf_fn! { fn current_line_len(&self) -> usize }
+    buf_fn! { fn last_indent_len(&self) -> usize }
+    buf_fn! { fn is_beginning_of_line(&self) -> bool }
+    buf_fn! { fn last_char(&self) -> Option<char> }
+    buf_fn! { fn last_indent_group_skipped(&self) -> bool }
+    buf_fn! { fn set_last_indent_group_skipped(&mut self, skip: bool) }
+    buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
 
-        *level += delta;
+    /// Do the callback within the context of a temp buffer
+    fn with_temp_buf(
+        &mut self,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<FormatBuffer<String>> {
+        self.temp_bufs.push(self.create_temp_buf());
+        let res = fun(self);
+        let out = self.temp_bufs.pop().unwrap();
+        res?;
+        Ok(out)
     }
 
-    fn dedent(&mut self, delta: usize) {
-        let level = self.level();
-
-        *level -= delta;
-    }
-
-    /// Write opening bracket with respect to `config.bracket_spacing` setting:
-    /// `"{ "` if `true`, `"{"` if `false`
-    fn write_opening_bracket(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { "{ " } else { "{" })
-    }
-
-    /// Write closing bracket with respect to `config.bracket_spacing` setting:
-    /// `" }"` if `true`, `"}"` if `false`
-    fn write_closing_bracket(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { " }" } else { "}" })
-    }
-
-    /// Write empty brackets with respect to `config.bracket_spacing` setting:
-    /// `"{ }"` if `true`, `"{}"` if `false`
-    fn write_empty_brackets(&mut self) -> std::fmt::Result {
-        write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
-    }
-
-    /// Length of the line `s` with respect to already written line and indentation
-    fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
-        (self.config.tab_width * self.level)
-            .saturating_add(self.current_line)
-            .saturating_add(s.as_ref().len())
+    /// Does the next written character require whitespace before
+    fn next_chunk_needs_space(&self, next_char: char) -> bool {
+        if self.is_beginning_of_line() {
+            return false
+        }
+        let last_char =
+            if let Some(last_char) = self.last_char() { last_char } else { return false };
+        if last_char.is_whitespace() {
+            return false
+        }
+        if next_char.is_whitespace() {
+            return false
+        }
+        match last_char {
+            '{' | '[' => match next_char {
+                '{' | '[' | '(' => false,
+                '/' => true,
+                _ => self.config.bracket_spacing,
+            },
+            '(' | '.' => false,
+            '/' => true,
+            _ => match next_char {
+                '}' | ']' => self.config.bracket_spacing,
+                ')' | ',' | '.' => false,
+                _ => true,
+            },
+        }
     }
 
     /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
-        self.len_indented_with_current(text) <= self.config.line_length
+        let text = text.as_ref();
+        if text.is_empty() {
+            return true
+        }
+        if text.contains('\n') {
+            return false
+        }
+        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
+        self.config.line_length >=
+            self.last_indent_len()
+                .saturating_add(self.current_line_len())
+                .saturating_add(text.len() + space)
     }
 
-    /// Is length of the line consisting of `items` separated by `separator` with respect to
-    /// already written line greater than `config.line_length`
-    fn is_separated_multiline(
-        &self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        separator: &str,
-    ) -> bool {
-        !self.will_it_fit(items.into_iter().join(separator))
+    /// Write empty brackets with respect to `config.bracket_spacing` setting:
+    /// `"{ }"` if `true`, `"{}"` if `false`
+    fn write_empty_brackets(&mut self) -> Result<()> {
+        let brackets = if self.config.bracket_spacing { "{ }" } else { "{}" };
+        write_chunk!(self, "{brackets}")?;
+        Ok(())
     }
 
-    /// Write `items` with no separator with respect to `config.line_length` setting
-    fn write_items(
+    /// Write semicolon to the buffer
+    fn write_semicolon(&mut self) -> Result<()> {
+        write!(self.buf(), ";")?;
+        Ok(())
+    }
+
+    /// Write whitespace separator to the buffer
+    /// `"\n"` if `multiline` is `true`, `" "` if `false`
+    fn write_whitespace_separator(&mut self, multiline: bool) -> Result<()> {
+        if !self.is_beginning_of_line() {
+            write!(self.buf(), "{}", if multiline { "\n" } else { " " })?;
+        }
+        Ok(())
+    }
+
+    /// Returns number of blank lines in source between two byte indexes
+    fn blank_lines(&self, start: usize, end: usize) -> usize {
+        self.source[start..end].matches('\n').count()
+    }
+
+    /// Find the next instance of the character in source
+    fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
+        self.source[byte_offset..]
+            .non_comment_chars()
+            .position(|ch| needle == ch)
+            .map(|p| byte_offset + p)
+    }
+
+    /// Create a chunk given a string and the location information
+    fn chunk_at(
         &mut self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        self.write_items_separated(items, "", multiline)
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        content: impl std::fmt::Display,
+    ) -> Chunk {
+        Chunk {
+            postfixes_before: self.comments.remove_postfixes_before(byte_offset),
+            prefixes: self.comments.remove_prefixes_before(byte_offset),
+            content: content.to_string(),
+            postfixes: next_byte_offset
+                .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
+                .unwrap_or_default(),
+        }
     }
 
-    /// Write `items` separated by `separator` with respect to `config.line_length` setting
-    fn write_items_separated(
+    /// Create a chunk given a callback
+    fn chunked(
         &mut self,
-        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
-        separator: &str,
-        multiline: bool,
-    ) -> std::fmt::Result {
-        if multiline {
-            let mut items = items.into_iter().peekable();
-            while let Some(item) = items.next() {
-                write!(self, "{}", item.as_ref())?;
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Chunk> {
+        let postfixes_before = self.comments.remove_postfixes_before(byte_offset);
+        let prefixes = self.comments.remove_prefixes_before(byte_offset);
+        let content = self.with_temp_buf(fun)?.w;
+        let postfixes = next_byte_offset
+            .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
+            .unwrap_or_default();
+        Ok(Chunk { postfixes_before, prefixes, content, postfixes })
+    }
 
-                if items.peek().is_some() {
-                    writeln!(self, "{}", separator.trim_end())?;
+    /// Create a chunk given a [Visitable] item
+    fn visit_to_chunk(
+        &mut self,
+        byte_offset: usize,
+        next_byte_offset: Option<usize>,
+        visitable: &mut impl Visitable,
+    ) -> Result<Chunk> {
+        self.chunked(byte_offset, next_byte_offset, |fmt| {
+            visitable.visit(fmt)?;
+            Ok(())
+        })
+    }
+
+    /// Transform [Visitable] items to the list of chunks
+    fn items_to_chunks<'b>(
+        &mut self,
+        next_byte_offset: Option<usize>,
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
+        let mut items = items.into_iter().collect::<Result<Vec<_>>>()?.into_iter().peekable();
+        let mut out = Vec::new();
+        while let Some((loc, item)) = items.next() {
+            let chunk_next_byte_offset =
+                items.peek().map(|(loc, _)| loc.start()).or(next_byte_offset);
+            out.push(self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?);
+        }
+        Ok(out)
+    }
+
+    /// Transform [Visitable] items to a list of chunks and then sort those chunks by [AttrSortKey]
+    fn items_to_chunks_sorted<'b>(
+        &mut self,
+        next_byte_offset: Option<usize>,
+        items: impl IntoIterator<Item = Result<(Loc, &'b mut (impl Visitable + AttrSortKey + 'b))>> + 'b,
+    ) -> Result<Vec<Chunk>> {
+        let mut items = items
+            .into_iter()
+            .map_ok(|(loc, vis)| (vis.attr_sort_key(), loc, vis))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .peekable();
+        let mut out = Vec::new();
+        while let Some((attr_sort_key, loc, item)) = items.next() {
+            let chunk_next_byte_offset =
+                items.peek().map(|(_, loc, _)| loc.start()).or(next_byte_offset);
+            out.push((
+                (attr_sort_key, loc),
+                self.visit_to_chunk(loc.start(), chunk_next_byte_offset, item)?,
+            ));
+        }
+        out.sort_by_key(|(k, _)| *k);
+        Ok(out.into_iter().map(|(_, c)| c).collect_vec())
+    }
+
+    /// Write a comment to the buffer formatted.
+    /// WARNING: This may introduce a newline if the comment is a Line comment
+    fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
+        if comment.is_prefix() {
+            let last_indent_group_skipped = self.last_indent_group_skipped();
+            if !self.is_beginning_of_line() {
+                writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
+            }
+            let mut lines = comment.comment.splitn(2, '\n');
+            write!(self.buf(), "{}", lines.next().unwrap())?;
+            if let Some(line) = lines.next() {
+                writeln!(self.buf())?;
+                self.set_last_indent_group_skipped(last_indent_group_skipped);
+                self.write_raw(line)?;
+            }
+            writeln!(self.buf())?;
+            self.set_last_indent_group_skipped(last_indent_group_skipped);
+        } else {
+            let indented = self.is_beginning_of_line();
+            self.indented_if(indented, 1, |fmt| {
+                if !indented && fmt.next_chunk_needs_space('/') {
+                    write!(fmt.buf(), " ")?;
+                }
+                let mut lines = comment.comment.splitn(2, '\n');
+                write!(fmt.buf(), "{}", lines.next().unwrap())?;
+                if let Some(line) = lines.next() {
+                    writeln!(fmt.buf())?;
+                    fmt.write_raw(line)?;
+                }
+                if comment.is_line() {
+                    writeln!(fmt.buf())?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Write a postfix comments before a given location
+    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for postfix in self.comments.remove_postfixes_before(byte_end) {
+            self.write_comment(&postfix)?;
+        }
+        Ok(())
+    }
+
+    /// Write all prefix comments before a given location
+    fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        for prefix in self.comments.remove_prefixes_before(byte_end) {
+            self.write_comment(&prefix)?;
+        }
+        Ok(())
+    }
+
+    /// Check if a chunk will fit on the current line
+    fn will_chunk_fit(&mut self, format_string: &str, chunk: &Chunk) -> Result<bool> {
+        if let Some(chunk_str) = self.simulate_to_single_line(|fmt| fmt.write_chunk(chunk))? {
+            Ok(self.will_it_fit(format_string.replacen("{}", &chunk_str, 1)))
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check if a separated list of chunks will fit on the current line
+    fn are_chunks_separated_multiline<'b>(
+        &mut self,
+        format_string: &str,
+        items: impl IntoIterator<Item = &'b Chunk>,
+        separator: &str,
+    ) -> Result<bool> {
+        let items = items.into_iter().collect_vec();
+        if let Some(chunks) = self.simulate_to_single_line(|fmt| {
+            fmt.write_chunks_separated(items.iter().copied(), separator, false)
+        })? {
+            Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
+        } else {
+            Ok(true)
+        }
+    }
+
+    /// Write the chunk and any surrounding comments into the buffer
+    /// This will automatically add whitespace before the chunk given the rule set in
+    /// `next_chunk_needs_space`. If the chunk does not fit on the current line it will be put on
+    /// to the next line
+    fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
+        // handle comments before chunk
+        for comment in &chunk.postfixes_before {
+            self.write_comment(comment)?;
+        }
+        for comment in &chunk.prefixes {
+            self.write_comment(comment)?;
+        }
+
+        // trim chunk start
+        let content = if chunk.content.starts_with('\n') {
+            let mut chunk = chunk.content.trim_start().to_string();
+            chunk.insert(0, '\n');
+            chunk
+        } else if chunk.content.starts_with(' ') {
+            let mut chunk = chunk.content.trim_start().to_string();
+            chunk.insert(0, ' ');
+            chunk
+        } else {
+            chunk.content.clone()
+        };
+
+        if !content.is_empty() {
+            // add whitespace if necessary
+            if self.next_chunk_needs_space(content.chars().next().unwrap()) {
+                if self.will_it_fit(&content) {
+                    write!(self.buf(), " ")?;
+                } else {
+                    writeln!(self.buf())?;
                 }
             }
-        } else {
-            write!(self, "{}", items.into_iter().join(separator))?;
+
+            // write chunk
+            write!(self.buf(), "{content}")?;
+        }
+
+        // write any postfix comments
+        for comment in &chunk.postfixes {
+            self.write_comment(comment)?;
         }
 
         Ok(())
     }
 
-    fn visit_to_string(
+    /// Write chunks separated by a separator. If `multiline`, each chunk will be written to a
+    /// separate line
+    fn write_chunks_separated<'b>(
         &mut self,
-        visitable: &mut impl Visitable,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        self.bufs.push(FormatBuffer::default());
-        visitable.visit(self)?;
-        let buf = self.bufs.pop().unwrap();
+        chunks: impl IntoIterator<Item = &'b Chunk>,
+        separator: &str,
+        multiline: bool,
+    ) -> Result<()> {
+        let mut chunks = chunks.into_iter().peekable();
+        while let Some(chunk) = chunks.next() {
+            let mut chunk = chunk.clone();
 
-        Ok(buf.w)
-    }
+            // handle postfixes before and add newline if necessary
+            let postfixes_before = std::mem::take(&mut chunk.postfixes_before);
+            for comment in postfixes_before {
+                self.write_comment(&comment)?;
+            }
+            if multiline && !self.is_beginning_of_line() {
+                writeln!(self.buf())?;
+            }
 
-    /// Returns number of blank lines between two LOCs
-    fn blank_lines(&self, a: Loc, b: Loc) -> usize {
-        return self.source[a.end()..b.start()].matches('\n').count()
-    }
-}
+            // remove postfixes so we can add separator between
+            let postfixes = std::mem::take(&mut chunk.postfixes);
 
-impl<'a, W: Write> Write for Formatter<'a, W> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let (level, current_line, pending_indent, w): (_, _, _, &mut dyn Write) =
-            if let Some(buf) = self.bufs.last_mut() {
-                (buf.level, &mut buf.current_line, &mut buf.pending_indent, &mut buf.w)
+            self.write_chunk(&chunk)?;
+
+            // add separator
+            if chunks.peek().is_some() {
+                write!(self.buf(), "{}", separator)?;
+                for comment in postfixes {
+                    self.write_comment(&comment)?;
+                }
+                if multiline && !self.is_beginning_of_line() {
+                    writeln!(self.buf())?;
+                }
             } else {
-                (self.level, &mut self.current_line, &mut self.pending_indent, self.w)
+                for comment in postfixes {
+                    self.write_comment(&comment)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the callback indented by the indent size
+    fn indented(&mut self, delta: usize, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<()> {
+        self.indented_if(true, delta, fun)
+    }
+
+    /// Apply the callback indented by the indent size if the condition is true
+    fn indented_if(
+        &mut self,
+        condition: bool,
+        delta: usize,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        if condition {
+            self.indent(delta);
+        }
+        let res = fun(self);
+        if condition {
+            self.dedent(delta);
+        }
+        res?;
+        Ok(())
+    }
+
+    /// Apply the callback into an indent group. The first line of the indent group is not
+    /// indented but lines thereafter are
+    fn grouped(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
+        self.start_group();
+        let res = fun(self);
+        let indented = !self.last_indent_group_skipped();
+        self.end_group();
+        res?;
+        Ok(indented)
+    }
+
+    /// Create a transaction. The result of the transaction is not applied to the buffer unless
+    /// `Transacton::commit` is called
+    fn transact<'b>(
+        &'b mut self,
+        fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Transaction<'b, 'a, W>> {
+        Transaction::new(self, fun)
+    }
+
+    /// Do the callback and return the result on the buffer as a string
+    fn simulate_to_string(&mut self, fun: impl FnMut(&mut Self) -> Result<()>) -> Result<String> {
+        Ok(self.transact(fun)?.buffer)
+    }
+
+    /// Turn a chunk and its surrounding comments into a a string
+    fn chunk_to_string(&mut self, chunk: &Chunk) -> Result<String> {
+        self.simulate_to_string(|fmt| fmt.write_chunk(chunk))
+    }
+
+    /// Try to create a string based on a callback. If the string does not fit on a single line
+    /// this will return `None`
+    fn simulate_to_single_line(
+        &mut self,
+        mut fun: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Option<String>> {
+        let mut single_line = false;
+        let tx = self.transact(|fmt| {
+            fmt.restrict_to_single_line(true);
+            single_line = match fun(fmt) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
             };
+            Ok(())
+        })?;
+        Ok(if single_line && tx.will_it_fit(&tx.buffer) { Some(tx.buffer) } else { None })
+    }
 
-        if *pending_indent {
-            let indent = " ".repeat(self.config.tab_width * level);
-            IndentWriter::new(&indent, w).write_str(s)?;
+    /// Try to apply a callback to a single line. If the callback cannot be applied to a single
+    /// line the callback will not be applied to the buffer and `false` will be returned. Otherwise
+    /// `true` will be returned
+    fn try_on_single_line(&mut self, mut fun: impl FnMut(&mut Self) -> Result<()>) -> Result<bool> {
+        let mut single_line = false;
+        let tx = self.transact(|fmt| {
+            fmt.restrict_to_single_line(true);
+            single_line = match fun(fmt) {
+                Ok(()) => true,
+                Err(FormatterError::Fmt(_)) => false,
+                Err(err) => bail!(err),
+            };
+            Ok(())
+        })?;
+        Ok(if single_line && tx.will_it_fit(&tx.buffer) {
+            tx.commit()?;
+            true
         } else {
-            w.write_str(s)?;
-        }
-        *current_line += s.len();
+            false
+        })
+    }
 
-        *pending_indent = s.ends_with('\n');
-        if *pending_indent {
-            *current_line = 0;
+    /// Surrounds a callback with parentheses. The callback will try to be applied to a single
+    /// line. If the callback cannot be applied to a single line the callback will applied to the
+    /// nextline indented. The callback receives a `multiline` hint as the second argument which
+    /// receives `true` in the latter case
+    fn surrounded(
+        &mut self,
+        byte_offset: usize,
+        first_chunk: impl std::fmt::Display,
+        last_chunk: impl std::fmt::Display,
+        next_byte_end: Option<usize>,
+        mut fun: impl FnMut(&mut Self, bool) -> Result<()>,
+    ) -> Result<()> {
+        self.write_postfix_comments_before(byte_offset)?;
+
+        write_chunk!(self, byte_offset, "{first_chunk}")?;
+
+        let multiline = !self.try_on_single_line(|fmt| {
+            fun(fmt, false)?;
+            write_chunk!(fmt, byte_offset, "{last_chunk}")?;
+            Ok(())
+        })?;
+
+        if multiline {
+            self.indented(1, |fmt| {
+                let contents = fmt
+                    .with_temp_buf(|fmt| {
+                        fmt.set_current_line_len(0);
+                        fun(fmt, true)
+                    })?
+                    .w;
+                if contents.chars().next().map(|ch| !ch.is_whitespace()).unwrap_or(false) {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                write_chunk!(fmt, "{contents}")
+            })?;
+            if let Some(next_byte_end) = next_byte_end {
+                self.write_postfix_comments_before(next_byte_end)?;
+            }
+            let last_chunk = last_chunk.to_string();
+            if !last_chunk.trim_start().is_empty() {
+                self.write_whitespace_separator(true)?;
+            }
+            write_chunk!(self, byte_offset, "{last_chunk}")?;
+        } else if let Some(next_byte_end) = next_byte_end {
+            self.write_postfix_comments_before(next_byte_end)?;
         }
 
+        Ok(())
+    }
+
+    /// Write each [Visitable] item on a separate line. The function will check if there are any
+    /// blank lines between each visitable statement and will apply a single blank line if there
+    /// exists any. The `needs_space` callback can force a newline and is given the last_item if
+    /// any and the next item as arguments
+    fn write_lined_visitable<'b, I, V, F>(&mut self, items: I, needs_space_fn: F) -> Result<()>
+    where
+        I: Iterator<Item = &'b mut V> + 'b,
+        V: Visitable + LineOfCode + 'b,
+        F: Fn(&Option<&V>, &V) -> bool,
+    {
+        let mut last_item: Option<&V> = None;
+        let mut last_byte_written = 0;
+        let mut is_first_line = true;
+        let mut items_iter = items.peekable();
+
+        while let Some(item) = items_iter.next() {
+            // check if the next block requires space
+            let mut needs_space = needs_space_fn(&last_item, item);
+
+            // write prefix comments
+            let comments = self.comments.remove_prefixes_before(item.loc().start());
+            for comment in &comments {
+                if !is_first_line && (needs_space || comment.has_newline_before) {
+                    writeln!(self.buf())?;
+                    needs_space = false;
+                }
+                self.write_comment(comment)?;
+                is_first_line = false;
+                last_byte_written = comment.loc.end();
+            }
+
+            // write space if required or if there are blank lines in between
+            if !is_first_line &&
+                (needs_space || self.blank_lines(last_byte_written, item.loc().start()) > 1)
+            {
+                writeln!(self.buf())?;
+            }
+
+            // write source unit part
+            item.visit(self)?;
+            last_byte_written = item.loc().end();
+            last_item = Some(item);
+            is_first_line = false;
+
+            // write postfix comments
+            if let Some(next_item) = items_iter.peek() {
+                let comments = self.comments.remove_postfixes_before(next_item.loc().start());
+                for comment in comments {
+                    self.write_comment(&comment)?;
+                    last_byte_written = comment.loc.end();
+                }
+                self.write_whitespace_separator(true)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Visit a flattened expression. The function will try to be applied to a single line and
+    /// otherwise will be grouped into the next line
+    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
+            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
+        }
+        Ok(())
+    }
+
+    /// Visit a flattened expression. The function takes a `multiline` hint as a second argument
+    /// If multiline the function will split every spaced operator onto a separate line
+    fn visit_flattened_expr_multiline<E>(
+        &mut self,
+        flattened: &mut [FlatExpression<&mut E>],
+        multiline: bool,
+    ) -> Result<()>
+    where
+        E: Visitable + LineOfCode,
+    {
+        let mut flattened = flattened.iter_mut().peekable();
+        let mut prefix_ops = String::new();
+        while let Some(item) = flattened.next() {
+            let loc = item.loc();
+            match item {
+                FlatExpression::Expression(expr) => {
+                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
+
+                    chunk.content.insert_str(0, &prefix_ops);
+                    prefix_ops.clear();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        chunk.content.push_str(op);
+                        flattened.next();
+                    }
+
+                    self.write_chunk(&chunk)?;
+                    if multiline && flattened.peek().is_some() {
+                        self.write_whitespace_separator(true)?;
+                    }
+                }
+                FlatExpression::SpacedOp(op) => {
+                    write_chunk!(self, "{op}")?;
+                }
+                FlatExpression::UnspacedOp(op) => {
+                    prefix_ops.push_str(op);
+                }
+                FlatExpression::Group(group) => {
+                    let mut prefix = std::mem::take(&mut prefix_ops);
+                    prefix.push('(');
+                    let mut suffix = ")".to_string();
+                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
+                        suffix.push_str(op);
+                        flattened.next();
+                    }
+                    self.surrounded(
+                        loc.map(|loc| loc.start()).unwrap_or(0),
+                        prefix,
+                        suffix,
+                        loc.map(|loc| loc.end()),
+                        |fmt, _multiline| fmt.visit_flattened_expr(group),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Visit the right side of an assignment. The function will try to write the assignment on a
+    /// single line or indented on the next line. If it can't do this it resorts to letting the
+    /// expression decide how to split iself on multiple lines
+    fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
+        use Expression::*;
+
+        if self.try_on_single_line(|fmt| expr.visit(fmt))? {
+            return Ok(())
+        }
+
+        self.write_postfix_comments_before(expr.loc().start())?;
+        self.write_prefix_comments_before(expr.loc().start())?;
+
+        if self.is_beginning_of_line() &&
+            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
+        {
+            return Ok(())
+        } else {
+            let mut fit_on_next_line = false;
+            self.indented(1, |fmt| {
+                let tx = fmt.transact(|fmt| {
+                    writeln!(fmt.buf())?;
+                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
+                    Ok(())
+                })?;
+                if fit_on_next_line {
+                    tx.commit()?;
+                }
+                Ok(())
+            })?;
+            if fit_on_next_line {
+                return Ok(())
+            }
+        }
+
+        let unsplittable = matches!(
+            expr,
+            BoolLiteral(..) |
+                NumberLiteral(..) |
+                RationalNumberLiteral(..) |
+                HexNumberLiteral(..) |
+                StringLiteral(..) |
+                HexLiteral(..) |
+                AddressLiteral(..) |
+                Variable(..) |
+                Unit(..) |
+                This(..)
+        );
+        if unsplittable {
+            self.indented(1, |fmt| expr.visit(fmt))?;
+            return Ok(())
+        }
+
+        expr.visit(self)?;
+
+        Ok(())
+    }
+
+    fn visit_ident_list(
+        &mut self,
+        loc: &mut Loc,
+        prefix: &str,
+        idents: &mut Vec<IdentifierPath>,
+    ) -> Result<()> {
+        write_chunk!(self, loc.start(), "{}", prefix)?;
+        if !idents.is_empty() {
+            self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _multiline| {
+                let args = fmt.items_to_chunks(
+                    Some(loc.end()),
+                    idents.iter_mut().map(|arg| Ok((arg.loc, arg))),
+                )?;
+                let multiline = fmt.are_chunks_separated_multiline("{}", &args, ", ")?;
+                fmt.write_chunks_separated(&args, ",", multiline)?;
+                Ok(())
+            })?;
+        }
         Ok(())
     }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
-    fn visit_source(&mut self, loc: Loc) -> VResult {
-        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())?;
+    type Error = FormatterError;
+
+    fn visit_source(&mut self, loc: Loc) -> Result<()> {
+        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())
+            .map_err(FormatterError::custom)?;
         let mut lines = source.splitn(2, '\n');
 
-        write!(self, "{}", lines.next().unwrap())?;
+        write_chunk!(self, loc.start(), "{}", lines.next().unwrap())?;
         if let Some(remainder) = lines.next() {
             // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
             // without triggering an indentation
-            self.write_str(&format!("\n{remainder}"))?;
+            self.write_raw(&format!("\n{remainder}"))?;
         }
+
+        let _ = self.comments.remove_comments_before(loc.end());
 
         Ok(())
     }
 
-    fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
+    fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<()> {
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
         //     SourceUnitPart::PragmaDirective(_, _, _) => 0,
@@ -230,45 +1200,39 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         //     _ => usize::MAX,
         // });
 
-        let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
-        while let Some(unit) = source_unit_parts_iter.next() {
-            let is_pragma =
-                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _));
-            let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_));
-            let is_error = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ErrorDefinition(_));
-            let is_declaration =
-                |u: &SourceUnitPart| !(is_pragma(u) || is_import(u) || is_error(u));
-            let is_comment = |u: &SourceUnitPart| matches!(u, SourceUnitPart::DocComment(_));
-
-            unit.visit(self)?;
-
-            if !is_comment(unit) {
-                writeln!(self)?;
-            }
-
-            if let Some(next_unit) = source_unit_parts_iter.peek() {
-                // If source has zero blank lines between imports or errors, leave it as is. If one
-                // or more, separate with one blank line.
-                let separate = (is_import(unit) || is_error(unit)) &&
-                    (is_import(next_unit) || is_error(next_unit)) &&
-                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
-
-                if (is_declaration(unit) || is_declaration(next_unit)) ||
-                    (is_pragma(unit) || is_pragma(next_unit)) ||
-                    separate
-                {
-                    writeln!(self)?;
+        self.write_lined_visitable(source_unit.0.iter_mut(), |last_unit, unit| match last_unit {
+            Some(last_unit) => match last_unit {
+                SourceUnitPart::ImportDirective(_) => {
+                    !matches!(unit, SourceUnitPart::ImportDirective(_))
                 }
-            }
-        }
+                SourceUnitPart::ErrorDefinition(_) => {
+                    !matches!(unit, SourceUnitPart::ErrorDefinition(_))
+                }
+                SourceUnitPart::Using(_) => !matches!(unit, SourceUnitPart::Using(_)),
+                SourceUnitPart::VariableDefinition(_) => {
+                    !matches!(unit, SourceUnitPart::VariableDefinition(_))
+                }
+                SourceUnitPart::DocComment(_) => false,
+                _ => true,
+            },
+            None => false,
+        })?;
+
+        let comments = self.simulate_to_string(|fmt| {
+            fmt.write_postfix_comments_before(fmt.source.len())?;
+            fmt.write_prefix_comments_before(fmt.source.len())?;
+            Ok(())
+        })?;
+        self.comments.remove_comments_before(self.source.len());
+        write_chunk!(self, self.source.len(), "{}", comments.trim_end())?;
 
         Ok(())
     }
 
-    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
+    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> Result<()> {
         match doc_comment.ty {
             CommentType::Line => {
-                write!(self, "///{}", doc_comment.comment)?;
+                write!(self.buf(), "///{}", doc_comment.comment.trim_end())?;
             }
             CommentType::Block => {
                 let lines = doc_comment
@@ -279,20 +1243,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     .peekable()
                     .collect::<Vec<_>>();
                 if lines.iter().skip(1).all(|line| line.starts_with('*')) {
-                    writeln!(self, "/**")?;
+                    writeln!(self.buf(), "/**")?;
                     let mut lines = lines.into_iter();
                     if let Some(first_line) = lines.next() {
                         if !first_line.is_empty() {
                             // write the original first line
-                            writeln!(self, " *{}", doc_comment.comment.lines().next().unwrap())?;
+                            writeln!(
+                                self.buf(),
+                                " *{}",
+                                doc_comment.comment.lines().next().unwrap().trim_end()
+                            )?;
                         }
                     }
                     for line in lines {
-                        writeln!(self, " *{}", &line[1..])?;
+                        writeln!(self.buf(), " *{}", &line[1..].trim_end())?;
                     }
-                    write!(self, " */")?;
+                    write!(self.buf(), " */")?;
                 } else {
-                    write!(self, "/**{}*/", doc_comment.comment)?;
+                    write!(self.buf(), "/**")?;
+                    self.write_raw(&doc_comment.comment)?;
+                    write!(self.buf(), "*/")?;
                 }
             }
         }
@@ -300,228 +1270,386 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_doc_comments(&mut self, doc_comments: &mut [DocComment]) -> VResult {
-        let mut iter = doc_comments.iter_mut();
-        if let Some(doc_comment) = iter.next() {
-            doc_comment.visit(self)?
-        }
-        for doc_comment in iter {
-            writeln!(self)?;
-            doc_comment.visit(self)?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
+    fn visit_contract(&mut self, contract: &mut ContractDefinition) -> Result<()> {
         self.context.contract = Some(contract.clone());
 
-        write!(self, "{} {} ", contract.ty, contract.name.name)?;
+        self.grouped(|fmt| {
+            write_chunk!(fmt, contract.loc.start(), "{}", contract.ty)?;
+            write_chunk!(fmt, contract.name.loc.end(), "{}", contract.name.name)?;
+            if !contract.base.is_empty() {
+                write_chunk!(
+                    fmt,
+                    contract.name.loc.end(),
+                    contract.base.first().unwrap().loc.start(),
+                    "is"
+                )?;
+            }
+            Ok(())
+        })?;
 
         if !contract.base.is_empty() {
-            write!(self, "is")?;
-
-            let bases = contract
-                .base
-                .iter_mut()
-                .map(|base| self.visit_to_string(base))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let multiline = self.is_separated_multiline(&bases, ", ");
-
-            if multiline {
-                writeln!(self)?;
-                self.indent(1);
-            } else {
-                write!(self, " ")?;
-            }
-
-            self.write_items_separated(&bases, ", ", multiline)?;
-
-            if multiline {
-                self.dedent(1);
-                writeln!(self)?;
-            } else {
-                write!(self, " ")?;
-            }
+            self.indented(1, |fmt| {
+                let base_end = contract.parts.first().map(|part| part.loc().start());
+                let bases = fmt.items_to_chunks(
+                    base_end,
+                    contract.base.iter_mut().map(|base| Ok((base.loc, base))),
+                )?;
+                let multiline = fmt.are_chunks_separated_multiline("{}", &bases, ",")?;
+                fmt.write_chunks_separated(&bases, ",", multiline)?;
+                fmt.write_whitespace_separator(multiline)?;
+                Ok(())
+            })?;
         }
 
-        if contract.parts.is_empty() {
-            self.write_empty_brackets()?;
-        } else {
-            writeln!(self, "{{")?;
+        write_chunk!(self, "{{")?;
 
-            self.indent(1);
-            let mut contract_parts_iter = contract.parts.iter_mut().peekable();
-            while let Some(part) = contract_parts_iter.next() {
-                part.visit(self)?;
-                writeln!(self)?;
+        self.indented(1, |fmt| {
+            if let Some(first) = contract.parts.first() {
+                fmt.write_postfix_comments_before(first.loc().start())?;
+                fmt.write_whitespace_separator(true)?;
+            } else {
+                return Ok(())
+            }
 
-                // If source has zero blank lines between parts and the current part is not a
-                // function, leave it as is. If it has one or more blank lines or
-                // the current part is a function, separate parts with one blank
-                // line.
-                if let Some(next_part) = contract_parts_iter.peek() {
-                    let blank_lines = self.blank_lines(part.loc(), next_part.loc());
-                    let is_function =
-                        if let ContractPart::FunctionDefinition(function_definition) = part {
-                            matches!(
-                                **function_definition,
-                                FunctionDefinition {
-                                    ty: FunctionTy::Function |
-                                        FunctionTy::Receive |
-                                        FunctionTy::Fallback,
-                                    ..
+            fmt.write_lined_visitable(
+                contract.parts.iter_mut(),
+                |last_part, part| match last_part {
+                    Some(last_part) => match last_part {
+                        ContractPart::ErrorDefinition(_) => {
+                            !matches!(part, ContractPart::ErrorDefinition(_))
+                        }
+                        ContractPart::EventDefinition(_) => {
+                            !matches!(part, ContractPart::EventDefinition(_))
+                        }
+                        ContractPart::VariableDefinition(_) => {
+                            !matches!(part, ContractPart::VariableDefinition(_))
+                        }
+                        ContractPart::TypeDefinition(_) => {
+                            !matches!(part, ContractPart::TypeDefinition(_))
+                        }
+                        ContractPart::EnumDefinition(_) => {
+                            !matches!(part, ContractPart::EnumDefinition(_))
+                        }
+                        ContractPart::Using(_) => !matches!(part, ContractPart::Using(_)),
+                        ContractPart::FunctionDefinition(last_def) => {
+                            if last_def.is_empty() {
+                                match part {
+                                    ContractPart::FunctionDefinition(def) => !def.is_empty(),
+                                    _ => true,
                                 }
-                            )
-                        } else {
-                            false
-                        };
-                    if is_function && blank_lines > 0 || blank_lines > 1 {
-                        writeln!(self)?;
-                    }
-                }
-            }
-            self.dedent(1);
+                            } else {
+                                true
+                            }
+                        }
+                        ContractPart::DocComment(_) => false,
+                        _ => true,
+                    },
+                    None => false,
+                },
+            )
+        })?;
 
-            write!(self, "}}")?;
+        // the end of the contract location doesn't actually contain the }, this will change in
+        // future versions of solang_parser
+        let contract_end = {
+            let last_byte = contract
+                .parts
+                .last()
+                .map(|p| p.loc())
+                .or_else(|| contract.base.last().map(|b| b.loc))
+                .unwrap_or(contract.loc)
+                .end();
+            self.find_next_in_src(last_byte, '}').unwrap_or(last_byte)
+        };
+        self.write_postfix_comments_before(contract_end)?;
+        if !contract.parts.is_empty() {
+            self.write_whitespace_separator(true)?;
         }
+        write_chunk!(self, contract_end, "}}")?;
 
         self.context.contract = None;
 
         Ok(())
     }
 
-    fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        write!(self, "pragma {} ", &ident.name)?;
-
+    fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> Result<()> {
         #[allow(clippy::if_same_then_else)]
-        if ident.name == "solidity" {
+        let pragma_descriptor = if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
             // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
             // TODO: semver-solidity crate :D
-            write!(self, "{};", str.string)?;
+            &str.string
         } else {
-            write!(self, "{};", str.string)?;
-        }
+            &str.string
+        };
+
+        write_chunk!(self, str.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
 
         Ok(())
     }
 
-    fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
-        write!(self, "import \"{}\";", &import.string)?;
-
+    fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> Result<()> {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), import.loc.start(), "import")?;
+            write_chunk!(fmt, import.loc.start(), import.loc.end(), "\"{}\"", &import.string)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_import_global(
         &mut self,
+        loc: Loc,
         global: &mut StringLiteral,
         alias: &mut Identifier,
-    ) -> VResult {
-        write!(self, "import \"{}\" as {};", global.string, alias.name)?;
-
+    ) -> Result<()> {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), global.loc.start(), "import")?;
+            write_chunk!(fmt, global.loc.start(), global.loc.end(), "\"{}\"", &global.string)?;
+            write_chunk!(fmt, loc.start(), alias.loc.start(), "as")?;
+            alias.visit(fmt)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn visit_import_renames(
         &mut self,
+        loc: Loc,
         imports: &mut [(Identifier, Option<Identifier>)],
         from: &mut StringLiteral,
-    ) -> VResult {
-        write!(self, "import ")?;
-
-        let mut imports = imports
-            .iter()
-            .map(|(ident, alias)| {
-                format!(
-                    "{}{}",
-                    ident.name,
-                    alias.as_ref().map_or("".to_string(), |alias| format!(" as {}", alias.name))
-                )
-            })
-            .collect::<Vec<_>>();
-        imports.sort();
-
-        let multiline = self.is_separated_multiline(&imports, ", ");
-
-        if multiline {
-            writeln!(self, "{{")?;
-            self.indent(1);
-        } else {
-            self.write_opening_bracket()?;
+    ) -> Result<()> {
+        if imports.is_empty() {
+            self.grouped(|fmt| {
+                write_chunk!(fmt, loc.start(), "import")?;
+                fmt.write_empty_brackets()?;
+                write_chunk!(fmt, loc.start(), from.loc.start(), "from")?;
+                write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+                fmt.write_semicolon()?;
+                Ok(())
+            })?;
+            return Ok(())
         }
 
-        self.write_items_separated(&imports, ", ", multiline)?;
+        let imports_start = imports.first().unwrap().0.loc.start();
 
-        if multiline {
-            self.dedent(1);
-            write!(self, "\n}}")?;
-        } else {
-            self.write_closing_bracket()?;
-        }
+        write_chunk!(self, loc.start(), imports_start, "import")?;
 
-        write!(self, " from \"{}\";", from.string)?;
+        self.surrounded(imports_start, "{", "}", Some(from.loc.start()), |fmt, _multiline| {
+            let mut imports = imports.iter_mut().peekable();
+            let mut import_chunks = Vec::new();
+            while let Some((ident, alias)) = imports.next() {
+                import_chunks.push(fmt.chunked(
+                    ident.loc.start(),
+                    imports.peek().map(|(ident, _)| ident.loc.start()),
+                    |fmt| {
+                        fmt.grouped(|fmt| {
+                            ident.visit(fmt)?;
+                            if let Some(alias) = alias {
+                                write_chunk!(fmt, ident.loc.end(), alias.loc.start(), "as")?;
+                                alias.visit(fmt)?;
+                            }
+                            Ok(())
+                        })?;
+                        Ok(())
+                    },
+                )?);
+            }
+
+            let multiline = fmt.are_chunks_separated_multiline(
+                &format!("{{}} }} from \"{}\";", from.string),
+                &import_chunks,
+                ",",
+            )?;
+            fmt.write_chunks_separated(&import_chunks, ",", multiline)?;
+            Ok(())
+        })?;
+
+        self.grouped(|fmt| {
+            write_chunk!(fmt, imports_start, from.loc.start(), "from")?;
+            write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
 
         Ok(())
     }
 
-    fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
-        write!(self, "enum {} ", &enumeration.name.name)?;
+    fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
+        let mut name = self.visit_to_chunk(
+            enumeration.name.loc.start(),
+            Some(enumeration.loc.end()),
+            &mut enumeration.name,
+        )?;
+        name.content = format!("enum {}", name.content);
+        self.write_chunk(&name)?;
 
         if enumeration.values.is_empty() {
             self.write_empty_brackets()?;
         } else {
-            writeln!(self, "{{")?;
-
-            self.indent(1);
-            for (i, value) in enumeration.values.iter().enumerate() {
-                write!(self, "{}", &value.name)?;
-
-                if i != enumeration.values.len() - 1 {
-                    write!(self, ",")?;
-                }
-
-                writeln!(self)?;
-            }
-            self.dedent(1);
-
-            write!(self, "}}")?;
+            self.surrounded(
+                enumeration.values.first().unwrap().loc.start(),
+                "{",
+                "}",
+                Some(enumeration.loc.end()),
+                |fmt, _multiline| {
+                    let values = fmt.items_to_chunks(
+                        Some(enumeration.loc.end()),
+                        enumeration.values.iter_mut().map(|ident| Ok((ident.loc, ident))),
+                    )?;
+                    fmt.write_chunks_separated(&values, ",", true)?;
+                    Ok(())
+                },
+            )?;
         }
 
         Ok(())
     }
 
-    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> Result<()> {
         match expr {
-            Expression::Type(_, typ) => match typ {
-                Type::Address => write!(self, "address")?,
-                Type::AddressPayable => write!(self, "address payable")?,
-                Type::Payable => write!(self, "payable")?,
-                Type::Bool => write!(self, "bool")?,
-                Type::String => write!(self, "string")?,
-                Type::Int(n) => write!(self, "int{}", n)?,
-                Type::Uint(n) => write!(self, "uint{}", n)?,
-                Type::Bytes(n) => write!(self, "bytes{}", n)?,
-                Type::Rational => write!(self, "rational")?,
-                Type::DynamicBytes => write!(self, "bytes")?,
-                Type::Mapping(_, from, to) => {
-                    write!(self, "mapping(")?;
+            Expression::Type(loc, typ) => match typ {
+                Type::Address => write_chunk!(self, loc.start(), "address")?,
+                Type::AddressPayable => write_chunk!(self, loc.start(), "address payable")?,
+                Type::Payable => write_chunk!(self, loc.start(), "payable")?,
+                Type::Bool => write_chunk!(self, loc.start(), "bool")?,
+                Type::String => write_chunk!(self, loc.start(), "string")?,
+                Type::Int(n) => write_chunk!(self, loc.start(), "int{}", n)?,
+                Type::Uint(n) => write_chunk!(self, loc.start(), "uint{}", n)?,
+                Type::Bytes(n) => write_chunk!(self, loc.start(), "bytes{}", n)?,
+                Type::Rational => write_chunk!(self, loc.start(), "rational")?,
+                Type::DynamicBytes => write_chunk!(self, loc.start(), "bytes")?,
+                Type::Mapping(loc, from, to) => {
+                    write_chunk!(self, loc.start(), "mapping(")?;
                     from.visit(self)?;
-                    write!(self, " => ")?;
+                    write!(self.buf(), " => ")?;
                     to.visit(self)?;
-                    write!(self, ")")?;
+                    write!(self.buf(), ")")?;
                 }
-                Type::Function { .. } => self.visit_source(loc)?,
+                Type::Function { .. } => self.visit_source(*loc)?,
             },
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
-                write!(self, "[")?;
+                write!(self.buf(), "[")?;
                 if let Some(size_exp) = size_exp {
                     size_exp.visit(self)?;
                 }
-                write!(self, "]")?;
+                write!(self.buf(), "]")?;
+            }
+            Expression::PreIncrement(..) |
+            Expression::PostIncrement(..) |
+            Expression::PreDecrement(..) |
+            Expression::PostDecrement(..) |
+            Expression::Not(..) |
+            Expression::Complement(..) |
+            Expression::UnaryPlus(..) |
+            Expression::Add(..) |
+            Expression::UnaryMinus(..) |
+            Expression::Subtract(..) |
+            Expression::Power(..) |
+            Expression::Multiply(..) |
+            Expression::Divide(..) |
+            Expression::Modulo(..) |
+            Expression::ShiftLeft(..) |
+            Expression::ShiftRight(..) |
+            Expression::BitwiseAnd(..) |
+            Expression::BitwiseXor(..) |
+            Expression::BitwiseOr(..) |
+            Expression::Less(..) |
+            Expression::More(..) |
+            Expression::LessEqual(..) |
+            Expression::MoreEqual(..) |
+            Expression::And(..) |
+            Expression::Or(..) |
+            Expression::Equal(..) |
+            Expression::NotEqual(..) => {
+                self.visit_flattened_expr(&mut expr.flatten())?;
+            }
+            Expression::Assign(..) |
+            Expression::AssignOr(..) |
+            Expression::AssignAnd(..) |
+            Expression::AssignXor(..) |
+            Expression::AssignShiftLeft(..) |
+            Expression::AssignShiftRight(..) |
+            Expression::AssignAdd(..) |
+            Expression::AssignSubtract(..) |
+            Expression::AssignMultiply(..) |
+            Expression::AssignDivide(..) |
+            Expression::AssignModulo(..) => {
+                let precedence = expr.precedence();
+                let op = expr.operator().unwrap();
+                let (left, right) = expr.into_components();
+                let left = left.unwrap();
+                let right = right.unwrap();
+
+                // we shouldn't need parentheses on the left as assignment should always have the
+                // lowest priority
+                let left_chunked = self.chunked(left.loc().start(), None, |fmt| left.visit(fmt))?;
+                // TODO we use the operator presence as a short hand for whether and indent was
+                // introduced if multiline, but this may not always be the case
+                let left_is_indented =
+                    left_chunked.content.contains('\n') && left.operator().is_some();
+                self.write_chunk(&left_chunked)?;
+
+                self.indented_if(left_is_indented || !self.will_it_fit(op), 1, |fmt| {
+                    write_chunk!(fmt, "{}", op)?;
+                    if precedence.is_evaluated_first(right.precedence()) {
+                        fmt.surrounded(right.loc().start(), "(", ")", None, |fmt, _multiline| {
+                            right.visit(fmt)
+                        })?;
+                    } else {
+                        fmt.visit_assignment(right)?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Expression::Variable(ident) => {
+                ident.visit(self)?;
+            }
+            Expression::MemberAccess(_, expr, ident) => {
+                let (remaining, idents) = {
+                    let mut idents = vec![ident];
+                    let mut remaining = expr.as_mut();
+                    while let Expression::MemberAccess(_, expr, ident) = remaining {
+                        idents.push(ident);
+                        remaining = expr;
+                    }
+                    idents.reverse();
+                    (remaining, idents)
+                };
+
+                self.visit_expr(remaining.loc(), remaining)?;
+
+                let mut chunks = self.items_to_chunks(
+                    Some(loc.end()),
+                    idents.into_iter().map(|ident| Ok((ident.loc, ident))),
+                )?;
+                chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+                let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
+                self.write_chunks_separated(&chunks, "", multiline)?;
+            }
+            Expression::List(loc, items) => {
+                self.surrounded(
+                    items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start()),
+                    "(",
+                    ")",
+                    Some(loc.end()),
+                    |fmt, _| {
+                        let items = fmt.items_to_chunks(
+                            Some(loc.end()),
+                            items.iter_mut().map(|item| Ok((item.0, &mut item.1))),
+                        )?;
+                        if !fmt.try_on_single_line(|fmt| {
+                            fmt.write_chunks_separated(&items, ",", false)
+                        })? {
+                            fmt.write_chunks_separated(&items, ",", true)?;
+                        }
+                        Ok(())
+                    },
+                )?;
             }
             _ => self.visit_source(loc)?,
         };
@@ -529,123 +1657,188 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
-        write!(self, "emit ")?;
-        event.loc().visit(self)?;
-        write!(self, ";")?;
-
+    fn visit_ident(&mut self, loc: Loc, ident: &mut Identifier) -> Result<()> {
+        write_chunk!(self, loc.end(), "{}", ident.name)?;
         Ok(())
     }
 
-    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
-        var.ty.visit(self)?;
-
-        if let Some(storage) = &var.storage {
-            write!(self, " {}", storage)?;
-        }
-
-        write!(self, " {}", var.name.name)?;
-
+    fn visit_ident_path(&mut self, idents: &mut IdentifierPath) -> Result<(), Self::Error> {
+        idents.identifiers.iter_mut().skip(1).for_each(|chunk| {
+            if !chunk.name.starts_with('.') {
+                chunk.name.insert(0, '.')
+            }
+        });
+        let chunks = self.items_to_chunks(
+            Some(idents.loc.end()),
+            idents.identifiers.iter_mut().map(|ident| Ok((ident.loc, ident))),
+        )?;
+        self.grouped(|fmt| {
+            let multiline = fmt.are_chunks_separated_multiline("{}", &chunks, "")?;
+            fmt.write_chunks_separated(&chunks, "", multiline)
+        })?;
         Ok(())
     }
 
-    fn visit_break(&mut self) -> VResult {
-        write!(self, "break;")?;
-
+    fn visit_emit(&mut self, loc: Loc, event: &mut Expression) -> Result<()> {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, loc.start(), "emit")?;
+            event.visit(fmt)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
-    fn visit_continue(&mut self) -> VResult {
-        write!(self, "continue;")?;
-
+    fn visit_var_declaration(
+        &mut self,
+        var: &mut VariableDeclaration,
+        is_assignment: bool,
+    ) -> Result<()> {
+        self.grouped(|fmt| {
+            var.ty.visit(fmt)?;
+            if let Some(storage) = &var.storage {
+                write_chunk!(fmt, storage.loc().end(), "{}", storage)?;
+            }
+            write_chunk!(
+                fmt,
+                var.name.loc.end(),
+                "{}{}",
+                var.name.name,
+                if is_assignment { " =" } else { "" }
+            )?;
+            Ok(())
+        })?;
         Ok(())
     }
 
-    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+    fn visit_break(&mut self, loc: Loc) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "break;")
+    }
+
+    fn visit_continue(&mut self, loc: Loc) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "continue;")
+    }
+
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
         self.context.function = Some(func.clone());
 
-        write!(self, "{}", func.ty)?;
+        self.write_postfix_comments_before(func.loc.start())?;
+        self.write_prefix_comments_before(func.loc.start())?;
 
-        if let Some(Identifier { name, .. }) = &func.name {
-            write!(self, " {name}")?;
-        }
-
-        let params = self.visit_to_string(&mut func.params)?;
-        let params_multiline = params.contains('\n');
-
-        self.write_items(params.lines(), params_multiline)?;
-
-        let attributes = self.visit_to_string(&mut func.attributes)?;
-        let attributes = attributes.lines().collect::<Vec<_>>();
-
-        let returns = self.visit_to_string(&mut func.returns)?;
-        let returns_multiline = returns.contains('\n');
-        let returns_indent = params_multiline || !attributes.is_empty() || returns_multiline;
-
-        // Compose one line string consisting of attributes and return parameters.
-        let attributes_returns = format!(
-            "{} {}",
-            attributes.join(" "),
-            if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
-        );
-        let attributes_returns = attributes_returns.trim();
-
-        let (body, body_first_line) = match &mut func.body {
-            Some(body) => {
-                let body_string = self.visit_to_string(body)?;
-                let first_line = body_string.lines().next().unwrap_or_default();
-
-                (Some(body), format!(" {first_line}"))
-            }
-            None => (None, ";".to_string()),
+        let func_name = if let Some(ident) = &func.name {
+            format!("{} {}", func.ty, ident.name)
+        } else {
+            func.ty.to_string()
         };
 
-        let attributes_returns_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
-            !returns_multiline;
+        // calculate locations of chunk groups
+        let attrs_loc = func.attributes.first().map(|attr| attr.loc());
+        let returns_loc = func.returns.first().map(|param| param.0);
+        let body_loc = func.body.as_ref().map(LineOfCode::loc);
 
-        // Check that we can fit both attributes and return arguments in one line.
-        if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
-            write!(self, " {attributes_returns}")?;
-        } else {
-            // If attributes and returns can't fit in one line, we write all attributes in multiple
-            // lines.
+        let params_end = attrs_loc
+            .as_ref()
+            .or(returns_loc.as_ref())
+            .or(body_loc.as_ref())
+            .map(|loc| loc.start());
+        let attrs_end = returns_loc.as_ref().or(body_loc.as_ref()).map(|loc| loc.start());
+        let returns_end = body_loc.as_ref().map(|loc| loc.start());
+
+        let mut params_multiline = false;
+        self.surrounded(
+            func.loc.start(),
+            format!("{func_name}("),
+            ")",
+            params_end,
+            |fmt, multiline| {
+                let params = fmt.items_to_chunks(
+                    params_end,
+                    func.params.iter_mut().map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+                )?;
+                let after_params = if !func.attributes.is_empty() || !func.returns.is_empty() {
+                    ""
+                } else if func.body.is_some() {
+                    " {"
+                } else {
+                    ";"
+                };
+                params_multiline = multiline ||
+                    fmt.are_chunks_separated_multiline(
+                        &format!("{{}}){after_params}"),
+                        &params,
+                        ",",
+                    )?;
+                fmt.write_chunks_separated(&params, ",", params_multiline)?;
+                Ok(())
+            },
+        )?;
+
+        let mut write_attributes = |fmt: &mut Self, multiline: bool| -> Result<()> {
+            // write attributes
             if !func.attributes.is_empty() {
-                writeln!(self)?;
-                self.indent(1);
-                func.attributes.visit(self)?;
-                self.dedent(1);
+                let byte_offset = attrs_loc.unwrap().start();
+                fmt.write_postfix_comments_before(byte_offset)?;
+                fmt.write_whitespace_separator(multiline)?;
+                let attributes = fmt.items_to_chunks_sorted(
+                    attrs_end,
+                    func.attributes.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+                )?;
+                fmt.indented(1, |fmt| {
+                    fmt.write_chunks_separated(&attributes, "", multiline)?;
+                    Ok(())
+                })?;
             }
 
+            // write returns
             if !func.returns.is_empty() {
-                if returns_indent {
-                    self.indent(1);
-                }
-                writeln!(self)?;
-                write!(self, "returns ")?;
-
-                self.write_items(returns.lines(), returns_multiline)?;
-
-                if returns_indent {
-                    self.dedent(1);
-                }
+                let returns = fmt.items_to_chunks(
+                    returns_end,
+                    func.returns.iter_mut().map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
+                )?;
+                let byte_offset = returns_loc.unwrap().start();
+                fmt.write_postfix_comments_before(byte_offset)?;
+                fmt.write_whitespace_separator(multiline)?;
+                fmt.indented(1, |fmt| {
+                    fmt.surrounded(
+                        byte_offset,
+                        "returns (",
+                        ")",
+                        returns_end,
+                        |fmt, multiline_hint| {
+                            fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
+                            Ok(())
+                        },
+                    )?;
+                    Ok(())
+                })?;
             }
+            Ok(())
+        };
+
+        let attrs_multiline = params_multiline ||
+            !self.try_on_single_line(|fmt| {
+                write_attributes(fmt, false)?;
+                if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
+                    bail!(FormatterError::fmt())
+                }
+                Ok(())
+            })?;
+        if attrs_multiline {
+            write_attributes(self, true)?;
         }
 
-        match body {
+        // write function body
+        match &mut func.body {
             Some(body) => {
-                if self.will_it_fit(format!(" {}", body_first_line)) &&
-                    attributes_returns_fits_one_line
-                {
-                    write!(self, " ")?;
-                } else {
-                    writeln!(self)?;
-                }
-                // TODO: when we implement visitors for statements, write `body_string` here instead
-                //  of visiting it twice.
-                body.visit(self)?;
+                let body_loc = body_loc.unwrap();
+                let byte_offset = body_loc.start();
+                let body = self.visit_to_chunk(byte_offset, Some(body_loc.end()), body)?;
+                self.write_whitespace_separator(
+                    attrs_multiline && !(func.attributes.is_empty() && func.returns.is_empty()),
+                )?;
+                self.write_chunk(&body)?;
             }
-            None => write!(self, ";")?,
+            None => self.write_semicolon()?,
         }
 
         self.context.function = None;
@@ -653,78 +1846,41 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    /// Write each function attribute on a new line because we don't have enough information in
-    /// visit function regarding one line/multiline cases. We can transform it into one line later
-    /// by `.split("\n").join(" ")`.
-    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        let mut attributes = list
-            .iter_mut()
-            .sorted_by_key(|attribute| match attribute {
-                FunctionAttribute::Visibility(_) => 0,
-                FunctionAttribute::Mutability(_) => 1,
-                FunctionAttribute::Virtual(_) => 2,
-                FunctionAttribute::Immutable(_) => 3,
-                FunctionAttribute::Override(_, _) => 4,
-                FunctionAttribute::BaseOrModifier(_, _) => 5,
-            })
-            .peekable();
-
-        while let Some(attribute) = attributes.next() {
-            attribute.visit(self)?;
-            if attributes.peek().is_some() {
-                writeln!(self)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> Result<()> {
         match attribute {
-            FunctionAttribute::Mutability(mutability) => write!(self, "{mutability}")?,
-            FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
-            FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
-            FunctionAttribute::Immutable(_) => write!(self, "immutable")?,
-            FunctionAttribute::Override(_, args) => {
-                write!(self, "override")?;
-                if !args.is_empty() {
-                    write!(self, "(")?;
-
-                    let args = args.iter().map(|arg| &arg.name).collect::<Vec<_>>();
-
-                    let multiline = self.is_separated_multiline(&args, ", ");
-
-                    if multiline {
-                        writeln!(self)?;
-                        self.indent(1);
-                    }
-
-                    self.write_items_separated(&args, ", ", multiline)?;
-
-                    if multiline {
-                        self.dedent(1);
-                        writeln!(self)?;
-                    }
-
-                    write!(self, ")")?;
-                }
+            FunctionAttribute::Mutability(mutability) => {
+                write_chunk!(self, mutability.loc().end(), "{mutability}")?
             }
-            FunctionAttribute::BaseOrModifier(_, base) => {
+            FunctionAttribute::Visibility(visibility) => {
+                // Visibility will always have a location in a Function attribute
+                write_chunk!(self, visibility.loc().unwrap().end(), "{visibility}")?
+            }
+            FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
+            FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
+            FunctionAttribute::Override(loc, args) => {
+                self.visit_ident_list(loc, "override", args)?
+            }
+            FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract.base.iter().any(|contract_base| {
-                        helpers::namespace_matches(&contract_base.name, &base.name)
+                        contract_base
+                            .name
+                            .identifiers
+                            .iter()
+                            .zip(&base.name.identifiers)
+                            .all(|(l, r)| l.name == r.name)
                     })
                 });
 
                 if is_contract_base {
                     base.visit(self)?;
                 } else {
-                    let base_or_modifier = self.visit_to_string(base)?;
-                    write!(
-                        self,
-                        "{}",
-                        base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
-                    )?;
+                    let mut base_or_modifier =
+                        self.visit_to_chunk(loc.start(), Some(loc.end()), base)?;
+                    if base_or_modifier.content.ends_with("()") {
+                        base_or_modifier.content.truncate(base_or_modifier.content.len() - 2);
+                    }
+                    self.write_chunk(&base_or_modifier)?;
                 }
             }
         };
@@ -732,117 +1888,113 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_base(&mut self, base: &mut Base) -> VResult {
-        let need_parents = self.context.function.is_some() || base.args.is_some();
+    fn visit_base(&mut self, base: &mut Base) -> Result<()> {
+        let name_loc = &base.name.loc;
+        let mut name = self.chunked(name_loc.start(), Some(name_loc.end()), |fmt| {
+            fmt.visit_ident_path(&mut base.name)?;
+            Ok(())
+        })?;
 
-        self.visit_expr(LineOfCode::loc(&base.name), &mut base.name)?;
-
-        if need_parents {
-            self.visit_opening_paren()?;
-        }
-
-        if let Some(args) = &mut base.args {
-            let args = args
-                .iter_mut()
-                .map(|arg| self.visit_to_string(arg))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let multiline = self.is_separated_multiline(&args, ", ");
-
-            if multiline {
-                writeln!(self)?;
-                self.indent(1);
+        if base.args.is_none() || base.args.as_ref().unwrap().is_empty() {
+            if self.context.function.is_some() {
+                name.content.push_str("()");
             }
+            self.write_chunk(&name)?;
+            return Ok(())
+        }
 
-            self.write_items_separated(&args, ", ", multiline)?;
+        let args = base.args.as_mut().unwrap();
+        let args_start = LineOfCode::loc(args.first().unwrap()).start();
 
-            if multiline {
-                self.dedent(1);
-                writeln!(self)?;
+        name.content.push('(');
+        let formatted_name = self.chunk_to_string(&name)?;
+
+        let multiline = !self.will_it_fit(&formatted_name);
+
+        self.surrounded(
+            args_start,
+            &formatted_name,
+            ")",
+            Some(base.loc.end()),
+            |fmt, multiline_hint| {
+                let args = fmt.items_to_chunks(
+                    Some(base.loc.end()),
+                    args.iter_mut().map(|arg| Ok((arg.loc(), arg))),
+                )?;
+                let multiline = multiline ||
+                    multiline_hint ||
+                    fmt.are_chunks_separated_multiline("{}", &args, ",")?;
+                fmt.write_chunks_separated(&args, ",", multiline)?;
+                Ok(())
+            },
+        )?;
+
+        Ok(())
+    }
+
+    fn visit_parameter(&mut self, parameter: &mut Parameter) -> Result<()> {
+        self.grouped(|fmt| {
+            parameter.ty.visit(fmt)?;
+            if let Some(storage) = &parameter.storage {
+                write_chunk!(fmt, storage.loc().end(), "{storage}")?;
             }
-        }
-
-        if need_parents {
-            self.visit_closing_paren()?;
-        }
-
+            if let Some(name) = &parameter.name {
+                write_chunk!(fmt, parameter.loc.end(), "{}", name.name)?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
-    fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
-        parameter.ty.visit(self)?;
-
-        if let Some(storage) = &parameter.storage {
-            write!(self, " {storage}")?;
-        }
-
-        if let Some(name) = &parameter.name {
-            write!(self, " {}", name.name)?;
-        }
-
-        Ok(())
-    }
-
-    /// Write parameter list with opening and closing parenthesis respecting multiline case.
-    /// More info in [Visitor::visit_parameter_list].
-    fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
-        let params = list
-            .iter_mut()
-            .map(|(_, param)| param.as_mut().map(|param| self.visit_to_string(param)).transpose())
-            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-
-        let params_multiline = params.len() > 2 || self.is_separated_multiline(&params, ", ");
-
-        self.visit_opening_paren()?;
-        if params_multiline {
-            writeln!(self)?;
-            self.indent(1);
-        }
-        self.write_items_separated(&params, ", ", params_multiline)?;
-        if params_multiline {
-            self.dedent(1);
-            writeln!(self)?;
-        }
-        self.visit_closing_paren()?;
-
-        Ok(())
-    }
-
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        write!(self, "struct {} ", &structure.name.name)?;
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
+        let mut name = self.visit_to_chunk(
+            structure.name.loc.start(),
+            Some(structure.loc.end()),
+            &mut structure.name,
+        )?;
+        name.content = format!("struct {}", name.content);
+        self.write_chunk(&name)?;
 
         if structure.fields.is_empty() {
             self.write_empty_brackets()?;
         } else {
-            writeln!(self, "{{")?;
-
-            self.indent(1);
-            for field in structure.fields.iter_mut() {
-                field.visit(self)?;
-                writeln!(self, ";")?;
-            }
-            self.dedent(1);
-
-            write!(self, "}}")?;
+            self.surrounded(
+                structure.fields.first().unwrap().loc.start(),
+                "{",
+                "}",
+                Some(structure.loc.end()),
+                |fmt, _multiline| {
+                    let chunks = fmt.items_to_chunks(
+                        Some(structure.loc.end()),
+                        structure.fields.iter_mut().map(|ident| Ok((ident.loc, ident))),
+                    )?;
+                    for mut chunk in chunks {
+                        chunk.content.push(';');
+                        fmt.write_chunk(&chunk)?;
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    Ok(())
+                },
+            )?;
         }
 
         Ok(())
     }
 
-    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        write!(self, "type {} is ", def.name.name)?;
-        def.ty.visit(self)?;
-        write!(self, ";")?;
-
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> Result<()> {
+        self.grouped(|fmt| {
+            write_chunk!(fmt, def.loc.start(), def.name.loc.start(), "type")?;
+            def.name.visit(fmt)?;
+            write_chunk!(fmt, def.name.loc.end(), LineOfCode::loc(&def.ty).start(), "is")?;
+            def.ty.visit(fmt)?;
+            fmt.write_semicolon()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult {
-        write!(self, ";")?;
-
+    fn visit_stray_semicolon(&mut self) -> Result<()> {
+        self.write_semicolon()?;
         Ok(())
     }
 
@@ -851,267 +2003,383 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         loc: Loc,
         unchecked: bool,
         statements: &mut Vec<Statement>,
-    ) -> VResult {
+    ) -> Result<()> {
         if unchecked {
-            write!(self, "unchecked ")?;
+            write_chunk!(self, loc.start(), "unchecked ")?;
         }
+        write_chunk!(self, "{{")?;
 
-        if statements.is_empty() {
-            self.write_empty_brackets()?;
-            return Ok(())
-        }
-
-        let multiline = self.source[loc.start()..loc.end()].contains('\n');
-
-        if multiline {
-            writeln!(self, "{{")?;
-            self.indent(1);
-        } else {
-            self.write_opening_bracket()?;
-        }
-
-        let mut statements_iter = statements.iter_mut().peekable();
-        while let Some(stmt) = statements_iter.next() {
-            stmt.visit(self)?;
-            if multiline {
-                writeln!(self)?;
+        self.indented(1, |fmt| {
+            if let Some(statement) = statements.first() {
+                fmt.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
+                fmt.write_whitespace_separator(true)?;
+            } else {
+                return Ok(())
             }
 
-            // If source has zero blank lines between statements, leave it as is. If one
-            //  or more, separate statements with one blank line.
-            if let Some(next_stmt) = statements_iter.peek() {
-                if self.blank_lines(LineOfCode::loc(stmt), LineOfCode::loc(next_stmt)) > 1 {
-                    writeln!(self)?;
-                }
-            }
-        }
+            fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
+            Ok(())
+        })?;
 
-        if multiline {
-            self.dedent(1);
-            write!(self, "}}")?;
+        self.write_postfix_comments_before(loc.end())?;
+        if !statements.is_empty() {
+            self.write_whitespace_separator(true)?;
+        }
+        write_chunk!(self, loc.end(), "}}")?;
+
+        Ok(())
+    }
+
+    fn visit_opening_paren(&mut self) -> Result<()> {
+        write_chunk!(self, "(")?;
+        Ok(())
+    }
+
+    fn visit_closing_paren(&mut self) -> Result<()> {
+        write_chunk!(self, ")")?;
+        Ok(())
+    }
+
+    fn visit_newline(&mut self) -> Result<()> {
+        writeln_chunk!(self)?;
+        Ok(())
+    }
+
+    fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
+        let mut name =
+            self.visit_to_chunk(event.name.loc.start(), Some(event.loc.end()), &mut event.name)?;
+        name.content = format!("event {}(", name.content);
+
+        if event.fields.is_empty() {
+            name.content.push(')');
+            self.write_chunk(&name)?;
         } else {
-            self.write_closing_bracket()?;
+            let params_start = event.fields.first().unwrap().loc.start();
+
+            let formatted_name = self.chunk_to_string(&name)?;
+
+            self.surrounded(params_start, &formatted_name, ")", None, |fmt, multiline| {
+                let params = fmt
+                    .items_to_chunks(None, event.fields.iter_mut().map(|arg| Ok((arg.loc, arg))))?;
+                fmt.write_chunks_separated(&params, ",", multiline)?;
+                Ok(())
+            })?;
         }
+
+        self.grouped(|fmt| {
+            write_chunk!(
+                fmt,
+                event.loc.start(),
+                event.loc.end(),
+                "{}",
+                if event.anonymous { "anonymous" } else { "" }
+            )
+        })?;
+
+        self.write_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_opening_paren(&mut self) -> VResult {
-        write!(self, "(")?;
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> Result<()> {
+        self.grouped(|fmt| {
+            param.ty.visit(fmt)?;
+            if param.indexed {
+                write_chunk!(fmt, param.loc.start(), "indexed")?;
+            }
+            if let Some(name) = &param.name {
+                write_chunk!(fmt, name.loc.end(), "{}", name.name)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> Result<()> {
+        let mut name =
+            self.visit_to_chunk(error.name.loc.start(), Some(error.loc.end()), &mut error.name)?;
+        name.content = format!("error {}(", name.content);
+
+        if error.fields.is_empty() {
+            name.content.push(')');
+            self.write_chunk(&name)?;
+        } else {
+            let params_start = error.fields.first().unwrap().loc.start();
+
+            let formatted_name = self.chunk_to_string(&name)?;
+
+            self.surrounded(params_start, &formatted_name, ")", None, |fmt, _multiline| {
+                let params = fmt
+                    .items_to_chunks(None, error.fields.iter_mut().map(|arg| Ok((arg.loc, arg))))?;
+                let multiline = fmt.are_chunks_separated_multiline("{}", &params, ",")?;
+                fmt.write_chunks_separated(&params, ",", multiline)?;
+                Ok(())
+            })?;
+        }
+
+        self.write_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_closing_paren(&mut self) -> VResult {
-        write!(self, ")")?;
-
+    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> Result<()> {
+        self.grouped(|fmt| {
+            param.ty.visit(fmt)?;
+            if let Some(name) = &param.name {
+                write_chunk!(fmt, name.loc.end(), "{}", name.name)?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
-    fn visit_newline(&mut self) -> VResult {
-        writeln!(self)?;
+    fn visit_using(&mut self, using: &mut Using) -> Result<()> {
+        write_chunk!(self, using.loc.start(), "using")?;
 
-        Ok(())
-    }
+        let ty_start = using.ty.as_mut().map(|ty| LineOfCode::loc(&ty).start());
+        let global_start = using.global.as_mut().map(|global| global.loc.start());
+        let loc_end = using.loc.end();
 
-    fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        write!(self, "event {}(", event.name.name)?;
-
-        let params = event
-            .fields
-            .iter_mut()
-            .map(|param| self.visit_to_string(param))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let multiline = !self.will_it_fit(format!(
-            "{}){};",
-            params.iter().join(", "),
-            if event.anonymous { " anonymous" } else { "" }
-        ));
-
-        if multiline {
-            writeln!(self)?;
-            self.indent(1);
-        }
-
-        self.write_items_separated(&params, ", ", multiline)?;
-
-        if multiline {
-            self.dedent(1);
-            writeln!(self)?;
-        }
-
-        write!(self, ")")?;
-
-        if event.anonymous {
-            write!(self, " anonymous")?;
-        }
-
-        write!(self, ";")?;
-
-        Ok(())
-    }
-
-    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
-        param.ty.visit(self)?;
-
-        if param.indexed {
-            write!(self, " indexed")?;
-        }
-        if let Some(name) = &param.name {
-            write!(self, " {}", name.name)?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
-        write!(self, "error {}(", error.name.name)?;
-
-        let params = error
-            .fields
-            .iter_mut()
-            .map(|param| self.visit_to_string(param))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let multiline = self.is_separated_multiline(&params, ", ");
-
-        if multiline {
-            writeln!(self)?;
-            self.indent(1);
-        }
-
-        self.write_items_separated(&params, ", ", multiline)?;
-
-        if multiline {
-            self.dedent(1);
-            writeln!(self)?;
-        }
-
-        write!(self, ");")?;
-
-        Ok(())
-    }
-
-    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
-        param.ty.visit(self)?;
-
-        if let Some(name) = &param.name {
-            write!(self, " {}", name.name)?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_using(&mut self, using: &mut Using) -> VResult {
-        write!(self, "using ")?;
-
-        match &mut using.list {
+        let (is_library, mut list_chunks) = match &mut using.list {
             UsingList::Library(library) => {
-                self.visit_expr(LineOfCode::loc(library), library)?;
+                (true, vec![self.visit_to_chunk(library.loc.start(), None, library)?])
             }
             UsingList::Functions(funcs) => {
-                let func_strs = funcs
-                    .iter_mut()
-                    .map(|func| self.visit_to_string(func))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let multiline = self.is_separated_multiline(func_strs.iter(), ", ");
-                self.write_opening_bracket()?;
-                self.write_items_separated(func_strs, ", ", multiline)?;
-                self.write_closing_bracket()?;
+                let mut funcs = funcs.iter_mut().peekable();
+                let mut chunks = Vec::new();
+                while let Some(func) = funcs.next() {
+                    let next_byte_end = funcs.peek().map(|func| func.loc.start());
+                    chunks.push(self.chunked(func.loc.start(), next_byte_end, |fmt| {
+                        fmt.visit_ident_path(func)?;
+                        Ok(())
+                    })?);
+                }
+                (false, chunks)
             }
-        }
+        };
 
-        write!(self, " for ")?;
-
-        if let Some(ty) = &mut using.ty {
-            ty.visit(self)?;
+        let for_chunk = self.chunk_at(
+            using.loc.start(),
+            Some(ty_start.or(global_start).unwrap_or(loc_end)),
+            "for",
+        );
+        let ty_chunk = if let Some(ty) = &mut using.ty {
+            self.visit_to_chunk(ty.loc().start(), Some(global_start.unwrap_or(loc_end)), ty)?
         } else {
-            write!(self, "*")?;
+            self.chunk_at(using.loc.start(), Some(global_start.unwrap_or(loc_end)), "*")
+        };
+        let global_chunk = using
+            .global
+            .as_mut()
+            .map(|global| self.visit_to_chunk(global.loc.start(), Some(using.loc.end()), global))
+            .transpose()?;
+
+        let write_for_def = |fmt: &mut Self| {
+            fmt.grouped(|fmt| {
+                fmt.write_chunk(&for_chunk)?;
+                fmt.write_chunk(&ty_chunk)?;
+                if let Some(global_chunk) = global_chunk.as_ref() {
+                    fmt.write_chunk(global_chunk)?;
+                }
+                Ok(())
+            })?;
+            Ok(())
+        };
+
+        let simulated_for_def = self.simulate_to_string(write_for_def)?;
+
+        if is_library {
+            let chunk = list_chunks.pop().unwrap();
+            if self.will_chunk_fit(&format!("{{}} {simulated_for_def};"), &chunk)? {
+                self.write_chunk(&chunk)?;
+                write_for_def(self)?;
+            } else {
+                self.write_whitespace_separator(true)?;
+                self.grouped(|fmt| {
+                    fmt.write_chunk(&chunk)?;
+                    Ok(())
+                })?;
+                self.write_whitespace_separator(true)?;
+                write_for_def(self)?;
+            }
+        } else {
+            self.surrounded(
+                using.loc.start(),
+                "{",
+                "}",
+                Some(ty_start.or(global_start).unwrap_or(loc_end)),
+                |fmt, _multiline| {
+                    let multiline = fmt.are_chunks_separated_multiline(
+                        &format!("{{ {{}} }} {simulated_for_def};"),
+                        &list_chunks,
+                        ",",
+                    )?;
+                    fmt.write_chunks_separated(&list_chunks, ",", multiline)?;
+                    Ok(())
+                },
+            )?;
+            write_for_def(self)?;
         }
 
-        if let Some(global) = &mut using.global {
-            write!(self, " {}", global.name)?;
-        }
-
-        write!(self, ";")?;
+        self.write_semicolon()?;
 
         Ok(())
     }
 
-    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
+    fn visit_var_attribute(&mut self, attribute: &mut VariableAttribute) -> Result<()> {
+        let token = match attribute {
+            VariableAttribute::Visibility(visibility) => Some(visibility.to_string()),
+            VariableAttribute::Constant(_) => Some("constant".to_string()),
+            VariableAttribute::Immutable(_) => Some("immutable".to_string()),
+            VariableAttribute::Override(loc, idents) => {
+                self.visit_ident_list(loc, "override", idents)?;
+                None
+            }
+        };
+        if let Some(token) = token {
+            let loc = attribute.loc();
+            write_chunk!(self, loc.start(), loc.end(), "{}", token)?;
+        }
+        Ok(())
+    }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
         var.ty.visit(self)?;
 
-        let attributes = var
-            .attrs
-            .iter_mut()
-            .sorted_by_key(|attribute| match attribute {
-                VariableAttribute::Visibility(_) => 0,
-                VariableAttribute::Constant(_) => 1,
-                VariableAttribute::Immutable(_) => 2,
-                VariableAttribute::Override(_) => 3,
-            })
-            .map(|attribute| match attribute {
-                VariableAttribute::Visibility(visibility) => visibility.to_string(),
-                VariableAttribute::Constant(_) => "constant".to_string(),
-                VariableAttribute::Immutable(_) => "immutable".to_string(),
-                VariableAttribute::Override(_) => "override".to_string(),
-            })
-            .collect::<Vec<_>>();
+        let multiline = self.grouped(|fmt| {
+            let name_start = var.name.loc.start();
 
-        let mut multiline = self.is_separated_multiline(&attributes, " ");
-
-        if !var.attrs.is_empty() {
-            if multiline {
-                writeln!(self)?;
-                self.indent(1);
-            } else {
-                write!(self, " ")?;
+            let attrs = fmt.items_to_chunks_sorted(
+                Some(name_start),
+                var.attrs.iter_mut().map(|attr| Ok((attr.loc(), attr))),
+            )?;
+            if !fmt.try_on_single_line(|fmt| fmt.write_chunks_separated(&attrs, "", false))? {
+                fmt.write_chunks_separated(&attrs, "", true)?;
             }
 
-            self.write_items_separated(&attributes, " ", multiline)?;
-        }
-
-        if self.will_it_fit(format!(
-            " {}{}",
-            var.name.name,
-            if var.initializer.is_some() { " =" } else { "" }
-        )) {
-            write!(self, " {}", var.name.name)?;
-        } else {
-            writeln!(self)?;
-            if !multiline {
-                multiline = true;
-                self.indent(1);
+            let mut name =
+                fmt.visit_to_chunk(name_start, Some(var.name.loc.end()), &mut var.name)?;
+            if var.initializer.is_some() {
+                name.content.push_str(" =");
             }
-            write!(self, "{}", var.name.name)?;
-        }
+            fmt.write_chunk(&name)?;
 
-        if let Some(init) = &mut var.initializer {
-            write!(self, " =")?;
+            Ok(())
+        })?;
 
-            let init = self.visit_to_string(init)?;
-            if self.will_it_fit(format!(" {init}")) {
-                write!(self, " {init}")?;
-            } else {
-                writeln!(self)?;
-                if !multiline {
-                    self.indent(1);
-                }
-                write!(self, "{init}")?;
-                if !multiline {
-                    self.dedent(1);
-                }
-            }
-        }
+        var.initializer
+            .as_mut()
+            .map(|init| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(init)))
+            .transpose()?;
 
-        write!(self, ";")?;
-
-        if multiline {
-            self.dedent(1);
-        }
+        self.write_semicolon()?;
 
         Ok(())
+    }
+
+    fn visit_var_definition_stmt(
+        &mut self,
+        _loc: Loc,
+        declaration: &mut VariableDeclaration,
+        expr: &mut Option<Expression>,
+        semicolon: bool,
+    ) -> Result<()> {
+        let declaration = self.chunked(declaration.loc.start(), None, |fmt| {
+            fmt.visit_var_declaration(declaration, expr.is_some())
+        })?;
+        let multiline = declaration.content.contains('\n');
+        self.write_chunk(&declaration)?;
+
+        expr.as_mut()
+            .map(|expr| self.indented_if(multiline, 1, |fmt| fmt.visit_assignment(expr)))
+            .transpose()?;
+
+        if semicolon {
+            self.write_semicolon()?;
+        }
+        Ok(())
+    }
+
+    fn visit_for(
+        &mut self,
+        loc: Loc,
+        init: &mut Option<Box<Statement>>,
+        cond: &mut Option<Box<Expression>>,
+        update: &mut Option<Box<Statement>>,
+        body: &mut Option<Box<Statement>>,
+    ) -> Result<(), Self::Error> {
+        let next_byte_end = update.as_ref().map(|u| u.loc().end());
+        self.surrounded(loc.start(), "for (", ") ", next_byte_end, |fmt, _| {
+            let mut write_for_loop_header = |fmt: &mut Self, multiline: bool| -> Result<()> {
+                init.as_mut()
+                    .map(|stmt| {
+                        match **stmt {
+                            Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                            }
+                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            _ => stmt.visit(fmt), // unreachable
+                        }
+                    })
+                    .transpose()?;
+                fmt.write_semicolon()?;
+                if multiline {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
+                fmt.write_semicolon()?;
+                if multiline {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                update
+                    .as_mut()
+                    .map(|stmt| {
+                        match **stmt {
+                            Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
+                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                            }
+                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            _ => stmt.visit(fmt), // unreachable
+                        }
+                    })
+                    .transpose()?;
+                Ok(())
+            };
+            let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;
+            if multiline {
+                write_for_loop_header(fmt, true)?;
+            }
+            Ok(())
+        })?;
+        match body {
+            Some(body) => body.visit(self),
+            None => self.write_empty_brackets(),
+        }
+    }
+
+    fn visit_while(
+        &mut self,
+        loc: Loc,
+        cond: &mut Expression,
+        body: &mut Statement,
+    ) -> Result<(), Self::Error> {
+        self.surrounded(loc.start(), "while (", ") ", Some(cond.loc().end()), |fmt, _| {
+            cond.visit(fmt)
+        })?;
+        body.visit(self)
+    }
+
+    fn visit_do_while(
+        &mut self,
+        loc: Loc,
+        body: &mut Statement,
+        cond: &mut Expression,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "do ")?;
+        body.visit(self)?;
+        self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
+            cond.visit(fmt)
+        })
     }
 }
 
@@ -1187,7 +2455,12 @@ mod tests {
         }
     }
 
-    fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected: &str) {
+    fn test_formatter(
+        filename: &str,
+        config: FormatterConfig,
+        source: &str,
+        expected_source: &str,
+    ) {
         #[derive(PartialEq, Eq)]
         struct PrettyString(String);
 
@@ -1197,9 +2470,11 @@ mod tests {
             }
         }
 
-        let (mut source_pt, _source_comments) = solang_parser::parse(source, 1).unwrap();
+        let (mut source_pt, source_comments) = solang_parser::parse(source, 1).unwrap();
+        let source_comments = Comments::new(source_comments, source);
 
-        let (expected_pt, _expected_comments) = solang_parser::parse(expected, 1).unwrap();
+        let (mut expected_pt, expected_comments) =
+            solang_parser::parse(expected_source, 1).unwrap();
         if !source_pt.ast_eq(&expected_pt) {
             pretty_assertions::assert_eq!(
                 source_pt,
@@ -1208,17 +2483,32 @@ mod tests {
                 filename
             );
         }
+        let expected_comments = Comments::new(expected_comments, expected_source);
 
-        let mut result = String::new();
-        let mut f = Formatter::new(&mut result, source, config);
+        let expected = PrettyString(expected_source.trim().to_string());
 
+        let mut source_formatted = String::new();
+        let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        let formatted = PrettyString(result);
-        let expected = PrettyString(expected.trim_start().to_string());
+        println!("{}", source_formatted);
+        let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
-            formatted,
+            source_formatted,
+            expected,
+            "(formatted == expected) in {}",
+            filename
+        );
+
+        let mut expected_formatted = String::new();
+        let mut f =
+            Formatter::new(&mut expected_formatted, expected_source, expected_comments, config);
+        expected_pt.visit(&mut f).unwrap();
+        let expected_formatted = PrettyString(expected_formatted);
+
+        pretty_assertions::assert_eq!(
+            expected_formatted,
             expected,
             "(formatted == expected) in {}",
             filename
@@ -1250,4 +2540,10 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
+    test_directory! { ExpressionPrecedence }
+    test_directory! { WhileStatement }
+    test_directory! { DoWhileStatement }
+    test_directory! { ForStatement }
+    test_directory! { IfStatement }
+    test_directory! { VariableAssignment }
 }

@@ -2,15 +2,10 @@ use super::{
     inspector::{Cheatcodes, InspectorStackConfig},
     Executor,
 };
-use crate::executor::{
-    backend::Backend,
-};
-use ethers::{
-    types::U256,
-};
+use crate::executor::backend::Backend;
+use ethers::types::U256;
 use foundry_config::cache::StorageCachingConfig;
 use revm::{Env, SpecId};
-
 
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {

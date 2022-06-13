@@ -6,6 +6,7 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use ethers::{
+    abi::AbiDecode,
     providers::ProviderError,
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
@@ -121,6 +122,17 @@ pub enum InvalidTransactionError {
     OutOfGas(U256),
 }
 
+/// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
+///
+/// **Note:** it's assumed the `out` buffer starts with the call's signature
+fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
+    let out = out.as_ref();
+    if out.len() < 4 {
+        return None
+    }
+    String::decode(&out[4..]).ok()
+}
+
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
@@ -163,11 +175,17 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params("Chain Id not available")
                 }
                 BlockchainError::InvalidTransaction(err) => match err {
-                    InvalidTransactionError::Revert(data) => RpcError {
-                        code: ErrorCode::TransactionRejected,
-                        message: "execution reverted: ".into(),
-                        data: serde_json::to_value(data).ok(),
-                    },
+                    InvalidTransactionError::Revert(data) => {
+                        let mut msg = "execution reverted".to_string();
+                        if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
+                            msg = format!("{}: {}", msg, reason);
+                        }
+                        RpcError {
+                            code: ErrorCode::TransactionRejected,
+                            message: msg.into(),
+                            data: serde_json::to_value(data).ok(),
+                        }
+                    }
                     _ => RpcError::transaction_rejected(err.to_string()),
                 },
                 BlockchainError::FeeHistory(err) => RpcError::invalid_params(err.to_string()),

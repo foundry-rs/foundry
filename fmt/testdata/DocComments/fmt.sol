@@ -23,6 +23,11 @@ contract HelloWorld {
     }
 
     /**
+     * @dev does nothing
+     */
+    function example() public {}
+
+    /**
      * @dev Calculates a rectangle's surface and perimeter.
      * @param w Width of the rectangle.
      * @param h Height of the rectangle.

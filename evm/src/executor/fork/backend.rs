@@ -510,16 +510,19 @@ impl DatabaseRef for SharedBackend {
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::{Backend, fork::{BlockchainDbMeta, JsonBlockCacheDB}};
+    use crate::executor::{
+        fork::{BlockchainDbMeta, JsonBlockCacheDB},
+        Backend,
+    };
     use ethers::{
         providers::{Http, Provider},
         solc::utils::RuntimeOrHandle,
         types::Address,
     };
 
-    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
-    use ethers::types::BlockNumber;
     use crate::executor::fork::CreateFork;
+    use ethers::types::BlockNumber;
+    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
@@ -591,7 +594,7 @@ mod tests {
             url: ENDPOINT.to_string(),
             block: BlockNumber::Number(block_num.into()),
             chain_id: Some(1),
-            env
+            env,
         };
 
         let backend = Backend::spawn(Some(fork));

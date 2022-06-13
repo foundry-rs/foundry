@@ -38,7 +38,7 @@ pub mod opts;
 pub mod snapshot;
 
 use crate::executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER};
-pub use builder::{ExecutorBuilder};
+pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
