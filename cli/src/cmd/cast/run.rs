@@ -166,7 +166,7 @@ impl RunArgs {
             if self.debug {
                 run_debugger(result, decoder)?;
             } else {
-                print_traces(&mut result, decoder)?;
+                print_traces(&mut result, decoder).await?;
             }
         }
         Ok(())
@@ -184,14 +184,14 @@ fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()
     }
 }
 
-fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+async fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
     if result.traces.is_empty() {
         eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
     }
 
     println!("Traces:");
     for (_, trace) in &mut result.traces {
-        decoder.decode(trace);
+        decoder.decode(trace).await;
         println!("{trace}");
     }
     println!();

@@ -10,7 +10,7 @@ use crate::{
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
-use ethers::solc::FileFilter;
+use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
@@ -674,6 +674,7 @@ fn test(
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
+                    let rt = RuntimeOrHandle::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
                         decoder.identify(trace, &etherscan_identifier);
@@ -695,7 +696,7 @@ fn test(
                         // We decode the trace if we either need to build a gas report or we need
                         // to print it
                         if should_include || gas_reporting {
-                            decoder.decode(trace);
+                            rt.block_on(decoder.decode(trace));
                         }
 
                         if should_include {
