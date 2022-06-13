@@ -1053,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cheats() {
+    fn test_envs() {
         let mut runner = runner();
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,
@@ -1069,9 +1069,39 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
             env_var_key,
             env_var_val
         );
+    }
 
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
+    /// Executes all fork cheatcodes
+    #[test]
+    fn test_cheats_fork() {
+        let mut runner = runner();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*cheats/Fork"), None, true).unwrap();
         assert!(!suite_result.is_empty());
+
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                dbg!(test_name.clone());
+                let logs = decode_console_logs(&result.logs);
+                assert!(
+                    result.success,
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name,
+                    result.reason,
+                    logs.join("\n")
+                );
+            }
+        }
+    }
+
+    /// Executes all cheat code tests but not fork cheat codes
+    #[test]
+    fn test_cheats_local() {
+        let mut runner = runner();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
+        assert!(!suite_result.is_empty());
+
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
