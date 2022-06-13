@@ -32,10 +32,10 @@ use foundry_config::cache::StorageCachingConfig;
 mod ext;
 /// Fork related cheatcodes
 mod fork;
-/// Snapshot related cheatcodes
-mod snapshot;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
+/// Snapshot related cheatcodes
+mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
 pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};

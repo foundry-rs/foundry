@@ -1,6 +1,6 @@
 use crate::{
     executor::{
-        backend::{Backend, BackendDatabase, DatabaseExt},
+        backend::{snapshot::BackendSnapshot, Backend, BackendDatabase, DatabaseExt},
         fork::{CreateFork, ForkId, SharedBackend},
         snapshot::Snapshots,
     },
@@ -11,7 +11,7 @@ use ethers::prelude::{H160, H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef},
-    Account, AccountInfo, Database, Env, Inspector, Log, Return, TransactOut,
+    Account, AccountInfo, Database, Env, Inspector, Log, Return, SubRoutine, TransactOut,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
@@ -38,7 +38,7 @@ pub struct FuzzBackendWrapper<'a> {
     /// tracks all created forks
     created_forks: HashMap<ForkId, SharedBackend>,
     /// Contains snapshots made at a certain point
-    snapshots: Snapshots<CacheDB<BackendDatabase>>,
+    snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
 }
 
 // === impl FuzzBackendWrapper ===
@@ -77,22 +77,24 @@ impl<'a> FuzzBackendWrapper<'a> {
 }
 
 impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
-    fn snapshot(&mut self) -> U256 {
-        let id = self.snapshots.insert(self.active_db().clone());
+    fn snapshot(&mut self, subroutine: &SubRoutine) -> U256 {
+        let id = self
+            .snapshots
+            .insert(BackendSnapshot::new(self.active_db().clone(), subroutine.clone()));
         trace!(target: "backend", "Created new snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256) -> bool {
-        if let Some(snapshot) =
+    fn revert(&mut self, id: U256) -> Option<SubRoutine> {
+        if let Some(BackendSnapshot { db, subroutine }) =
             self.snapshots.remove(id).or_else(|| self.inner.snapshots.get(id).cloned())
         {
-            self.set_active(snapshot);
+            self.set_active(db);
             trace!(target: "backend", "Reverted snapshot {}", id);
-            true
+            Some(subroutine)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
-            false
+            None
         }
     }
 

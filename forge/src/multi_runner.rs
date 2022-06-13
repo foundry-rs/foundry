@@ -180,7 +180,7 @@ impl MultiContractRunner {
         libs: &[Bytes],
         (filter, include_fuzz_tests): (&impl TestFilter, bool),
     ) -> Result<SuiteResult> {
-        let mut runner = ContractRunner::new(
+        let runner = ContractRunner::new(
             executor,
             contract,
             deploy_code,

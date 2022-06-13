@@ -29,8 +29,8 @@ contract SnapshotTest is DSTest {
         store.slot0 = 300;
         store.slot1 = 400;
 
-//        assertEq(store.slot0, 300);
-//        assertEq(store.slot1, 400);
+        assertEq(store.slot0, 300);
+        assertEq(store.slot1, 400);
 
         cheats.revertTo(snapshot);
         assertEq(store.slot0, 10, "snapshot revert for slot 0 unsuccessful");

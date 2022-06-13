@@ -10,25 +10,28 @@ use ethers::{
 use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
-    Account, AccountInfo, Database, DatabaseCommit, Env, Inspector, Log, Return, TransactOut,
+    Account, AccountInfo, Database, DatabaseCommit, Env, Inspector, Log, Return, SubRoutine,
+    TransactOut,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
 mod fuzz;
+mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
+use crate::executor::backend::snapshot::BackendSnapshot;
 pub use in_memory_db::MemDb;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database {
     /// Creates a new snapshot
-    fn snapshot(&mut self) -> U256;
+    fn snapshot(&mut self, subroutine: &SubRoutine) -> U256;
     /// Reverts the snapshot if it exists
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
     /// exists.
-    fn revert(&mut self, id: U256) -> bool;
+    fn revert(&mut self, id: U256) -> Option<SubRoutine>;
 
     /// Creates a new fork but does _not_ select it
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId>;
@@ -99,7 +102,7 @@ pub struct Backend {
     /// state
     pub db: CacheDB<BackendDatabase>,
     /// Contains snapshots made at a certain point
-    snapshots: Snapshots<CacheDB<BackendDatabase>>,
+    snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
 }
 
 // === impl Backend ===
@@ -157,21 +160,20 @@ impl Backend {
 // === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self) -> U256 {
-        let id = self.snapshots.insert(self.db.clone());
+    fn snapshot(&mut self, subroutine: &SubRoutine) -> U256 {
+        let id = self.snapshots.insert(BackendSnapshot::new(self.db.clone(), subroutine.clone()));
         trace!(target: "backend", "Created new snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256) -> bool {
-        if let Some(snapshot) = self.snapshots.remove(id) {
-            self.db = snapshot;
-            dbg!("reverted snapshot");
+    fn revert(&mut self, id: U256) -> Option<SubRoutine> {
+        if let Some(BackendSnapshot { db, subroutine }) = self.snapshots.remove(id) {
+            self.db = db;
             trace!(target: "backend", "Reverted snapshot {}", id);
-            true
+            Some(subroutine)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
-            false
+            None
         }
     }
 
@@ -203,9 +205,7 @@ impl DatabaseRef for Backend {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        let val = DatabaseRef::storage(&self.db, address, index);
-        dbg!(val);
-        val
+        DatabaseRef::storage(&self.db, address, index)
     }
 
     fn block_hash(&self, number: U256) -> H256 {

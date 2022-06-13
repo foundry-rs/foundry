@@ -333,8 +333,6 @@ impl<'a> ContractRunner<'a> {
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
-        dbg!("END");
-
         let success = self.executor.is_success(
             setup.address,
             reverted,
