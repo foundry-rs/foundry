@@ -4,6 +4,9 @@ pub use local::LocalTraceIdentifier;
 mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
+mod signatures;
+pub use signatures::SignaturesIdentifier;
+
 use ethers::abi::{Abi, Address};
 use std::borrow::Cow;
 

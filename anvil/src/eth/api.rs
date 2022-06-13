@@ -269,6 +269,12 @@ impl EthApi {
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
             }
+            EthRequest::EvmSetBlockTimeStampInterval(time) => {
+                self.evm_set_block_timestamp_interval(time).to_rpc_result()
+            }
+            EthRequest::EvmRemoveBlockTimeStampInterval(()) => {
+                self.evm_remove_block_timestamp_interval().to_rpc_result()
+            }
             EthRequest::EvmMine(mine) => {
                 self.evm_mine(mine.map(|p| p.params)).await.to_rpc_result()
             }
@@ -1402,6 +1408,23 @@ impl EthApi {
         node_info!("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds);
         Ok(())
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_setBlockTimestampInterval`
+    pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
+        node_info!("anvil_setBlockTimestampInterval");
+        self.backend.time().set_block_timestamp_interval(seconds);
+        Ok(())
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
+    pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
+        node_info!("anvil_removeBlockTimestampInterval");
+        Ok(self.backend.time().remove_block_timestamp_interval())
     }
 
     /// Mine blocks, instantly.
