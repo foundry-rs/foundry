@@ -281,7 +281,6 @@ impl DatabaseRef for BackendDatabase {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        dbg!("get storage DBREF");
         match self {
             BackendDatabase::InMemory(inner) => inner.storage(address, index),
             BackendDatabase::Forked(inner, _) => inner.storage(address, index),

@@ -5,7 +5,6 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{abi::AbiEncode, types::BlockNumber};
-
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -15,8 +14,6 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
-        HEVMCalls::Snapshot(_) => Ok(data.db.snapshot().encode().into()),
-        HEVMCalls::RevertTo(snapshot) => Ok(data.db.revert(snapshot.0).encode().into()),
         HEVMCalls::CreateFork0(fork) => {
             create_fork(state, data, fork.0.clone(), BlockNumber::Latest)
         }

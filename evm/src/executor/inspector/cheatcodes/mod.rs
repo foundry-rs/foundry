@@ -32,6 +32,8 @@ use foundry_config::cache::StorageCachingConfig;
 mod ext;
 /// Fork related cheatcodes
 mod fork;
+/// Snapshot related cheatcodes
+mod snapshot;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
@@ -125,6 +127,7 @@ impl Cheatcodes {
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
             .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| snapshot::apply(self, data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
