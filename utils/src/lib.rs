@@ -4,7 +4,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, RawLog, Token,
     },
     types::*,
 };
@@ -27,6 +27,7 @@ use std::{
 
 pub mod rpc;
 pub mod selectors;
+pub use selectors::decode_selector;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
@@ -444,6 +445,39 @@ pub fn get_func(sig: &str) -> Result<Function> {
         abi.functions.iter().next().ok_or_else(|| eyre::eyre!("function name not found"))?;
     let func = func.get(0).ok_or_else(|| eyre::eyre!("functions array empty"))?;
     Ok(func.clone())
+}
+
+/// Given an event signature string, it tries to parse it as a `Event`
+pub fn get_event(sig: &str) -> Result<Event> {
+    let sig = if !sig.starts_with("event ") { format!("event {}", sig) } else { sig.to_string() };
+    let abi = parse_abi(&[&sig])?;
+    // get the event
+    let (_, event) = abi.events.iter().next().ok_or_else(|| eyre::eyre!("event name not found"))?;
+    let event = event.get(0).ok_or_else(|| eyre::eyre!("events array empty"))?;
+    Ok(event.clone())
+}
+
+/// Given an event without indexed parameters and a rawlog, it tries to return the event with the
+/// proper indexed parameters. Otherwise, it returns the original event.
+pub fn get_indexed_event(mut event: Event, raw_log: &RawLog) -> Event {
+    if !event.anonymous && raw_log.topics.len() > 1 {
+        let indexed_params = raw_log.topics.len() - 1;
+        let num_inputs = event.inputs.len();
+        let num_address_params =
+            event.inputs.iter().filter(|p| p.kind == ParamType::Address).count();
+
+        event.inputs.iter_mut().enumerate().for_each(|(index, param)| {
+            if param.name.is_empty() {
+                param.name = format!("param{index}");
+            }
+            if num_inputs == indexed_params ||
+                (num_address_params == indexed_params && param.kind == ParamType::Address)
+            {
+                param.indexed = true;
+            }
+        })
+    }
+    event
 }
 
 // Given a function name, address, and args, tries to parse it as a `Function` by fetching the
@@ -1095,5 +1129,56 @@ mod tests {
             .to_string(),
             abi_to_solidity(&contract_abi, "").unwrap()
         );
+    }
+
+    #[test]
+    fn test_indexed_only_address() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog { topics: vec![event.signature(), param0, param2], data: param1.clone() };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // Only the address fields get indexed since total_params > num_indexed_params
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 2);
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
+    }
+
+    #[test]
+    fn test_indexed_all() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog {
+            topics: vec![event.signature(), param0, H256::from_slice(&param1), param2],
+            data: vec![],
+        };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // All parameters get indexed since num_indexed_params == total_params
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 3);
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
     }
 }

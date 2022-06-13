@@ -1,6 +1,6 @@
 use super::{
-    identifier::TraceIdentifier, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog,
-    RawOrDecodedReturnData,
+    identifier::{SignaturesIdentifier, TraceIdentifier},
+    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
@@ -11,7 +11,12 @@ use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
-use std::collections::{BTreeMap, HashMap};
+use foundry_utils::get_indexed_event;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+use tokio::sync::RwLock;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -72,6 +77,8 @@ pub struct CallTraceDecoder {
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
     /// All known errors
     pub errors: Abi,
+    /// A signature identifier for events and functions.
+    pub signature_identifier: Option<Arc<RwLock<SignaturesIdentifier>>>,
 }
 
 impl CallTraceDecoder {
@@ -172,7 +179,12 @@ impl CallTraceDecoder {
                 .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
+            signature_identifier: None,
         }
+    }
+
+    pub fn add_signature_identifier(&mut self, identifier: SignaturesIdentifier) {
+        self.signature_identifier = Some(Arc::new(RwLock::new(identifier)));
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -224,7 +236,7 @@ impl CallTraceDecoder {
         });
     }
 
-    pub fn decode(&self, traces: &mut CallTraceArena) {
+    pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
             // Set contract name
             if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
@@ -245,6 +257,12 @@ impl CallTraceDecoder {
                         node.decode_function(funcs, &self.labels, &self.errors);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
                         node.trace.data = RawOrDecodedCall::Decoded("create2".to_string(), vec![]);
+                    } else if let Some(identifier) = &self.signature_identifier {
+                        if let Some(function) =
+                            identifier.write().await.identify_function(&bytes[0..4]).await
+                        {
+                            node.decode_function(&[function], &self.labels, &self.errors);
+                        }
                     }
                 } else {
                     node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
@@ -265,31 +283,40 @@ impl CallTraceDecoder {
             }
 
             // Decode events
-            self.decode_events(node);
+            self.decode_events(node).await;
         }
     }
 
-    fn decode_events(&self, node: &mut CallTraceNode) {
-        node.logs.iter_mut().for_each(|log| {
-            self.decode_event(log);
-        });
+    async fn decode_events(&self, node: &mut CallTraceNode) {
+        for log in node.logs.iter_mut() {
+            self.decode_event(log).await;
+        }
     }
 
-    fn decode_event(&self, log: &mut RawOrDecodedLog) {
+    async fn decode_event(&self, log: &mut RawOrDecodedLog) {
         if let RawOrDecodedLog::Raw(raw_log) = log {
-            if let Some(events) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
-                for event in events {
-                    if let Ok(decoded) = event.parse_log(raw_log.clone()) {
-                        *log = RawOrDecodedLog::Decoded(
-                            event.name.clone(),
-                            decoded
-                                .params
-                                .into_iter()
-                                .map(|param| (param.name, self.apply_label(&param.value)))
-                                .collect(),
-                        );
-                        break
-                    }
+            let mut events = vec![];
+            if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
+                events = evs.clone();
+            } else if let Some(identifier) = &self.signature_identifier {
+                if let Some(event) =
+                    identifier.write().await.identify_event(&raw_log.topics[0].0).await
+                {
+                    events.push(get_indexed_event(event, raw_log));
+                }
+            }
+
+            for event in events {
+                if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                    *log = RawOrDecodedLog::Decoded(
+                        event.name,
+                        decoded
+                            .params
+                            .into_iter()
+                            .map(|param| (param.name, self.apply_label(&param.value)))
+                            .collect(),
+                    );
+                    break
                 }
             }
         }

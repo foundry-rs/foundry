@@ -75,7 +75,6 @@ impl ScriptArgs {
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
         let mut failed = false;
-        let mut sum_gas = 0;
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -95,9 +94,9 @@ impl ScriptArgs {
             })
             .collect();
 
-        let final_txs: VecDeque<TransactionWithMetadata> = transactions
-            .into_iter()
-            .map(|tx| match tx {
+        let mut final_txs = VecDeque::new();
+        for tx in transactions {
+            match tx {
                 TypedTransaction::Legacy(mut tx) => {
                     let mut result = runner
                         .simulate(
@@ -114,24 +113,27 @@ impl ScriptArgs {
                     // might be off
                     tx.gas = Some(U256::from(result.gas * 13 / 10));
 
-                    sum_gas += result.gas;
                     if !result.success {
                         failed = true;
                     }
 
                     if script_config.evm_opts.verbosity > 3 {
                         for (_kind, trace) in &mut result.traces {
-                            decoder.decode(trace);
+                            decoder.decode(trace).await;
                             println!("{}", trace);
                         }
                     }
 
-                    TransactionWithMetadata::new(tx.into(), &result, &address_to_abi, decoder)
-                        .unwrap()
+                    final_txs.push_back(TransactionWithMetadata::new(
+                        tx.into(),
+                        &result,
+                        &address_to_abi,
+                        decoder,
+                    )?);
                 }
                 _ => unreachable!(),
-            })
-            .collect();
+            }
+        }
 
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))

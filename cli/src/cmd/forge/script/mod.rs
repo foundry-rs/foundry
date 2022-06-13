@@ -30,7 +30,7 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     trace::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
@@ -177,6 +177,8 @@ impl ScriptArgs {
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
+        decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &local_identifier);
             decoder.identify(trace, &etherscan_identifier);
@@ -220,7 +222,7 @@ impl ScriptArgs {
         Ok(returns)
     }
 
-    pub fn show_traces(
+    pub async fn show_traces(
         &self,
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
@@ -244,7 +246,7 @@ impl ScriptArgs {
                     };
 
                     if should_include {
-                        decoder.decode(trace);
+                        decoder.decode(trace).await;
                         println!("{trace}");
                     }
                 }

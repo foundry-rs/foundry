@@ -231,8 +231,21 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 }
 
 /// Compile a set of files not necessarily included in the `project`'s source dir
-pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
+///
+/// If `silent` no solc related output will be emitted to stdout
+pub fn compile_files(
+    project: &Project,
+    files: Vec<PathBuf>,
+    silent: bool,
+) -> eyre::Result<ProjectCompileOutput> {
+    let output = if silent {
+        ethers::solc::report::with_scoped(
+            &ethers::solc::report::Report::new(NoReporter::default()),
+            || project.compile_files(files),
+        )
+    } else {
+        term::with_spinner_reporter(|| project.compile_files(files))
+    }?;
 
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
