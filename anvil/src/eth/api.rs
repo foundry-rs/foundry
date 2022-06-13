@@ -1412,18 +1412,18 @@ impl EthApi {
 
     /// Sets an interval for the block timestamp
     ///
-    /// Handler for RPC call: `evm_setBlockTimestampInterval`
+    /// Handler for RPC call: `anvil_setBlockTimestampInterval`
     pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
-        node_info!("evm_setBlockTimestampInterval");
+        node_info!("anvil_setBlockTimestampInterval");
         self.backend.time().set_block_timestamp_interval(seconds);
         Ok(())
     }
 
     /// Sets an interval for the block timestamp
     ///
-    /// Handler for RPC call: `evm_removeBlockTimestampInterval`
+    /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
     pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
-        node_info!("evm_removeBlockTimestampInterval");
+        node_info!("anvil_removeBlockTimestampInterval");
         Ok(self.backend.time().remove_block_timestamp_interval())
     }
 

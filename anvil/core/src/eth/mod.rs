@@ -301,11 +301,11 @@ pub enum EthRequest {
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
     /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
-    #[serde(rename = "evm_setBlockTimestampInterval", with = "sequence")]
+    #[serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")]
     EvmSetBlockTimeStampInterval(u64),
 
-    /// Removes a `evm_setBlockTimestampInterval` if it exists
-    #[serde(rename = "evm_removeBlockTimestampInterval", with = "empty_params")]
+    /// Removes a `anvil_setBlockTimestampInterval` if it exists
+    #[serde(rename = "anvil_removeBlockTimestampInterval", with = "empty_params")]
     EvmRemoveBlockTimeStampInterval(()),
 
     /// Mine a single block
@@ -801,14 +801,14 @@ mod tests {
 
     #[test]
     fn test_serde_custom_timestamp_interval() {
-        let s = r#"{"method": "evm_setBlockTimestampInterval", "params": [100]}"#;
+        let s = r#"{"method": "anvil_setBlockTimestampInterval", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_remove_timestamp_interval() {
-        let s = r#"{"method": "evm_removeBlockTimestampInterval", "params": []}"#;
+        let s = r#"{"method": "anvil_removeBlockTimestampInterval", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
