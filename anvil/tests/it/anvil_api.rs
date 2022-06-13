@@ -4,8 +4,9 @@ use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
-    types::{Address, TransactionRequest, U256},
+    types::{Address, BlockNumber, TransactionRequest, U256},
 };
+use std::time::{Duration, SystemTime};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
@@ -62,4 +63,32 @@ async fn can_mine_manually() {
         let num = provider.get_block_number().await.unwrap();
         assert_eq!(num, start_num + idx + 1);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_timestamp() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+    let next_timestamp = now + Duration::from_secs(60);
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(next_timestamp.as_secs()).unwrap();
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    assert_eq!(block.number.unwrap().as_u64(), 1);
+    assert_eq!(block.timestamp.as_u64(), next_timestamp.as_secs());
+
+    dbg!(block.timestamp.as_u64());
+    api.evm_mine(None).await.unwrap();
+
+    let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(next.number.unwrap().as_u64(), 2);
+
+    assert!(next.timestamp > block.timestamp);
 }
