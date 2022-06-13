@@ -90,6 +90,14 @@ This is automatically enabled for common networks without EIP1559."#
     gas_limit: Option<U256>,
 
     #[clap(
+        long = "scale-gas-limit",
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Scale the gas limit by the given percentage.",
+        value_name = "NUM"
+    )]
+    scale_gas_limit: Option<U256>,
+
+    #[clap(
         long = "priority-fee", 
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas priority fee for EIP1559 transactions.",
@@ -97,6 +105,7 @@ This is automatically enabled for common networks without EIP1559."#
         value_name = "PRICE"
     )]
     priority_fee: Option<U256>,
+
     #[clap(
         long,
         help_heading = "TRANSACTION OPTIONS",
@@ -241,7 +250,13 @@ impl CreateArgs {
 
         // set gas limit if specified
         if let Some(gas_limit) = self.gas_limit {
-            deployer.tx.set_gas(gas_limit);
+            if let Some(scale_gas_limit) = self.scale_gas_limit {
+                // let new_gas_limit = gas_limit * (1f64 + (scale_gas_limit / 100f64));
+                // deployer.tx.set_gas(new_gas_limit);
+                deployer.tx.set_gas(gas_limit * scale_gas_limit);
+            } else {
+                deployer.tx.set_gas(gas_limit);
+            }
         }
 
         // set nonce if specified
