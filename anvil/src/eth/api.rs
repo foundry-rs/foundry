@@ -1414,7 +1414,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_setBlockTimestampInterval`
     pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
-        node_info!("evm_setNextBlockTimestamp");
+        node_info!("evm_setBlockTimestampInterval");
         self.backend.time().set_block_timestamp_interval(seconds);
         Ok(())
     }
@@ -1423,7 +1423,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_removeBlockTimestampInterval`
     pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
-        node_info!("evm_setNextBlockTimestamp");
+        node_info!("evm_removeBlockTimestampInterval");
         Ok(self.backend.time().remove_block_timestamp_interval())
     }
 
