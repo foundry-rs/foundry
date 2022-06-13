@@ -41,6 +41,7 @@ use ui::{TUIExitReason, Tui, Ui};
 mod cmd;
 mod executor;
 mod receipts;
+mod sequence;
 
 use super::build::ProjectPathsArgs;
 

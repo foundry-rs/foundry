@@ -1,7 +1,9 @@
 use super::*;
-use crate::{cmd::needs_setup, utils};
+use crate::{
+    cmd::{forge::script::sequence::TransactionWithMetadata, needs_setup},
+    utils,
+};
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
-
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -11,8 +13,6 @@ use forge::{
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
-
-use crate::cmd::forge::script::{sequence::TransactionWithMetadata, *};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
