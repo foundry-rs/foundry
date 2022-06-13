@@ -19,6 +19,8 @@ pub struct TimeManager {
     /// if this is set then the next time `[TimeManager::current_timestamp()]` is called this value
     /// will be taken and returned. After which the `offset` will be updated accordingly
     next_exact_timestamp: Arc<RwLock<Option<u64>>>,
+    /// The interval to use when determining the next block's timestamp
+    interval: Arc<RwLock<Option<TimestampInterval>>>,
 }
 
 // === impl TimeManager ===
@@ -53,6 +55,20 @@ impl TimeManager {
     pub fn set_next_block_timestamp(&self, timestamp: u64) {
         trace!(target: "time", "override next timestamp {}", timestamp);
         self.next_exact_timestamp.write().replace(timestamp);
+    }
+
+    /// Sets an interval to use when computing the next timestamp
+    ///
+    /// If an interval already exists, this will update the interval, otherwise a new interval will be set starting with the current timestamp
+    pub fn set_block_timestamp_interval(&self, interval: u64) {
+        trace!(target: "time", "set interval {}", interval);
+        let mut current = self.interval.write();
+        if let Some(current) = current.as_mut() {
+            current.interval = interval;
+        } else {
+            *current =
+                Some(TimestampInterval { interval, last_timestamp: self.current_call_timestamp() });
+        }
     }
 
     /// Returns the current timestamp and updates the underlying offset accordingly
@@ -90,9 +106,9 @@ impl TimeManager {
 ///
 /// While the timestamp is based on the unix epoch, it
 #[derive(Debug, Clone)]
-struct TickRate {
-    tick: Arc<RwLock<u64>>,
-    last_timestamp:Arc<RwLock<u64>>,
+struct TimestampInterval {
+    interval: u64,
+    last_timestamp: u64,
 }
 
 /// Returns the current duration since unix epoch.

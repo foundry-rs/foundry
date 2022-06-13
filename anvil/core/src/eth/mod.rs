@@ -298,9 +298,9 @@ pub enum EthRequest {
     #[serde(rename = "evm_setNextBlockTimestamp", with = "sequence")]
     EvmSetNextBlockTimeStamp(u64),
 
-    /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`
+    /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
-    /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`
+    /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
     #[serde(rename = "evm_setBlockTimestampInterval", with = "sequence")]
     EvmSetBlockTimeStampInterval(u64),
 
