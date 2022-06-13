@@ -185,40 +185,40 @@ impl ScriptArgs {
     }
 
     pub fn get_returns(
-      &self,
-      script_config: &ScriptConfig,
-      result: &mut ScriptResult,
-  ) -> eyre::Result<HashMap<String, NestedValue>> {
-      let func = script_config.called_function.as_ref().expect("There should be a function.");
-      let mut returns = HashMap::new();
+        &self,
+        script_config: &ScriptConfig,
+        result: &mut ScriptResult,
+    ) -> eyre::Result<HashMap<String, NestedValue>> {
+        let func = script_config.called_function.as_ref().expect("There should be a function.");
+        let mut returns = HashMap::new();
 
-      match func.decode_output(&result.returned) {
-          Ok(decoded) => {
-              for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                  let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+        match func.decode_output(&result.returned) {
+            Ok(decoded) => {
+                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
 
-                  let label = if !output.name.is_empty() {
-                      output.name.to_string()
-                  } else {
-                      index.to_string()
-                  };
+                    let label = if !output.name.is_empty() {
+                        output.name.to_string()
+                    } else {
+                        index.to_string()
+                    };
 
-                  returns.insert(
-                      label,
-                      NestedValue {
-                          internal_type: internal_type.to_string(),
-                          value: format_token(token),
-                      },
-                  );
-              }
-          }
-          Err(_) => {
-              println!("{:x?}", (&result.returned));
-          }
-      }
+                    returns.insert(
+                        label,
+                        NestedValue {
+                            internal_type: internal_type.to_string(),
+                            value: format_token(token),
+                        },
+                    );
+                }
+            }
+            Err(_) => {
+                println!("{:x?}", (&result.returned));
+            }
+        }
 
-      Ok(returns)
-  }
+        Ok(returns)
+    }
 
     pub fn show_traces(
         &self,

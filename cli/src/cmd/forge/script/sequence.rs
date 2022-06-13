@@ -16,14 +16,14 @@ use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{ScriptResult, VerifyBundle, NestedValue};
+use super::{NestedValue, ScriptResult, VerifyBundle};
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
