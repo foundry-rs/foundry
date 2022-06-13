@@ -815,12 +815,16 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) =
+                    let (exit, out, _, _) =
                         self.backend.call(request.clone(), fees, block_number)?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                        }
+                        return_revert!() => {
+                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
+                                .into())
                         }
                         reason => {
                             trace!(target: "node", "estimation failed due to {:?}", reason);
@@ -838,9 +842,10 @@ impl EthApi {
             }
         }
 
-        let gas: U256 = gas.into();
+        // at this point we know the call succeeded but want to find the best gas, so we do a binary
+        // search over the possible range
 
-        // binary search gas estimation
+        let gas: U256 = gas.into();
         let mut lowest_gas_limit = MIN_GAS;
 
         // pick a point that's close to the estimated gas
@@ -1833,13 +1838,17 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
     }
 }
 
-/// Returns an error if the `exit` code is _not_ ok
-fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
-    let out = match out {
+fn convert_transact_out(out: &TransactOut) -> Bytes {
+    match out {
         TransactOut::None => Default::default(),
         TransactOut::Call(out) => out.to_vec().into(),
         TransactOut::Create(out, _) => out.to_vec().into(),
-    };
+    }
+}
+
+/// Returns an error if the `exit` code is _not_ ok
+fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+    let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
         return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
