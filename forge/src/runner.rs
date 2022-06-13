@@ -18,7 +18,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
 
 /// A type that executes all tests of a contract
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContractRunner<'a> {
     /// The executor used by the runner.
     pub executor: Executor,
@@ -163,7 +163,7 @@ impl<'a> ContractRunner<'a> {
 
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
-        &mut self,
+        mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
         include_fuzz_tests: bool,
@@ -251,9 +251,10 @@ impl<'a> ContractRunner<'a> {
             .par_iter()
             .filter_map(|(func, should_fail)| {
                 let result = if func.inputs.is_empty() {
-                    Some(self.run_test(func, *should_fail, setup.clone()))
+                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 } else {
                     fuzzer.as_ref().map(|fuzzer| {
+                        // TODO(mattsse) use fuzz wrapper backend
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
                     })
                 };
@@ -283,7 +284,7 @@ impl<'a> ContractRunner<'a> {
     /// similar to `eth_call`.
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(
-        &self,
+        mut self,
         func: &Function,
         should_fail: bool,
         setup: TestSetup,
@@ -294,7 +295,7 @@ impl<'a> ContractRunner<'a> {
         let start = Instant::now();
         let (reverted, reason, gas, stipend, execution_traces, state_changeset) = match self
             .executor
-            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
+            .execute::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
                 reverted,
@@ -331,6 +332,8 @@ impl<'a> ContractRunner<'a> {
             }
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
+
+        dbg!("END");
 
         let success = self.executor.is_success(
             setup.address,

@@ -293,7 +293,7 @@ impl Executor {
 
     /// Executes the test function call
     pub fn execute<D: Detokenize, T: Tokenize, F: IntoFunction>(
-        mut self,
+        &mut self,
         from: Address,
         to: Address,
         func: F,
@@ -346,6 +346,7 @@ impl Executor {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult> {
+        dbg!("call raw");
         // execute the call
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
@@ -444,6 +445,7 @@ impl Executor {
         state_changeset: StateChangeset,
         should_fail: bool,
     ) -> bool {
+        dbg!("is success");
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
         backend.insert_cache(address, self.backend().basic(address));

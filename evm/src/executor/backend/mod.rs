@@ -166,6 +166,7 @@ impl DatabaseExt for Backend {
     fn revert(&mut self, id: U256) -> bool {
         if let Some(snapshot) = self.snapshots.remove(id) {
             self.db = snapshot;
+            dbg!("reverted snapshot");
             trace!(target: "backend", "Reverted snapshot {}", id);
             true
         } else {
@@ -202,7 +203,9 @@ impl DatabaseRef for Backend {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        DatabaseRef::storage(&self.db, address, index)
+        let val = DatabaseRef::storage(&self.db, address, index);
+        dbg!(val);
+        val
     }
 
     fn block_hash(&self, number: U256) -> H256 {
@@ -278,6 +281,7 @@ impl DatabaseRef for BackendDatabase {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
+        dbg!("get storage DBREF");
         match self {
             BackendDatabase::InMemory(inner) => inner.storage(address, index),
             BackendDatabase::Forked(inner, _) => inner.storage(address, index),

@@ -66,7 +66,4 @@ contract ForkTest is DSTest {
         cheats.selectFork(forkB);
         assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
     }
-
-
-
 }
