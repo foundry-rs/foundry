@@ -1054,7 +1054,7 @@ forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async
     let run_log = re.replace_all(&run_log, "");
 
     // Ignore timestamp with `-11` since it changes inbetween runs.
-    assert!(&fixtures_log[..(fixtures_log.len() - 11)] == &run_log[..(run_log.len() - 11)]);
+    assert!(&fixtures_log[..(fixtures_log.len() - 12)] == &run_log[..(run_log.len() - 12)]);
 });
 
 // test to check that install/remove works properly

@@ -41,6 +41,7 @@ pub struct ScriptSequence {
 impl ScriptSequence {
     pub fn new(
         transactions: VecDeque<TransactionWithMetadata>,
+        returns: HashMap<String, NestedValue>,
         sig: &str,
         target: &ArtifactId,
         config: &Config,
@@ -50,10 +51,10 @@ impl ScriptSequence {
 
         Ok(ScriptSequence {
             transactions,
+            returns,
             receipts: vec![],
             pending: vec![],
             path,
-            returns: HashMap::new(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
@@ -135,10 +136,6 @@ impl ScriptSequence {
                 })
             })
             .collect();
-    }
-
-    pub fn add_returns(&mut self, returns: HashMap<String, NestedValue>) {
-        self.returns = returns;
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json

@@ -187,12 +187,12 @@ impl ScriptArgs {
     pub fn get_returns(
         &self,
         script_config: &ScriptConfig,
-        result: &mut ScriptResult,
+        returned: &bytes::Bytes,
     ) -> eyre::Result<HashMap<String, NestedValue>> {
         let func = script_config.called_function.as_ref().expect("There should be a function.");
         let mut returns = HashMap::new();
 
-        match func.decode_output(&result.returned) {
+        match func.decode_output(returned) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                     let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
@@ -213,7 +213,7 @@ impl ScriptArgs {
                 }
             }
             Err(_) => {
-                println!("{:x?}", (&result.returned));
+                println!("{:x?}", (&returned));
             }
         }
 
@@ -298,9 +298,11 @@ impl ScriptArgs {
 
     pub fn show_json(
         &self,
-        returns: HashMap<String, NestedValue>,
-        result: &mut ScriptResult,
+        script_config: &ScriptConfig,
+        result: &ScriptResult,
     ) -> eyre::Result<()> {
+        let returns = self.get_returns(script_config, &result.returned)?;
+
         let console_logs = decode_console_logs(&result.logs);
         let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
         let j = serde_json::to_string(&output)?;

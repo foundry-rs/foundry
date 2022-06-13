@@ -199,14 +199,13 @@ impl ScriptArgs {
     pub async fn handle_broadcastable_transactions(
         &self,
         target: &ArtifactId,
-        transactions: Option<VecDeque<TypedTransaction>>,
-        returns: HashMap<String, NestedValue>,
+        result: ScriptResult,
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
-        if let Some(txs) = transactions {
+        if let Some(txs) = result.transactions {
             if script_config.evm_opts.fork_url.is_some() {
                 let gas_filled_txs = self
                     .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
@@ -223,8 +222,11 @@ impl ScriptArgs {
                 let provider = get_http_provider(&fork_url, false);
                 let chain = provider.get_chainid().await?.as_u64();
 
+                let returns = self.get_returns(script_config, &result.returned)?;
+
                 let mut deployment_sequence = ScriptSequence::new(
                     self.handle_chain_requirements(gas_filled_txs, provider, chain).await?,
+                    returns,
                     &self.sig,
                     target,
                     &script_config.config,
@@ -232,8 +234,6 @@ impl ScriptArgs {
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
-
-                deployment_sequence.add_returns(returns);
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
