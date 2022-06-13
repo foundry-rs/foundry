@@ -196,7 +196,7 @@ impl ScriptArgs {
             Ok(target_contract) => {
                 self.standalone_check(&target_contract, &project.paths)?;
 
-                compile::compile_files(&project, vec![target_contract])?
+                compile::compile_files(&project, vec![target_contract], self.opts.args.silent)?
             }
             Err(_) => {
                 // We either got passed `contract_path:contract_name` or the contract name.
@@ -206,11 +206,19 @@ impl ScriptArgs {
 
                     self.standalone_check(&path, &project.paths)?;
 
-                    let output = compile::compile_files(&project, vec![path.clone()])?;
+                    let output = compile::compile_files(
+                        &project,
+                        vec![path.clone()],
+                        self.opts.args.silent,
+                    )?;
 
                     (path, output)
                 } else {
-                    let output = compile::compile(&project, false, false)?;
+                    let output = if self.opts.args.silent {
+                        compile::suppress_compile(&project)
+                    } else {
+                        compile::compile(&project, false, false)
+                    }?;
                     let cache = SolFilesCache::read_joined(&project.paths)?;
 
                     let res = get_cached_entry_by_name(&cache, &contract.name)?;
