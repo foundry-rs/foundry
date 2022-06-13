@@ -64,7 +64,7 @@ impl TimeManager {
             // the offset will be negative if the `next` timestamp is in the past
             let offset = (next as i128) - current;
             let mut current_offset = self.offset.write();
-            // increase the by one second, so that we don't yield the same timestamp twice if it's
+            // increase the offset by one second, so that we don't yield the same timestamp twice if it's
             // set manually
             *current_offset = offset.saturating_add(1);
             return next
