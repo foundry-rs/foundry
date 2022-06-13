@@ -92,3 +92,52 @@ async fn test_set_next_timestamp() {
 
     assert!(next.timestamp > block.timestamp);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_timestamp_interval() {
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let provider = handle.http_provider();
+
+    api.evm_mine(None).await.unwrap();
+    let interval = 10;
+
+    for _ in 0..5 {
+        let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+        // mock timestamp
+        api.evm_set_block_timestamp_interval(interval).unwrap();
+        api.evm_mine(None).await.unwrap();
+
+        let new_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+        assert_eq!(new_block.timestamp, block.timestamp + interval);
+    }
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let next_timestamp = block.timestamp + 50;
+    api.evm_set_next_block_timestamp(next_timestamp.as_u64()).unwrap();
+
+    api.evm_mine(None).await.unwrap();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.timestamp, next_timestamp);
+
+    api.evm_mine(None).await.unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    // interval also works after setting the next timestamp manually
+    assert_eq!(block.timestamp, next_timestamp + interval);
+
+    assert!(api.evm_remove_block_timestamp_interval().unwrap());
+
+    api.evm_mine(None).await.unwrap();
+    let new_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    // offset is applied correctly after resetting the interval
+    assert!(new_block.timestamp > block.timestamp);
+
+    api.evm_mine(None).await.unwrap();
+    let another_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    // check interval is disabled
+    assert!(another_block.timestamp - new_block.timestamp < U256::from(interval));
+}
