@@ -3,7 +3,6 @@ use crate::{
     cmd::{forge::script::sequence::TransactionWithMetadata, needs_setup},
     utils,
 };
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
