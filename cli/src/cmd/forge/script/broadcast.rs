@@ -200,6 +200,7 @@ impl ScriptArgs {
         &self,
         target: &ArtifactId,
         transactions: Option<VecDeque<TypedTransaction>>,
+        returns: HashMap<String, NestedValue>,
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
@@ -231,6 +232,8 @@ impl ScriptArgs {
                 )?;
 
                 deployment_sequence.add_libraries(libraries);
+
+                deployment_sequence.add_returns(returns);
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;

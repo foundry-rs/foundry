@@ -136,8 +136,10 @@ impl ScriptArgs {
                     }
                 }
 
+                let returns = self.get_returns(&script_config, &mut result)?;
+
                 if self.json {
-                    self.show_json(&script_config, &mut result)?;
+                    self.show_json(Clone::clone(&returns), &mut result)?;
                 } else {
                     self.show_traces(&script_config, &decoder, &mut result)?;
                 }
@@ -146,6 +148,7 @@ impl ScriptArgs {
                 self.handle_broadcastable_transactions(
                     &target,
                     result.transactions,
+                    returns,
                     libraries,
                     &mut decoder,
                     &script_config,

@@ -16,14 +16,14 @@ use foundry_config::Config;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, VecDeque, HashMap},
     io::BufWriter,
     path::{Path, PathBuf},
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{ScriptResult, VerifyBundle};
+use super::{ScriptResult, VerifyBundle, NestedValue};
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -34,6 +34,7 @@ pub struct ScriptSequence {
     pub libraries: Vec<String>,
     pub pending: Vec<TxHash>,
     pub path: PathBuf,
+    pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
 }
 
@@ -52,6 +53,7 @@ impl ScriptSequence {
             receipts: vec![],
             pending: vec![],
             path,
+            returns: HashMap::new(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Wrong system time.")
@@ -133,6 +135,10 @@ impl ScriptSequence {
                 })
             })
             .collect();
+    }
+
+    pub fn add_returns(&mut self, returns: HashMap<String, NestedValue>) {
+        self.returns = returns;
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
