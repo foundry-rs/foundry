@@ -521,7 +521,8 @@ mod tests {
     };
 
     use crate::executor::fork::CreateFork;
-    use ethers::types::BlockNumber;
+    use ethers::types::{BlockNumber, Chain};
+    use foundry_config::Config;
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
@@ -579,14 +580,11 @@ mod tests {
         assert!(!json.db().accounts.read().is_empty());
     }
 
-    #[test]
-    fn can_read_write_cache() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
         let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
-        let tmpdir = tempfile::tempdir().unwrap();
-        let cache_path = tmpdir.path().join("storage.json");
-        let runtime = RuntimeOrHandle::new();
 
-        let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
+        let block_num = provider.get_block_number().await.unwrap().as_u64();
         let env = revm::Env::default();
 
         let fork = CreateFork {
@@ -612,7 +610,6 @@ mod tests {
             let _ = backend.storage(address, idx.into());
         }
         drop(backend);
-        drop(runtime);
 
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
@@ -620,7 +617,10 @@ mod tests {
             hosts: Default::default(),
         };
 
-        let db = BlockchainDb::new(meta, Some(cache_path));
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+        );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
