@@ -32,7 +32,7 @@ First run the command below to get `foundryup`, the Foundry toolchain installer:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-If you do not want to use the redirect, feel free to manually download the foundryup installation script from [here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup).
+If you do not want to use the redirect, feel free to manually download the foundryup installation script from [here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/install).
 
 Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
 
