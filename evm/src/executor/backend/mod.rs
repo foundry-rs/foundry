@@ -31,7 +31,7 @@ pub trait DatabaseExt: Database {
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
     /// exists.
-    fn revert(&mut self, id: U256) -> Option<SubRoutine>;
+    fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine>;
 
     /// Creates a new fork but does _not_ select it
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId>;
@@ -166,8 +166,10 @@ impl DatabaseExt for Backend {
         id
     }
 
-    fn revert(&mut self, id: U256) -> Option<SubRoutine> {
+    fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
         if let Some(BackendSnapshot { db, subroutine }) = self.snapshots.remove(id) {
+            // TODO needs to store additioanl logs and whether there was a failure by looking at the
+            // subroutine
             self.db = db;
             trace!(target: "backend", "Reverted snapshot {}", id);
             Some(subroutine)

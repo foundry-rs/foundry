@@ -85,7 +85,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         id
     }
 
-    fn revert(&mut self, id: U256) -> Option<SubRoutine> {
+    fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
         if let Some(BackendSnapshot { db, subroutine }) =
             self.snapshots.remove(id).or_else(|| self.inner.snapshots.get(id).cloned())
         {
