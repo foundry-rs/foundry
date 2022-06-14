@@ -619,6 +619,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
+ "foundry-config",
  "foundry-evm",
  "foundry-utils",
  "futures",
