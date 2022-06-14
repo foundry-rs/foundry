@@ -328,7 +328,11 @@ impl Visitor {
     /// Pushes a coverage item to the internal collection, and might push a line item as well.
     fn push_item(&mut self, item: CoverageItem) {
         let source_location = item.source_location();
-        if self.last_line < source_location.line {
+
+        // Push a line item if we haven't already
+        if matches!(item, CoverageItem::Statement { .. } | CoverageItem::Branch { .. }) &&
+            self.last_line < source_location.line
+        {
             self.items.push(CoverageItem::Line {
                 loc: source_location.clone(),
                 anchor: item.anchor(),
