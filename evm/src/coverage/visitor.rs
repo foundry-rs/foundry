@@ -1,23 +1,35 @@
 use super::{BranchKind, CoverageItem, SourceLocation};
-use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
+use ethers::{
+    prelude::sourcemap::SourceMap,
+    solc::artifacts::ast::{self, Ast, Node, NodeType},
+};
+use std::collections::HashMap;
 use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
 pub struct Visitor {
-    /// Coverage items
-    pub items: Vec<CoverageItem>,
+    /// The source ID containing the AST being walked.
+    source_id: u32,
+    /// The source code that contains the AST being walked.
+    source: String,
+    /// Source maps for this specific source file, keyed by the contract name.
+    source_maps: HashMap<String, SourceMap>,
+
+    /// The contract whose AST we are currently walking
+    context: String,
     /// The current branch ID
     // TODO: Does this need to be unique across files?
-    pub branch_id: usize,
-    /// The source code that contains the AST being walked.
-    pub source: String,
+    branch_id: usize,
     /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
     last_line: usize,
+
+    /// Coverage items
+    items: Vec<CoverageItem>,
 }
 
 impl Visitor {
-    pub fn new(source: String) -> Self {
-        Self { source, ..Default::default() }
+    pub fn new(source_id: u32, source: String, source_maps: HashMap<String, SourceMap>) -> Self {
+        Self { source_id, source, source_maps, ..Default::default() }
     }
 
     pub fn visit_ast(mut self, ast: Ast) -> eyre::Result<Vec<CoverageItem>> {
@@ -33,7 +45,7 @@ impl Visitor {
         Ok(self.items)
     }
 
-    pub fn visit_contract(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_contract(&mut self, node: Node) -> eyre::Result<()> {
         let is_contract =
             node.attribute("contractKind").map_or(false, |kind: String| kind == "contract");
         let is_abstract: bool = node.attribute("abstract").unwrap_or_default();
@@ -43,6 +55,12 @@ impl Visitor {
             return Ok(())
         }
 
+        // Set the current context
+        let contract_name: String =
+            node.attribute("name").ok_or_else(|| eyre::eyre!("contract has no name"))?;
+        self.context = contract_name;
+
+        // Find all functions and walk their AST
         for node in node.nodes {
             if node.node_type == NodeType::FunctionDefinition {
                 self.visit_function_definition(node)?;
@@ -52,7 +70,7 @@ impl Visitor {
         Ok(())
     }
 
-    pub fn visit_function_definition(&mut self, mut node: Node) -> eyre::Result<()> {
+    fn visit_function_definition(&mut self, mut node: Node) -> eyre::Result<()> {
         let name: String =
             node.attribute("name").ok_or_else(|| eyre::eyre!("function has no name"))?;
         let is_virtual: bool = node.attribute("virtual").unwrap_or_default();
@@ -68,7 +86,7 @@ impl Visitor {
                 self.push_item(CoverageItem::Function {
                     name,
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&body.src),
                     hits: 0,
                 });
                 self.visit_block(*body)
@@ -77,7 +95,7 @@ impl Visitor {
         }
     }
 
-    pub fn visit_block(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_block(&mut self, node: Node) -> eyre::Result<()> {
         let statements: Vec<Node> = node.attribute("statements").unwrap_or_default();
 
         for statement in statements {
@@ -86,7 +104,7 @@ impl Visitor {
 
         Ok(())
     }
-    pub fn visit_statement(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_statement(&mut self, node: Node) -> eyre::Result<()> {
         // TODO: YulSwitch, YulForLoop, YulFunctionDefinition, YulVariableDeclaration
         match node.node_type {
             // Blocks
@@ -111,7 +129,7 @@ impl Visitor {
             NodeType::YulLeave => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 Ok(())
@@ -120,7 +138,7 @@ impl Visitor {
             NodeType::VariableDeclarationStatement => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 if let Some(expr) = node.attribute("initialValue") {
@@ -185,7 +203,7 @@ impl Visitor {
                     path_id: 0,
                     kind: BranchKind::True,
                     loc: self.source_location_for(&node.src),
-                    anchor: true_body.src.start,
+                    anchor: self.anchor_for(&true_body.src),
                     hits: 0,
                 });
                 self.visit_block_or_statement(true_body)?;
@@ -197,7 +215,7 @@ impl Visitor {
                         path_id: 1,
                         kind: BranchKind::False,
                         loc: self.source_location_for(&node.src),
-                        anchor: false_body.src.start,
+                        anchor: self.anchor_for(&false_body.src),
                         hits: 0,
                     });
                     self.visit_block_or_statement(false_body)?;
@@ -228,7 +246,7 @@ impl Visitor {
                     path_id: 0,
                     kind: BranchKind::True,
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 self.visit_block(body)?;
@@ -251,7 +269,7 @@ impl Visitor {
         }
     }
 
-    pub fn visit_expression(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_expression(&mut self, node: Node) -> eyre::Result<()> {
         // TODO
         // elementarytypenameexpression
         //  memberaccess
@@ -263,7 +281,7 @@ impl Visitor {
                 // TODO: Should we explore the subexpressions?
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 Ok(())
@@ -272,7 +290,7 @@ impl Visitor {
                 // TODO: Handle assert and require
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 Ok(())
@@ -281,7 +299,7 @@ impl Visitor {
                 // TODO: Do we count these as branches?
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: node.src.start,
+                    anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
                 Ok(())
@@ -301,7 +319,7 @@ impl Visitor {
         }
     }
 
-    pub fn visit_block_or_statement(&mut self, node: Node) -> eyre::Result<()> {
+    fn visit_block_or_statement(&mut self, node: Node) -> eyre::Result<()> {
         match node.node_type {
             NodeType::Block => self.visit_block(node),
             NodeType::Break |
@@ -350,5 +368,22 @@ impl Visitor {
             length: loc.length,
             line: self.source[..loc.start].as_bytes().iter().filter(|&&c| c == b'\n').count() + 1,
         }
+    }
+
+    fn anchor_for(&self, loc: &ast::SourceLocation) -> usize {
+        self.source_maps
+            .get(&self.context)
+            .and_then(|source_map| {
+                source_map
+                    .iter()
+                    .enumerate()
+                    .find(|(_, element)| {
+                        element.index.map_or(false, |source_id| {
+                            source_id == self.source_id && element.offset >= loc.start
+                        })
+                    })
+                    .map(|(ic, _)| ic)
+            })
+            .unwrap_or(loc.start)
     }
 }

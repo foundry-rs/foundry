@@ -66,28 +66,25 @@ impl CoverageMap {
                 continue
             }
 
-            // Get the instruction offset and the source ID in the source map.
-            let (instruction_offset, source_id) = if let Some((instruction_offset, source_id)) =
-                source_map
-                    .get(ic)
-                    .and_then(|source_element| Some((source_element.offset, source_element.index?)))
-            {
-                (instruction_offset, source_id)
-            } else {
-                continue
-            };
+            // Get the source ID in the source map.
+            let source_id =
+                if let Some(source_id) = source_map.get(ic).and_then(|element| element.index) {
+                    source_id
+                } else {
+                    continue
+                };
 
             // Get the coverage items corresponding to the source ID in the source map.
             if let Some(source) = self.sources.get_mut(&(source_version.clone(), source_id)) {
                 for item in source.items.iter_mut() {
                     // We've reached a point where we will no longer be able to map this
                     // instruction to coverage items
-                    if instruction_offset < item.anchor() {
-                        break
-                    }
+                    /*if ic > item.anchor() {
+                        break;
+                    }*/
 
                     // We found a matching coverage item, but there may be more
-                    if instruction_offset == item.anchor() {
+                    if ic == item.anchor() {
                         item.increment_hits(instruction_hits);
                     }
                 }

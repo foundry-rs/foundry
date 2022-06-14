@@ -158,8 +158,24 @@ impl CoverageArgs {
             for mut versioned_source in versioned_sources {
                 let source = &mut versioned_source.source_file;
                 if let Some(ast) = source.ast.take() {
-                    let items = Visitor::new(std::fs::read_to_string(PathBuf::from(&path))?)
-                        .visit_ast(ast)?;
+                    let source_maps: HashMap<String, SourceMap> = source_maps
+                        .iter()
+                        .filter(|(id, _)| {
+                            id.version == versioned_source.version &&
+                                id.source == PathBuf::from(&path)
+                        })
+                        .map(|(id, (_, source_map))| {
+                            // TODO: Deploy source map too?
+                            (id.name.clone(), source_map.clone())
+                        })
+                        .collect();
+
+                    let items = Visitor::new(
+                        source.id,
+                        std::fs::read_to_string(PathBuf::from(&path))?,
+                        source_maps,
+                    )
+                    .visit_ast(ast)?;
 
                     if items.is_empty() {
                         continue
