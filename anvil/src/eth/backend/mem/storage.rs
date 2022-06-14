@@ -8,7 +8,10 @@ use anvil_core::eth::{
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
+use ethers::{
+    prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
+    types::U256,
+};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -94,6 +97,29 @@ pub struct BlockchainStorage {
 }
 
 impl BlockchainStorage {
+    /// Creates a new storage with a genesis block
+    pub fn new(base_fee: Option<U256>) -> Self {
+        // create a dummy genesis block
+        let partial_header = PartialHeader {
+            timestamp: duration_since_unix_epoch().as_secs(),
+            base_fee,
+            ..Default::default()
+        };
+        let block = Block::new(partial_header, vec![], vec![]);
+        let genesis_hash = block.header.hash();
+        let best_hash = genesis_hash;
+        let best_number: U64 = 0u64.into();
+
+        Self {
+            blocks: HashMap::from([(genesis_hash, block)]),
+            hashes: HashMap::from([(best_number, genesis_hash)]),
+            best_hash,
+            best_number,
+            genesis_hash,
+            transactions: Default::default(),
+        }
+    }
+
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
         BlockchainStorage {
             blocks: Default::default(),
@@ -118,29 +144,6 @@ impl BlockchainStorage {
     }
 }
 
-impl Default for BlockchainStorage {
-    fn default() -> Self {
-        // create a dummy genesis block
-        let partial_header = PartialHeader {
-            timestamp: duration_since_unix_epoch().as_secs(),
-            ..Default::default()
-        };
-        let block = Block::new(partial_header, vec![], vec![]);
-        let genesis_hash = block.header.hash();
-        let best_hash = genesis_hash;
-        let best_number: U64 = 0u64.into();
-
-        Self {
-            blocks: HashMap::from([(genesis_hash, block)]),
-            hashes: HashMap::from([(best_number, genesis_hash)]),
-            best_hash,
-            best_number,
-            genesis_hash,
-            transactions: Default::default(),
-        }
-    }
-}
-
 // === impl BlockchainStorage ===
 
 impl BlockchainStorage {
@@ -156,7 +159,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -165,6 +168,11 @@ pub struct Blockchain {
 // === impl BlockchainStorage ===
 
 impl Blockchain {
+    /// Creates a new storage with a genesis block
+    pub fn new(base_fee: Option<U256>) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(base_fee))) }
+    }
+
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
     }

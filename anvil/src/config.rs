@@ -167,25 +167,28 @@ Derivation path:   {}
             );
         }
 
-        let _ = write!(
-            config_string,
-            r#"
+        if (SpecId::from(self.hardfork) as u8) < (SpecId::LONDON as u8) {
+            let _ = write!(
+                config_string,
+                r#"
+Gas Price
+==================
+{}
+"#,
+                Paint::green(format!("\n{}", self.get_gas_price()))
+            );
+        } else {
+            let _ = write!(
+                config_string,
+                r#"
 
 Base Fee
 ==================
 {}
 "#,
-            Paint::green(format!("\n{}", self.get_base_fee()))
-        );
-        let _ = write!(
-            config_string,
-            r#"
-Gas Price
-==================
-{}
-"#,
-            Paint::green(format!("\n{}", self.get_gas_price()))
-        );
+                Paint::green(format!("\n{}", self.get_base_fee()))
+            );
+        }
 
         let _ = write!(
             config_string,
@@ -543,7 +546,7 @@ impl NodeConfig {
             },
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
-        let fees = FeeManager::new(self.get_base_fee(), self.get_gas_price());
+        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
@@ -615,6 +618,7 @@ impl NodeConfig {
                     provider,
                     chain_id,
                     timestamp: block.timestamp.as_u64(),
+                    base_fee: block.base_fee_per_gas,
                 },
                 Arc::clone(&db),
             );

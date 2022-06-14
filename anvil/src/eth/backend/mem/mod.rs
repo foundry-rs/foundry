@@ -46,7 +46,9 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{
+        db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
+    },
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -96,7 +98,7 @@ impl Backend {
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
         Self {
             db,
-            blockchain: Blockchain::default(),
+            blockchain: Blockchain::new(fees.is_eip1559().then(|| fees.base_fee())),
             states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
@@ -112,7 +114,7 @@ impl Backend {
     /// Creates a new empty blockchain backend
     pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
         let db = MemDb::default();
-        let fees = FeeManager::new(gas_price, gas_price);
+        let fees = FeeManager::new(env.read().cfg.spec_id, gas_price, gas_price);
         Self::new(Arc::new(RwLock::new(db)), env, fees)
     }
 
@@ -129,7 +131,7 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
-            Default::default()
+            Blockchain::new(fees.is_eip1559().then(|| fees.base_fee()))
         };
 
         let backend = Self {
@@ -192,6 +194,9 @@ impl Backend {
                 env.cfg.chain_id = fork.chain_id().into();
                 env.block.number = fork.block_number().into();
                 self.time.set_start_timestamp(fork.timestamp());
+                let base_fee = fork.base_fee().unwrap_or_default();
+                self.fees.set_base_fee(base_fee);
+                env.block.basefee = base_fee;
             }
 
             // reset storage
@@ -293,12 +298,17 @@ impl Backend {
         self.db.write().set_storage_at(address, slot, val);
     }
 
+    /// Returns true for post London
+    pub fn is_eip1559(&self) -> bool {
+        (self.env().read().cfg.spec_id as u8) >= (SpecId::LONDON as u8)
+    }
+
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
         self.env().read().block.gas_limit
     }
 
-    /// Returns the current basefee
+    /// Returns the current base fee
     pub fn base_fee(&self) -> U256 {
         self.fees.base_fee()
     }
@@ -491,8 +501,17 @@ impl Backend {
         node_info!("    Block Hash: {:?}", block_hash);
         node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
 
+        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+            header.gas_used,
+            header.gas_limit,
+            header.base_fee_per_gas.unwrap_or_default(),
+        );
+
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
+
+        // update next base fee
+        self.fees.set_base_fee(next_block_base_fee.into());
 
         MinedBlockOutcome { block_number, included, invalid }
     }
@@ -768,13 +787,13 @@ impl Backend {
     /// Returns all transactions given a block
     fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
-        let base_fee = self.base_fee();
+        let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
         for hash in block.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block), Some(info), true, Some(base_fee));
+            let tx = transaction_build(tx, Some(block), Some(info), true, base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -866,6 +885,7 @@ impl Backend {
             extra_data,
             mix_hash,
             nonce,
+            base_fee_per_gas,
         } = header;
 
         EthersBlock {
@@ -894,8 +914,7 @@ impl Backend {
             size: Some(size),
             mix_hash: Some(mix_hash),
             nonce: Some(nonce),
-            // TODO check
-            base_fee_per_gas: Some(self.base_fee()),
+            base_fee_per_gas,
         }
     }
 
@@ -1232,7 +1251,7 @@ impl Backend {
             (info, block, tx)
         };
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
     pub async fn transaction_by_hash(
@@ -1261,7 +1280,7 @@ impl Backend {
         };
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
     /// Returns a new block event stream
@@ -1312,6 +1331,10 @@ impl TransactionValidator for Backend {
         if nonce < account.nonce {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
+        }
+
+        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
+            return Err(InvalidTransactionError::FeeTooLow)
         }
 
         let max_cost = tx.max_cost();

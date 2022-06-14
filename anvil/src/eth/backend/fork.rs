@@ -6,8 +6,8 @@ use ethers::{
     prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError, RetryClient},
     types::{
-        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, Filter, Log,
-        Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
+        transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
+        Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -67,8 +67,8 @@ impl ClientFork {
                 provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
             let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
             let timestamp = block.timestamp.as_u64();
-
-            Some((block_number, block_hash, timestamp))
+            let base_fee = block.base_fee_per_gas;
+            Some((block_number, block_hash, timestamp, base_fee))
         } else {
             None
         };
@@ -96,6 +96,10 @@ impl ClientFork {
         self.config.read().block_number
     }
 
+    pub fn base_fee(&self) -> Option<U256> {
+        self.config.read().base_fee
+    }
+
     pub fn block_hash(&self) -> H256 {
         self.config.read().block_hash
     }
@@ -118,6 +122,16 @@ impl ClientFork {
 
     fn storage_write(&self) -> RwLockWriteGuard<'_, RawRwLock, ForkedStorage> {
         self.storage.write()
+    }
+
+    /// Returns the fee history  `eth_feeHistory`
+    pub async fn fee_history(
+        &self,
+        block_count: U256,
+        newest_block: BlockNumber,
+        reward_percentiles: &[f64],
+    ) -> Result<FeeHistory, ProviderError> {
+        self.provider().fee_history(block_count, newest_block, reward_percentiles).await
     }
 
     /// Sends `eth_call`
@@ -381,6 +395,8 @@ pub struct ClientForkConfig {
     pub chain_id: u64,
     /// The timestamp for the forked block
     pub timestamp: u64,
+    /// The basefee of the forked block
+    pub base_fee: Option<U256>,
 }
 
 // === impl ClientForkConfig ===
@@ -401,11 +417,12 @@ impl ClientForkConfig {
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
-    pub fn update_block(&mut self, block: Option<(u64, H256, u64)>) {
-        if let Some((block_number, block_hash, timestamp)) = block {
+    pub fn update_block(&mut self, block: Option<(u64, H256, u64, Option<U256>)>) {
+        if let Some((block_number, block_hash, timestamp, base_fee)) = block {
             self.block_number = block_number;
             self.block_hash = block_hash;
             self.timestamp = timestamp;
+            self.base_fee = base_fee;
             trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
         }
     }
