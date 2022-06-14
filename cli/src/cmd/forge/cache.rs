@@ -5,7 +5,7 @@ use std::str::FromStr;
 use strum::VariantNames;
 
 use crate::cmd::Cmd;
-use cache::{Cache};
+use cache::Cache;
 use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
