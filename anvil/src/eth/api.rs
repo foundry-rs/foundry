@@ -5,7 +5,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistory, FeeHistoryCache},
+        fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -43,9 +43,9 @@ use ethers::{
     providers::{Http, ProviderError, RetryClient},
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
-        Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
-        TransactionRequest as EthersTransactionRequest, TransactionRequest, TxHash, TxpoolContent,
-        TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Log, Trace, Transaction,
+        TransactionReceipt, TransactionRequest as EthersTransactionRequest, TransactionRequest,
+        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -214,7 +214,7 @@ impl EthApi {
                 self.submit_hashrate(rate, id).to_rpc_result()
             }
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
-                self.fee_history(count, newest, reward_percentiles).to_rpc_result()
+                self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
             }
 
             // non eth-standard rpc calls
@@ -815,12 +815,16 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) =
+                    let (exit, out, _, _) =
                         self.backend.call(request.clone(), fees, block_number)?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                        }
+                        return_revert!() => {
+                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
+                                .into())
                         }
                         reason => {
                             trace!(target: "node", "estimation failed due to {:?}", reason);
@@ -838,9 +842,10 @@ impl EthApi {
             }
         }
 
-        let gas: U256 = gas.into();
+        // at this point we know the call succeeded but want to find the best gas, so we do a binary
+        // search over the possible range
 
-        // binary search gas estimation
+        let gas: U256 = gas.into();
         let mut lowest_gas_limit = MIN_GAS;
 
         // pick a point that's close to the estimated gas
@@ -998,7 +1003,7 @@ impl EthApi {
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
-    pub fn fee_history(
+    pub async fn fee_history(
         &self,
         block_count: U256,
         newest_block: BlockNumber,
@@ -1006,17 +1011,32 @@ impl EthApi {
     ) -> Result<FeeHistory> {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
-        const MAX_BLOCK_COUNT: u64 = 1024u64;
-
-        let range_limit = U256::from(MAX_BLOCK_COUNT);
-        let block_count =
-            if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
         let number = match newest_block {
             BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
         };
+
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            // if we're still at the forked block we don't have any history and can't compute it
+            // efficiently, instead we fetch it from the fork
+            if number <= fork.block_number() {
+                return Ok(fork
+                    .fee_history(
+                        block_count,
+                        BlockNumber::Number(number.into()),
+                        &reward_percentiles,
+                    )
+                    .await?)
+            }
+        }
+
+        const MAX_BLOCK_COUNT: u64 = 1024u64;
+        let range_limit = U256::from(MAX_BLOCK_COUNT);
+        let block_count =
+            if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -1033,7 +1053,7 @@ impl EthApi {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
-            reward: None,
+            reward: Default::default(),
         };
 
         let mut rewards = Vec::new();
@@ -1063,7 +1083,7 @@ impl EthApi {
             }
         }
 
-        response.reward = Some(rewards);
+        response.reward = rewards;
 
         // calculate next base fee
         if let (Some(last_gas_used), Some(last_fee_per_gas)) =
@@ -1353,6 +1373,12 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setMinGasPrice`
     pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
         node_info!("anvil_setMinGasPrice");
+        if self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setMinGasPrice is not supported when EIP-1559 is active",
+            )
+            .into())
+        }
         self.backend.set_gas_price(gas);
         Ok(())
     }
@@ -1833,13 +1859,17 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
     }
 }
 
-/// Returns an error if the `exit` code is _not_ ok
-fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
-    let out = match out {
+fn convert_transact_out(out: &TransactOut) -> Bytes {
+    match out {
         TransactOut::None => Default::default(),
         TransactOut::Call(out) => out.to_vec().into(),
         TransactOut::Create(out, _) => out.to_vec().into(),
-    };
+    }
+}
+
+/// Returns an error if the `exit` code is _not_ ok
+fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+    let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
         return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),

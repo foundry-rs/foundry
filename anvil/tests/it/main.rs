@@ -6,6 +6,7 @@ mod anvil_api;
 mod api;
 mod fork;
 mod ganache;
+mod gas;
 mod geth;
 mod logs;
 mod pubsub;

@@ -17,7 +17,7 @@ use ethers::{
 use foundry_evm::{
     executor::inspector::Tracer,
     revm,
-    revm::{BlockEnv, CfgEnv, Env, Return, TransactOut},
+    revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
     trace::node::CallTraceNode,
 };
 use std::sync::Arc;
@@ -111,6 +111,11 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
         let difficulty = self.block_env.difficulty;
         let beneficiary = self.block_env.coinbase;
         let timestamp = self.block_env.timestamp.as_u64();
+        let base_fee = if (self.cfg_env.spec_id as u8) >= (SpecId::LONDON as u8) {
+            Some(self.block_env.basefee)
+        } else {
+            None
+        };
 
         for (idx, tx) in self.enumerate() {
             let tx = match tx {
@@ -168,6 +173,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
+            base_fee,
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
