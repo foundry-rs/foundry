@@ -8,6 +8,7 @@ use ethers::{
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
+    fmt::Display,
     path::PathBuf,
     usize,
 };
@@ -259,6 +260,28 @@ impl CoverageItem {
     }
 }
 
+impl Display for CoverageItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            CoverageItem::Line { loc, anchor, hits } => {
+                write!(f, "Line (location: {loc}, anchor: {anchor}, hits: {hits})")
+            }
+            CoverageItem::Statement { loc, anchor, hits } => {
+                write!(f, "Statement (location: {loc}, anchor: {anchor}, hits: {hits})")
+            }
+            CoverageItem::Branch { loc, anchor, hits, branch_id, path_id, kind } => {
+                write!(f, "{} Branch (branch: {branch_id}, path: {path_id}) (location: {loc}, anchor: {anchor}, hits: {hits})", match kind {
+                    BranchKind::True => "True",
+                    BranchKind::False => "False",
+                })
+            }
+            CoverageItem::Function { loc, anchor, hits, name } => {
+                write!(f, r#"Function "{name}" (location: {loc}, anchor: {anchor}, hits: {hits})"#)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     /// Start byte in the source code.
@@ -267,6 +290,18 @@ pub struct SourceLocation {
     pub length: Option<usize>,
     /// The line in the source code.
     pub line: usize,
+}
+
+impl Display for SourceLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "L{}, C{}-{}",
+            self.line,
+            self.start,
+            self.length.map_or(self.start, |length| self.start + length)
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-use comfy_table::{Cell, Color, Row, Table};
+use comfy_table::{Attribute, Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
 use std::{collections::HashMap, io::Write, path::PathBuf};
 
@@ -61,11 +61,18 @@ impl CoverageReporter for SummaryReporter {
 fn format_cell(hits: usize, total: usize) -> Cell {
     let percentage = if total == 0 { 1. } else { hits as f64 / total as f64 };
 
-    Cell::new(format!("{:.2}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
-        _ if percentage < 0.5 => Color::Red,
-        _ if percentage < 0.75 => Color::Yellow,
-        _ => Color::Green,
-    })
+    let mut cell =
+        Cell::new(format!("{:.2}% ({hits}/{total})", percentage * 100.)).fg(match percentage {
+            _ if total == 0 => Color::Grey,
+            _ if percentage < 0.5 => Color::Red,
+            _ if percentage < 0.75 => Color::Yellow,
+            _ => Color::Green,
+        });
+
+    if total == 0 {
+        cell = cell.add_attribute(Attribute::Dim);
+    }
+    cell
 }
 
 pub struct LcovReporter<W> {
@@ -204,12 +211,13 @@ impl CoverageReporter for DebugReporter {
         println!("{}", self.table);
 
         for (path, items) in self.uncovered {
-            println!("Uncovered for {:?}:", path);
+            println!("Uncovered for {}:", path.to_string_lossy());
             items.iter().for_each(|item| {
                 if item.hits() == 0 {
-                    println!("- {:?}", item);
+                    println!("- {}", item);
                 }
             });
+            println!();
         }
         Ok(())
     }
