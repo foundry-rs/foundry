@@ -3,8 +3,6 @@ use crate::{
     compile,
     opts::forge::ContractInfo,
 };
-use eyre::{Context, ContextCompat};
-
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
@@ -13,7 +11,7 @@ use ethers::{
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
 };
-
+use eyre::{Context, ContextCompat};
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, str::FromStr};
 use tracing::warn;
