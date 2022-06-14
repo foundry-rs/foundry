@@ -177,7 +177,7 @@ impl WalletSubcommands {
                     wallet,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
-                    chain: Chain::Mainnet,
+                    chain: Some(Chain::Mainnet),
                     etherscan_api_key: None,
                 }
                 .signer(0u64.into())
@@ -197,7 +197,7 @@ impl WalletSubcommands {
                     wallet,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
-                    chain: Chain::Mainnet,
+                    chain: Some(Chain::Mainnet),
                     etherscan_api_key: None,
                 }
                 .signer(0u64.into())
