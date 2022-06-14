@@ -1,4 +1,4 @@
-use crate::{ContractRunner, SuiteResult, TestFilter};
+use crate::{result::SuiteResult, ContractRunner, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -1046,7 +1046,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         );
 
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
-        assert!(suite_result.len() > 0);
+        assert!(!suite_result.is_empty());
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
