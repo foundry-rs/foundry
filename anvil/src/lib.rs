@@ -1,4 +1,3 @@
-mod config;
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},
@@ -12,7 +11,6 @@ use crate::{
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
 };
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 use eth::backend::fork::ClientFork;
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -36,6 +34,9 @@ use tokio::task::JoinError;
 
 /// contains the background service that drives the node
 mod service;
+
+mod config;
+pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 /// ethereum related implementations
 pub mod eth;

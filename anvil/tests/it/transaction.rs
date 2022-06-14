@@ -185,7 +185,6 @@ async fn can_reject_too_high_gas_limits() {
     assert!(err.to_string().contains("gas too high"));
 
     api.anvil_set_balance(from, U256::MAX).await.unwrap();
-    api.anvil_set_min_gas_price(0u64.into()).await.unwrap();
 
     let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
     assert!(pending.is_ok());
