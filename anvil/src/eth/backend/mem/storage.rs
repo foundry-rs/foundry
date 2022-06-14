@@ -10,8 +10,9 @@ use anvil_core::eth::{
 };
 use ethers::{
     prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
-    types::U256,
+    types::{ActionType, U256},
 };
+use forge::revm::Return;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -221,6 +222,13 @@ impl MinedTransaction {
         for (idx, node) in self.info.traces.iter().cloned().enumerate() {
             let action = node.parity_action();
             let result = node.parity_result();
+
+            let action_type = if node.status() == Return::SelfDestruct {
+                ActionType::Suicide
+            } else {
+                node.kind().into()
+            };
+
             let trace = Trace {
                 action,
                 result: Some(result),
@@ -230,7 +238,7 @@ impl MinedTransaction {
                 transaction_hash: Some(self.info.transaction_hash),
                 block_number: self.block_number,
                 block_hash: self.block_hash,
-                action_type: node.kind().into(),
+                action_type,
                 error: None,
             };
             traces.push(trace)
