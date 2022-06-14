@@ -1044,8 +1044,8 @@ forgetest_async!(
         // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"
         // ));
 
-        // Ignore blockhash since it changes inbetween runs.
-        let re = Regex::new(r"blockHash.*?blockNumber").unwrap();
+        // Ignore blockhash and timestamp since they can change inbetween runs.
+        let re = Regex::new(r#"(blockHash.*?blockNumber)|((timestamp":)[0-9]*)"#).unwrap();
 
         let fixtures_log = std::fs::read_to_string(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1058,8 +1058,7 @@ forgetest_async!(
             std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
         let run_log = re.replace_all(&run_log, "");
 
-        // Ignore timestamp with `-11` since it changes inbetween runs.
-        assert!(&fixtures_log[..(fixtures_log.len() - 11)] == &run_log[..(run_log.len() - 11)]);
+        assert!(&fixtures_log == &run_log);
     }
 );
 
