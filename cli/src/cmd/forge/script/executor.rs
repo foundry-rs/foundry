@@ -1,5 +1,10 @@
-use crate::{cmd::needs_setup, utils};
-
+use crate::{
+    cmd::{
+        forge::script::{sequence::TransactionWithMetadata, *},
+        needs_setup,
+    },
+    utils,
+};
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -8,10 +13,7 @@ use forge::{
     executor::{builder::Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
-
 use std::collections::VecDeque;
-
-use crate::cmd::forge::script::{sequence::TransactionWithMetadata, *};
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -136,17 +138,18 @@ impl ScriptArgs {
         }
 
         if failed {
-            Err(eyre::Report::msg("Simulated execution failed"))
+            eyre::bail!("Simulated execution failed")
         } else {
             Ok(final_txs)
         }
     }
 
+    /// Creates the Runner that drives script execution
     async fn prepare_runner(
         &self,
         script_config: &ScriptConfig,
         sender: Address,
-    ) -> Runner<Backend> {
+    ) -> ScriptRunner<Backend> {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
@@ -170,6 +173,6 @@ impl ScriptArgs {
             builder = builder.with_tracing().with_debugger();
         }
 
-        Runner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
     }
 }
