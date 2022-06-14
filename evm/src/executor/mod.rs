@@ -45,6 +45,10 @@ use revm::{
 };
 use std::collections::{BTreeMap, VecDeque};
 
+/// custom revm database implementations
+pub mod backend;
+pub mod snapshot;
+
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
 
