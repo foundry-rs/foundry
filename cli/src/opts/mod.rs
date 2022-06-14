@@ -61,9 +61,9 @@ pub struct EthereumOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub etherscan_api_key: Option<String>,
 
-    #[clap(long, env = "CHAIN", default_value = "mainnet", value_name = "CHAIN_NAME")]
+    #[clap(long, env = "CHAIN", value_name = "CHAIN_NAME")]
     #[serde(skip)]
-    pub chain: Chain,
+    pub chain: Option<Chain>,
 
     #[clap(flatten, next_help_heading = "WALLET OPTIONS")]
     #[serde(skip)]

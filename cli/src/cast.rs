@@ -19,9 +19,10 @@ use ethers::{
         types::{BlockId, BlockNumber::Latest, H256},
     },
     providers::{Middleware, Provider},
-    types::{Address, Chain, NameOrAddress, U256},
+    types::{Address, NameOrAddress, U256},
 };
 use eyre::WrapErr;
+use foundry_config::Chain;
 use foundry_utils::{
     format_tokens,
     selectors::{
@@ -177,8 +178,11 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
-            let chain_id = Cast::new(&provider).chain_id().await?;
-            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain.into()
+            } else {
+                provider.get_chainid().await?.into()
+            };
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, chain, false).await?;
@@ -204,8 +208,11 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
-            let chain_id = provider.get_chainid().await?;
-            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain.into()
+            } else {
+                provider.get_chainid().await?.into()
+            };
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, chain, false).await?;
@@ -275,11 +282,14 @@ async fn main() -> eyre::Result<()> {
                 &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
                 false,
             );
-            let chain_id = Cast::new(&provider).chain_id().await?;
-            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain.into()
+            } else {
+                provider.get_chainid().await?.into()
+            };
             let sig = sig.unwrap_or_default();
 
-            if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
+            if let Ok(Some(signer)) = eth.signer_with(chain.into(), provider.clone()).await {
                 let from = match &signer {
                     WalletType::Ledger(leger) => leger.address(),
                     WalletType::Local(local) => local.address(),
@@ -401,8 +411,11 @@ async fn main() -> eyre::Result<()> {
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
-            let chain_id = Cast::new(&provider).chain_id().await?;
-            let chain = Chain::try_from(chain_id.as_u64()).unwrap_or(eth.chain);
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain.into()
+            } else {
+                provider.get_chainid().await?.into()
+            };
 
             let from = eth.sender().await;
 

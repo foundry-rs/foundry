@@ -595,11 +595,16 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
 /// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
 /// by
 /// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
-pub fn resolve_addr<T: Into<NameOrAddress>>(to: T, chain: Chain) -> eyre::Result<NameOrAddress> {
+pub fn resolve_addr<T: Into<NameOrAddress>>(
+    to: T,
+    chain: Option<Chain>,
+) -> eyre::Result<NameOrAddress> {
     Ok(match to.into() {
         NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
         NameOrAddress::Name(contract_or_ens) => {
             if let Some(contract) = contract(&contract_or_ens) {
+                let chain = chain
+                    .ok_or_else(|| eyre::eyre!("resolving contract requires a known chain"))?;
                 NameOrAddress::Address(contract.address(chain).ok_or_else(|| {
                     eyre::eyre!(
                         "contract: {} not found in addressbook for network: {}",
@@ -1069,7 +1074,7 @@ mod tests {
 
         // DAI:mainnet exists in ethers-addressbook (0x6b175474e89094c44da98b954eedeac495271d0f)
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Mainnet).ok(),
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Mainnet)).ok(),
             Some(NameOrAddress::Address(
                 Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap()
             ))
@@ -1077,25 +1082,30 @@ mod tests {
 
         // DAI:goerli exists in ethers-adddressbook (0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844)
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Goerli).ok(),
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Goerli)).ok(),
             Some(NameOrAddress::Address(
                 Address::from_str("0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844").unwrap()
             ))
         );
 
         // DAI:moonbean does not exist in addressbook
-        assert!(resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::MoonbeamDev).is_err());
+        assert!(
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::MoonbeamDev)).is_err()
+        );
 
         // If not present in addressbook, gets resolved to an ENS name.
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("contractnotpresent".to_string()), Chain::Mainnet)
-                .ok(),
+            resolve_addr(
+                NameOrAddress::Name("contractnotpresent".to_string()),
+                Some(Chain::Mainnet)
+            )
+            .ok(),
             Some(NameOrAddress::Name("contractnotpresent".to_string())),
         );
 
         // Nothing to resolve for an address.
         assert_eq!(
-            resolve_addr(NameOrAddress::Address(Address::zero()), Chain::Mainnet).ok(),
+            resolve_addr(NameOrAddress::Address(Address::zero()), Some(Chain::Mainnet)).ok(),
             Some(NameOrAddress::Address(Address::zero())),
         );
     }
