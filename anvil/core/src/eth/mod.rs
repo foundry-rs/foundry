@@ -453,7 +453,7 @@ mod sequence {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 1 but got {}",
                 seq.len()
-            )));
+            )))
         }
         Ok(seq.remove(0))
     }
@@ -472,7 +472,7 @@ mod empty_params {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 0 but got {}",
                 seq.len()
-            )));
+            )))
         }
         Ok(())
     }
