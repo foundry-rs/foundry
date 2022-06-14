@@ -24,7 +24,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
-use std::{collections::HashMap, sync::mpsc::channel, thread};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel, thread};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -158,14 +158,14 @@ impl CoverageArgs {
             for mut versioned_source in versioned_sources {
                 let source = &mut versioned_source.source_file;
                 if let Some(ast) = source.ast.take() {
-                    let mut visitor = Visitor::new();
-                    visitor.visit_ast(ast)?;
+                    let items = Visitor::new(std::fs::read_to_string(PathBuf::from(&path))?)
+                        .visit_ast(ast)?;
 
-                    if visitor.items.is_empty() {
+                    if items.is_empty() {
                         continue
                     }
 
-                    map.add_source(path.clone(), versioned_source, visitor.items);
+                    map.add_source(path.clone(), versioned_source, items);
                 }
             }
         }

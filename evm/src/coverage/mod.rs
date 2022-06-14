@@ -79,16 +79,14 @@ impl CoverageMap {
             // Get the coverage items corresponding to the source ID in the source map.
             if let Some(source) = self.sources.get_mut(&(source_version.clone(), source_id)) {
                 for item in source.items.iter_mut() {
-                    let loc = item.source_location();
-
                     // We've reached a point where we will no longer be able to map this
                     // instruction to coverage items
-                    if instruction_offset < loc.start {
+                    if instruction_offset < item.anchor() {
                         break
                     }
 
                     // We found a matching coverage item, but there may be more
-                    if instruction_offset == loc.start {
+                    if instruction_offset == item.anchor() {
                         item.increment_hits(instruction_hits);
                     }
                 }
@@ -173,6 +171,8 @@ pub enum CoverageItem {
     Line {
         /// The location of the line in the source code.
         loc: SourceLocation,
+        /// The instruction counter that covers this line.
+        anchor: usize,
         /// The number of times this item was hit.
         hits: u64,
     },
@@ -181,6 +181,8 @@ pub enum CoverageItem {
     Statement {
         /// The location of the statement in the source code.
         loc: SourceLocation,
+        /// The instruction counter that covers this statement.
+        anchor: usize,
         /// The number of times this statement was hit.
         hits: u64,
     },
@@ -189,6 +191,8 @@ pub enum CoverageItem {
     Branch {
         /// The location of the branch in the source code.
         loc: SourceLocation,
+        /// The instruction counter that covers this branch.
+        anchor: usize,
         /// The ID that identifies the branch.
         ///
         /// There may be multiple items with the same branch ID - they belong to the same branch,
@@ -208,6 +212,8 @@ pub enum CoverageItem {
     Function {
         /// The location of the function in the source code.
         loc: SourceLocation,
+        /// The instruction counter that covers this function.
+        anchor: usize,
         /// The name of the function.
         name: String,
         /// The number of times this item was hit.
@@ -222,6 +228,15 @@ impl CoverageItem {
             Self::Statement { loc, .. } |
             Self::Branch { loc, .. } |
             Self::Function { loc, .. } => loc,
+        }
+    }
+
+    pub fn anchor(&self) -> usize {
+        match self {
+            Self::Line { anchor, .. } |
+            Self::Statement { anchor, .. } |
+            Self::Branch { anchor, .. } |
+            Self::Function { anchor, .. } => *anchor,
         }
     }
 

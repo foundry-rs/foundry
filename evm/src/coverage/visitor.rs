@@ -9,14 +9,19 @@ pub struct Visitor {
     /// The current branch ID
     // TODO: Does this need to be unique across files?
     pub branch_id: usize,
+    /// The source code that contains the AST being walked.
+    pub source: String,
+    /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
+    last_line: usize,
 }
 
 impl Visitor {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(source: String) -> Self {
+        Self { source, ..Default::default() }
     }
 
-    pub fn visit_ast(&mut self, ast: Ast) -> eyre::Result<()> {
+    pub fn visit_ast(mut self, ast: Ast) -> eyre::Result<Vec<CoverageItem>> {
+        // Walk AST
         for node in ast.nodes.into_iter() {
             if !matches!(node.node_type, NodeType::ContractDefinition) {
                 continue
@@ -25,7 +30,7 @@ impl Visitor {
             self.visit_contract(node)?;
         }
 
-        Ok(())
+        Ok(self.items)
     }
 
     pub fn visit_contract(&mut self, node: Node) -> eyre::Result<()> {
@@ -60,9 +65,10 @@ impl Visitor {
         match node.body.take() {
             // Skip virtual functions
             Some(body) if !is_virtual => {
-                self.items.push(CoverageItem::Function {
+                self.push_item(CoverageItem::Function {
                     name,
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 self.visit_block(*body)
@@ -103,16 +109,18 @@ impl Visitor {
             NodeType::YulBreak |
             NodeType::YulContinue |
             NodeType::YulLeave => {
-                self.items.push(CoverageItem::Statement {
+                self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 Ok(())
             }
             // Variable declaration
             NodeType::VariableDeclarationStatement => {
-                self.items.push(CoverageItem::Statement {
+                self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 if let Some(expr) = node.attribute("initialValue") {
@@ -172,22 +180,24 @@ impl Visitor {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.items.push(CoverageItem::Branch {
+                self.push_item(CoverageItem::Branch {
                     branch_id,
                     path_id: 0,
                     kind: BranchKind::True,
                     loc: self.source_location_for(&node.src),
+                    anchor: true_body.src.start,
                     hits: 0,
                 });
                 self.visit_block_or_statement(true_body)?;
 
                 let false_body: Option<Node> = node.attribute("falseBody");
                 if let Some(false_body) = false_body {
-                    self.items.push(CoverageItem::Branch {
+                    self.push_item(CoverageItem::Branch {
                         branch_id,
                         path_id: 1,
                         kind: BranchKind::False,
                         loc: self.source_location_for(&node.src),
+                        anchor: false_body.src.start,
                         hits: 0,
                     });
                     self.visit_block_or_statement(false_body)?;
@@ -213,11 +223,12 @@ impl Visitor {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.items.push(CoverageItem::Branch {
+                self.push_item(CoverageItem::Branch {
                     branch_id,
                     path_id: 0,
                     kind: BranchKind::True,
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 self.visit_block(body)?;
@@ -250,24 +261,27 @@ impl Visitor {
         match node.node_type {
             NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
                 // TODO: Should we explore the subexpressions?
-                self.items.push(CoverageItem::Statement {
+                self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 Ok(())
             }
             NodeType::FunctionCall => {
                 // TODO: Handle assert and require
-                self.items.push(CoverageItem::Statement {
+                self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 Ok(())
             }
             NodeType::Conditional => {
                 // TODO: Do we count these as branches?
-                self.items.push(CoverageItem::Statement {
+                self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
+                    anchor: node.src.start,
                     hits: 0,
                 });
                 Ok(())
@@ -311,8 +325,26 @@ impl Visitor {
         }
     }
 
+    /// Pushes a coverage item to the internal collection, and might push a line item as well.
+    fn push_item(&mut self, item: CoverageItem) {
+        let source_location = item.source_location();
+        if self.last_line < source_location.line {
+            self.items.push(CoverageItem::Line {
+                loc: source_location.clone(),
+                anchor: item.anchor(),
+                hits: 0,
+            });
+            self.last_line = source_location.line;
+        }
+
+        self.items.push(item);
+    }
+
     fn source_location_for(&self, loc: &ast::SourceLocation) -> SourceLocation {
-        // TODO: Map to line
-        SourceLocation { start: loc.start, length: loc.length, line: 0 }
+        SourceLocation {
+            start: loc.start,
+            length: loc.length,
+            line: self.source[..loc.start].as_bytes().iter().filter(|&&c| c == b'\n').count() + 1,
+        }
     }
 }
