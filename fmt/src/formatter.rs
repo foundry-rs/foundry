@@ -2381,6 +2381,25 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             cond.visit(fmt)
         })
     }
+
+    fn visit_if(
+        &mut self,
+        loc: Loc,
+        cond: &mut Expression,
+        if_branch: &mut Box<Statement>,
+        else_branch: &mut Option<Box<Statement>>,
+    ) -> Result<(), Self::Error> {
+        self.surrounded(loc.start(), "if (", ")", Some(cond.loc().end()), |fmt, _| {
+            cond.visit(fmt)
+        })?;
+        if_branch.visit(self)?;
+        if let Some(else_branch) = else_branch {
+            self.write_postfix_comments_before(else_branch.loc().start())?;
+            write_chunk!(self, else_branch.loc().start(), "else")?;
+            else_branch.visit(self)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
