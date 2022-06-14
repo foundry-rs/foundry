@@ -203,11 +203,15 @@ pub enum EthRequest {
 
     /// Enables or disables, based on the single boolean argument, the automatic mining of new
     /// blocks with each new transaction submitted to the network.
-    #[serde(rename = "evm_setAutomine", with = "sequence")]
+    #[serde(rename = "anvil_setAutomine", alias = "evm_setAutomine", with = "sequence")]
     SetAutomine(bool),
 
     /// Sets the mining behavior to interval with the given interval (seconds)
-    #[serde(rename = "evm_setIntervalMining", with = "sequence")]
+    #[serde(
+        rename = "anvil_setIntervalMining",
+        alias = "evm_setIntervalMining",
+        with = "sequence"
+    )]
     SetIntervalMining(u64),
 
     /// Removes transactions from the pool
@@ -278,24 +282,36 @@ pub enum EthRequest {
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
-    #[serde(rename = "evm_snapshot", with = "empty_params")]
+    #[serde(rename = "anvil_snapshot", alias = "evm_snapshot", with = "empty_params")]
     EvmSnapshot(()),
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
-    #[serde(rename = "evm_revert", deserialize_with = "deserialize_number_seq")]
+    #[serde(
+        rename = "anvil_revert",
+        alias = "evm_revert",
+        deserialize_with = "deserialize_number_seq"
+    )]
     EvmRevert(U256),
 
     /// Jump forward in time by the given amount of time, in seconds.
-    #[serde(rename = "evm_increaseTime", deserialize_with = "deserialize_number_seq")]
+    #[serde(
+        rename = "anvil_increaseTime",
+        alias = "evm_increaseTime",
+        deserialize_with = "deserialize_number_seq"
+    )]
     EvmIncreaseTime(U256),
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
-    #[serde(rename = "evm_setNextBlockTimestamp", with = "sequence")]
+    #[serde(
+        rename = "anvil_setNextBlockTimestamp",
+        alias = "evm_setNextBlockTimestamp",
+        with = "sequence"
+    )]
     EvmSetNextBlockTimeStamp(u64),
 
     /// Mine a single block
-    #[serde(rename = "evm_mine")]
+    #[serde(rename = "anvil_mine", alias = "evm_mine")]
     EvmMine(#[serde(default)] Option<Params<EvmMineOptions>>),
 
     /// Execute a transaction regardless of signature status
@@ -437,7 +453,7 @@ mod sequence {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 1 but got {}",
                 seq.len()
-            )))
+            )));
         }
         Ok(seq.remove(0))
     }
@@ -456,7 +472,7 @@ mod empty_params {
             return Err(serde::de::Error::custom(format!(
                 "expected params sequence with length 0 but got {}",
                 seq.len()
-            )))
+            )));
         }
         Ok(())
     }
@@ -573,14 +589,14 @@ mod tests {
 
     #[test]
     fn test_custom_auto_mine() {
-        let s = r#"{"method": "evm_setAutomine", "params": [false]}"#;
+        let s = r#"{"method": "anvil_setAutomine", "params": [false]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_interval_mining() {
-        let s = r#"{"method": "evm_setIntervalMining", "params": [100]}"#;
+        let s = r#"{"method": "anvil_setIntervalMining", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -743,46 +759,46 @@ mod tests {
 
     #[test]
     fn test_serde_custom_snapshot() {
-        let s = r#"{"method": "evm_snapshot", "params": [] }"#;
+        let s = r#"{"method": "anvil_snapshot", "params": [] }"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_revert() {
-        let s = r#"{"method": "evm_revert", "params": ["0x0"]}"#;
+        let s = r#"{"method": "anvil_revert", "params": ["0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_increase_time() {
-        let s = r#"{"method": "evm_increaseTime", "params": ["0x0"]}"#;
+        let s = r#"{"method": "anvil_increaseTime", "params": ["0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "evm_increaseTime", "params": [1]}"#;
+        let s = r#"{"method": "anvil_increaseTime", "params": [1]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
-        let s = r#"{"method": "evm_increaseTime", "params": 1}"#;
+        let s = r#"{"method": "anvil_increaseTime", "params": 1}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_next_timestamp() {
-        let s = r#"{"method": "evm_setNextBlockTimestamp", "params": [100]}"#;
+        let s = r#"{"method": "anvil_setNextBlockTimestamp", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_evm_mine() {
-        let s = r#"{"method": "evm_mine", "params": [100]}"#;
+        let s = r#"{"method": "anvil_mine", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
-        let s = r#"{"method": "evm_mine", "params": [{
+        let s = r#"{"method": "anvil_mine", "params": [{
             "timestamp": 100,
             "blocks": 100
         }]}"#;
@@ -798,7 +814,7 @@ mod tests {
             _ => unreachable!(),
         }
 
-        let s = r#"{"method": "evm_mine"}"#;
+        let s = r#"{"method": "anvil_mine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
 
