@@ -378,9 +378,17 @@ impl Visitor {
                     .iter()
                     .enumerate()
                     .find(|(_, element)| {
-                        element.index.map_or(false, |source_id| {
-                            source_id == self.source_id && element.offset >= loc.start
-                        })
+                        element
+                            .index
+                            .and_then(|source_id| {
+                                Some(
+                                    source_id == self.source_id &&
+                                        element.offset >= loc.start &&
+                                        element.offset + element.length <=
+                                            loc.start + loc.length?,
+                                )
+                            })
+                            .unwrap_or_default()
                     })
                     .map(|(ic, _)| ic)
             })
