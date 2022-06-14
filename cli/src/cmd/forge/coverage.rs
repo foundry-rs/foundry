@@ -82,6 +82,9 @@ impl Cmd for CoverageArgs {
     }
 }
 
+/// A map, keyed by artifact ID, to a tuple of the deployment source map and the runtime source map.
+type SourceMaps = HashMap<ArtifactId, (SourceMap, SourceMap)>;
+
 // The main flow of the command itself
 impl CoverageArgs {
     /// Collects and adjusts configuration.
@@ -115,14 +118,11 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage map.
-    fn prepare(
-        &self,
-        output: ProjectCompileOutput,
-    ) -> eyre::Result<(CoverageMap, HashMap<ArtifactId, (SourceMap, SourceMap)>)> {
+    fn prepare(&self, output: ProjectCompileOutput) -> eyre::Result<(CoverageMap, SourceMaps)> {
         // Get sources and source maps
         let (artifacts, sources) = output.into_artifacts_with_sources();
 
-        let source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)> = artifacts
+        let source_maps: SourceMaps = artifacts
             .into_iter()
             .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
             .filter_map(|(id, artifact): (ArtifactId, CompactContractBytecode)| {
@@ -194,7 +194,7 @@ impl CoverageArgs {
         self,
         project: Project,
         output: ProjectCompileOutput,
-        source_maps: HashMap<ArtifactId, (SourceMap, SourceMap)>,
+        source_maps: SourceMaps,
         mut map: CoverageMap,
         config: Config,
         evm_opts: EvmOpts,
