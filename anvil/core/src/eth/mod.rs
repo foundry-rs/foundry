@@ -311,7 +311,7 @@ pub enum EthRequest {
     EvmSetNextBlockTimeStamp(u64),
 
     /// Mine a single block
-    #[serde(rename = "anvil_mine", alias = "evm_mine")]
+    #[serde(rename = "evm_mine")]
     EvmMine(#[serde(default)] Option<Params<EvmMineOptions>>),
 
     /// Execute a transaction regardless of signature status
@@ -820,10 +820,10 @@ mod tests {
 
     #[test]
     fn test_serde_custom_evm_mine() {
-        let s = r#"{"method": "anvil_mine", "params": [100]}"#;
+        let s = r#"{"method": "evm_mine", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
-        let s = r#"{"method": "anvil_mine", "params": [{
+        let s = r#"{"method": "evm_mine", "params": [{
             "timestamp": 100,
             "blocks": 100
         }]}"#;
@@ -839,7 +839,7 @@ mod tests {
             _ => unreachable!(),
         }
 
-        let s = r#"{"method": "anvil_mine"}"#;
+        let s = r#"{"method": "evm_mine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
 
