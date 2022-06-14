@@ -95,6 +95,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],
+        rpc_endpoints: Default::default(),
         __non_exhaustive: (),
     };
     prj.write_config(input.clone());
