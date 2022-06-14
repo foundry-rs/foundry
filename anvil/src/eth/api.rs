@@ -377,9 +377,10 @@ impl EthApi {
     /// Returns the same as `chain_id`
     ///
     /// Handler for ETH RPC call: `eth_networkId`
-    pub fn network_id(&self) -> Result<Option<U64>> {
+    pub fn network_id(&self) -> Result<Option<String>> {
         node_info!("eth_networkId");
-        Ok(Some(self.backend.chain_id().as_u64().into()))
+        let chain_id = self.backend.chain_id().as_u64();
+        Ok(Some(format!("{chain_id}")))
     }
 
     /// Returns true if client is actively listening for network connections.
