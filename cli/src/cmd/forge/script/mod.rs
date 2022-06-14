@@ -150,10 +150,10 @@ pub struct ScriptResult {
 pub struct JsonResult {
     pub logs: Vec<String>,
     pub gas_used: u64,
-    pub results: HashMap<String, NestedValue>,
+    pub returns: HashMap<String, NestedValue>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct NestedValue {
     pub internal_type: String,
     pub value: String,
@@ -184,6 +184,42 @@ impl ScriptArgs {
             decoder.identify(trace, &etherscan_identifier);
         }
         Ok(decoder)
+    }
+
+    pub fn get_returns(
+        &self,
+        script_config: &ScriptConfig,
+        returned: &bytes::Bytes,
+    ) -> eyre::Result<HashMap<String, NestedValue>> {
+        let func = script_config.called_function.as_ref().expect("There should be a function.");
+        let mut returns = HashMap::new();
+
+        match func.decode_output(returned) {
+            Ok(decoded) => {
+                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+
+                    let label = if !output.name.is_empty() {
+                        output.name.to_string()
+                    } else {
+                        index.to_string()
+                    };
+
+                    returns.insert(
+                        label,
+                        NestedValue {
+                            internal_type: internal_type.to_string(),
+                            value: format_token(token),
+                        },
+                    );
+                }
+            }
+            Err(_) => {
+                println!("{:x?}", (&returned));
+            }
+        }
+
+        Ok(returns)
     }
 
     pub async fn show_traces(
@@ -265,38 +301,12 @@ impl ScriptArgs {
     pub fn show_json(
         &self,
         script_config: &ScriptConfig,
-        result: &mut ScriptResult,
+        result: &ScriptResult,
     ) -> eyre::Result<()> {
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-        let mut results = HashMap::new();
-
-        match func.decode_output(&result.returned) {
-            Ok(decoded) => {
-                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
-
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
-                        index.to_string()
-                    };
-
-                    results.insert(
-                        label,
-                        NestedValue {
-                            internal_type: internal_type.to_string(),
-                            value: format_token(token),
-                        },
-                    );
-                }
-            }
-            Err(_) => {
-                println!("{:x?}", (&result.returned));
-            }
-        }
+        let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, results };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
