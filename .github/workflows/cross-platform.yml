@@ -89,4 +89,4 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --workspace
+          args: --verbose --workspace -- --skip fork
