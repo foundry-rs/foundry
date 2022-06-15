@@ -96,7 +96,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         labeled_addresses: labels,
                         setup_failed: true,
                         reason: Some(reason),
-                    });
+                    })
                 }
                 e => eyre::bail!("Unrecoverable error: {:?}", e),
             }
@@ -122,7 +122,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     labeled_addresses: labels,
                     setup_failed: true,
                     reason: Some(reason),
-                });
+                })
             }
             e => eyre::bail!("Unrecoverable error: {:?}", e),
         };
@@ -208,7 +208,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 )]
                 .into(),
                 warnings,
-            ));
+            ))
         }
 
         let setup = self.setup(needs_setup)?;
@@ -230,7 +230,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 )]
                 .into(),
                 warnings,
-            ));
+            ))
         }
 
         // Collect valid test functions
@@ -239,9 +239,9 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .functions()
             .into_iter()
             .filter(|func| {
-                func.name.starts_with("test")
-                    && filter.matches_test(func.signature())
-                    && (include_fuzz_tests || func.inputs.is_empty())
+                func.name.starts_with("test") &&
+                    filter.matches_test(func.signature()) &&
+                    (include_fuzz_tests || func.inputs.is_empty())
             })
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
@@ -320,7 +320,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }
             Err(err) => {
                 tracing::error!(?err);
-                return Err(err.into());
+                return Err(err.into())
             }
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
