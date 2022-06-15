@@ -680,4 +680,14 @@ mod tests {
             assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
     }
+
+    #[test]
+    fn fixture_regex_matches() {
+        assert!(IGNORE_IN_FIXTURES.is_match(r#"
+Location:
+   [35mcli/src/compile.rs[0m:[35m151[0m
+
+Backtrace omitted.
+        "#));
+    }
 }
