@@ -125,10 +125,10 @@ fn create_on_chain<F>(
 
 // tests `forge` create on goerli if correct env vars are set
 forgetest!(can_create_simple_on_goerli, |prj: TestProject, cmd: TestCommand| {
-    create_on_chain(EnvExternalities::goerli(), prj, cmd, |prj| setup_with_simple_remapping(prj));
+    create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_with_simple_remapping);
 });
 
 // tests `forge` create on goerli if correct env vars are set
 forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
-    create_on_chain(EnvExternalities::goerli(), prj, cmd, |prj| setup_oracle(prj));
+    create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
 });
