@@ -132,7 +132,10 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
 
-    let filter = args.filter();
+    let config: Config = args.build_args().into();
+
+    let filter = args.filter(&config);
+
     // marker to check whether to override the command
     let no_reconfigure = filter.pattern.is_some() ||
         filter.test_pattern.is_some() ||
@@ -140,7 +143,6 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         filter.contract_pattern.is_some() ||
         args.watch.run_all;
 
-    let config: Config = args.build_args().into();
     let state = WatchTestState {
         project_root: config.__root.0,
         no_reconfigure,

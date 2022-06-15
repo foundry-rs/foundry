@@ -50,6 +50,7 @@ pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod remappings;
+pub mod remove;
 pub mod script;
 pub mod snapshot;
 pub mod test;

@@ -21,6 +21,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -30,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -38,14 +40,17 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
+mod rpc;
+pub use rpc::RpcEndpoints;
+
 pub mod cache;
 use cache::{Cache, ChainCache};
+
 mod chain;
 pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
-use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -251,6 +256,9 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Multiple rpc endpoints and their aliases
+    #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
+    pub rpc_endpoints: RpcEndpoints,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -343,6 +351,7 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
+        trace!("load config with provider: {:?}", provider.metadata());
         match Self::try_from(provider) {
             Ok(config) => config,
             Err(errors) => {
@@ -910,6 +919,10 @@ impl Config {
         }
         s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
 
+        if !self.rpc_endpoints.is_empty() {
+            s = s.replace("[rpc_endpoints]", &format!("[{}.rpc_endpoints]", self.profile));
+        }
+
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -1390,6 +1403,7 @@ impl Default for Config {
             __non_exhaustive: (),
             via_ir: false,
             rpc_storage_caching: Default::default(),
+            rpc_endpoints: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
@@ -1805,6 +1819,7 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
         fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
@@ -1848,7 +1863,14 @@ impl<'a> RemappingsProvider<'a> {
             insert_closest(&mut lib_remappings, r.name, r.path.into());
         }
         // use auto detection for all libs
-        for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
+        for r in self
+            .lib_paths
+            .iter()
+            .map(|lib| self.root.join(lib))
+            .inspect(|lib| {
+                trace!("find all remappings in lib path: {:?}", lib);
+            })
+            .flat_map(Remapping::find_many)
         {
             // this is an additional safety check for weird auto-detected remappings
             if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
@@ -1872,8 +1894,14 @@ impl<'a> RemappingsProvider<'a> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
-            |lib: PathBuf| {
+        self.lib_paths
+            .iter()
+            .map(|p| self.root.join(p))
+            .flat_map(foundry_toml_dirs)
+            .inspect(|lib| {
+                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
+            })
+            .flat_map(|lib: PathBuf| {
                 // load config, of the nested lib if it exists
                 let config = Config::load_with_root(&lib).sanitized();
 
@@ -1903,8 +1931,7 @@ impl<'a> RemappingsProvider<'a> {
                     remappings.push(r);
                 }
                 remappings
-            },
-        )
+            })
     }
 }
 
@@ -2024,6 +2051,7 @@ mod tests {
 
     use super::*;
 
+    use crate::rpc::RpcEndpoint;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -2387,6 +2415,7 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
+                rpc_endpoints = { optimism = "https://example.com/", mainnet = "${RPC_MAINNET}" }
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
@@ -2415,6 +2444,10 @@ mod tests {
                     bytecode_hash: BytecodeHash::Ipfs,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
+                    rpc_endpoints: RpcEndpoints::new([
+                        ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                        ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                    ]),
                     ..Config::default()
                 }
             );

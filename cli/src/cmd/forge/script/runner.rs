@@ -1,19 +1,19 @@
+use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    deploy_create2_deployer,
     executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
 
-use super::*;
-pub struct Runner<DB: DatabaseRef> {
+/// Drives script execution
+pub struct ScriptRunner<DB: DatabaseRef> {
     pub executor: Executor<DB>,
     pub initial_balance: U256,
     pub sender: Address,
 }
 
-impl<DB: DatabaseRef> Runner<DB> {
+impl<DB: DatabaseRef> ScriptRunner<DB> {
     pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
@@ -33,7 +33,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             self.executor.set_balance(self.sender, U256::MAX);
 
             if need_create2_deployer {
-                deploy_create2_deployer(&mut self.executor)?;
+                self.executor.deploy_create2_deployer()?;
             }
         }
 
@@ -127,6 +127,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                 logs,
                 traces,
                 debug,
+                address: None,
             },
         ))
     }
@@ -147,7 +148,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address: _, gas, logs, traces, debug } = self.executor.deploy(
+            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
@@ -169,6 +170,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                 debug: vec![debug].into_iter().collect(),
                 labeled_addresses: Default::default(),
                 transactions: Default::default(),
+                address: Some(address),
             })
         } else {
             eyre::bail!("ENS not supported.");
@@ -217,6 +219,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             debug: vec![debug].into_iter().collect(),
             labeled_addresses: labels,
             transactions,
+            address: None,
         })
     }
 }

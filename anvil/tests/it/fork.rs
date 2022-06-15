@@ -5,9 +5,10 @@ use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
     contract::abigen,
-    prelude::{Middleware, SignerMiddleware},
+    core::rand,
+    prelude::{LocalWallet, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{Address, BlockNumber, Chain, TransactionRequest},
+    types::{Address, BlockNumber, Chain, TransactionRequest, U256},
 };
 use std::sync::Arc;
 
@@ -122,7 +123,7 @@ async fn test_fork_eth_fee_history() {
     let provider = handle.http_provider();
 
     let count = 10u64;
-    let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).unwrap();
+    let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).await.unwrap();
     let _provider_history = provider.fee_history(count, BlockNumber::Latest, &[]).await.unwrap();
 }
 
@@ -361,4 +362,37 @@ async fn test_fork_timestamp() {
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
     assert!(diff <= elapsed.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_set_empty_code() {
+    let (api, _handle) = spawn(fork_config()).await;
+    let addr = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984".parse().unwrap();
+    let code = api.get_code(addr, None).await.unwrap();
+    assert!(!code.as_ref().is_empty());
+    api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
+    let code = api.get_code(addr, None).await.unwrap();
+    assert!(code.as_ref().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_can_send_tx() {
+    let (api, handle) =
+        spawn(fork_config().with_blocktime(Some(std::time::Duration::from_millis(800)))).await;
+
+    let wallet = LocalWallet::new(&mut rand::thread_rng());
+
+    api.anvil_set_balance(wallet.address(), U256::from(1e18 as u64)).await.unwrap();
+
+    let provider = SignerMiddleware::new(handle.http_provider(), wallet);
+
+    let addr = Address::random();
+    let val = 1337u64;
+    let tx = TransactionRequest::new().to(addr).value(val);
+
+    // broadcast it via the eth_sendTransaction API
+    let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let balance = provider.get_balance(addr, None).await.unwrap();
+    assert_eq!(balance, val.into());
 }

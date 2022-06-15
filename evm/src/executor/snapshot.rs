@@ -1,4 +1,4 @@
-//! support for snapshotting the state of the blockchain in memory
+//! support for snapshotting different states
 
 use ethers::types::U256;
 use std::collections::HashMap;
@@ -17,6 +17,11 @@ impl<T> Snapshots<T> {
         let id = self.id;
         self.id = id.saturating_add(U256::one());
         id
+    }
+
+    /// Returns the snapshot with the given id `id`
+    pub fn get(&self, id: U256) -> Option<&T> {
+        self.snapshots.get(&id)
     }
 
     /// Removes the snapshot with the given `id`

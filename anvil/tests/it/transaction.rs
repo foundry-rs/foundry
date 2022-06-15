@@ -1,16 +1,15 @@
 use crate::{abi::*, next_port};
 use anvil::{spawn, NodeConfig};
 use ethers::{
-    contract::ContractFactory,
     prelude::{
         signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
         TransactionRequest,
     },
-    types::{Address, BlockNumber, H256, U256},
+    types::{Address, BlockNumber, Transaction, TransactionReceipt, H256, U256},
 };
-use ethers_solc::{project_util::TempProject, Artifact};
-use futures::{future::join_all, StreamExt};
-use std::{sync::Arc, time::Duration};
+
+use futures::{future::join_all, FutureExt, StreamExt};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -186,7 +185,6 @@ async fn can_reject_too_high_gas_limits() {
     assert!(err.to_string().contains("gas too high"));
 
     api.anvil_set_balance(from, U256::MAX).await.unwrap();
-    api.anvil_set_min_gas_price(0u64.into()).await.unwrap();
 
     let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
     assert!(pending.is_ok());
@@ -374,46 +372,6 @@ async fn can_deploy_get_code() {
 
     let code = client.get_code(greeter_contract.address(), None).await.unwrap();
     assert!(!code.as_ref().is_empty());
-}
-
-#[test]
-fn test_deploy_reverting() {
-    let prj = TempProject::dapptools().unwrap();
-    prj.add_source(
-        "Contract",
-        r#"
-pragma solidity 0.8.13;
-contract Contract {
-    constructor() {
-      require(false, "");
-    }
-}
-"#,
-    )
-    .unwrap();
-
-    let mut compiled = prj.compile().unwrap();
-    assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove("Contract").unwrap();
-    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
-
-    // need to run this in a runtime because svm's blocking install does panic if invoked in another
-    // async runtime
-    tokio::runtime::Runtime::new().unwrap().block_on(async move {
-        let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
-        let provider = handle.ws_provider().await;
-
-        let wallet = handle.dev_wallets().next().unwrap();
-        let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
-        let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
-        let contract = factory.deploy(()).unwrap().send().await;
-        assert!(contract.is_err());
-
-        // should catch the revert during estimation which results in an err
-        let err = contract.unwrap_err();
-        assert!(err.to_string().contains("execution reverted:"));
-    });
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -724,4 +682,62 @@ async fn test_tx_receipt() {
     // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_stream_pending_transactions() {
+    let (_api, handle) = spawn(
+        NodeConfig::test().with_port(next_port()).with_blocktime(Some(Duration::from_secs(2))),
+    )
+    .await;
+    let num_txs = 5;
+    let provider = handle.http_provider();
+    let ws_provider = handle.ws_provider().await;
+
+    let accounts = provider.get_accounts().await.unwrap();
+    let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
+
+    let mut sending = futures::future::join_all(
+        std::iter::repeat(tx.clone())
+            .take(num_txs)
+            .enumerate()
+            .map(|(nonce, tx)| tx.nonce(nonce))
+            .map(|tx| async {
+                provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap()
+            }),
+    )
+    .fuse();
+
+    let mut watch_tx_stream =
+        provider.watch_pending_transactions().await.unwrap().transactions_unordered(num_txs).fuse();
+
+    let mut sub_tx_stream =
+        ws_provider.subscribe_pending_txs().await.unwrap().transactions_unordered(2).fuse();
+
+    let mut sent: Option<Vec<TransactionReceipt>> = None;
+    let mut watch_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+    let mut sub_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+
+    loop {
+        futures::select! {
+            txs = sending => {
+                sent = Some(txs)
+            },
+            tx = watch_tx_stream.next() => {
+                watch_received.push(tx.unwrap().unwrap());
+            },
+            tx = sub_tx_stream.next() => {
+                sub_received.push(tx.unwrap().unwrap());
+            },
+        };
+        if watch_received.len() == num_txs && sub_received.len() == num_txs {
+            if let Some(ref sent) = sent {
+                assert_eq!(sent.len(), watch_received.len());
+                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
+                assert_eq!(sent_txs, watch_received.iter().map(|tx| tx.hash).collect());
+                assert_eq!(sent_txs, sub_received.iter().map(|tx| tx.hash).collect());
+                break
+            }
+        }
+    }
 }

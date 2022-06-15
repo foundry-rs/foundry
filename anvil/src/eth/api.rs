@@ -5,7 +5,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistory, FeeHistoryCache},
+        fees::{FeeDetails, FeeHistoryCache},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -43,9 +43,9 @@ use ethers::{
     providers::{Http, ProviderError, RetryClient},
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
-        Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
-        TransactionRequest as EthersTransactionRequest, TransactionRequest, TxHash, TxpoolContent,
-        TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Log, Trace, Transaction,
+        TransactionReceipt, TransactionRequest as EthersTransactionRequest, TransactionRequest,
+        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -214,7 +214,7 @@ impl EthApi {
                 self.submit_hashrate(rate, id).to_rpc_result()
             }
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
-                self.fee_history(count, newest, reward_percentiles).to_rpc_result()
+                self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
             }
 
             // non eth-standard rpc calls
@@ -226,8 +226,8 @@ impl EthApi {
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
-            EthRequest::StopImpersonatingAccount => {
-                self.anvil_stop_impersonating_account().await.to_rpc_result()
+            EthRequest::StopImpersonatingAccount(addr) => {
+                self.anvil_stop_impersonating_account(addr).await.to_rpc_result()
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
@@ -268,6 +268,12 @@ impl EthApi {
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
+            }
+            EthRequest::EvmSetBlockTimeStampInterval(time) => {
+                self.evm_set_block_timestamp_interval(time).to_rpc_result()
+            }
+            EthRequest::EvmRemoveBlockTimeStampInterval(()) => {
+                self.evm_remove_block_timestamp_interval().to_rpc_result()
             }
             EthRequest::EvmMine(mine) => {
                 self.evm_mine(mine.map(|p| p.params)).await.to_rpc_result()
@@ -371,9 +377,10 @@ impl EthApi {
     /// Returns the same as `chain_id`
     ///
     /// Handler for ETH RPC call: `eth_networkId`
-    pub fn network_id(&self) -> Result<Option<U64>> {
+    pub fn network_id(&self) -> Result<Option<String>> {
         node_info!("eth_networkId");
-        Ok(Some(self.backend.chain_id().as_u64().into()))
+        let chain_id = self.backend.chain_id().as_u64();
+        Ok(Some(format!("{chain_id}")))
     }
 
     /// Returns true if client is actively listening for network connections.
@@ -551,10 +558,9 @@ impl EthApi {
     pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
-        let from =
-            request.from.or_else(|| self.get_impersonated()).map(Ok).unwrap_or_else(|| {
-                self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
-            })?;
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -810,12 +816,16 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, _, _gas, _) =
+                    let (exit, out, _, _) =
                         self.backend.call(request.clone(), fees, block_number)?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                        }
+                        return_revert!() => {
+                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
+                                .into())
                         }
                         reason => {
                             trace!(target: "node", "estimation failed due to {:?}", reason);
@@ -833,9 +843,10 @@ impl EthApi {
             }
         }
 
-        let gas: U256 = gas.into();
+        // at this point we know the call succeeded but want to find the best gas, so we do a binary
+        // search over the possible range
 
-        // binary search gas estimation
+        let gas: U256 = gas.into();
         let mut lowest_gas_limit = MIN_GAS;
 
         // pick a point that's close to the estimated gas
@@ -993,7 +1004,7 @@ impl EthApi {
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
-    pub fn fee_history(
+    pub async fn fee_history(
         &self,
         block_count: U256,
         newest_block: BlockNumber,
@@ -1001,17 +1012,32 @@ impl EthApi {
     ) -> Result<FeeHistory> {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
-        const MAX_BLOCK_COUNT: u64 = 1024u64;
-
-        let range_limit = U256::from(MAX_BLOCK_COUNT);
-        let block_count =
-            if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
         let number = match newest_block {
             BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
             BlockNumber::Earliest => 0,
             BlockNumber::Number(n) => n.as_u64(),
         };
+
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            // if we're still at the forked block we don't have any history and can't compute it
+            // efficiently, instead we fetch it from the fork
+            if number <= fork.block_number() {
+                return Ok(fork
+                    .fee_history(
+                        block_count,
+                        BlockNumber::Number(number.into()),
+                        &reward_percentiles,
+                    )
+                    .await?)
+            }
+        }
+
+        const MAX_BLOCK_COUNT: u64 = 1024u64;
+        let range_limit = U256::from(MAX_BLOCK_COUNT);
+        let block_count =
+            if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -1028,7 +1054,7 @@ impl EthApi {
             oldest_block: U256::from(lowest),
             base_fee_per_gas: Vec::new(),
             gas_used_ratio: Vec::new(),
-            reward: None,
+            reward: Default::default(),
         };
 
         let mut rewards = Vec::new();
@@ -1058,7 +1084,7 @@ impl EthApi {
             }
         }
 
-        response.reward = Some(rewards);
+        response.reward = rewards;
 
         // calculate next base fee
         if let (Some(last_gas_used), Some(last_fee_per_gas)) =
@@ -1204,9 +1230,9 @@ impl EthApi {
     /// Stops impersonating an account if previously set with `anvil_impersonateAccount`.
     ///
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
-    pub async fn anvil_stop_impersonating_account(&self) -> Result<()> {
+    pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.cheats().stop_impersonating();
+        self.backend.cheats().stop_impersonating(&address);
         Ok(())
     }
 
@@ -1348,6 +1374,12 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setMinGasPrice`
     pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
         node_info!("anvil_setMinGasPrice");
+        if self.backend.is_eip1559() {
+            return Err(RpcError::invalid_params(
+                "anvil_setMinGasPrice is not supported when EIP-1559 is active",
+            )
+            .into())
+        }
         self.backend.set_gas_price(gas);
         Ok(())
     }
@@ -1403,6 +1435,23 @@ impl EthApi {
         node_info!("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds);
         Ok(())
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_setBlockTimestampInterval`
+    pub fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
+        node_info!("anvil_setBlockTimestampInterval");
+        self.backend.time().set_block_timestamp_interval(seconds);
+        Ok(())
+    }
+
+    /// Sets an interval for the block timestamp
+    ///
+    /// Handler for RPC call: `anvil_removeBlockTimestampInterval`
+    pub fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
+        node_info!("anvil_removeBlockTimestampInterval");
+        Ok(self.backend.time().remove_block_timestamp_interval())
     }
 
     /// Mine blocks, instantly.
@@ -1487,8 +1536,7 @@ impl EthApi {
     ) -> Result<TxHash> {
         node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
-        let from =
-            self.get_impersonated().or(request.from).ok_or(BlockchainError::NoSignerAvailable)?;
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -1738,16 +1786,6 @@ impl EthApi {
         self.backend.cheats().is_impersonated(addr)
     }
 
-    /// Returns the sender to associate with this request
-    ///
-    /// If we're currently impersonating an account, see [`EthApi::anvil_impersonate_account()`],
-    /// then this will return the address of the impersonated account.
-    fn get_impersonated(&self) -> Option<Address> {
-        let acc = self.backend.cheats().impersonated_account()?;
-        trace!("using impersonated account {:?}", acc);
-        Some(acc)
-    }
-
     /// Returns the nonce of the `address` depending on the `block_number`
     async fn get_transaction_count(
         &self,
@@ -1822,13 +1860,17 @@ fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) ->
     }
 }
 
-/// Returns an error if the `exit` code is _not_ ok
-fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
-    let out = match out {
+fn convert_transact_out(out: &TransactOut) -> Bytes {
+    match out {
         TransactOut::None => Default::default(),
         TransactOut::Call(out) => out.to_vec().into(),
         TransactOut::Create(out, _) => out.to_vec().into(),
-    };
+    }
+}
+
+/// Returns an error if the `exit` code is _not_ ok
+fn ensure_return_ok(exit: Return, out: &TransactOut) -> Result<Bytes> {
+    let out = convert_transact_out(out);
     match exit {
         return_ok!() => Ok(out),
         return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),

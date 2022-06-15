@@ -1,18 +1,4 @@
-mod build;
-use build::BuildOutput;
-
-mod runner;
-use runner::Runner;
-
-mod broadcast;
-use ui::{TUIExitReason, Tui, Ui};
-
-mod cmd;
-
-mod executor;
-
-mod receipts;
-
+//! script command
 use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
 use clap::{Parser, ValueHint};
 use ethers::{
@@ -28,24 +14,36 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     trace::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-
 use foundry_common::evm::EvmArgs;
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
-
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
     time::Duration,
 };
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use yansi::Paint;
+
+mod build;
+use build::BuildOutput;
+
+mod runner;
+use runner::ScriptRunner;
+
+mod broadcast;
+use ui::{TUIExitReason, Tui, Ui};
+
+mod cmd;
+mod executor;
+mod receipts;
+mod sequence;
+
+use super::build::ProjectPathsArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -130,29 +128,7 @@ pub struct ScriptArgs {
     pub with_gas_price: Option<U256>,
 }
 
-pub struct ScriptResult {
-    pub success: bool,
-    pub logs: Vec<Log>,
-    pub traces: Vec<(TraceKind, CallTraceArena)>,
-    pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
-    pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<TypedTransaction>>,
-    pub returned: bytes::Bytes,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct JsonResult {
-    pub logs: Vec<String>,
-    pub gas_used: u64,
-    pub results: HashMap<String, NestedValue>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NestedValue {
-    pub internal_type: String,
-    pub value: String,
-}
+// === impl ScriptArgs ===
 
 impl ScriptArgs {
     pub fn decode_traces(
@@ -172,6 +148,8 @@ impl ScriptArgs {
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
+        decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &local_identifier);
             decoder.identify(trace, &etherscan_identifier);
@@ -179,7 +157,43 @@ impl ScriptArgs {
         Ok(decoder)
     }
 
-    pub fn show_traces(
+    pub fn get_returns(
+        &self,
+        script_config: &ScriptConfig,
+        returned: &bytes::Bytes,
+    ) -> eyre::Result<HashMap<String, NestedValue>> {
+        let func = script_config.called_function.as_ref().expect("There should be a function.");
+        let mut returns = HashMap::new();
+
+        match func.decode_output(returned) {
+            Ok(decoded) => {
+                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
+                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
+
+                    let label = if !output.name.is_empty() {
+                        output.name.to_string()
+                    } else {
+                        index.to_string()
+                    };
+
+                    returns.insert(
+                        label,
+                        NestedValue {
+                            internal_type: internal_type.to_string(),
+                            value: format_token(token),
+                        },
+                    );
+                }
+            }
+            Err(_) => {
+                println!("{:x?}", (&returned));
+            }
+        }
+
+        Ok(returns)
+    }
+
+    pub async fn show_traces(
         &self,
         script_config: &ScriptConfig,
         decoder: &CallTraceDecoder,
@@ -203,7 +217,7 @@ impl ScriptArgs {
                     };
 
                     if should_include {
-                        decoder.decode(trace);
+                        decoder.decode(trace).await;
                         println!("{trace}");
                     }
                 }
@@ -258,38 +272,12 @@ impl ScriptArgs {
     pub fn show_json(
         &self,
         script_config: &ScriptConfig,
-        result: &mut ScriptResult,
+        result: &ScriptResult,
     ) -> eyre::Result<()> {
-        let func = script_config.called_function.as_ref().expect("There should be a function.");
-        let mut results = HashMap::new();
-
-        match func.decode_output(&result.returned) {
-            Ok(decoded) => {
-                for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
-                    let internal_type = output.internal_type.as_deref().unwrap_or("unknown");
-
-                    let label = if !output.name.is_empty() {
-                        output.name.to_string()
-                    } else {
-                        index.to_string()
-                    };
-
-                    results.insert(
-                        label,
-                        NestedValue {
-                            internal_type: internal_type.to_string(),
-                            value: format_token(token),
-                        },
-                    );
-                }
-            }
-            Err(_) => {
-                println!("{:x?}", (&result.returned));
-            }
-        }
+        let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, results };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
@@ -420,9 +408,73 @@ impl ScriptArgs {
     }
 }
 
+pub struct ScriptResult {
+    pub success: bool,
+    pub logs: Vec<Log>,
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub debug: Option<Vec<DebugArena>>,
+    pub gas: u64,
+    pub labeled_addresses: BTreeMap<Address, String>,
+    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub returned: bytes::Bytes,
+    pub address: Option<Address>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JsonResult {
+    pub logs: Vec<String>,
+    pub gas_used: u64,
+    pub returns: HashMap<String, NestedValue>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct NestedValue {
+    pub internal_type: String,
+    pub value: String,
+}
+
 pub struct ScriptConfig {
     pub config: foundry_config::Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub called_function: Option<Function>,
+}
+
+/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
+pub struct VerifyBundle {
+    pub num_of_optimizations: Option<usize>,
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub etherscan_key: Option<String>,
+    pub project_paths: ProjectPathsArgs,
+}
+
+impl VerifyBundle {
+    pub fn new(
+        project: &Project,
+        config: &Config,
+        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    ) -> Self {
+        let num_of_optimizations =
+            if config.optimizer { Some(config.optimizer_runs) } else { None };
+
+        let config_path = config.get_config_path();
+
+        let project_paths = ProjectPathsArgs {
+            root: Some(project.paths.root.clone()),
+            contracts: Some(project.paths.sources.clone()),
+            remappings: project.paths.remappings.clone(),
+            remappings_env: None,
+            cache_path: Some(project.paths.cache.clone()),
+            lib_paths: project.paths.libraries.clone(),
+            hardhat: config.profile == Config::HARDHAT_PROFILE,
+            config_path: if config_path.exists() { Some(config_path) } else { None },
+        };
+
+        VerifyBundle {
+            num_of_optimizations,
+            known_contracts,
+            etherscan_key: config.etherscan_api_key.clone(),
+            project_paths,
+        }
+    }
 }

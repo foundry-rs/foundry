@@ -18,7 +18,7 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{Chain, Config, SolcReq};
+use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -198,7 +198,7 @@ impl VerifyArgs {
         };
 
         let project = build_args.project()?;
-        let config = Config::load();
+        let config = Config::load_with_root(find_project_root_path().unwrap());
 
         if self.contract.path.is_none() && !config.cache {
             eyre::bail!(
