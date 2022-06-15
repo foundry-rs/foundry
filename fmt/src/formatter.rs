@@ -1651,6 +1651,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     },
                 )?;
             }
+            Expression::FunctionCall(loc, expr, exprs) => {
+                self.visit_expr(expr.loc(), expr)?;
+                self.surrounded(expr.loc().end(), "(", ")", Some(loc.end()), |fmt, _| {
+                    let exprs = fmt.items_to_chunks(
+                        Some(loc.end()),
+                        exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                    )?;
+
+                    let multiline = fmt.are_chunks_separated_multiline("{}", &exprs, ",")?;
+                    fmt.write_chunks_separated(&exprs, ",", multiline)?;
+                    Ok(())
+                })?
+            }
+            Expression::FunctionCallBlock(_loc, expr, stmt) => {
+                expr.visit(self)?;
+                stmt.visit(self)?;
+            }
             _ => self.visit_source(loc)?,
         };
 
@@ -2400,6 +2417,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
         Ok(())
     }
+
+    fn visit_args(&mut self, loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
+        self.surrounded(loc.start(), "{", "}", Some(loc.end()), |fmt, _| {
+            let mut args = args.iter_mut().peekable();
+            let mut chunks = Vec::new();
+            while let Some(NamedArgument { loc, name, expr }) = args.next() {
+                chunks.push(fmt.chunked(
+                    loc.start(),
+                    args.peek().map(|NamedArgument { loc, .. }| loc.start()),
+                    |fmt| {
+                        write_chunk!(fmt, name.loc.end(), expr.loc().start(), "{}:", name.name)?;
+                        expr.visit(fmt)?;
+                        Ok(())
+                    },
+                )?);
+            }
+
+            let multiline = fmt.are_chunks_separated_multiline("{}", &chunks, ",")?;
+            fmt.write_chunks_separated(&chunks, ",", multiline)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2565,4 +2605,5 @@ mod tests {
     test_directory! { ForStatement }
     test_directory! { IfStatement }
     test_directory! { VariableAssignment }
+    test_directory! { FunctionCallArgsStatement }
 }
