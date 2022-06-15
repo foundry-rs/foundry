@@ -4106,9 +4106,8 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1affcd38e2d1a4570699f8cf35f0668c886febdba1b857771b20cf81025ada1d"
+version = "1.6.0"
+source = "git+https://github.com/bluealloy/revm?rev=a95390f991942323f90725087b7b513c68af4df5#a95390f991942323f90725087b7b513c68af4df5"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4126,8 +4125,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd6aae8f44783ef6ff39fc22c9c999dfa0e17b79d663b752730c02a025935185"
+source = "git+https://github.com/bluealloy/revm?rev=a95390f991942323f90725087b7b513c68af4df5#a95390f991942323f90725087b7b513c68af4df5"
 dependencies = [
  "bytes",
  "k256",
