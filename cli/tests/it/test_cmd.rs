@@ -6,11 +6,6 @@ use foundry_cli_test_utils::{
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
-
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     let patt = regex::Regex::new("test*").unwrap();
