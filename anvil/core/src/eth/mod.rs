@@ -68,7 +68,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
-    #[serde(rename = "eth_getBlockTransactionCountByHash")]
+    #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(H256),
 
     #[serde(
@@ -77,7 +77,7 @@ pub enum EthRequest {
     )]
     EthGetTransactionCountByNumber(BlockNumber),
 
-    #[serde(rename = "eth_getUncleCountByBlockHash")]
+    #[serde(rename = "eth_getUncleCountByBlockHash", with = "sequence")]
     EthGetUnclesCountByHash(H256),
 
     #[serde(
@@ -785,6 +785,20 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_eth_uncle_count_by_block_hash() {
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getUncleCountByBlockHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_block_tx_count_by_block_hash() {
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByHash","params":["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
