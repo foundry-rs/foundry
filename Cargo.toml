@@ -26,6 +26,11 @@ debug = 0
 # These speed up local tests
 ethers-solc.opt-level = 3
 
+[profile.test.package]
+# These will speed up all forge script related integration tests
+anvil.opt-level = 3
+axum.opt-level = 3
+
 # local "release" mode
 [profile.local]
 inherits = "dev"
