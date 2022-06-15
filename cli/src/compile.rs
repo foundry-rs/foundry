@@ -24,7 +24,8 @@ pub struct SizeReport {
 
 pub struct ContractInfo {
     pub size: usize,
-    pub is_test_contract: bool,
+    // A development contract is either a Script or a Test contract.
+    pub is_dev_contract: bool,
 }
 
 impl SizeReport {
@@ -32,7 +33,7 @@ impl SizeReport {
     pub fn max_size(&self) -> usize {
         let mut max_size = 0;
         for contract in self.contracts.values() {
-            if !contract.is_test_contract && contract.size > max_size {
+            if !contract.is_dev_contract && contract.size > max_size {
                 max_size = contract.size;
             }
         }
@@ -55,7 +56,7 @@ impl Display for SizeReport {
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
-        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_test_contract && c.size > 0);
+        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
         for (name, contract) in contracts {
             let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
             let color = match contract.size {
@@ -181,13 +182,17 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
 
-                        let test_functions =
+                        let dev_functions =
                             contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
-                                |func| func.name.starts_with("test") || func.name.eq("IS_TEST"),
+                                |func| {
+                                    func.name.starts_with("test") ||
+                                        func.name.eq("IS_TEST") ||
+                                        func.name.eq("IS_SCRIPT")
+                                },
                             );
 
-                        let is_test_contract = test_functions.into_iter().count() > 0;
-                        size_report.contracts.insert(name, ContractInfo { size, is_test_contract });
+                        let is_dev_contract = dev_functions.into_iter().count() > 0;
+                        size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
                     }
                 }
 
