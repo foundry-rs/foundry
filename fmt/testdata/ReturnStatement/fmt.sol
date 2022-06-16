@@ -35,8 +35,8 @@ contract ReturnStatement {
         if (val == 4) {
             /* return single value 2 */
             return 2** // return single value 3
-            3 // return single value 4
-            /* return single value 5 */;
+                3 // return single value 4
+                /* return single value 5 */;
         }
 
         return value(); // return single value 6

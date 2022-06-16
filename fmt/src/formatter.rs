@@ -2402,27 +2402,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
-        // self.write_postfix_comments_before(loc.start())?;
-        // self.write_prefix_comments_before(loc.start())?;
-        // write_chunk!(self, loc.start(), "return")?;
-        // if let Some(expr) = expr {
-        //     expr.visit(self)?;
-        // }
-        // write_chunk!(self, loc.end(), ";")?;
-        // self.write_prefix_comments_before(loc.end())?;
-        self.write_postfix_comments_before(loc.start())?;
-        self.write_prefix_comments_before(
-            expr.as_mut().map_or(loc.end(), |expr| expr.loc().start()),
-        )?;
-        self.surrounded(loc.start(), "return", "", Some(loc.end()), |fmt, _| {
-            // if let Some(expr) = expr {
-            //     expr.visit(fmt)?;
-            // }
+        self.write_prefix_comments_before(loc.start())?;
+        self.grouped(|fmt| {
+            fmt.write_prefix_comments_before(loc.end())?;
+            write_chunk!(fmt, loc.start(), "return")?;
             expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
             write_chunk!(fmt, loc.end(), ";")?;
+            fmt.write_prefix_comments_before(loc.end())?;
+            fmt.write_postfix_comments_before(loc.end())?;
             Ok(())
-        })
-        // Ok(())
+        })?;
+        Ok(())
     }
 }
 
