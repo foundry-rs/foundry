@@ -155,7 +155,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     (api, handle)
 }
 
-type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>>>;
+type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>+ Send + Sync>>;
 
 /// A handle to the spawned node and server
 pub struct NodeHandle {
