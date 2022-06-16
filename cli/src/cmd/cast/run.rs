@@ -12,7 +12,7 @@ use forge::{
     executor::{builder::Backend, opts::EvmOpts, DeployResult, ExecutorBuilder, RawCallResult},
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
-use foundry_config::Config;
+use foundry_config::{find_project_root_path, Config};
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
@@ -52,7 +52,7 @@ impl Cmd for RunArgs {
 
 impl RunArgs {
     async fn run_tx(self) -> eyre::Result<()> {
-        let figment = Config::figment();
+        let figment = Config::figment_with_root(find_project_root_path().unwrap());
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
