@@ -86,9 +86,14 @@ jobs:
 #          command: run
 #          args: -p foundry-cli --bin forge -- --help
 
+      - name: setup git config
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
+
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --workspace -- --skip fork --nocapture
+          args: --release --locked --workspace -- --skip fork --nocapture
