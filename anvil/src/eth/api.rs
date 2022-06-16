@@ -693,14 +693,14 @@ impl EthApi {
             }
         }
 
-        let from = request.from;
+        // ensure tx succeeds
         let (exit, out, _, mut state) =
             self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
 
         ensure_return_ok(exit, &out)?;
 
         // cleanup state map
-        if let Some(from) = from {
+        if let Some(from) = request.from {
             // remove the sender
             let _ = state.remove(&from);
         }
@@ -722,12 +722,10 @@ impl EthApi {
 
         // execute again but with access list set
         request.access_list = Some(access_list.clone());
-        let (exit, out, gas_used, _) =
-            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
 
-        ensure_return_ok(exit, &out)?;
+        let gas_used = self.do_estimate_gas(request, Some(number.into())).await?;
 
-        Ok(AccessListWithGasUsed { access_list, gas_used: gas_used.into() })
+        Ok(AccessListWithGasUsed { access_list, gas_used })
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -735,161 +733,11 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        mut request: CallRequest,
+        request: CallRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        let number = self.backend.ensure_block_number(block_number)?;
-        let block_number = Some(number.into());
-        // check if the number predates the fork, if in fork mode
-        if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-                return Ok(fork.estimate_gas(&request, block_number).await?)
-            }
-        }
-
-        // call takes at least this amount
-        const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
-
-        // if the request is a simple transfer we can optimize
-        let likely_transfer =
-            request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
-        if likely_transfer {
-            if let Some(to) = request.to {
-                if let Ok(target_code) = self.backend.get_code(to, block_number).await {
-                    if target_code.as_ref().is_empty() {
-                        return Ok(MIN_GAS)
-                    }
-                }
-            }
-        }
-
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-        )?
-        .or_zero_fees();
-
-        // get the highest possible gas limit, either the request's set value or the currently
-        // configured gas limit
-        let mut highest_gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
-
-        // check with the funds of the sender
-        if let Some(from) = request.from {
-            let gas_price = fees.gas_price.unwrap_or_default();
-            if gas_price > U256::zero() {
-                let mut available_funds = self.backend.get_balance(from, block_number).await?;
-                if let Some(value) = request.value {
-                    if value > available_funds {
-                        return Err(InvalidTransactionError::Payment.into())
-                    }
-                    // safe: value < available_funds
-                    available_funds -= value;
-                }
-                // amount of gas the sender can afford with the `gas_price`
-                let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
-                if highest_gas_limit > allowance {
-                    trace!(target: "node", "eth_estimateGas capped by limited user funds");
-                    highest_gas_limit = allowance;
-                }
-            }
-        }
-
-        // if the provided gas limit is less than computed cap, use that
-        let gas_limit = std::cmp::min(request.gas.unwrap_or(highest_gas_limit), highest_gas_limit);
-        let mut call_to_estimate = request.clone();
-        call_to_estimate.gas = Some(gas_limit);
-
-        // execute the call without writing to db
-        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number)?;
-        match exit {
-            Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
-                // succeeded
-            }
-            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
-                return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
-            }
-            // need to check if the revert was due to lack of gas or unrelated reason
-            Return::Revert => {
-                // if price or limit was included in the request then we can execute the request
-                // again with the max gas limit to check if revert is gas related or not
-                return if request.gas.is_some() || request.gas_price.is_some() {
-                    request.gas = Some(self.backend.gas_limit());
-                    let (exit, out, _, _) =
-                        self.backend.call(request.clone(), fees, block_number)?;
-                    match exit {
-                        return_ok!() => {
-                            // transaction succeeded by manually increasing the gas limit to highest
-                            Err(InvalidTransactionError::OutOfGas(gas_limit).into())
-                        }
-                        return_revert!() => {
-                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
-                                .into())
-                        }
-                        reason => {
-                            trace!(target: "node", "estimation failed due to {:?}", reason);
-                            Err(BlockchainError::EvmError(reason))
-                        }
-                    }
-                } else {
-                    // the transaction did fail due to lack of gas from the user
-                    Err(InvalidTransactionError::Revert(request.data).into())
-                }
-            }
-            reason => {
-                trace!(target: "node", "estimation failed due to {:?}", reason);
-                return Err(BlockchainError::EvmError(reason))
-            }
-        }
-
-        // at this point we know the call succeeded but want to find the best gas, so we do a binary
-        // search over the possible range
-
-        let gas: U256 = gas.into();
-        let mut lowest_gas_limit = MIN_GAS;
-
-        // pick a point that's close to the estimated gas
-        let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
-
-        let mut last_highest_gas_limit = highest_gas_limit;
-
-        while (highest_gas_limit - lowest_gas_limit) > U256::one() {
-            request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) =
-                self.backend.call(request.clone(), fees.clone(), block_number)?;
-            match exit {
-                return_ok!() => {
-                    highest_gas_limit = mid_gas_limit;
-                    // if last two successful estimations only vary by 10%, we consider this to
-                    // sufficiently accurate
-                    const ACCURACY: u64 = 10;
-                    if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
-                        last_highest_gas_limit <
-                        U256::one()
-                    {
-                        return Ok(highest_gas_limit)
-                    }
-                    last_highest_gas_limit = highest_gas_limit;
-                }
-                Return::Revert |
-                Return::OutOfGas |
-                Return::LackOfFundForGasLimit |
-                Return::OutOfFund => {
-                    lowest_gas_limit = mid_gas_limit;
-                }
-                reason => {
-                    trace!(target: "node", "estimation failed due to {:?}", reason);
-                    return Err(BlockchainError::EvmError(reason))
-                }
-            }
-            // new midpoint
-            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
-        }
-
-        trace!(target : "node", "Estimated Gas for call {:?}", gas);
-
-        Ok(gas)
+        self.do_estimate_gas(request, block_number).await
     }
 
     /// Get transaction by its hash.
@@ -1655,6 +1503,164 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    async fn do_estimate_gas(
+        &self,
+        mut request: CallRequest,
+        block_number: Option<BlockId>,
+    ) -> Result<U256> {
+        let number = self.backend.ensure_block_number(block_number)?;
+        let block_number = Some(number.into());
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+                return Ok(fork.estimate_gas(&request, block_number).await?)
+            }
+        }
+
+        // call takes at least this amount
+        const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
+
+        // if the request is a simple transfer we can optimize
+        let likely_transfer =
+            request.data.as_ref().map(|data| data.as_ref().is_empty()).unwrap_or(true);
+        if likely_transfer {
+            if let Some(to) = request.to {
+                if let Ok(target_code) = self.backend.get_code(to, block_number).await {
+                    if target_code.as_ref().is_empty() {
+                        return Ok(MIN_GAS)
+                    }
+                }
+            }
+        }
+
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+        )?
+        .or_zero_fees();
+
+        // get the highest possible gas limit, either the request's set value or the currently
+        // configured gas limit
+        let mut highest_gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
+
+        // check with the funds of the sender
+        if let Some(from) = request.from {
+            let gas_price = fees.gas_price.unwrap_or_default();
+            if gas_price > U256::zero() {
+                let mut available_funds = self.backend.get_balance(from, block_number).await?;
+                if let Some(value) = request.value {
+                    if value > available_funds {
+                        return Err(InvalidTransactionError::Payment.into())
+                    }
+                    // safe: value < available_funds
+                    available_funds -= value;
+                }
+                // amount of gas the sender can afford with the `gas_price`
+                let allowance = available_funds.checked_div(gas_price).unwrap_or_default();
+                if highest_gas_limit > allowance {
+                    trace!(target: "node", "eth_estimateGas capped by limited user funds");
+                    highest_gas_limit = allowance;
+                }
+            }
+        }
+
+        // if the provided gas limit is less than computed cap, use that
+        let gas_limit = std::cmp::min(request.gas.unwrap_or(highest_gas_limit), highest_gas_limit);
+        let mut call_to_estimate = request.clone();
+        call_to_estimate.gas = Some(gas_limit);
+
+        // execute the call without writing to db
+        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number)?;
+        match exit {
+            Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
+                // succeeded
+            }
+            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
+                return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+            }
+            // need to check if the revert was due to lack of gas or unrelated reason
+            Return::Revert => {
+                // if price or limit was included in the request then we can execute the request
+                // again with the max gas limit to check if revert is gas related or not
+                return if request.gas.is_some() || request.gas_price.is_some() {
+                    request.gas = Some(self.backend.gas_limit());
+                    let (exit, out, _, _) =
+                        self.backend.call(request.clone(), fees, block_number)?;
+                    match exit {
+                        return_ok!() => {
+                            // transaction succeeded by manually increasing the gas limit to highest
+                            Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+                        }
+                        return_revert!() => {
+                            Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out)))
+                                .into())
+                        }
+                        reason => {
+                            trace!(target: "node", "estimation failed due to {:?}", reason);
+                            Err(BlockchainError::EvmError(reason))
+                        }
+                    }
+                } else {
+                    // the transaction did fail due to lack of gas from the user
+                    Err(InvalidTransactionError::Revert(request.data).into())
+                }
+            }
+            reason => {
+                trace!(target: "node", "estimation failed due to {:?}", reason);
+                return Err(BlockchainError::EvmError(reason))
+            }
+        }
+
+        // at this point we know the call succeeded but want to find the best gas, so we do a binary
+        // search over the possible range
+
+        let gas: U256 = gas.into();
+        let mut lowest_gas_limit = MIN_GAS;
+
+        // pick a point that's close to the estimated gas
+        let mut mid_gas_limit = std::cmp::min(gas * 3, (highest_gas_limit + lowest_gas_limit) / 2);
+
+        let mut last_highest_gas_limit = highest_gas_limit;
+
+        while (highest_gas_limit - lowest_gas_limit) > U256::one() {
+            request.gas = Some(mid_gas_limit);
+            let (exit, _, _gas, _) =
+                self.backend.call(request.clone(), fees.clone(), block_number)?;
+            match exit {
+                return_ok!() => {
+                    highest_gas_limit = mid_gas_limit;
+                    // if last two successful estimations only vary by 10%, we consider this to
+                    // sufficiently accurate
+                    const ACCURACY: u64 = 10;
+                    if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                        last_highest_gas_limit <
+                        U256::one()
+                    {
+                        return Ok(highest_gas_limit)
+                    }
+                    last_highest_gas_limit = highest_gas_limit;
+                }
+                Return::Revert |
+                Return::OutOfGas |
+                Return::LackOfFundForGasLimit |
+                Return::OutOfFund => {
+                    lowest_gas_limit = mid_gas_limit;
+                }
+                reason => {
+                    trace!(target: "node", "estimation failed due to {:?}", reason);
+                    return Err(BlockchainError::EvmError(reason))
+                }
+            }
+            // new midpoint
+            mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+        }
+
+        trace!(target : "node", "Estimated Gas for call {:?}", gas);
+
+        Ok(gas)
+    }
+
     /// Updates the `TransactionOrder`
     pub fn set_transaction_order(&self, order: TransactionOrder) {
         *self.transaction_order.write() = order;
