@@ -26,7 +26,7 @@ contract FunctionCallArgsStatement {
         target.run{ gas: gasleft(), value: 1 wei };
 
         target.run{ gas: 1, value: 0x00 }();
-        
+
         target.run{ gas: 1000, value: 1 ether }();
 
         target.run{ gas: estimate(), value: value(1) }();

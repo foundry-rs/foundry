@@ -1509,7 +1509,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> Result<()> {
+    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression, append: Option<&str>) -> Result<()> {
+        // println!("expr {:?}", expr);
         match expr {
             Expression::Type(loc, typ) => match typ {
                 Type::Address => write_chunk!(self, loc.start(), "address")?,
@@ -1607,7 +1608,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
             }
             Expression::Variable(ident) => {
-                ident.visit(self)?;
+                let chunk = format!("{}{}", ident.name, append.unwrap_or(""));
+                write_chunk!(self, loc.end(), "{}", chunk)?;
             }
             Expression::MemberAccess(_, expr, ident) => {
                 let (remaining, idents) = {
@@ -1618,16 +1620,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         remaining = expr;
                     }
                     idents.reverse();
+
                     (remaining, idents)
                 };
 
-                self.visit_expr(remaining.loc(), remaining)?;
+                self.visit_expr(remaining.loc(), remaining, None)?;
 
                 let mut chunks = self.items_to_chunks(
                     Some(loc.end()),
                     idents.into_iter().map(|ident| Ok((ident.loc, ident))),
                 )?;
                 chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+                match (append, chunks.last_mut()) {
+                    (Some(append), Some(last)) => last.content.push_str(append),
+                    _ => {}
+                }
                 let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
                 self.write_chunks_separated(&chunks, "", multiline)?;
             }
@@ -1652,8 +1659,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 )?;
             }
             Expression::FunctionCall(loc, expr, exprs) => {
-                self.visit_expr(expr.loc(), expr)?;
-                self.surrounded(expr.loc().end(), "(", ")", Some(loc.end()), |fmt, _| {
+                self.visit_expr(expr.loc(), expr, Some("("))?;
+                self.surrounded(expr.loc().end(), "", ")", Some(loc.end()), |fmt, _| {
                     let exprs = fmt.items_to_chunks(
                         Some(loc.end()),
                         exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
@@ -1665,8 +1672,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?
             }
             Expression::FunctionCallBlock(_loc, expr, stmt) => {
-                expr.visit(self)?;
-                stmt.visit(self)?;
+                let indented = self.grouped(|fmt| {
+                    fmt.visit_expr(expr.loc(), expr, Some("{"))?;
+                    stmt.visit(fmt)
+                })?;
+                if indented {
+                    self.write_whitespace_separator(true)?;
+                }
+                write_chunk!(self, expr.loc().end(), "}}{}", append.unwrap_or(""))?;
             }
             _ => self.visit_source(loc)?,
         };
@@ -2334,7 +2347,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
                                 fmt.visit_var_definition_stmt(loc, decl, expr, false)
                             }
-                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            Statement::Expression(loc, ref mut expr) => {
+                                fmt.visit_expr(loc, expr, None)
+                            }
                             _ => stmt.visit(fmt), // unreachable
                         }
                     })
@@ -2355,7 +2370,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
                                 fmt.visit_var_definition_stmt(loc, decl, expr, false)
                             }
-                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
+                            Statement::Expression(loc, ref mut expr) => {
+                                fmt.visit_expr(loc, expr, None)
+                            }
                             _ => stmt.visit(fmt), // unreachable
                         }
                     })
@@ -2419,25 +2436,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_args(&mut self, loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
-        self.surrounded(loc.start(), "{", "}", Some(loc.end()), |fmt, _| {
-            let mut args = args.iter_mut().peekable();
-            let mut chunks = Vec::new();
-            while let Some(NamedArgument { loc, name, expr }) = args.next() {
-                chunks.push(fmt.chunked(
-                    loc.start(),
-                    args.peek().map(|NamedArgument { loc, .. }| loc.start()),
-                    |fmt| {
-                        write_chunk!(fmt, name.loc.end(), expr.loc().start(), "{}:", name.name)?;
-                        expr.visit(fmt)?;
-                        Ok(())
-                    },
-                )?);
-            }
+        // self.surrounded(loc.start(), "{", "}", Some(loc.end()), |fmt, _| {
 
-            let multiline = fmt.are_chunks_separated_multiline("{}", &chunks, ",")?;
-            fmt.write_chunks_separated(&chunks, ",", multiline)?;
-            Ok(())
-        })?;
+        // })?;
+        // Ok(())
+        let mut args = args.iter_mut().peekable();
+        let mut chunks = Vec::new();
+        while let Some(NamedArgument { loc, name, expr }) = args.next() {
+            chunks.push(self.chunked(
+                loc.start(),
+                args.peek().map(|NamedArgument { loc, .. }| loc.start()),
+                |fmt| {
+                    write_chunk!(fmt, name.loc.end(), expr.loc().start(), "{}:", name.name)?;
+                    expr.visit(fmt)?;
+                    Ok(())
+                },
+            )?);
+        }
+
+        let multiline = self.are_chunks_separated_multiline("{}", &chunks, ",")?;
+        self.write_chunks_separated(&chunks, ",", multiline)?;
         Ok(())
     }
 }

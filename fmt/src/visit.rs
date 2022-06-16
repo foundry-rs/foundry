@@ -89,7 +89,12 @@ pub trait Visitor {
 
     /// Don't write semicolon at the end because expressions can appear as both
     /// part of other node and a statement in the function body
-    fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> Result<(), Self::Error> {
+    fn visit_expr(
+        &mut self,
+        loc: Loc,
+        _expr: &mut Expression,
+        _append: Option<&str>,
+    ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -436,7 +441,7 @@ impl Visitable for Statement {
             }
             Statement::While(loc, cond, body) => v.visit_while(*loc, cond, body),
             Statement::Expression(loc, expr) => {
-                v.visit_expr(*loc, expr)?;
+                v.visit_expr(*loc, expr, None)?;
                 v.visit_stray_semicolon()
             }
             Statement::VariableDefinition(loc, declaration, expr) => {
@@ -476,7 +481,7 @@ impl Visitable for Expression {
     where
         V: Visitor,
     {
-        v.visit_expr(LineOfCode::loc(self), self)
+        v.visit_expr(LineOfCode::loc(self), self, None)
     }
 }
 
