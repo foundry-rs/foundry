@@ -33,5 +33,16 @@ contract FunctionCallArgsStatement {
 
         target.run { value:
         value(1 ether), gas: veryAndVeryLongNameOfSomeGasEstimateFunction() } ();
+
+        target.run /* comment 1 */ { value: /* comment2 */ 1 }; 
+
+        target.run { /* comment3 */ value: 1, // comment4
+        gas: gasleft()};
+
+        target.run {
+            // comment5
+            value: 1,
+            // comment6
+            gas: gasleft()};
     }
 }

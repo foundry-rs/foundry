@@ -1629,9 +1629,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     idents.into_iter().map(|ident| Ok((ident.loc, ident))),
                 )?;
                 chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
-                match (append, chunks.last_mut()) {
-                    (Some(append), Some(last)) => last.content.push_str(append),
-                    _ => {}
+                if let (Some(append), Some(last)) = (append, chunks.last_mut()) {
+                    last.content.push_str(append)
                 }
                 let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
                 self.write_chunks_separated(&chunks, "", multiline)?;
@@ -2441,7 +2440,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 loc.start(),
                 args.peek().map(|NamedArgument { loc, .. }| loc.start()),
                 |fmt| {
-                    write_chunk!(fmt, name.loc.end(), expr.loc().start(), "{}:", name.name)?;
+                    write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
                     expr.visit(fmt)?;
                     Ok(())
                 },
