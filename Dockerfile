@@ -1,6 +1,6 @@
 from alpine as build-environment
 WORKDIR /opt
-RUN apk add clang lld curl build-base linux-headers \
+RUN apk add clang lld curl build-base linux-headers git \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh \
     && chmod +x ./rustup.sh \
     && ./rustup.sh -y
