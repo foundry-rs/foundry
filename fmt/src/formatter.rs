@@ -1510,7 +1510,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression, append: Option<&str>) -> Result<()> {
-        // println!("expr {:?}", expr);
         match expr {
             Expression::Type(loc, typ) => match typ {
                 Type::Address => write_chunk!(self, loc.start(), "address")?,
@@ -1620,7 +1619,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         remaining = expr;
                     }
                     idents.reverse();
-
                     (remaining, idents)
                 };
 
@@ -2435,11 +2433,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_args(&mut self, loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
-        // self.surrounded(loc.start(), "{", "}", Some(loc.end()), |fmt, _| {
-
-        // })?;
-        // Ok(())
+    fn visit_args(&mut self, _loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
         let mut args = args.iter_mut().peekable();
         let mut chunks = Vec::new();
         while let Some(NamedArgument { loc, name, expr }) = args.next() {
