@@ -154,8 +154,12 @@ result: uint256 255
 
 forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .load_private_keys(vec![0, 1])
@@ -169,8 +173,12 @@ forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestComm
 
 forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .load_private_keys(vec![0, 1])
@@ -184,8 +192,12 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
 
 forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .load_private_keys(vec![0])
@@ -203,8 +215,12 @@ forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async m
 
 forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .add_deployer(2)
@@ -273,8 +289,12 @@ forgetest_async!(
     can_deploy_100_txes_concurrently,
     |prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
-        let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+        let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+        tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
         tester
             .load_private_keys(vec![0])
@@ -291,8 +311,12 @@ forgetest_async!(
     can_deploy_mixed_broadcast_modes,
     |prj: TestProject, cmd: TestCommand| async move {
         let port = next_port();
-        let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+        let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
         let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+         tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
         tester
             .load_private_keys(vec![0])
@@ -307,8 +331,12 @@ forgetest_async!(
 
 forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .load_private_keys(vec![0])
@@ -322,8 +350,12 @@ forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async m
 
 forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand| async move {
     let port = next_port();
-    let (_api, _handle) = spawn(NodeConfig::test().with_port(port)).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(port)).await;
     let mut tester = ScriptTester::new(cmd, port, prj.root());
+
+     tokio::task::spawn(async move {
+            handle.await.unwrap().unwrap();
+        });
 
     tester
         .load_private_keys(vec![0])
