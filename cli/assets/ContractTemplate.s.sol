@@ -7,6 +7,6 @@ contract ContractScript is Script {
     function setUp() public {}
 
     function run() public {
-        vm.startBroadcast();
+        vm.broadcast();
     }
 }
