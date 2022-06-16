@@ -19,7 +19,6 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     io::BufWriter,
     path::{Path, PathBuf},
-    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -171,10 +170,7 @@ impl ScriptSequence {
                 let mut create2_offset = 0;
 
                 if tx.is_create2() {
-                    receipt.contract_address = Address::from_str(
-                        tx.contract_address.as_ref().expect("There should be a contract address."),
-                    )
-                    .ok();
+                    receipt.contract_address = tx.contract_address;
                     create2_offset = 32;
                 }
 
@@ -261,7 +257,7 @@ pub struct TransactionWithMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contract_address: Option<String>,
+    pub contract_address: Option<Address>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -307,7 +303,7 @@ impl TransactionWithMetadata {
         }
 
         self.contract_name = contracts.get(&address).map(|(name, _)| name.clone());
-        self.contract_address = Some(format!("0x{:?}", address));
+        self.contract_address = Some(address);
     }
 
     fn set_call(
@@ -349,7 +345,7 @@ impl TransactionWithMetadata {
                             })?);
                     }
                 }
-                self.contract_address = Some(format!("0x{:?}", target));
+                self.contract_address = Some(target);
             }
         }
         Ok(())
