@@ -2,13 +2,32 @@ use ethers_core::{
     abi::ethereum_types::BloomInput,
     types::{Address, BlockNumber, Bloom, Filter as EthersFilter, Log, ValueOrArray, H256},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+pub type BloomFilter = Vec<Option<Bloom>>;
 
 /// topic filter supports nested arrays/items: `[T1,[T2,T3]]` | `[null,[T2,T3]]`
 /// Note: we treat `null` and `[]`
 pub type Topics = ValueOrArray<Option<ValueOrArray<Option<H256>>>>;
 
-pub type BloomFilter = Vec<Option<Bloom>>;
+// custom deserializer that prevents arrays being deserialized as Value(Array)
+fn deserialize_topics<'de, D>(deserializer: D) -> Result<Option<Topics>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer).map_err(serde::de::Error::custom)?;
+
+    if value.is_null() {
+        return Ok(Some(Topics::Array(Vec::new())))
+    }
+    if value.is_array() {
+        let topics = serde_json::from_value::<Vec<Option<ValueOrArray<Option<H256>>>>>(value)
+            .map_err(serde::de::Error::custom)?;
+        return Ok(Some(Topics::Array(topics)))
+    }
+    let val = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+    Ok(val)
+}
 
 /// Filter
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Hash)]
@@ -31,6 +50,7 @@ pub struct Filter {
     /// The provided topics, if any.
     ///
     /// Topics are order-dependent. Each topic can also be an array with “or” options.
+    #[serde(deserialize_with = "deserialize_topics")]
     pub topics: Option<Topics>,
 }
 
@@ -623,5 +643,52 @@ mod tests {
             build_bloom(bloom_address, H256::random(), H256::random(),),
             &address_bloom
         ));
+    }
+
+    #[test]
+    fn can_convert_to_ethers_filter() {
+        let json = serde_json::json!(
+                    {
+          "fromBlock": "0x429d3b",
+          "toBlock": "0x429d3b",
+          "address": "0xb59f67a8bff5d8cd03f6ac17265c550ed8f33907",
+          "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x00000000000000000000000000b46c2526e227482e2ebb8f4c69e4674d262e75",
+          "0x00000000000000000000000054a2d42a40f51259dedd1978f6c118a0f0eff078"
+          ]
+        }
+            );
+
+        let filter: Filter = serde_json::from_value(json).unwrap();
+
+        assert!(filter.topics.is_some());
+
+        if let ValueOrArray::Value(_) = filter.topics.clone().unwrap() {
+            panic!("expected array");
+        }
+        let ethers_filter: EthersFilter = filter.into();
+
+        assert_eq!(
+            ethers_filter.topics,
+            [
+                Some(ValueOrArray::Value(
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                        .parse()
+                        .unwrap()
+                )),
+                Some(ValueOrArray::Value(
+                    "0x00000000000000000000000000b46c2526e227482e2ebb8f4c69e4674d262e75"
+                        .parse()
+                        .unwrap()
+                )),
+                Some(ValueOrArray::Value(
+                    "0x00000000000000000000000054a2d42a40f51259dedd1978f6c118a0f0eff078"
+                        .parse()
+                        .unwrap()
+                )),
+                None
+            ],
+        );
     }
 }
