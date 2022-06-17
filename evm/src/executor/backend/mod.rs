@@ -25,12 +25,20 @@ pub use in_memory_db::MemDb;
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
 pub trait DatabaseExt: Database {
-    /// Creates a new snapshot
+    /// Creates a new snapshot at the current point of execution.
+    ///
+    /// A snapshot is associated with a new unique id that's created for the snapshot.
+    /// Snapshots can be reverted: [DatabaseExt::revert], however a snapshot can only be reverted
+    /// once. After a successful revert, the same snapshot id cannot be used again.
     fn snapshot(&mut self, subroutine: &SubRoutine) -> U256;
     /// Reverts the snapshot if it exists
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
     /// exists.
+    ///
+    /// **N.B.** While this reverts the state of the evm to the snapshot, it keeps new logs made
+    /// since the snapshots was created. This way we can show logs that were emitted between
+    /// snapshot and its revert.
     fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine>;
 
     /// Creates a new fork but does _not_ select it
@@ -166,9 +174,11 @@ impl DatabaseExt for Backend {
         id
     }
 
-    fn revert(&mut self, id: U256, _subroutine: &SubRoutine) -> Option<SubRoutine> {
-        if let Some(BackendSnapshot { db, subroutine }) = self.snapshots.remove(id) {
+    fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
+        if let Some(mut snapshot) = self.snapshots.remove(id) {
             // TODO needs to store additioanl logs and whether there was a failure by looking at the
+
+            let BackendSnapshot { db, subroutine } = snapshot;
             // subroutine
             self.db = db;
             trace!(target: "backend", "Reverted snapshot {}", id);

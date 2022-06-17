@@ -24,9 +24,21 @@ impl<T> Snapshots<T> {
         self.snapshots.get(&id)
     }
 
-    /// Removes the snapshot with the given `id`
+    /// Removes the snapshot with the given `id`.
+    ///
+    /// This will also remove any snapshots taken after the snapshot with the `id`. e.g.: reverting
+    /// to id 1 will delete snapshots with ids 1, 2, 3, etc.)
     pub fn remove(&mut self, id: U256) -> Option<T> {
-        self.snapshots.remove(&id)
+        let snapshot = self.snapshots.remove(&id);
+
+        // revert all snapshots taken after the snapshot
+        let mut to_revert = id + 1;
+        while to_revert < self.id {
+            self.snapshots.remove(&to_revert);
+            to_revert = to_revert + 1;
+        }
+
+        snapshot
     }
 
     /// Inserts the new snapshot and returns the id
