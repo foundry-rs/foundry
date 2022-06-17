@@ -75,18 +75,18 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --verbose --workspace
+          args: --profile local --verbose --locked --workspace
 
       - name: Run forge
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
-          args: -p foundry-cli --bin forge -- --help
+          args: --profile local --locked -p foundry-cli --bin forge -- --help
 
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --workspace -- --skip fork
+          args: --profile local --locked --workspace -- --skip fork

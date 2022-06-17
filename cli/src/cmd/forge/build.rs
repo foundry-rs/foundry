@@ -149,6 +149,10 @@ pub struct CoreBuildArgs {
     #[clap(help_heading = "COMPILER OPTIONS", long, help = "Don't print anything on startup.")]
     #[serde(skip)]
     pub silent: bool,
+
+    #[clap(help_heading = "PROJECT OPTIONS", help = "Generate build info files.", long)]
+    #[serde(skip)]
+    pub build_info: bool,
 }
 
 impl CoreBuildArgs {
@@ -197,6 +201,10 @@ impl Provider for CoreBuildArgs {
 
         if self.force {
             dict.insert("force".to_string(), self.force.into());
+        }
+
+        if self.build_info {
+            dict.insert("build_info".to_string(), self.build_info.into());
         }
 
         if self.compiler.optimize {
