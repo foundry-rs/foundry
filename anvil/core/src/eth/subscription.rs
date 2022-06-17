@@ -36,7 +36,7 @@ pub enum SubscriptionParams {
     /// no `params`
     None,
     /// `Filter` parameters.
-    Logs(Filter),
+    Logs(Box<Filter>)
 }
 
 impl Default for SubscriptionParams {
@@ -57,7 +57,7 @@ impl<'a> Deserialize<'a> for SubscriptionParams {
 
         let filter: Filter = serde_json::from_value(val)
             .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {}", e)))?;
-        Ok(SubscriptionParams::Logs(filter))
+        Ok(SubscriptionParams::Logs(Box::new(filter)))
     }
 }
 

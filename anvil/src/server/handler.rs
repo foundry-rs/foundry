@@ -63,7 +63,7 @@ impl WsEthRpcHandler {
             }
             EthPubSub::EthSubscribe(kind, params) => {
                 let params = match params {
-                    SubscriptionParams::Logs(filter) => FilteredParams::new(Some(filter)),
+                    SubscriptionParams::Logs(filter) => FilteredParams::new(Some(*filter)),
                     _ => FilteredParams::default(),
                 };
 
