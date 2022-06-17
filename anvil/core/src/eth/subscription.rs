@@ -1,9 +1,9 @@
 //! Subscription types
 
-use crate::eth::{block::Header, filter::Filter};
+use crate::eth::block::Header;
 use ethers_core::{
     rand::{distributions::Alphanumeric, thread_rng, Rng},
-    types::{Log, TxHash},
+    types::{Filter, Log, TxHash},
     utils::hex,
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
@@ -31,18 +31,10 @@ pub struct SyncStatus {
 }
 
 /// Params for a subscription request
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum SubscriptionParams {
-    /// no `params`
-    None,
-    /// `Filter` parameters.
-    Logs(Filter),
-}
-
-impl Default for SubscriptionParams {
-    fn default() -> Self {
-        SubscriptionParams::None
-    }
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
+pub struct SubscriptionParams {
+    /// holds the filter params field if present in the request
+    pub filter: Option<Filter>,
 }
 
 impl<'a> Deserialize<'a> for SubscriptionParams {
@@ -52,12 +44,12 @@ impl<'a> Deserialize<'a> for SubscriptionParams {
     {
         let val = serde_json::Value::deserialize(deserializer)?;
         if val.is_null() {
-            return Ok(SubscriptionParams::None)
+            return Ok(SubscriptionParams::default())
         }
 
         let filter: Filter = serde_json::from_value(val)
             .map_err(|e| D::Error::custom(format!("Invalid Subscription parameters: {}", e)))?;
-        Ok(SubscriptionParams::Logs(filter))
+        Ok(SubscriptionParams { filter: Some(filter) })
     }
 }
 

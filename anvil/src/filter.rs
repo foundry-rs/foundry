@@ -4,12 +4,15 @@ use crate::{
     pubsub::filter_logs,
     StorageInfo,
 };
-use anvil_core::eth::{filter::FilteredParams, subscription::SubscriptionId};
+use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use ethers::prelude::{Log as EthersLog, H256 as TxHash};
+use ethers::{
+    prelude::{Log as EthersLog, H256 as TxHash},
+    types::FilteredParams,
+};
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 
-use anvil_core::eth::filter::Filter;
+use ethers::types::Filter;
 use std::{
     collections::HashMap,
     pin::Pin,
