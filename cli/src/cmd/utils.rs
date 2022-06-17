@@ -200,6 +200,6 @@ macro_rules! update_progress {
 pub fn has_different_gas_calc(chain: u64) -> bool {
     matches!(
         Chain::try_from(chain).unwrap_or(Chain::Mainnet),
-        Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        Chain::Arbitrum | Chain::ArbitrumTestnet
     )
 }
