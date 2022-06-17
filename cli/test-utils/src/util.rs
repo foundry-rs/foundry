@@ -613,7 +613,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.*?)\.rs(.*)?Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
+    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
 });
 
 impl OutputExt for process::Output {
@@ -679,5 +679,17 @@ mod tests {
         } else {
             assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
+    }
+
+    #[test]
+    fn fixture_regex_matches() {
+        assert!(IGNORE_IN_FIXTURES.is_match(
+            r#"
+Location:
+   [35mcli/src/compile.rs[0m:[35m151[0m
+
+Backtrace omitted.
+        "#
+        ));
     }
 }

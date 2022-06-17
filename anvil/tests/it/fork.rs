@@ -1,20 +1,19 @@
 //! various fork related test
 
-use crate::{next_port, utils};
+use crate::{abi::*, next_port, utils};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
-    contract::abigen,
     core::rand,
     prelude::{LocalWallet, Middleware, SignerMiddleware},
     signers::Signer,
-    types::{Address, BlockNumber, Chain, TransactionRequest, U256},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
+        U256,
+    },
 };
-use std::sync::Arc;
-
 use foundry_utils::rpc;
-
-abigen!(Greeter, "test-data/greeter.json");
+use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
@@ -395,4 +394,51 @@ async fn test_fork_can_send_tx() {
 
     let balance = provider.get_balance(addr, None).await.unwrap();
     assert_eq!(balance, val.into());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/1920>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_nft_set_approve_all() {
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(14812197u64))
+            .with_blocktime(Some(Duration::from_secs(5)))
+            .with_chain_id(1u64),
+    )
+    .await;
+
+    // create and fund a random wallet
+    let wallet = LocalWallet::new(&mut rand::thread_rng());
+    api.anvil_set_balance(wallet.address(), U256::from(1000e18 as u64)).await.unwrap();
+
+    let provider = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet.clone()));
+
+    // pick a random nft <https://opensea.io/assets/ethereum/0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03/154>
+    let nouns_addr: Address = "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03".parse().unwrap();
+
+    let owner: Address = "0x052564eb0fd8b340803df55def89c25c432f43f4".parse().unwrap();
+    let token_id: U256 = 154u64.into();
+
+    let nouns = Erc721::new(nouns_addr, Arc::clone(&provider));
+
+    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_onwer, owner);
+    let approval = nouns.set_approval_for_all(nouns_addr, true);
+    let tx = approval.send().await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+    // transfer: impersonate real owner and transfer nft
+    api.anvil_impersonate_account(real_onwer).await.unwrap();
+
+    api.anvil_set_balance(real_onwer, U256::from(10000e18 as u64)).await.unwrap();
+
+    let call = nouns.transfer_from(real_onwer, wallet.address(), token_id);
+    let mut tx: TypedTransaction = call.tx;
+    tx.set_from(real_onwer);
+    provider.fill_transaction(&mut tx, None).await.unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+    let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
+    assert_eq!(real_onwer, wallet.address());
 }

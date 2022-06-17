@@ -429,6 +429,10 @@ impl Backend {
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide.
     pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
+        tokio::task::block_in_place(|| self.do_mine_block(pool_transactions))
+    }
+
+    fn do_mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let current_base_fee = self.base_fee();
