@@ -85,7 +85,6 @@ async fn test_set_next_timestamp() {
     assert_eq!(block.number.unwrap().as_u64(), 1);
     assert_eq!(block.timestamp.as_u64(), next_timestamp.as_secs());
 
-    dbg!(block.timestamp.as_u64());
     api.evm_mine(None).await.unwrap();
 
     let next = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
