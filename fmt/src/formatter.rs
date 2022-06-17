@@ -1668,15 +1668,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     Ok(())
                 })?
             }
-            Expression::FunctionCallBlock(_loc, expr, stmt) => {
-                let indented = self.grouped(|fmt| {
-                    fmt.visit_expr(expr.loc(), expr, Some("{"))?;
+            Expression::FunctionCallBlock(loc, expr, stmt) => {
+                let last_chunk = format!("}}{}", append.unwrap_or(""));
+                self.visit_expr(expr.loc(), expr, Some("{"))?;
+                self.surrounded(stmt.loc().start(), "", last_chunk, Some(loc.end()), |fmt, _| {
                     stmt.visit(fmt)
                 })?;
-                if indented {
-                    self.write_whitespace_separator(true)?;
-                }
-                write_chunk!(self, expr.loc().end(), "}}{}", append.unwrap_or(""))?;
             }
             _ => self.visit_source(loc)?,
         };
@@ -2440,8 +2437,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 loc.start(),
                 args.peek().map(|NamedArgument { loc, .. }| loc.start()),
                 |fmt| {
-                    write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
-                    expr.visit(fmt)?;
+                    fmt.grouped(|fmt| {
+                        write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
+                        expr.visit(fmt)
+                    })?;
                     Ok(())
                 },
             )?);
@@ -2561,7 +2560,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        println!("{}", source_formatted);
+        // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
