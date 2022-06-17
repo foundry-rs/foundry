@@ -273,6 +273,11 @@ pub struct Config {
     /// included in solc's output selection, see also
     /// [OutputSelection](ethers_solc::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
+    /// Whether to emit additional build info files
+    ///
+    /// If set to `true`, `ethers-solc` will generate additional build info json files for every
+    /// new build, containing the `CompilerInput` and `CompilerOutput`
+    pub build_info: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -528,6 +533,7 @@ impl Config {
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
+            .set_build_info(cached & self.build_info)
             .set_no_artifacts(no_artifacts)
             .build()?;
 
@@ -1400,7 +1406,6 @@ impl Default for Config {
                 SolidityErrorCode::SpdxLicenseNotProvided,
                 SolidityErrorCode::CotractExceeds24576Bytes,
             ],
-            __non_exhaustive: (),
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -1408,6 +1413,8 @@ impl Default for Config {
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
             sparse_mode: false,
+            build_info: false,
+            __non_exhaustive: (),
         }
     }
 }
