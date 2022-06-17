@@ -111,6 +111,15 @@ pub struct Backend {
     pub db: CacheDB<BackendDatabase>,
     /// Contains snapshots made at a certain point
     snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
+    /// Tracks whether there was a failure in a snapshot that was reverted
+    ///
+    /// The Test contract contains a bool variable that is set to true when an `assert` function
+    /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
+    /// to know if there was an assert that failed after the snapshot was taken so that we can
+    /// check if the test function passed all asserts even across snapshots. When a snapshot is
+    /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
+    /// if the `failed` variable is set
+    has_failure_in_reverted_snapshot: bool,
 }
 
 // === impl Backend ===
@@ -133,7 +142,13 @@ impl Backend {
             CacheDB::new(BackendDatabase::InMemory(EmptyDB()))
         };
 
-        Self { forks, db, created_forks: Default::default(), snapshots: Default::default() }
+        Self {
+            forks,
+            db,
+            created_forks: Default::default(),
+            snapshots: Default::default(),
+            has_failure_in_reverted_snapshot: false,
+        }
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
