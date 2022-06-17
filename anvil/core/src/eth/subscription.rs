@@ -36,7 +36,7 @@ pub enum SubscriptionParams {
     /// no `params`
     None,
     /// `Filter` parameters.
-    Logs(Box<Filter>)
+    Logs(Box<Filter>),
 }
 
 impl Default for SubscriptionParams {
