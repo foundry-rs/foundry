@@ -113,7 +113,7 @@ impl WsRpcHandler for WsEthRpcHandler {
     async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult {
         trace!(target: "rpc::ws", "received ws request {:?}", request);
         match request {
-            EthRpcCall::Request(request) => self.api.execute(*request).await,
+            EthRpcCall::Request(request) => self.api.execute(request).await,
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,
         }
     }
