@@ -375,7 +375,7 @@ pub enum EthRequest {
 pub enum EthPubSub {
     /// Subscribe to an eth subscription
     #[serde(rename = "eth_subscribe")]
-    EthSubscribe(SubscriptionKind, #[serde(default)] SubscriptionParams),
+    EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
     /// Unsubscribe from an eth subscription
     #[serde(rename = "eth_unsubscribe", with = "sequence")]
@@ -386,7 +386,7 @@ pub enum EthPubSub {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum EthRpcCall {
-    Request(EthRequest),
+    Request(Box<EthRequest>),
     PubSub(EthPubSub),
 }
 
