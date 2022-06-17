@@ -116,7 +116,7 @@ where
 }
 
 /// Wrapper type that ensures the type is named `params`
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Params<T> {
     pub params: T,
 }
