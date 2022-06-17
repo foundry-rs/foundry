@@ -166,7 +166,7 @@ impl DatabaseExt for Backend {
         id
     }
 
-    fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
+    fn revert(&mut self, id: U256, _subroutine: &SubRoutine) -> Option<SubRoutine> {
         if let Some(BackendSnapshot { db, subroutine }) = self.snapshots.remove(id) {
             // TODO needs to store additioanl logs and whether there was a failure by looking at the
             // subroutine

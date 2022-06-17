@@ -13,7 +13,7 @@ use clap::{AppSettings, Parser};
 use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
 use forge::{
     decode::decode_console_logs,
-    executor::opts::EvmOpts,
+    executor::{inspector::CheatsConfig, opts::EvmOpts},
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
@@ -494,12 +494,14 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
 
     // Prepare the test builder
     let evm_spec = utils::evm_spec(&config.evm_version);
+
     let mut runner = MultiContractRunnerBuilder::default()
         .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(evm_opts.get_fork(env.clone()))
+        .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
         .build(project.paths.root, output, env, evm_opts)?;
 
     if args.debug.is_some() {

@@ -6,8 +6,6 @@ use forge::{
     CALLER,
 };
 
-use super::*;
-
 /// Drives script execution
 pub struct ScriptRunner {
     pub executor: Executor,

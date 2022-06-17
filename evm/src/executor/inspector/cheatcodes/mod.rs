@@ -26,7 +26,6 @@ pub use env::{Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
-use foundry_config::cache::StorageCachingConfig;
 
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
@@ -39,6 +38,9 @@ mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
 pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
+
+mod config;
+pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -91,23 +93,17 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 
-    /// RPC storage caching settings determines what chains and endpoints to cache
-    pub rpc_storage_caching: StorageCachingConfig,
+    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    pub config: CheatsConfig,
 }
 
 impl Cheatcodes {
-    pub fn new(
-        ffi: bool,
-        block: BlockEnv,
-        gas_price: U256,
-        rpc_storage_caching: StorageCachingConfig,
-    ) -> Self {
+    pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
-            ffi,
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
-            rpc_storage_caching,
+            config,
             ..Default::default()
         }
     }
@@ -126,7 +122,7 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| ext::apply(self.config.ffi, &decoded))
             .or_else(|| snapshot::apply(self, data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?

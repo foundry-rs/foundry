@@ -6,10 +6,10 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_config::cache::StorageCachingConfig;
 use foundry_evm::{
     executor::{
-        backend::Backend, fork::CreateFork, opts::EvmOpts, Executor, ExecutorBuilder, SpecId,
+        backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
+        ExecutorBuilder, SpecId,
     },
     revm,
 };
@@ -44,8 +44,8 @@ pub struct MultiContractRunner {
     pub source_paths: BTreeMap<String, String>,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
-    /// RPC storage caching settings determines what chains and endpoints to cache
-    pub rpc_storage_caching: StorageCachingConfig,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: CheatsConfig,
 }
 
 impl MultiContractRunner {
@@ -133,7 +133,7 @@ impl MultiContractRunner {
                 })
                 .map(|(id, (abi, deploy_code, libs))| {
                     let executor = ExecutorBuilder::default()
-                        .with_cheatcodes(self.evm_opts.ffi, self.rpc_storage_caching.clone())
+                        .with_cheatcodes(self.cheats_config.clone())
                         .with_config(self.env.clone())
                         .with_spec(self.evm_spec)
                         .with_gas_limit(self.evm_opts.gas_limit())
@@ -207,8 +207,8 @@ pub struct MultiContractRunnerBuilder {
     pub evm_spec: Option<SpecId>,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
-    /// RPC storage caching settings determines what chains and endpoints to cache
-    pub rpc_storage_caching: StorageCachingConfig,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: Option<CheatsConfig>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -305,7 +305,7 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
-            rpc_storage_caching: self.rpc_storage_caching,
+            cheats_config: self.cheats_config.unwrap_or_default(),
         })
     }
 
@@ -336,6 +336,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
         self.fork = fork;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
+        self.cheats_config = Some(cheats_config);
         self
     }
 }

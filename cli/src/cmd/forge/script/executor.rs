@@ -3,6 +3,7 @@ use crate::{
     cmd::{forge::script::sequence::TransactionWithMetadata, needs_setup},
     utils,
 };
+use cast::executor::inspector::CheatsConfig;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -150,10 +151,7 @@ impl ScriptArgs {
         let db = Backend::spawn(script_config.evm_opts.get_fork(env.clone()));
 
         let mut builder = ExecutorBuilder::default()
-            .with_cheatcodes(
-                script_config.evm_opts.ffi,
-                script_config.config.rpc_storage_caching.clone(),
-            )
+            .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
             .with_spec(utils::evm_spec(&script_config.config.evm_version))
             .set_tracing(script_config.evm_opts.verbosity >= 3)

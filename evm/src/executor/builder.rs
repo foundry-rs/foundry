@@ -2,9 +2,9 @@ use super::{
     inspector::{Cheatcodes, InspectorStackConfig},
     Executor,
 };
-use crate::executor::backend::Backend;
+use crate::executor::{backend::Backend, inspector::CheatsConfig};
 use ethers::types::U256;
-use foundry_config::cache::StorageCachingConfig;
+
 use revm::{Env, SpecId};
 
 #[derive(Default, Debug)]
@@ -21,13 +21,9 @@ pub struct ExecutorBuilder {
 impl ExecutorBuilder {
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool, rpc_storage_caching: StorageCachingConfig) -> Self {
-        self.inspector_config.cheatcodes = Some(Cheatcodes::new(
-            ffi,
-            self.env.block.clone(),
-            self.env.tx.gas_price,
-            rpc_storage_caching,
-        ));
+    pub fn with_cheatcodes(mut self, config: CheatsConfig) -> Self {
+        self.inspector_config.cheatcodes =
+            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price, config));
         self
     }
 

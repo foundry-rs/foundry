@@ -36,7 +36,7 @@ fn create_fork<DB: DatabaseExt>(
     block: BlockNumber,
 ) -> Result<Bytes, Bytes> {
     let fork = CreateFork {
-        enable_caching: state.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         block,
         chain_id: None,
