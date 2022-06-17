@@ -5,7 +5,7 @@ use crate::{
     EthApi,
 };
 use anvil_core::eth::{
-    subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
+    subscription::{SubscriptionId, SubscriptionKind},
     EthPubSub, EthRequest, EthRpcCall,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
@@ -62,10 +62,7 @@ impl WsEthRpcHandler {
                 ResponseResult::Success(canceled.into())
             }
             EthPubSub::EthSubscribe(kind, params) => {
-                let params = match params {
-                    SubscriptionParams::Logs(filter) => FilteredParams::new(Some(*filter)),
-                    _ => FilteredParams::default(),
-                };
+                let params = FilteredParams::new(params.filter);
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {

@@ -718,7 +718,7 @@ impl Backend {
 
             if fork.predates_fork(from) {
                 // this data is only available on the forked client
-                let mut filter = filter.clone().from_block(from).to_block(to_on_fork);
+                let filter = filter.clone().from_block(from).to_block(to_on_fork);
                 all_logs = fork.logs(&filter).await?;
 
                 // update the range
