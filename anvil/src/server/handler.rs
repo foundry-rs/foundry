@@ -5,12 +5,12 @@ use crate::{
     EthApi,
 };
 use anvil_core::eth::{
-    filter::FilteredParams,
     subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
     EthPubSub, EthRequest, EthRpcCall,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{RpcHandler, WsContext, WsRpcHandler};
+use ethers::types::FilteredParams;
 use tracing::trace;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http

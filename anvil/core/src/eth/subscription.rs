@@ -1,9 +1,9 @@
 //! Subscription types
 
-use crate::eth::{block::Header, filter::Filter};
+use crate::eth::block::Header;
 use ethers_core::{
     rand::{distributions::Alphanumeric, thread_rng, Rng},
-    types::{Log, TxHash},
+    types::{Filter, Log, TxHash},
     utils::hex,
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
