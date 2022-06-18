@@ -1,6 +1,6 @@
 //! A Solidity formatter
 
-use std::{fmt::Write, ops::Deref};
+use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
@@ -1688,7 +1688,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     fmt.grouped(|fmt| {
                         expr.visit(fmt)?;
                         write!(fmt.buf(), "{{")?;
-                        fmt.write_postfix_comments_before(stmt.loc().start())?;
                         stmt.visit(fmt)
                     })?;
                     Ok(())
@@ -2450,16 +2449,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_args(&mut self, _loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
-        let mut args = args.iter_mut().enumerate().peekable();
+        let mut args = args.iter_mut().peekable();
         let mut chunks = Vec::new();
-        while let Some((idx, NamedArgument { loc, name, expr })) = args.next() {
+        while let Some(NamedArgument { loc, name, expr }) = args.next() {
             chunks.push(self.chunked(
                 loc.start(),
-                args.peek().map(|(_, NamedArgument { loc, .. })| loc.start()),
+                args.peek().map(|NamedArgument { loc, .. }| loc.start()),
                 |fmt| {
                     fmt.grouped(|fmt| {
-                        let needs_space = if idx == 0 { Some(false) } else { None };
-                        write_chunk_spaced!(fmt, name.loc.end(), needs_space, "{}:", name.name)?;
+                        write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
                         expr.visit(fmt)
                     })?;
                     Ok(())
@@ -2468,6 +2466,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         let multiline = self.are_chunks_separated_multiline("{}", &chunks, ",")?;
+        if let Some(first) = chunks.first_mut() {
+            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
+                first.needs_space = Some(false);
+            }
+        }
         self.write_chunks_separated(&chunks, ",", multiline)?;
         Ok(())
     }
