@@ -770,7 +770,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             // add whitespace if necessary
             let needs_space = chunk
                 .needs_space
-                .unwrap_or(self.next_char_needs_space(content.chars().next().unwrap()));
+                .unwrap_or_else(|| self.next_char_needs_space(content.chars().next().unwrap()));
             if needs_space {
                 if self.will_it_fit(&content) {
                     write!(self.buf(), " ")?;
@@ -2584,7 +2584,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        // println!("{}", source_formatted);
+        println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
