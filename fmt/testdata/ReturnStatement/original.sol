@@ -20,7 +20,7 @@ contract ReturnStatement {
 
     function returnSingleValue(uint256 val) external returns (uint256) {
         if (val == 0) {
-        return // return single value 1
+        return // return single 1
         0x00;
         }
 
@@ -34,12 +34,22 @@ contract ReturnStatement {
         }
 
         if (val == 4) {
-            /* return single value 2 */ return 2** // return single value 3
-            3 // return single value 4
-            /* return single value 5 */;
+            /* return single 2 */ return 2** // return single 3
+            3 // return single 4
+                        /* return single 5 */;
         }
 
-        return  value() // return single value 6
+        return  value() // return single 6
         ;
+    }
+
+    function returnMultipleValues(uint256 val) external returns (uint256, uint256, bool) {
+        if (val == 0) { return /* return mul 1 */ (0, 1,/* return mul 2 */ false); }
+
+        if (val == 1) { 
+    // return mul 3
+            return /* return mul 4 */
+            (
+                987654321, 1234567890,/* return mul 5 */ false); }
     }
 }

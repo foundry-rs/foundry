@@ -1659,10 +1659,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                             Some(loc.end()),
                             items.iter_mut().map(|item| Ok((item.0, &mut item.1))),
                         )?;
-                        if !fmt.try_on_single_line(|fmt| {
-                            fmt.write_chunks_separated(&items, ",", false)
-                        })? {
-                            fmt.write_chunks_separated(&items, ",", true)?;
+                        let write_items = |fmt: &mut Self, multiline| {
+                            fmt.write_chunks_separated(&items, ",", multiline)
+                        };
+                        if !fmt.try_on_single_line(|fmt| write_items(fmt, false))? {
+                            write_items(fmt, true)?;
                         }
                         Ok(())
                     },
@@ -2476,14 +2477,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
-        self.write_prefix_comments_before(loc.start())?;
         self.grouped(|fmt| {
-            fmt.write_prefix_comments_before(loc.end())?;
             write_chunk!(fmt, loc.start(), "return")?;
             expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
             write_chunk!(fmt, loc.end(), ";")?;
-            fmt.write_prefix_comments_before(loc.end())?;
-            fmt.write_postfix_comments_before(loc.end())?;
             Ok(())
         })?;
         Ok(())
@@ -2598,7 +2595,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        println!("{}", source_formatted);
+        // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
