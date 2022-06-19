@@ -66,7 +66,7 @@ async fn test_basefee_empty_block() {
         provider.get_block(BlockNumber::Latest).await.unwrap().unwrap().base_fee_per_gas.unwrap();
 
     // mine empty block
-    api.mine_one();
+    api.mine_one().await;
 
     let next_base_fee =
         provider.get_block(BlockNumber::Latest).await.unwrap().unwrap().base_fee_per_gas.unwrap();

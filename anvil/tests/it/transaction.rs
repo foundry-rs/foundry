@@ -72,7 +72,7 @@ async fn can_order_transactions() {
     let tx_higher = provider.send_transaction(tx, None).await.unwrap();
 
     // manually mine the block with the transactions
-    api.mine_one();
+    api.mine_one().await;
 
     // get the block, await receipts
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
@@ -144,7 +144,7 @@ async fn can_replace_transaction() {
         provider.send_transaction(tx.gas_price(gas_price + 1u64), None).await.unwrap();
 
     // mine exactly one block
-    api.mine_one();
+    api.mine_one().await;
 
     // lower priced transaction was replaced
     let lower_priced_receipt = lower_priced_pending_tx.await.unwrap();
@@ -220,7 +220,7 @@ async fn can_reject_underpriced_replacement() {
     assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
 
     // mine exactly one block
-    api.mine_one();
+    api.mine_one().await;
     let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
 
     // ensure that only the higher priced tx was mined
@@ -592,7 +592,7 @@ async fn can_get_pending_transaction() {
     let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
     assert!(pending.is_some());
 
-    api.mine_one();
+    api.mine_one().await;
     let mined = provider.get_transaction(tx.tx_hash()).await.unwrap().unwrap();
 
     assert_eq!(mined.hash, pending.unwrap().hash);
@@ -620,7 +620,7 @@ async fn includes_pending_tx_for_transaction_count() {
         assert_eq!(nonce, idx.into());
     }
 
-    api.mine_one();
+    api.mine_one().await;
     let nonce = provider
         .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
         .await

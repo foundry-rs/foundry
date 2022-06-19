@@ -130,10 +130,12 @@ impl Stream for BlockProducer {
         if !pin.queued.is_empty() {
             if let Some(backend) = pin.idle_backend.take() {
                 let transactions = pin.queued.pop_front().expect("not empty; qed");
-                pin.block_mining = Some(Box::pin(futures::future::ready((
-                    backend.mine_block(transactions),
-                    backend,
-                ))));
+                pin.block_mining = Some(Box::pin(async move {
+                    trace!(target: "miner", "creating new block");
+                    let block = backend.mine_block(transactions).await;
+                    trace!(target: "miner", "created new block: {}", block.block_number);
+                    (block, backend)
+                }));
             }
         }
 

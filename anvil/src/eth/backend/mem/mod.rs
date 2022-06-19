@@ -6,7 +6,7 @@ use crate::{
             cheats,
             cheats::CheatsManager,
             db::Db,
-            executor::{ExecutedTransactions, TransactionExecutor},
+            executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -90,6 +90,8 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
+    /// A lock used to sync evm executor access
+    executor_lock: EvmExecutorLock,
 }
 
 impl Backend {
@@ -107,6 +109,7 @@ impl Backend {
             fees,
             genesis: Default::default(),
             active_snapshots: Arc::new(Mutex::new(Default::default())),
+            executor_lock: EvmExecutorLock::new(false),
         }
     }
 
@@ -138,6 +141,7 @@ impl Backend {
             blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
+            executor_lock: EvmExecutorLock::new(fork.is_some()),
             fork,
             time: Default::default(),
             cheats: Default::default(),
@@ -427,12 +431,20 @@ impl Backend {
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide.
-    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
-        tokio::task::block_in_place(|| self.do_mine_block(pool_transactions))
+    pub async fn mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
+        self.do_mine_block(pool_transactions).await
     }
 
-    fn do_mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
+    async fn do_mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
+
+        let _lock = self.executor_lock.write().await;
 
         let current_base_fee = self.base_fee();
         // acquire all locks
@@ -524,13 +536,16 @@ impl Backend {
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
-    pub fn call(
+    pub async fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
+
+        let _lock = self.executor_lock.read().await;
+
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
