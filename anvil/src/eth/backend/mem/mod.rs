@@ -444,78 +444,87 @@ impl Backend {
     ) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
-        let _lock = self.executor_lock.write().await;
+        let (outcome, header, block_hash) = {
+            let _lock = self.executor_lock.write().await;
 
-        let current_base_fee = self.base_fee();
-        // acquire all locks
-        let mut env = self.env.write();
-        let mut db = self.db.write();
-        let mut storage = self.blockchain.storage.write();
+            let current_base_fee = self.base_fee();
+            // acquire all locks
+            let mut env = self.env.write();
+            let mut db = self.db.write();
+            let mut storage = self.blockchain.storage.write();
 
-        // store current state
-        self.states.write().insert(storage.best_hash, db.current_state());
+            // store current state
+            self.states.write().insert(storage.best_hash, db.current_state());
 
-        // increase block number for this block
-        env.block.number = env.block.number.saturating_add(U256::one());
-        env.block.basefee = current_base_fee;
-        env.block.timestamp = self.time.next_timestamp().into();
+            // increase block number for this block
+            env.block.number = env.block.number.saturating_add(U256::one());
+            env.block.basefee = current_base_fee;
+            env.block.timestamp = self.time.next_timestamp().into();
 
-        let executor = TransactionExecutor {
-            db: &mut *db,
-            validator: self,
-            pending: pool_transactions.into_iter(),
-            block_env: env.block.clone(),
-            cfg_env: env.cfg.clone(),
-            parent_hash: storage.best_hash,
-            gas_used: U256::zero(),
-        };
+            let executor = TransactionExecutor {
+                db: &mut *db,
+                validator: self,
+                pending: pool_transactions.into_iter(),
+                block_env: env.block.clone(),
+                cfg_env: env.cfg.clone(),
+                parent_hash: storage.best_hash,
+                gas_used: U256::zero(),
+            };
 
-        // create the new block with the current timestamp
-        let ExecutedTransactions { block, included, invalid } = executor.execute();
-        let BlockInfo { block, transactions, receipts } = block;
+            // create the new block with the current timestamp
+            let ExecutedTransactions { block, included, invalid } = executor.execute();
+            let BlockInfo { block, transactions, receipts } = block;
 
-        let header = block.header.clone();
+            let header = block.header.clone();
 
-        let block_hash = block.header.hash();
-        let block_number: U64 = env.block.number.as_u64().into();
+            let block_hash = block.header.hash();
+            let block_number: U64 = env.block.number.as_u64().into();
 
-        trace!(
-            target: "backend",
-            "Mined block {} with {} tx {:?}",
-            block_number,
-            transactions.len(),
-            transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
-        );
+            trace!(
+                target: "backend",
+                "Mined block {} with {} tx {:?}",
+                block_number,
+                transactions.len(),
+                transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
+            );
 
-        // update block metadata
-        storage.best_number = block_number;
-        storage.best_hash = block_hash;
+            // update block metadata
+            storage.best_number = block_number;
+            storage.best_hash = block_hash;
 
-        storage.blocks.insert(block_hash, block);
-        storage.hashes.insert(block_number, block_hash);
+            storage.blocks.insert(block_hash, block);
+            storage.hashes.insert(block_number, block_hash);
 
-        node_info!("");
-        // insert all transactions
-        for (info, receipt) in transactions.into_iter().zip(receipts) {
-            // log some tx info
-            {
-                node_info!("    Transaction: {:?}", info.transaction_hash);
-                if let Some(ref contract) = info.contract_address {
-                    node_info!("    Contract created: {:?}", contract);
+            node_info!("");
+            // insert all transactions
+            for (info, receipt) in transactions.into_iter().zip(receipts) {
+                // log some tx info
+                {
+                    node_info!("    Transaction: {:?}", info.transaction_hash);
+                    if let Some(ref contract) = info.contract_address {
+                        node_info!("    Contract created: {:?}", contract);
+                    }
+                    node_info!("    Gas used: {}", receipt.gas_used());
                 }
-                node_info!("    Gas used: {}", receipt.gas_used());
+
+                let mined_tx = MinedTransaction {
+                    info,
+                    receipt,
+                    block_hash,
+                    block_number: block_number.as_u64(),
+                };
+                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+            let timestamp = utc_from_secs(header.timestamp);
 
-            let mined_tx =
-                MinedTransaction { info, receipt, block_hash, block_number: block_number.as_u64() };
-            storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
-        }
-        let timestamp = utc_from_secs(header.timestamp);
+            node_info!("    Block Number: {}", block_number);
+            node_info!("    Block Hash: {:?}", block_hash);
+            node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
 
-        node_info!("    Block Number: {}", block_number);
-        node_info!("    Block Hash: {:?}", block_hash);
-        node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            let outcome = MinedBlockOutcome { block_number, included, invalid };
 
+            (outcome, header, block_hash)
+        };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
             header.gas_used,
             header.gas_limit,
@@ -528,7 +537,7 @@ impl Backend {
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee.into());
 
-        MinedBlockOutcome { block_number, included, invalid }
+        outcome
     }
 
     /// Executes the `CallRequest` without writing to the DB
