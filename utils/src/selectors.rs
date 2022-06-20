@@ -350,7 +350,7 @@ async fn test_decode_selector() {
     // invalid signature
     decode_function_selector("0xa9059c")
         .await
-        .map_err(|e| assert_eq!(e.to_string(), "Invalid selector"))
+        .map_err(|e| assert_eq!(e.to_string(), "Invalid selector: expected 8 characters (excluding 0x prefix), got 8 characters (including 0x prefix)."))
         .map(|_| panic!("Expected fourbyte error"))
         .ok();
 }
