@@ -15,6 +15,7 @@ use ethers::types::{H160, H256, U256};
 
 use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
 
+use crate::executor::inspector::CheatsConfig;
 use revm::AccountInfo;
 
 #[derive(Default, Debug)]
@@ -129,16 +130,11 @@ impl DatabaseRef for Backend {
 }
 
 impl ExecutorBuilder {
-    #[must_use]
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
+    pub fn with_cheatcodes(mut self, config: CheatsConfig) -> Self {
         self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
+            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price, config));
         self
     }
 

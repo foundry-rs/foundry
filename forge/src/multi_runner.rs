@@ -7,7 +7,8 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::executor::{
-    builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+    builder::Backend, inspector::CheatsConfig, opts::EvmOpts, DatabaseRef, Executor,
+    ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
@@ -28,6 +29,8 @@ pub struct MultiContractRunnerBuilder {
     pub evm_spec: Option<SpecId>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: Option<CheatsConfig>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -124,6 +127,7 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
+            cheats_config: self.cheats_config.unwrap_or_default(),
         })
     }
 
@@ -156,6 +160,12 @@ impl MultiContractRunnerBuilder {
         self.fork = fork;
         self
     }
+
+    #[must_use]
+    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
+        self.cheats_config = Some(cheats_config);
+        self
+    }
 }
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
@@ -180,6 +190,8 @@ pub struct MultiContractRunner {
     pub source_paths: BTreeMap<String, String>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: CheatsConfig,
 }
 
 impl MultiContractRunner {
@@ -259,8 +271,8 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
-                let mut builder = ExecutorBuilder::new()
-                    .with_cheatcodes(self.evm_opts.ffi)
+                let mut builder = ExecutorBuilder::default()
+                    .with_cheatcodes(self.cheats_config.clone())
                     .with_config(env.clone())
                     .with_spec(self.evm_spec)
                     .with_gas_limit(self.evm_opts.gas_limit());
@@ -330,12 +342,15 @@ mod tests {
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
+    use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
     use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
-        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
+        MultiContractRunnerBuilder::default()
+            .sender(EVM_OPTS.sender)
+            .with_cheats_config(CheatsConfig::new(&Config::default(), &*EVM_OPTS))
     }
 
     /// Builds a non-tracing runner

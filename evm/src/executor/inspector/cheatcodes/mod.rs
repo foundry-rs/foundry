@@ -35,15 +35,15 @@ use revm::{
 };
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+mod config;
+pub use config::CheatsConfig;
+
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
-    /// Whether FFI is enabled or not
-    pub ffi: bool,
-
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -86,17 +86,20 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 
+    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    pub config: CheatsConfig,
+
     //// Offsets for files opened for reading
     pub file_reading_offsets: HashMap<String, usize>,
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
+    pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
-            ffi,
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
+            config,
             ..Default::default()
         }
     }
@@ -115,7 +118,7 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self, self.ffi, &decoded))
+            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }
