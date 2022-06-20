@@ -110,6 +110,7 @@ dependencies = [
 name = "anvil-core"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ethers-core",
  "foundry-evm",
  "hash-db",
@@ -2359,6 +2360,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c21d40587b92fa6a6c6e3c1bdbf87d75511db5672f9c93175574b3a00df1758"
 dependencies = [
  "ahash",
+ "serde",
 ]
 
 [[package]]

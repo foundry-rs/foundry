@@ -12,6 +12,7 @@ use ethers_core::{
     types::{Address, BlockId, BlockNumber, Bytes, TxHash, H256, U256},
 };
 use serde::{Deserialize, Deserializer};
+use bytes::Bytes as StdBytes;
 
 pub mod block;
 pub mod call;
@@ -282,7 +283,7 @@ pub enum EthRequest {
         rename = "anvil_dumpState",
         alias = "hardhat_dumpState"
     )]
-    LoadState(Bytes),
+    LoadState(StdBytes),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.

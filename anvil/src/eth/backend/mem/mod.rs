@@ -5,7 +5,7 @@ use crate::{
         backend::{
             cheats,
             cheats::CheatsManager,
-            db::Db,
+            db::{Db, SerializableState},
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -51,9 +51,10 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, sync::Arc};
+use std::{str, collections::HashMap, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
+use bytes::{Bytes as StdBytes};
 
 pub mod fork_db;
 pub mod in_memory_db;
@@ -362,6 +363,21 @@ impl Backend {
             self.set_block_number(num.into());
         }
         self.db.write().revert(id)
+    }
+
+    
+    /// Write all chain data to serialized bytes buffer
+    pub fn dump_state(&self) -> StdBytes {
+        StdBytes::from(serde_json::to_string(&self.db.read().dump_state()).unwrap_or_default())
+    }
+
+    /// Deserialize and add all chain data to the backend storage
+    pub fn load_state(&self, buf: StdBytes) -> Result<bool, BlockchainError> {
+        let state: SerializableState = serde_json::from_str(
+            str::from_utf8(&buf).map_err(|_| BlockchainError::FailedToDecodeStateDump)?
+        ).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+
+        Ok(self.db.write().load_state(state))
     }
 
     /// Returns the environment for the next block

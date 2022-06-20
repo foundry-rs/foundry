@@ -1,7 +1,7 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::{Db, StateDb},
+    eth::backend::db::{Db, StateDb, AccountRecord, SerializableState},
     mem::{snapshot::Snapshots, state::state_merkle_trie_root},
     revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit},
     Address, U256,
@@ -11,7 +11,7 @@ use ethers::prelude::{H160, H256};
 use foundry_evm::{revm::InMemoryDB, HashMap as Map};
 use tracing::{trace, warn};
 
-/// In memory Database for anvil
+/// In memory ` for anvil
 ///
 /// This acts like a wrapper type for [InMemoryDB] but is capable of applying snapshots
 #[derive(Debug)]
@@ -77,18 +77,23 @@ impl Db for MemDb {
         self.inner.insert_cache_storage(address, slot, val)
     }
 
-    fn dump_state(&mut self) -> Map<Address, AccountRecord> {
-        self.inner.cache().map {
-            AccountRecord {
-                nonce: it.nonce,
-                balance: it.balance,
-                code: it.code,
-                storage: self.inner.storage().get(it)
-            }
+    fn dump_state(&self) -> SerializableState {
+        SerializableState {
+            accounts: self.inner.cache().clone().into_iter().map(|(k,v)| {
+                (
+                    k,
+                    AccountRecord {
+                        nonce: v.nonce,
+                        balance: v.balance,
+                        code: v.code.unwrap_or_default(),
+                        storage: self.inner.storage().get(&k).unwrap().clone()
+                    }
+                )
+            }).collect()
         }
     }
 
-    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool {
+    fn load_state(&mut self, buf: SerializableState) -> bool {
         false
     }
 

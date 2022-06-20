@@ -8,19 +8,24 @@ use ethers::{
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
+    HashMap
 };
+
+use serde::{Serialize, Deserialize};
+
+use bytes::Bytes as StdBytes;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SerializableState {
-    accounts: Map<Address, AccountRecord>
+    pub accounts: HashMap<Address, AccountRecord>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AccountRecord {
-    nonce: u64,
-    balance: U256,
-    code: Bytes,
-    storage: Map<U256, U256>
+    pub nonce: u64,
+    pub balance: U256,
+    pub code: StdBytes,
+    pub storage: HashMap<U256, U256>
 }
 
 /// This bundles all required revm traits
@@ -53,10 +58,10 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
 
     /// Write all chain data to serialized bytes buffer
-    fn dump_state(&mut self) -> Map<Address, AccountRecord>;
+    fn dump_state(&self) -> SerializableState;
 
     /// Deserialize and add all chain data to the backend storage
-    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool;
+    fn load_state(&mut self, buf: SerializableState) -> bool;
 
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256;
@@ -88,11 +93,11 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
         self.insert_cache_storage(address, slot, val)
     }
 
-    fn dump_state(&mut self) -> Map<Address, AccountRecord> {
-        Map::new()
+    fn dump_state(&self) -> SerializableState {
+        SerializableState::new()
     }
 
-    fn load_state(&mut self, buf: Map<Address, AccountRecord>) -> bool {
+    fn load_state(&mut self, buf: SerializableState) -> bool {
         false
     }
 
@@ -135,5 +140,13 @@ impl DatabaseRef for StateDb {
 
     fn block_hash(&self, number: U256) -> H256 {
         self.0.block_hash(number)
+    }
+}
+
+impl SerializableState {
+    pub fn new() -> SerializableState {
+        SerializableState {
+            accounts: HashMap::new()
+        }
     }
 }

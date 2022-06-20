@@ -32,6 +32,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode state")]
+    FailedToDecodeStateDump,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
@@ -179,6 +181,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
+                }
+                BlockchainError::FailedToDecodeStateDump => {
+                    RpcError::invalid_params("Failed to decode state dump")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),

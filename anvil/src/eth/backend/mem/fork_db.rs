@@ -1,6 +1,6 @@
 use crate::{
     eth::{
-        backend::db::{Db, StateDb},
+        backend::db::{Db, StateDb, SerializableState},
         error::BlockchainError,
     },
     mem::snapshot::Snapshots,
@@ -28,11 +28,11 @@ impl Db for ForkedDatabase {
         self.cache_db.set_storage_at(address, slot, val)
     }
 
-    fn dump_state(&mut self) -> Bytes {
-        Bytes::new()
+    fn dump_state(&self) -> SerializableState {
+        SerializableState::new()
     }
 
-    fn load_state(&mut self, buf: Bytes) -> {
+    fn load_state(&mut self, buf: SerializableState) -> bool {
         false
     }
 

@@ -16,3 +16,5 @@ serde_json = { version = "1.0" }
 hash-db = { version = "0.15", default-features = false }
 hash256-std-hasher = { version = "0.15", default-features = false }
 triehash = { version = "0.8", default-features = false }
+
+bytes = "1.1.0"

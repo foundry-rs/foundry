@@ -58,6 +58,8 @@ use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
+use bytes::{Bytes as StdBytes};
+
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
 
@@ -1349,7 +1351,7 @@ impl EthApi {
     /// Create a bufer that represents all state on the chain, which can be loaded to separate process by calling `anvil_laodState`
     /// 
     /// Handler for RPC call: `anvil_dumpState`
-    pub async fn anvil_dump_state(&self) -> Result<Bytes> {
+    pub async fn anvil_dump_state(&self) -> Result<StdBytes> {
         node_info!("anvil_dumpState");
         Ok(self.backend.dump_state())
     }
@@ -1357,9 +1359,9 @@ impl EthApi {
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or storage.
     ///
     /// Handler for RPC call: `anvil_loadState`
-    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
+    pub async fn anvil_load_state(&self, buf: StdBytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        Ok(self.backend.load_state(buf))
+        self.backend.load_state(buf)
     }
 
     /// Snapshot the state of the blockchain at the current block.
