@@ -98,7 +98,7 @@ pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Res
         .get(selector)
         .ok_or(eyre::eyre!("No signature found"))?
         .iter()
-        .filter_map(|d| d.filtered.then(|| d.name.clone()))
+        .filter_map(|d| (!d.filtered).then(|| d.name.clone()))
         .collect::<Vec<String>>())
 }
 
