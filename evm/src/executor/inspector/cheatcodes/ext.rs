@@ -178,9 +178,12 @@ fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
 
     let mut line: String = String::new();
     let written = reader.read_line(&mut line).map_err(|err| err.to_string().encode())?;
-    // Remove one trailing newline character, preserving others for cases where it may be important
-    if line.ends_with(&['\r', '\n'][..]) {
+    // Remove trailing newline character, preserving others for cases where it may be important
+    if line.ends_with('\n') {
         line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
     }
 
     // Update offset to read from it later
