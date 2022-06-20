@@ -1,4 +1,4 @@
-use ethers_core::types::{Block, Transaction, TransactionReceipt, H256, U256, *};
+use ethers_core::types::*;
 
 pub fn to_bytes(uint: U256) -> Bytes {
     let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
@@ -267,6 +267,12 @@ transactions:        {}",
 }
 
 impl UIfmt for U64 {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl UIfmt for H64 {
     fn pretty(&self) -> String {
         self.to_string()
     }

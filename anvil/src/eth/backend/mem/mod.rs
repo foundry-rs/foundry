@@ -932,9 +932,7 @@ impl Backend {
             difficulty,
             total_difficulty: None,
             seal_fields: {
-                let mut arr = [0u8; 8];
-                nonce.to_big_endian(&mut arr);
-                vec![mix_hash.as_bytes().to_vec().into(), arr.to_vec().into()]
+                vec![mix_hash.as_bytes().to_vec().into(), nonce.0.to_vec().into()]
             },
             uncles: vec![],
             transactions: transactions.into_iter().map(|tx| tx.hash()).collect(),
