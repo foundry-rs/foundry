@@ -98,12 +98,7 @@ pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Res
         .get(selector)
         .ok_or(eyre::eyre!("No signature found"))?
         .iter()
-        .filter_map(|d| {
-            if !d.filtered {
-                return Some(d.name.clone())
-            }
-            None
-        })
+        .filter_map(|d| d.filtered.then(|| d.name.clone()))
         .collect::<Vec<String>>())
 }
 
@@ -133,10 +128,7 @@ pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
     Ok(sigs
         .iter()
         .cloned()
-        .filter(|sig| {
-            let res = abi_decode(sig, calldata, true);
-            res.is_ok()
-        })
+        .filter(|sig| abi_decode(sig, calldata, true).is_ok())
         .collect::<Vec<String>>())
 }
 
