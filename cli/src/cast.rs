@@ -681,23 +681,25 @@ async fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
         Subcommands::Run(cmd) => cmd.run()?,
-        Subcommands::Rpc { rpc_url, method, params } => {
+        Subcommands::Rpc { rpc_url, direct_params, method, params } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
-            let params = params
-                .into_iter()
-                .map(|param| {
-                    if let Some(param) = param.strip_prefix(':') {
-                        if param.starts_with(':') {
-                            Ok(serde_json::Value::String(param.to_string()))
-                        } else {
-                            serde_json::from_str::<serde_json::Value>(param)
-                        }
-                    } else {
-                        Ok(serde_json::Value::String(param))
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let params = if direct_params {
+                if params.len() != 1 {
+                    eyre::bail!(r#"Expected exactly one argument for "params""#);
+                }
+                let param = params.into_iter().next().unwrap();
+                serde_json::from_str(&param).unwrap_or(serde_json::Value::String(param))
+            } else {
+                serde_json::Value::Array(
+                    params
+                        .into_iter()
+                        .map(|param| {
+                            serde_json::from_str(&param).unwrap_or(serde_json::Value::String(param))
+                        })
+                        .collect(),
+                )
+            };
             println!("{}", Cast::new(provider).rpc(&method, params).await?);
         }
     };

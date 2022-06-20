@@ -828,6 +828,18 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     Rpc {
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
+        #[clap(
+            short,
+            long,
+            help = "Do not put parameters in an array",
+            long_help = r#"Do not put parameters in an array
+
+If --direct-params is passed the first PARAM will be taken as the value of "params". For example:
+
+rpc --direct-params eth_getBlockByNumber '["0x123", false]'
+    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
+        )]
+        direct_params: bool,
         #[clap(value_name = "METHOD", help = "RPC method name")]
         method: String,
         #[clap(
@@ -835,11 +847,10 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
             help = "RPC parameters",
             long_help = r#"RPC parameters
 
-Parameters are interpreted as strings. If you wish to pass a JSON value you can prepend the value with a ':'. To start a string with a ':' prepend with '::'. For example:
+Parameters are interpreted as JSON and then fall back to string. For example:
 
-request doThing 123   => {"method": "doThing", "params": ["123"] ... }
-request doThing :123  => {"method": "doThing", "params": [123] ... }
-request doThing ::123 => {"method": "doThing", "params": [":123"] ... }"#
+rpc eth_getBlockByNumber 0x123 false
+    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
         )]
         params: Vec<String>,
     },

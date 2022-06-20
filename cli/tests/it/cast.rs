@@ -107,8 +107,25 @@ casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
 casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
-    // Call `cast rpc eth_getBlockByNumber 0x123 :false`
-    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", ":false"]);
+    // Call `cast rpc eth_getBlockByNumber 0x123 false`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
+});
+
+// test for cast_rpc with direct params
+casttest!(cast_rpc_direct_params, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc --direct-params eth_getBlockByNumber '["0x123", false]'`
+    cmd.args([
+        "rpc",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "--direct-params",
+        "eth_getBlockByNumber",
+        r#"["0x123", false]"#,
+    ]);
     let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
