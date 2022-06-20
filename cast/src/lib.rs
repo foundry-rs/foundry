@@ -626,6 +626,29 @@ where
         };
         Ok(receipt)
     }
+
+    /// Perform a raw JSON-RPC request
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let result = cast.rpc("eth_blockNumber", []).await?;
+    /// println!("{}", receipt);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn request<T>(&self, method: &str, params: T) -> Result<String>
+    where
+        T: std::fmt::Debug + serde::Serialize + Send + Sync,
+    {
+        let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
+        Ok(serde_json::to_string(&res)?)
+    }
 }
 
 pub struct InterfaceSource {

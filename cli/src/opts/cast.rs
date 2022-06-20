@@ -822,6 +822,27 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
+    #[clap(name = "request")]
+    #[clap(visible_aliases = &["rq", "req"])]
+    #[clap(about = "Perform a raw JSON-RPC request")]
+    Request {
+        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
+        rpc_url: Option<String>,
+        #[clap(value_name = "METHOD", help = "RPC method name")]
+        method: String,
+        #[clap(
+            value_name = "PARAMS",
+            help = "RPC parameters",
+            long_help = r#"RPC parameters
+
+Parameters are interpreted as strings. If you wish to pass a JSON value you can prepend the value with a ':'. To start a string with a ':' prepend with '::'. For example:
+
+request doThing 123   => {"method": "doThing", "params": ["123"] ... }
+request doThing :123  => {"method": "doThing", "params": [123] ... }
+request doThing ::123 => {"method": "doThing", "params": [":123"] ... }"#
+        )]
+        params: Vec<String>,
+    },
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

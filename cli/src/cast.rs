@@ -681,6 +681,25 @@ async fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
         Subcommands::Run(cmd) => cmd.run()?,
+        Subcommands::Request { rpc_url, method, params } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = Provider::try_from(rpc_url)?;
+            let params = params
+                .into_iter()
+                .map(|param| {
+                    if let Some(param) = param.strip_prefix(':') {
+                        if param.starts_with(':') {
+                            Ok(serde_json::Value::String(param.to_string()))
+                        } else {
+                            serde_json::from_str::<serde_json::Value>(param)
+                        }
+                    } else {
+                        Ok(serde_json::Value::String(param))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            println!("{}", Cast::new(provider).request(&method, params).await?);
+        }
     };
     Ok(())
 }
