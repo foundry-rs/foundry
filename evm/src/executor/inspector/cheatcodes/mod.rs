@@ -86,7 +86,8 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 
-    pub file_offsets: HashMap<String, usize>,
+    //// Offsets for files opened for reading
+    pub file_reading_offsets: HashMap<String, usize>,
 }
 
 impl Cheatcodes {

@@ -169,7 +169,7 @@ fn read_file(path: &str) -> Result<Bytes, Bytes> {
 
 fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     // Get offset of previously opened file to continue reading OR set offset to zero
-    let offset = state.file_offsets.entry(path.to_string()).or_default();
+    let offset = state.file_reading_offsets.entry(path.to_string()).or_default();
     let file = File::open(path).map_err(|err| err.to_string().encode())?;
 
     let mut reader = BufReader::new(file);
@@ -208,7 +208,7 @@ fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
 }
 
 fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
-    state.file_offsets.remove(path);
+    state.file_reading_offsets.remove(path);
 
     Ok(Bytes::new())
 }
