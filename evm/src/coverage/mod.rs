@@ -26,10 +26,6 @@ pub struct CoverageMap {
 }
 
 impl CoverageMap {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Adds coverage items and a source map for the given source.
     ///
     /// Sources are identified by path, and then by source ID and version.

@@ -142,7 +142,7 @@ impl CoverageArgs {
             })
             .collect();
 
-        let mut map = CoverageMap::new();
+        let mut map = CoverageMap::default();
         for (path, versioned_sources) in sources.0.into_iter() {
             // TODO: Make these checks robust
             // NOTE: We should actually filter out test contracts in the AST
