@@ -28,7 +28,6 @@ use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header},
         call::CallRequest,
-        filter::{Filter, FilteredParams},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
         utils::to_access_list,
@@ -39,7 +38,7 @@ use anvil_rpc::error::RpcError;
 use ethers::{
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
-        Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
+        Address, Block as EthersBlock, BlockId, Bytes, Filter, FilteredParams, Log, Trace,
         Transaction, TransactionReceipt,
     },
     utils::{keccak256, rlp},
@@ -629,7 +628,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            let filter = filter.into();
+            let filter = filter;
             return Ok(fork.logs(&filter).await?)
         }
 
@@ -671,7 +670,7 @@ impl Backend {
                     removed: Some(false),
                 };
                 let mut is_match: bool = true;
-                if filter.address.is_some() && filter.topics.is_some() {
+                if filter.address.is_some() && filter.has_topics() {
                     if !params.filter_address(&log) || !params.filter_topics(&log) {
                         is_match = false;
                     }
@@ -679,7 +678,7 @@ impl Backend {
                     if !params.filter_address(&log) {
                         is_match = false;
                     }
-                } else if filter.topics.is_some() && !params.filter_topics(&log) {
+                } else if filter.has_topics() && !params.filter_topics(&log) {
                     is_match = false;
                 }
 
@@ -719,8 +718,7 @@ impl Backend {
 
             if fork.predates_fork(from) {
                 // this data is only available on the forked client
-                let mut filter: EthersFilter = filter.clone().into();
-                filter = filter.from_block(from).to_block(to_on_fork);
+                let filter = filter.clone().from_block(from).to_block(to_on_fork);
                 all_logs = fork.logs(&filter).await?;
 
                 // update the range
@@ -740,13 +738,14 @@ impl Backend {
     /// Returns the logs according to the filter
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>, BlockchainError> {
         trace!(target: "backend", "get logs [{:?}]", filter);
-        if let Some(hash) = filter.block_hash {
+        if let Some(hash) = filter.get_block_hash() {
             self.logs_for_block(filter, hash).await
         } else {
             let best = self.best_number().as_u64();
-            let to_block = filter.get_to_block_number().unwrap_or(best).min(best);
-
-            let from_block = filter.get_from_block_number().unwrap_or(best).min(best);
+            let to_block =
+                self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
+            let from_block =
+                self.convert_block_number(filter.block_option.get_from_block().copied()).min(best);
             self.logs_for_range(&filter, from_block, to_block).await
         }
     }

@@ -1,7 +1,6 @@
 use crate::{
     eth::{
         call::CallRequest,
-        filter::Filter,
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
@@ -9,14 +8,13 @@ use crate::{
 };
 use ethers_core::{
     abi::ethereum_types::H64,
-    types::{Address, BlockId, BlockNumber, Bytes, TxHash, H256, U256},
+    types::{Address, BlockId, BlockNumber, Bytes, Filter, TxHash, H256, U256},
 };
 use serde::Deserialize;
 use serde_helpers::Params;
 
 pub mod block;
 pub mod call;
-pub mod filter;
 pub mod receipt;
 mod serde_helpers;
 pub mod subscription;
@@ -377,7 +375,7 @@ pub enum EthRequest {
 pub enum EthPubSub {
     /// Subscribe to an eth subscription
     #[serde(rename = "eth_subscribe")]
-    EthSubscribe(SubscriptionKind, #[serde(default)] SubscriptionParams),
+    EthSubscribe(SubscriptionKind, #[serde(default)] Box<SubscriptionParams>),
 
     /// Unsubscribe from an eth subscription
     #[serde(rename = "eth_unsubscribe", with = "sequence")]

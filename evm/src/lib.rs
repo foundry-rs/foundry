@@ -22,13 +22,18 @@ pub mod utils;
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::{self, HashMap};
-pub use revm;
-
 use once_cell::sync::Lazy;
-pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
-
+pub use revm;
 use revm::{CallScheme, CreateScheme};
 use serde::{Deserialize, Serialize};
+
+/// Stores a random caller address to be used as _sender_ account for:
+///     - deploying Test contracts
+///     - deploying Script contracts
+///
+/// The address is randomly initialized once for each program and is constant for the duration of
+/// the existence of this program.
+pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CallKind {

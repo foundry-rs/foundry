@@ -25,8 +25,8 @@ See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86
 
 - [x] Block
 - [ ] Assembly
-- [ ] Args
-- [ ] If
+- [x] Args
+- [x] If
 - [x] While
 - [x] Expression
 - [x] VariableDefinition

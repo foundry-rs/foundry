@@ -286,6 +286,7 @@ struct Chunk {
     prefixes: Vec<CommentWithMetadata>,
     content: String,
     postfixes: Vec<CommentWithMetadata>,
+    needs_space: Option<bool>,
 }
 
 impl From<String> for Chunk {
@@ -332,14 +333,18 @@ macro_rules! write_chunk {
         write_chunk!($self, $loc, $format_str,)
     }};
     ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, None, format_args!($format_str, $($arg)*));
+        let chunk = $self.chunk_at($loc, None, None, format_args!($format_str, $($arg)*),);
         $self.write_chunk(&chunk)
     }};
     ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
         write_chunk!($self, $loc, $end_loc, $format_str,)
     }};
     ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, Some($end_loc), format_args!($format_str, $($arg)*));
+        let chunk = $self.chunk_at($loc, Some($end_loc), None, format_args!($format_str, $($arg)*),);
+        $self.write_chunk(&chunk)
+    }};
+    ($self:expr, $loc:expr, $end_loc:expr, $needs_space:expr, $format_str:literal, $($arg:tt)*) => {{
+        let chunk = $self.chunk_at($loc, Some($end_loc), Some($needs_space), format_args!($format_str, $($arg)*),);
         $self.write_chunk(&chunk)
     }};
 }
@@ -368,6 +373,13 @@ macro_rules! writeln_chunk {
     }};
     ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
         write_chunk!($self, $loc, $end_loc, "{}\n", format_args!($format_str, $($arg)*))
+    }};
+}
+
+macro_rules! write_chunk_spaced {
+    ($self:expr, $loc:expr, $needs_space:expr, $format_str:literal, $($arg:tt)*) => {{
+        let chunk = $self.chunk_at($loc, None, $needs_space, format_args!($format_str, $($arg)*),);
+        $self.write_chunk(&chunk)
     }};
 }
 
@@ -481,16 +493,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Does the next written character require whitespace before
-    fn next_chunk_needs_space(&self, next_char: char) -> bool {
+    fn next_char_needs_space(&self, next_char: char) -> bool {
         if self.is_beginning_of_line() {
             return false
         }
         let last_char =
             if let Some(last_char) = self.last_char() { last_char } else { return false };
-        if last_char.is_whitespace() {
-            return false
-        }
-        if next_char.is_whitespace() {
+        if last_char.is_whitespace() || next_char.is_whitespace() {
             return false
         }
         match last_char {
@@ -518,7 +527,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         if text.contains('\n') {
             return false
         }
-        let space = if self.next_chunk_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
+        let space = if self.next_char_needs_space(text.chars().next().unwrap()) { 1 } else { 0 };
         self.config.line_length >=
             self.last_indent_len()
                 .saturating_add(self.current_line_len())
@@ -566,6 +575,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         byte_offset: usize,
         next_byte_offset: Option<usize>,
+        needs_space: Option<bool>,
         content: impl std::fmt::Display,
     ) -> Chunk {
         Chunk {
@@ -575,6 +585,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             postfixes: next_byte_offset
                 .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
                 .unwrap_or_default(),
+            needs_space, // TODO:
         }
     }
 
@@ -591,7 +602,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         let postfixes = next_byte_offset
             .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
             .unwrap_or_default();
-        Ok(Chunk { postfixes_before, prefixes, content, postfixes })
+        Ok(Chunk { postfixes_before, prefixes, content, postfixes, needs_space: None }) // TODO:
     }
 
     /// Create a chunk given a [Visitable] item
@@ -669,7 +680,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         } else {
             let indented = self.is_beginning_of_line();
             self.indented_if(indented, 1, |fmt| {
-                if !indented && fmt.next_chunk_needs_space('/') {
+                if !indented && fmt.next_char_needs_space('/') {
                     write!(fmt.buf(), " ")?;
                 }
                 let mut lines = comment.comment.splitn(2, '\n');
@@ -731,7 +742,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write the chunk and any surrounding comments into the buffer
     /// This will automatically add whitespace before the chunk given the rule set in
-    /// `next_chunk_needs_space`. If the chunk does not fit on the current line it will be put on
+    /// `next_char_needs_space`. If the chunk does not fit on the current line it will be put on
     /// to the next line
     fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
         // handle comments before chunk
@@ -757,7 +768,10 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         if !content.is_empty() {
             // add whitespace if necessary
-            if self.next_chunk_needs_space(content.chars().next().unwrap()) {
+            let needs_space = chunk
+                .needs_space
+                .unwrap_or_else(|| self.next_char_needs_space(content.chars().next().unwrap()));
+            if needs_space {
                 if self.will_it_fit(&content) {
                     write!(self.buf(), " ")?;
                 } else {
@@ -1607,7 +1621,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
             }
             Expression::Variable(ident) => {
-                ident.visit(self)?;
+                write_chunk!(self, loc.end(), "{}", ident.name)?;
             }
             Expression::MemberAccess(_, expr, ident) => {
                 let (remaining, idents) = {
@@ -1628,6 +1642,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     idents.into_iter().map(|ident| Ok((ident.loc, ident))),
                 )?;
                 chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+                if let Some(last) = chunks.last_mut() {
+                    last.needs_space = Some(false);
+                }
                 let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
                 self.write_chunks_separated(&chunks, "", multiline)?;
             }
@@ -1650,6 +1667,35 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         Ok(())
                     },
                 )?;
+            }
+            Expression::FunctionCall(loc, expr, exprs) => {
+                self.visit_expr(expr.loc(), expr)?;
+                // write_chunk_spaced!(self, expr.loc().end(), Some(false), "{}", "(")?;
+                write!(self.buf(), "(")?;
+                self.surrounded(expr.loc().end(), "", ")", Some(loc.end()), |fmt, _| {
+                    let exprs = fmt.items_to_chunks(
+                        Some(loc.end()),
+                        exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                    )?;
+
+                    let multiline = fmt.are_chunks_separated_multiline("{}", &exprs, ",")?;
+                    fmt.write_chunks_separated(&exprs, ",", multiline)?;
+                    Ok(())
+                })?
+            }
+            Expression::FunctionCallBlock(loc, expr, stmt) => {
+                let chunks = vec![self.chunked(loc.start(), Some(loc.end()), |fmt| {
+                    fmt.grouped(|fmt| {
+                        expr.visit(fmt)?;
+                        write!(fmt.buf(), "{{")?;
+                        stmt.visit(fmt)
+                    })?;
+                    Ok(())
+                })?];
+                let multiline = self.are_chunks_separated_multiline("{}", &chunks, "")?;
+                self.write_chunks_separated(&chunks, "", multiline)?;
+                let closing_bracket = format!("{}{}", if multiline { "\n" } else { "" }, "}");
+                write_chunk_spaced!(self, expr.loc().end(), Some(false), "{}", closing_bracket)?;
             }
             _ => self.visit_source(loc)?,
         };
@@ -2161,12 +2207,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let for_chunk = self.chunk_at(
             using.loc.start(),
             Some(ty_start.or(global_start).unwrap_or(loc_end)),
+            None,
             "for",
         );
         let ty_chunk = if let Some(ty) = &mut using.ty {
             self.visit_to_chunk(ty.loc().start(), Some(global_start.unwrap_or(loc_end)), ty)?
         } else {
-            self.chunk_at(using.loc.start(), Some(global_start.unwrap_or(loc_end)), "*")
+            self.chunk_at(using.loc.start(), Some(global_start.unwrap_or(loc_end)), None, "*")
         };
         let global_chunk = using
             .global
@@ -2400,6 +2447,33 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
         Ok(())
     }
+
+    fn visit_args(&mut self, _loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
+        let mut args = args.iter_mut().peekable();
+        let mut chunks = Vec::new();
+        while let Some(NamedArgument { loc, name, expr }) = args.next() {
+            chunks.push(self.chunked(
+                loc.start(),
+                args.peek().map(|NamedArgument { loc, .. }| loc.start()),
+                |fmt| {
+                    fmt.grouped(|fmt| {
+                        write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
+                        expr.visit(fmt)
+                    })?;
+                    Ok(())
+                },
+            )?);
+        }
+
+        let multiline = self.are_chunks_separated_multiline("{}", &chunks, ",")?;
+        if let Some(first) = chunks.first_mut() {
+            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
+                first.needs_space = Some(false);
+            }
+        }
+        self.write_chunks_separated(&chunks, ",", multiline)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2565,4 +2639,5 @@ mod tests {
     test_directory! { ForStatement }
     test_directory! { IfStatement }
     test_directory! { VariableAssignment }
+    test_directory! { FunctionCallArgsStatement }
 }

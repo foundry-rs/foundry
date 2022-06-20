@@ -8,6 +8,7 @@ jobs:
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

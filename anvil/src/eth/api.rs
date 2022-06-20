@@ -27,7 +27,6 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         call::CallRequest,
-        filter::{Filter, FilteredParams},
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -43,9 +42,10 @@ use ethers::{
     providers::{Http, ProviderError, RetryClient},
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
-        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Log, Trace, Transaction,
-        TransactionReceipt, TransactionRequest as EthersTransactionRequest, TransactionRequest,
-        TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
+        Trace, Transaction, TransactionReceipt, TransactionRequest as EthersTransactionRequest,
+        TransactionRequest, TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256,
+        U64,
     },
     utils::rlp,
 };
@@ -975,7 +975,7 @@ impl EthApi {
         node_info!("eth_newFilter");
         // all logs that are already available that match the filter if the filter's block range is
         // in the past
-        let historic = if filter.from_block.is_some() {
+        let historic = if filter.block_option.get_from_block().is_some() {
             self.backend.logs(filter.clone()).await?
         } else {
             vec![]

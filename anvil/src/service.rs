@@ -1,11 +1,17 @@
 //! background service
 
 use crate::{
-    eth::{backend, fees::FeeHistoryService, miner::Miner, pool::Pool},
+    eth::{
+        fees::FeeHistoryService,
+        miner::Miner,
+        pool::{transactions::PoolTransaction, Pool},
+    },
     filter::Filters,
+    mem::{storage::MinedBlockOutcome, Backend},
 };
-use futures::FutureExt;
+use futures::{FutureExt, Stream, StreamExt};
 use std::{
+    collections::VecDeque,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -23,8 +29,8 @@ use tracing::trace;
 pub struct NodeService {
     /// the pool that holds all transactions
     pool: Arc<Pool>,
-    /// holds the blockchain's state
-    backend: Arc<backend::mem::Backend>,
+    /// creates new blocks
+    block_producer: BlockProducer,
     /// the miner responsible to select transactions from the `pool´
     miner: Miner,
     /// maintenance task for fee history related tasks
@@ -38,14 +44,14 @@ pub struct NodeService {
 impl NodeService {
     pub fn new(
         pool: Arc<Pool>,
-        backend: Arc<backend::mem::Backend>,
+        backend: Arc<Backend>,
         miner: Miner,
         fee_history: FeeHistoryService,
         filters: Filters,
     ) -> Self {
         Self {
             pool,
-            backend,
+            block_producer: BlockProducer::new(backend),
             miner,
             fee_history,
             filter_eviction_interval: tokio::time::interval(filters.keep_alive()),
@@ -61,12 +67,22 @@ impl Future for NodeService {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
-        while let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
-            // miner returned a set of transaction to put into a new block
-            let outcome = pin.backend.mine_block(transactions.clone());
-            trace!(target: "node", "mined block {}", outcome.block_number);
-            // prune the transactions from the pool
-            pin.pool.on_mined_block(outcome);
+        // this drives block production and feeds new sets of ready transactions to the block
+        // producer
+        loop {
+            while let Poll::Ready(Some(outcome)) = pin.block_producer.poll_next_unpin(cx) {
+                trace!(target: "node", "mined block {}", outcome.block_number);
+                // prune the transactions from the pool
+                pin.pool.on_mined_block(outcome);
+            }
+
+            if let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
+                // miner returned a set of transaction that we feed to the producer
+                pin.block_producer.queued.push_back(transactions);
+            } else {
+                // no progress made
+                break
+            }
         }
 
         // poll the fee history task
@@ -76,6 +92,58 @@ impl Future for NodeService {
             let filters = pin.filters.clone();
             // evict filters that timed out
             tokio::task::spawn(async move { filters.evict().await });
+        }
+
+        Poll::Pending
+    }
+}
+
+// The type of the future that mines a new block
+type BlockMiningFuture =
+    Pin<Box<dyn Future<Output = (MinedBlockOutcome, Arc<Backend>)> + Send + Sync>>;
+
+/// A type that exclusively mines one block at a time
+#[must_use = "BlockProducer does nothing unless polled"]
+struct BlockProducer {
+    /// Holds the backend if no block is being mined
+    idle_backend: Option<Arc<Backend>>,
+    /// Single active future that mines a new block
+    block_mining: Option<BlockMiningFuture>,
+    /// backlog of sets of transactions ready to be mined
+    queued: VecDeque<Vec<Arc<PoolTransaction>>>,
+}
+
+// === impl BlockProducer ===
+
+impl BlockProducer {
+    fn new(backend: Arc<Backend>) -> Self {
+        Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
+    }
+}
+
+impl Stream for BlockProducer {
+    type Item = MinedBlockOutcome;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let pin = self.get_mut();
+
+        if !pin.queued.is_empty() {
+            if let Some(backend) = pin.idle_backend.take() {
+                let transactions = pin.queued.pop_front().expect("not empty; qed");
+                pin.block_mining = Some(Box::pin(futures::future::ready((
+                    backend.mine_block(transactions),
+                    backend,
+                ))));
+            }
+        }
+
+        if let Some(mut mining) = pin.block_mining.take() {
+            if let Poll::Ready((outcome, backend)) = mining.poll_unpin(cx) {
+                pin.idle_backend = Some(backend);
+                return Poll::Ready(Some(outcome))
+            } else {
+                pin.block_mining = Some(mining)
+            }
         }
 
         Poll::Pending
