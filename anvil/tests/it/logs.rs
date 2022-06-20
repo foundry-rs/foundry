@@ -75,7 +75,7 @@ async fn get_all_events() {
     for _ in 0..num_tx {
         let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
         let tx = func.send().await.unwrap();
-        api.mine_one();
+        api.mine_one().await;
         let _receipt = tx.await.unwrap();
     }
     let logs = client.get_logs(&Filter::new().from_block(BlockNumber::Earliest)).await.unwrap();
@@ -113,7 +113,7 @@ async fn can_install_filter() {
     for _ in 0..num_logs {
         let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
         let tx = func.send().await.unwrap();
-        api.mine_one();
+        api.mine_one().await;
         let _receipt = tx.await.unwrap();
         let logs = client.get_filter_changes::<_, Log>(filter).await.unwrap();
         assert_eq!(logs.len(), 1);

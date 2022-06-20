@@ -658,7 +658,7 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, block_number)?;
+        let (exit, out, gas, _) = self.backend.call(request, fees, block_number).await?;
 
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
@@ -695,7 +695,7 @@ impl EthApi {
 
         // ensure tx succeeds
         let (exit, out, _, mut state) =
-            self.backend.call(request.clone(), FeeDetails::zero(), block_number)?;
+            self.backend.call(request.clone(), FeeDetails::zero(), block_number).await?;
 
         ensure_return_ok(exit, &out)?;
 
@@ -1124,7 +1124,7 @@ impl EthApi {
 
         // mine all the blocks
         for _ in 0..blocks.as_u64() {
-            self.mine_one();
+            self.mine_one().await;
 
             if let Some(interval) = interval {
                 tokio::time::sleep(Duration::from_secs(interval)).await;
@@ -1328,12 +1328,9 @@ impl EthApi {
             }
         }
 
-        // lock the miner
-        let _miner = self.miner.mode_write();
-
         // mine all the blocks
         for _ in 0..blocks_to_mine {
-            self.mine_one();
+            self.mine_one().await;
         }
 
         Ok("0x0".to_string())
@@ -1571,7 +1568,8 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone(), block_number)?;
+        let (exit, _, gas, _) =
+            self.backend.call(call_to_estimate, fees.clone(), block_number).await?;
         match exit {
             Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                 // succeeded
@@ -1586,7 +1584,7 @@ impl EthApi {
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
                     let (exit, out, _, _) =
-                        self.backend.call(request.clone(), fees, block_number)?;
+                        self.backend.call(request.clone(), fees, block_number).await?;
                     match exit {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
@@ -1626,7 +1624,7 @@ impl EthApi {
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
             let (exit, _, _gas, _) =
-                self.backend.call(request.clone(), fees.clone(), block_number)?;
+                self.backend.call(request.clone(), fees.clone(), block_number).await?;
             match exit {
                 return_ok!() => {
                     highest_gas_limit = mid_gas_limit;
@@ -1707,9 +1705,9 @@ impl EthApi {
     }
 
     /// Mines exactly one block
-    pub fn mine_one(&self) {
+    pub async fn mine_one(&self) {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions);
+        let outcome = self.backend.mine_block(transactions).await;
 
         trace!(target: "node", "mined block {}", outcome.block_number);
         self.pool.on_mined_block(outcome);
