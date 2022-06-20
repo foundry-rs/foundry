@@ -33,7 +33,7 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -85,6 +85,8 @@ pub struct Cheatcodes {
 
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
+
+    pub file_offsets: HashMap<String, usize>,
 }
 
 impl Cheatcodes {
@@ -112,7 +114,7 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| ext::apply(self, self.ffi, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }
