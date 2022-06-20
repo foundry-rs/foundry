@@ -111,7 +111,7 @@ pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Res
 pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
     let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
     if prefixed_selector.len() != 10 {
-        return Err(eyre::eyre!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len()));
+        eyre::bail!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len())
     }
 
     decode_selector(&prefixed_selector[..10], SelectorType::Function).await
@@ -119,19 +119,15 @@ pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
 
 /// Fetches all possible signatures and attempts to abi decode the calldata
 pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
+    let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
     if calldata.len() < 8 {
-        return Err(eyre::eyre!(
+        eyre::bail!(
             "Calldata too short: expected at least 8 characters (excluding 0x prefix), got {}.",
             calldata.len()
-        ))
+        )
     }
 
-    let sigs = decode_function_selector(if calldata.starts_with("0x") {
-        &calldata[..10]
-    } else {
-        &calldata[..8]
-    })
-    .await?;
+    let sigs = decode_function_selector(&calldata[..8]).await?;
 
     // filter for signatures that can be decoded
     Ok(sigs
@@ -148,7 +144,7 @@ pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
 pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
     let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
     if prefixed_topic.len() != 66 {
-        return Err(eyre::eyre!("Invalid topic: expected 64 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_topic.len()));
+        eyre::bail!("Invalid topic: expected 64 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_topic.len())
     }
     decode_selector(&prefixed_topic[..66], SelectorType::Event).await
 }
