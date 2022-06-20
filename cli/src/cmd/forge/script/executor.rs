@@ -10,7 +10,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{builder::Backend, ExecutorBuilder},
+    executor::{builder::Backend, inspector::CheatsConfig, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
@@ -159,8 +159,8 @@ impl ScriptArgs {
         )
         .await;
 
-        let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(script_config.evm_opts.ffi)
+        let mut builder = ExecutorBuilder::default()
+            .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
             .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit());
