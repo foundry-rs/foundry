@@ -119,7 +119,19 @@ pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
 
 /// Fetches all possible signatures and attempts to abi decode the calldata
 pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
-    let sigs = decode_function_selector(calldata).await?;
+    if calldata.len() < 8 {
+        return Err(eyre::eyre!(
+            "Calldata too short: expected at least 8 characters (excluding 0x prefix), got {}.",
+            calldata.len()
+        ))
+    }
+
+    let sigs = decode_function_selector(if calldata.starts_with("0x") {
+        &calldata[..10]
+    } else {
+        &calldata[..8]
+    })
+    .await?;
 
     // filter for signatures that can be decoded
     Ok(sigs
