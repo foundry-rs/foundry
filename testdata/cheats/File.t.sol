@@ -22,17 +22,17 @@ contract FileTest is DSTest {
     }
 
     function testWriteFile() public {
-        string memory path = "../testdata/fixtures/File/write.txt";
+        string memory path = "../testdata/fixtures/File/write_file.txt";
         string memory data = "hello writable world";
         cheats.writeFile(path, data);
 
         assertEq(cheats.readFile(path), data);
+
+        cheats.removeFile(path);
     }
 
     function testWriteLine() public {
         string memory path = "../testdata/fixtures/File/write_line.txt";
-
-        cheats.writeFile(path, "");
 
         string memory line1 = "first line";
         cheats.writeLine(path, line1);
@@ -41,6 +41,8 @@ contract FileTest is DSTest {
         cheats.writeLine(path, line2);
 
         assertEq(cheats.readFile(path), string.concat(line1, "\n", line2, "\n"));
+
+        cheats.removeFile(path);
     }
 
     function testCloseFile() public {
@@ -49,5 +51,17 @@ contract FileTest is DSTest {
         assertEq(cheats.readLine(path), "hello readable world");
         cheats.closeFile(path);
         assertEq(cheats.readLine(path), "hello readable world");
+    }
+
+    function testRemoveFile() public {
+        string memory path = "../testdata/fixtures/File/remove_file.txt";
+        string memory data = "hello writable world";
+
+        cheats.writeFile(path, data);
+        assertEq(cheats.readLine(path), data);
+
+        cheats.removeFile(path);
+        cheats.writeLine(path, data);
+        assertEq(cheats.readLine(path), data);
     }
 }

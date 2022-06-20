@@ -116,4 +116,10 @@ interface Cheats {
     // Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.
     // (path) => ()
     function closeFile(string calldata) external;
+    // Removes file. This cheatcode will revert in the following situations, but is not limited to just these cases:
+    // - Path points to a directory.
+    // - The file doesn't exist.
+    // - The user lacks permissions to remove the file.
+    // (path) => ()
+    function removeFile(string calldata) external;
 }

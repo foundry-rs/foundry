@@ -74,6 +74,7 @@ ethers::contract::abigen!(
             readLine(string)(string)
             writeLine(string,string)
             closeFile(string)
+            removeFile(string)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

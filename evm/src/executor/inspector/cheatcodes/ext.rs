@@ -8,7 +8,7 @@ use ethers::{
 };
 use serde::Deserialize;
 use std::{
-    env,
+    env, fs,
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -213,6 +213,13 @@ fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     Ok(Bytes::new())
 }
 
+fn remove_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    close_file(state, path)?;
+    fs::remove_file(path).map_err(|err| err.to_string().encode())?;
+
+    Ok(Bytes::new())
+}
+
 pub fn apply(
     state: &mut Cheatcodes,
     ffi_enabled: bool,
@@ -249,6 +256,7 @@ pub fn apply(
         HEVMCalls::WriteFile(inner) => write_file(&inner.0, &inner.1),
         HEVMCalls::WriteLine(inner) => write_line(&inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
+        HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         _ => return None,
     })
 }
