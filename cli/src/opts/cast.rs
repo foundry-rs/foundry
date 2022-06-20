@@ -822,10 +822,10 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
-    #[clap(name = "request")]
-    #[clap(visible_aliases = &["rq", "req"])]
+    #[clap(name = "rpc")]
+    #[clap(visible_alias = "rp")]
     #[clap(about = "Perform a raw JSON-RPC request")]
-    Request {
+    Rpc {
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
         #[clap(value_name = "METHOD", help = "RPC method name")]

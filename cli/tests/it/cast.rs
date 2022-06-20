@@ -92,3 +92,23 @@ casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
     let out = cmd.stdout_lossy();
     assert!(out.contains("[[\"0x55556666\"],[],[],[[[]]]]"), "{}", out);
 });
+
+// test for cast_rpc without arguments
+casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_chainId`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim_end(), r#""0x1""#);
+});
+
+// test for cast_rpc with arguments
+casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_getBlockByNumber 0x123 :false`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", ":false"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
+});

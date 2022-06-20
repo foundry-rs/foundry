@@ -637,12 +637,13 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
-    /// let result = cast.rpc("eth_blockNumber", []).await?;
-    /// println!("{}", receipt);
+    /// let result = cast.rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
+    ///     .await?;
+    /// println!("{}", result);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn request<T>(&self, method: &str, params: T) -> Result<String>
+    pub async fn rpc<T>(&self, method: &str, params: T) -> Result<String>
     where
         T: std::fmt::Debug + serde::Serialize + Send + Sync,
     {

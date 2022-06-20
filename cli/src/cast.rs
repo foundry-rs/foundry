@@ -681,7 +681,7 @@ async fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
         Subcommands::Run(cmd) => cmd.run()?,
-        Subcommands::Request { rpc_url, method, params } => {
+        Subcommands::Rpc { rpc_url, method, params } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             let params = params
@@ -698,7 +698,7 @@ async fn main() -> eyre::Result<()> {
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            println!("{}", Cast::new(provider).request(&method, params).await?);
+            println!("{}", Cast::new(provider).rpc(&method, params).await?);
         }
     };
     Ok(())
