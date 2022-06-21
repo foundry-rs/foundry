@@ -98,20 +98,15 @@ pub async fn decode_selector(selector: &str, selector_type: SelectorType) -> Res
         .get(selector)
         .ok_or(eyre::eyre!("No signature found"))?
         .iter()
-        .filter_map(|d| {
-            if !d.filtered {
-                return Some(d.name.clone())
-            }
-            None
-        })
+        .filter_map(|d| (!d.filtered).then(|| d.name.clone()))
         .collect::<Vec<String>>())
 }
 
 /// Fetches a function signature given the selector using sig.eth.samczsun.com
 pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
     let prefixed_selector = format!("0x{}", selector.strip_prefix("0x").unwrap_or(selector));
-    if prefixed_selector.len() < 10 {
-        return Err(eyre::eyre!("Invalid selector"))
+    if prefixed_selector.len() != 10 {
+        eyre::bail!("Invalid selector: expected 8 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_selector.len())
     }
 
     decode_selector(&prefixed_selector[..10], SelectorType::Function).await
@@ -119,24 +114,29 @@ pub async fn decode_function_selector(selector: &str) -> Result<Vec<String>> {
 
 /// Fetches all possible signatures and attempts to abi decode the calldata
 pub async fn decode_calldata(calldata: &str) -> Result<Vec<String>> {
-    let sigs = decode_function_selector(calldata).await?;
+    let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
+    if calldata.len() < 8 {
+        eyre::bail!(
+            "Calldata too short: expected at least 8 characters (excluding 0x prefix), got {}.",
+            calldata.len()
+        )
+    }
+
+    let sigs = decode_function_selector(&calldata[..8]).await?;
 
     // filter for signatures that can be decoded
     Ok(sigs
         .iter()
         .cloned()
-        .filter(|sig| {
-            let res = abi_decode(sig, calldata, true);
-            res.is_ok()
-        })
+        .filter(|sig| abi_decode(sig, calldata, true).is_ok())
         .collect::<Vec<String>>())
 }
 
 /// Fetches a event signature given the 32 byte topic using sig.eth.samczsun.com
 pub async fn decode_event_topic(topic: &str) -> Result<Vec<String>> {
     let prefixed_topic = format!("0x{}", topic.strip_prefix("0x").unwrap_or(topic));
-    if prefixed_topic.len() < 66 {
-        return Err(eyre::eyre!("Invalid topic"))
+    if prefixed_topic.len() != 66 {
+        eyre::bail!("Invalid topic: expected 64 characters (excluding 0x prefix), got {} characters (including 0x prefix).", prefixed_topic.len())
     }
     decode_selector(&prefixed_topic[..66], SelectorType::Event).await
 }
@@ -338,7 +338,7 @@ async fn test_decode_selector() {
     // invalid signature
     decode_function_selector("0xa9059c")
         .await
-        .map_err(|e| assert_eq!(e.to_string(), "Invalid selector"))
+        .map_err(|e| assert_eq!(e.to_string(), "Invalid selector: expected 8 characters (excluding 0x prefix), got 8 characters (including 0x prefix)."))
         .map(|_| panic!("Expected fourbyte error"))
         .ok();
 }
