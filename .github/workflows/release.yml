@@ -98,11 +98,11 @@ jobs:
             target: aarch64-apple-darwin
             arch: arm64
             svm_target_platform: macosx-aarch64
-          #- os: windows-latest
-          #  platform: win32
-          #  target: x86_64-pc-windows-msvc
-          #  arch: amd64
-          #  svm_target_platform: macosx-amd64
+          - os: windows-latest
+            platform: win32
+            target: x86_64-pc-windows-msvc
+            arch: amd64
+            svm_target_platform: windows-amd64
 
     steps:
       - name: Checkout sources
