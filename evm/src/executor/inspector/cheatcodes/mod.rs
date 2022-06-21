@@ -33,7 +33,11 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    fs::File,
+    io::BufReader,
+};
 
 mod config;
 pub use config::CheatsConfig;
@@ -89,8 +93,21 @@ pub struct Cheatcodes {
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: CheatsConfig,
 
-    //// Offsets for files opened for reading
-    pub file_reading_offsets: HashMap<String, usize>,
+    /// Test-scoped context holding data that needs to be reset every test run
+    pub context: Context,
+}
+
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<String, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
 }
 
 impl Cheatcodes {

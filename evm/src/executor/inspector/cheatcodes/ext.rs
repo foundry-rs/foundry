@@ -9,8 +9,7 @@ use ethers::{
 use serde::Deserialize;
 use std::{
     env, fs,
-    fs::{File, OpenOptions},
-    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::Path,
     process::Command,
     str::FromStr,
@@ -70,7 +69,7 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
     };
 
     let mut buffer = String::new();
-    File::open(path)
+    fs::File::open(path)
         .map_err(|err| err.to_string().encode())?
         .read_to_string(&mut buffer)
         .map_err(|err| err.to_string().encode())?;
@@ -162,22 +161,21 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
 }
 
 fn read_file(path: &str) -> Result<Bytes, Bytes> {
-    let data = std::fs::read_to_string(path).map_err(|err| err.to_string().encode())?;
+    let data = fs::read_to_string(path).map_err(|err| err.to_string().encode())?;
 
     Ok(abi::encode(&[Token::String(data)]).into())
 }
 
 fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
-    // Get offset of previously opened file to continue reading OR set offset to zero
-    let offset = state.file_reading_offsets.entry(path.to_string()).or_default();
-    let file = File::open(path).map_err(|err| err.to_string().encode())?;
-
-    let mut reader = BufReader::new(file);
-    // Seek to read from offset
-    reader.seek(SeekFrom::Start(*offset as u64)).map_err(|err| err.to_string().encode())?;
+    // Get reader for previously opened file to continue reading OR initialize new reader
+    let reader =
+        state.context.opened_read_files.entry(path.to_string()).or_insert(BufReader::new(
+            fs::File::open(path).map_err(|err| err.to_string().encode())?,
+        ));
 
     let mut line: String = String::new();
-    let written = reader.read_line(&mut line).map_err(|err| err.to_string().encode())?;
+    reader.read_line(&mut line).map_err(|err| err.to_string().encode())?;
+
     // Remove trailing newline character, preserving others for cases where it may be important
     if line.ends_with('\n') {
         line.pop();
@@ -185,9 +183,6 @@ fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
             line.pop();
         }
     }
-
-    // Update offset to read from it later
-    *offset += written;
 
     Ok(abi::encode(&[Token::String(line)]).into())
 }
@@ -199,7 +194,7 @@ fn write_file(path: &str, data: &str) -> Result<Bytes, Bytes> {
 }
 
 fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
-    let mut file = OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .append(true)
         .create(true)
         .open(path)
@@ -211,7 +206,7 @@ fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
 }
 
 fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
-    state.file_reading_offsets.remove(path);
+    state.context.opened_read_files.remove(path);
 
     Ok(Bytes::new())
 }
