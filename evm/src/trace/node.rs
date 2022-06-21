@@ -131,13 +131,17 @@ impl CallTraceNode {
                         if let Some(tokens) =
                             funcs.iter().find_map(|func| func.decode_output(&bytes[..]).ok())
                         {
-                            self.trace.output = RawOrDecodedReturnData::Decoded(
-                                tokens
-                                    .iter()
-                                    .map(|token| utils::label(token, labels))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            );
+                            // Functions coming from an external database do not have any outputs
+                            // specified, and will lead to returning an empty list of tokens.
+                            if !tokens.is_empty() {
+                                self.trace.output = RawOrDecodedReturnData::Decoded(
+                                    tokens
+                                        .iter()
+                                        .map(|token| utils::label(token, labels))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                );
+                            }
                         }
                     } else if let Ok(decoded_error) =
                         foundry_utils::decode_revert(&bytes[..], Some(errors))
