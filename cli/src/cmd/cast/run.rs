@@ -1,5 +1,5 @@
 use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
-use cast::trace::CallTraceDecoder;
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -162,6 +162,9 @@ impl RunArgs {
                 .collect();
 
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+            decoder
+                .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);
