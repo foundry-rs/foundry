@@ -15,7 +15,7 @@ contract ReturnStatement {
 
         /* return empty 4 */
         return;
-        // return empty 5
+            // return empty 5
     }
 
     function returnSingleValue(uint256 val) external returns (uint256) {
@@ -57,5 +57,8 @@ contract ReturnStatement {
                 987654321, 1234567890, /* return mul 5 */ false
             );
         }
+
+        return someFunction().getValue().modifyValue().negate()
+            .scaleBySomeFactor(1000).transformToTuple();
     }
 }

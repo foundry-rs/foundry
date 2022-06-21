@@ -51,5 +51,7 @@ contract ReturnStatement {
             return /* return mul 4 */
             (
                 987654321, 1234567890,/* return mul 5 */ false); }
+
+        return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
     }
 }
