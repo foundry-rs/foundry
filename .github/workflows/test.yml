@@ -88,6 +88,7 @@ jobs:
             filter: '!test(~fork)'
           - name: forking
             filter: 'test(~fork)'
+        partition: [1, 2]
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -113,7 +114,7 @@ jobs:
           git config --global user.email "<>"
 
       - name: cargo nextest
-        run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
+        run: ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
 
   external-integration:
     name: external integration tests / ${{ matrix.job.name }}
