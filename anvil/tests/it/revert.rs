@@ -1,4 +1,3 @@
-use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::{Contract, ContractFactory},
@@ -30,7 +29,7 @@ contract Contract {
     let contract = compiled.remove("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -74,7 +73,7 @@ contract Contract {
     let contract = compiled.remove("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
@@ -131,7 +130,7 @@ async fn test_solc_revert_example() {
     let contract = compiled.remove("VendingMachine").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider().await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
