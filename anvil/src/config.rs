@@ -310,12 +310,6 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Returns the default node configuration
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
