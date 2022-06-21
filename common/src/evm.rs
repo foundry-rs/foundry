@@ -153,7 +153,7 @@ pub struct EnvArgs {
     pub gas_price: Option<u64>,
 
     /// The base fee in a block.
-    #[clap(long, value_name = "FEE")]
+    #[clap(long, visible_alias = "base-fee", value_name = "FEE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_base_fee_per_gas: Option<u64>,
 
