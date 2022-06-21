@@ -294,7 +294,7 @@ impl ScriptArgs {
         println!("\n==========================");
         println!("\nEstimated total gas used for script: {}", total_gas);
         println!(
-            "\nAmount required: {} ETH",
+            "\nEstimated amount required: {} ETH",
             format_units(total_gas.saturating_mul(per_gas), 18)
                 .unwrap_or_else(|_| "[Could not calculate]".to_string())
                 .trim_end_matches('0')
