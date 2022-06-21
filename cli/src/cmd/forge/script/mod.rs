@@ -231,7 +231,9 @@ impl ScriptArgs {
             println!("{}", Paint::red("Script failed."));
         }
 
-        println!("Gas used: {}", result.gas);
+        if !self.broadcast {
+            println!("Gas used: {}", result.gas);
+        }
 
         if !result.returned.is_empty() {
             println!("\n== Return ==");
