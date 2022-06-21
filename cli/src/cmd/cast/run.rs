@@ -1,5 +1,5 @@
-use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
-use cast::trace::CallTraceDecoder;
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -9,7 +9,10 @@ use ethers::{
 };
 use forge::{
     debug::DebugArena,
-    executor::{opts::EvmOpts, Backend, DeployResult, ExecutorBuilder, RawCallResult},
+    executor::{
+        inspector::CheatsConfig, opts::EvmOpts, Backend, DeployResult, ExecutorBuilder,
+        RawCallResult,
+    },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
 use foundry_config::{find_project_root_path, Config};
@@ -74,7 +77,8 @@ impl RunArgs {
 
             let builder = ExecutorBuilder::default()
                 .with_config(env)
-                .with_spec(utils::evm_spec(&config.evm_version));
+                .with_cheatcodes(CheatsConfig::new(&config, &evm_opts))
+                .with_spec(crate::utils::evm_spec(&config.evm_version));
 
             let mut executor = builder.build(db);
 
@@ -153,6 +157,9 @@ impl RunArgs {
                 .collect();
 
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
+
+            decoder
+                .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);

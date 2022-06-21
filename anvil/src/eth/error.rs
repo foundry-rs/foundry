@@ -180,12 +180,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
+                        // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
                             msg = format!("{}: {}", msg, reason);
                         }
                         RpcError {
-                            code: ErrorCode::TransactionRejected,
+                            // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
+                            code: ErrorCode::ExecutionError,
                             message: msg.into(),
                             data: serde_json::to_value(data).ok(),
                         }

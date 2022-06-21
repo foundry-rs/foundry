@@ -231,7 +231,9 @@ impl ScriptArgs {
             println!("{}", Paint::red("Script failed."));
         }
 
-        println!("Gas used: {}", result.gas);
+        if script_config.evm_opts.fork_url.is_none() {
+            println!("Gas used: {}", result.gas);
+        }
 
         if !result.returned.is_empty() {
             println!("\n== Return ==");

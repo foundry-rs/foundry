@@ -355,13 +355,16 @@ mod tests {
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
+    use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
     use foundry_utils::init_tracing_subscriber;
     use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
-        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
+        MultiContractRunnerBuilder::default()
+            .sender(EVM_OPTS.sender)
+            .with_cheats_config(CheatsConfig::new(&Config::default(), &*EVM_OPTS))
     }
 
     /// Builds a non-tracing runner

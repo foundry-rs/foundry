@@ -160,6 +160,7 @@ impl Backend {
             created_forks: Default::default(),
             db,
             snapshots: Default::default(),
+            has_failure_in_reverted_snapshot: false,
         }
     }
 

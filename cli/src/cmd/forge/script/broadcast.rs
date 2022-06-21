@@ -3,7 +3,7 @@ use super::{
     *,
 };
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_different_gas_calc},
+    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
     init_progress,
     opts::WalletType,
     update_progress,
@@ -15,6 +15,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
+use eyre::ContextCompat;
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -39,14 +40,13 @@ impl ScriptArgs {
                 .collect();
 
             let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
-            if local_wallets.is_empty() {
-                eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
-            }
+            let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
 
             // We only wait for a transaction receipt before sending the next transaction, if there
             // is more than one signer. There would be no way of assuring their order
-            // otherwise.
-            let sequential_broadcast = local_wallets.len() != 1 || self.slow;
+            // otherwise. Or if the chain does not support batched transactions (eg. Arbitrum).
+            let sequential_broadcast =
+                local_wallets.len() != 1 || self.slow || !has_batch_support(chain);
 
             // Make a one-time gas price estimation
             let (gas_price, eip1559_fees) = {
@@ -72,7 +72,7 @@ impl ScriptArgs {
 
                     let mut tx = tx.clone();
 
-                    tx.set_chain_id(signer.chain_id());
+                    tx.set_chain_id(chain);
 
                     if let Some(gas_price) = self.with_gas_price {
                         tx.set_gas_price(gas_price);
@@ -294,7 +294,7 @@ impl ScriptArgs {
         println!("\n==========================");
         println!("\nEstimated total gas used for script: {}", total_gas);
         println!(
-            "\nAmount required: {} ETH",
+            "\nEstimated amount required: {} ETH",
             format_units(total_gas.saturating_mul(per_gas), 18)
                 .unwrap_or_else(|_| "[Could not calculate]".to_string())
                 .trim_end_matches('0')
@@ -325,13 +325,28 @@ impl fmt::Display for BroadcastError {
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    legacy_or_1559: TypedTransaction,
+    mut legacy_or_1559: TypedTransaction,
 ) -> Result<TxHash, BroadcastError>
 where
     T: Middleware,
     U: Signer,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+
+    // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to be
+    // re-estimated right before broadcasting.
+    if has_different_gas_calc(signer.signer().chain_id()) {
+        // If we don't, some RPCs might just return our estimated gas anyway.
+        legacy_or_1559.set_gas(0);
+
+        legacy_or_1559.set_gas(
+            signer
+                .provider()
+                .estimate_gas(&legacy_or_1559)
+                .await
+                .map_err(|err| BroadcastError::Simple(err.to_string()))?,
+        );
+    }
 
     // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
     let signature = signer

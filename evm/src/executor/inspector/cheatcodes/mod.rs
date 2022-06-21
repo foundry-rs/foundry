@@ -48,9 +48,6 @@ pub use config::CheatsConfig;
 /// mocking addresses, signatures and altering call reverts.
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
-    /// Whether FFI is enabled or not
-    pub ffi: bool,
-
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the

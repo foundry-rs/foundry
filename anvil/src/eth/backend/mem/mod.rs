@@ -6,7 +6,7 @@ use crate::{
             cheats,
             cheats::CheatsManager,
             db::Db,
-            executor::{ExecutedTransactions, TransactionExecutor},
+            executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -90,6 +90,8 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
+    /// A lock used to sync evm executor access
+    executor_lock: EvmExecutorLock,
 }
 
 impl Backend {
@@ -107,6 +109,7 @@ impl Backend {
             fees,
             genesis: Default::default(),
             active_snapshots: Arc::new(Mutex::new(Default::default())),
+            executor_lock: EvmExecutorLock::new(false),
         }
     }
 
@@ -138,6 +141,7 @@ impl Backend {
             blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
+            executor_lock: EvmExecutorLock::new(fork.is_some()),
             fork,
             time: Default::default(),
             cheats: Default::default(),
@@ -427,83 +431,100 @@ impl Backend {
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide.
-    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
-        tokio::task::block_in_place(|| self.do_mine_block(pool_transactions))
+    pub async fn mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
+        self.do_mine_block(pool_transactions).await
     }
 
-    fn do_mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
+    async fn do_mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
-        let current_base_fee = self.base_fee();
-        // acquire all locks
-        let mut env = self.env.write();
-        let mut db = self.db.write();
-        let mut storage = self.blockchain.storage.write();
+        let (outcome, header, block_hash) = {
+            let _lock = self.executor_lock.write().await;
 
-        // store current state
-        self.states.write().insert(storage.best_hash, db.current_state());
+            let current_base_fee = self.base_fee();
+            // acquire all locks
+            let mut env = self.env.write();
+            let mut db = self.db.write();
+            let mut storage = self.blockchain.storage.write();
 
-        // increase block number for this block
-        env.block.number = env.block.number.saturating_add(U256::one());
-        env.block.basefee = current_base_fee;
-        env.block.timestamp = self.time.next_timestamp().into();
+            // store current state
+            self.states.write().insert(storage.best_hash, db.current_state());
 
-        let executor = TransactionExecutor {
-            db: &mut *db,
-            validator: self,
-            pending: pool_transactions.into_iter(),
-            block_env: env.block.clone(),
-            cfg_env: env.cfg.clone(),
-            parent_hash: storage.best_hash,
-            gas_used: U256::zero(),
-        };
+            // increase block number for this block
+            env.block.number = env.block.number.saturating_add(U256::one());
+            env.block.basefee = current_base_fee;
+            env.block.timestamp = self.time.next_timestamp().into();
 
-        // create the new block with the current timestamp
-        let ExecutedTransactions { block, included, invalid } = executor.execute();
-        let BlockInfo { block, transactions, receipts } = block;
+            let executor = TransactionExecutor {
+                db: &mut *db,
+                validator: self,
+                pending: pool_transactions.into_iter(),
+                block_env: env.block.clone(),
+                cfg_env: env.cfg.clone(),
+                parent_hash: storage.best_hash,
+                gas_used: U256::zero(),
+            };
 
-        let header = block.header.clone();
+            // create the new block with the current timestamp
+            let ExecutedTransactions { block, included, invalid } = executor.execute();
+            let BlockInfo { block, transactions, receipts } = block;
 
-        let block_hash = block.header.hash();
-        let block_number: U64 = env.block.number.as_u64().into();
+            let header = block.header.clone();
 
-        trace!(
-            target: "backend",
-            "Mined block {} with {} tx {:?}",
-            block_number,
-            transactions.len(),
-            transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
-        );
+            let block_hash = block.header.hash();
+            let block_number: U64 = env.block.number.as_u64().into();
 
-        // update block metadata
-        storage.best_number = block_number;
-        storage.best_hash = block_hash;
+            trace!(
+                target: "backend",
+                "Mined block {} with {} tx {:?}",
+                block_number,
+                transactions.len(),
+                transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
+            );
 
-        storage.blocks.insert(block_hash, block);
-        storage.hashes.insert(block_number, block_hash);
+            // update block metadata
+            storage.best_number = block_number;
+            storage.best_hash = block_hash;
 
-        node_info!("");
-        // insert all transactions
-        for (info, receipt) in transactions.into_iter().zip(receipts) {
-            // log some tx info
-            {
-                node_info!("    Transaction: {:?}", info.transaction_hash);
-                if let Some(ref contract) = info.contract_address {
-                    node_info!("    Contract created: {:?}", contract);
+            storage.blocks.insert(block_hash, block);
+            storage.hashes.insert(block_number, block_hash);
+
+            node_info!("");
+            // insert all transactions
+            for (info, receipt) in transactions.into_iter().zip(receipts) {
+                // log some tx info
+                {
+                    node_info!("    Transaction: {:?}", info.transaction_hash);
+                    if let Some(ref contract) = info.contract_address {
+                        node_info!("    Contract created: {:?}", contract);
+                    }
+                    node_info!("    Gas used: {}", receipt.gas_used());
                 }
-                node_info!("    Gas used: {}", receipt.gas_used());
+
+                let mined_tx = MinedTransaction {
+                    info,
+                    receipt,
+                    block_hash,
+                    block_number: block_number.as_u64(),
+                };
+                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+            let timestamp = utc_from_secs(header.timestamp);
 
-            let mined_tx =
-                MinedTransaction { info, receipt, block_hash, block_number: block_number.as_u64() };
-            storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
-        }
-        let timestamp = utc_from_secs(header.timestamp);
+            node_info!("    Block Number: {}", block_number);
+            node_info!("    Block Hash: {:?}", block_hash);
+            node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
 
-        node_info!("    Block Number: {}", block_number);
-        node_info!("    Block Hash: {:?}", block_hash);
-        node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            let outcome = MinedBlockOutcome { block_number, included, invalid };
 
+            (outcome, header, block_hash)
+        };
         let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
             header.gas_used,
             header.gas_limit,
@@ -516,7 +537,7 @@ impl Backend {
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee.into());
 
-        MinedBlockOutcome { block_number, included, invalid }
+        outcome
     }
 
     /// Executes the `CallRequest` without writing to the DB
@@ -524,13 +545,16 @@ impl Backend {
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
-    pub fn call(
+    pub async fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
+
+        let _lock = self.executor_lock.read().await;
+
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
