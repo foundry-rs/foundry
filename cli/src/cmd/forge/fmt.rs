@@ -1,20 +1,17 @@
+use crate::cmd::Cmd;
+use clap::Parser;
+use console::{style, Style};
+use ethers::solc::ProjectPathsConfig;
+use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
+use foundry_common::fs;
+use rayon::prelude::*;
+use similar::{ChangeTag, TextDiff};
 use std::{
     fmt::{Display, Write},
     io,
     io::Read,
     path::{Path, PathBuf},
 };
-
-use clap::Parser;
-use console::{style, Style};
-use ethers::solc::ProjectPathsConfig;
-
-use rayon::prelude::*;
-use similar::{ChangeTag, TextDiff};
-
-use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
-
-use crate::cmd::Cmd;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -97,7 +94,7 @@ impl Cmd for FmtArgs {
             .enumerate()
             .map(|(i, input)| {
                 let source = match input {
-                    Input::Path(path) => std::fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(&path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
@@ -169,7 +166,7 @@ impl Cmd for FmtArgs {
                         return Ok(Some(diff_summary))
                     }
                 } else if let Input::Path(path) = input {
-                    std::fs::write(path, output)?;
+                    fs::write(path, output)?;
                 }
 
                 Ok(None)
