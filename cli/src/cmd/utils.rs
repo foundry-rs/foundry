@@ -14,6 +14,7 @@ use ethers::{
     },
 };
 
+use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
 
 use std::{collections::BTreeMap, path::PathBuf};
@@ -198,8 +199,19 @@ macro_rules! update_progress {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
-    matches!(
-        Chain::try_from(chain).unwrap_or(Chain::Mainnet),
-        Chain::Arbitrum | Chain::ArbitrumTestnet
-    )
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+    }
+    false
+}
+
+/// True if it supports broadcasting in batches.
+pub fn has_batch_support(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return !matches!(
+            chain,
+            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        )
+    }
+    true
 }
