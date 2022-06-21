@@ -2639,27 +2639,27 @@ mod tests {
         };
     }
 
-    // test_directory! { ConstructorDefinition }
-    // test_directory! { ContractDefinition }
-    // test_directory! { DocComments }
-    // test_directory! { EnumDefinition }
-    // test_directory! { ErrorDefinition }
-    // test_directory! { EventDefinition }
-    // test_directory! { FunctionDefinition }
-    // test_directory! { FunctionType }
-    // test_directory! { ImportDirective }
-    // test_directory! { ModifierDefinition }
-    // test_directory! { StatementBlock }
-    // test_directory! { StructDefinition }
-    // test_directory! { TypeDefinition }
-    // test_directory! { UsingDirective }
-    // test_directory! { VariableDefinition }
-    // test_directory! { ExpressionPrecedence }
-    // test_directory! { WhileStatement }
-    // test_directory! { DoWhileStatement }
-    // test_directory! { ForStatement }
-    // test_directory! { IfStatement }
-    // test_directory! { VariableAssignment }
-    // test_directory! { FunctionCallArgsStatement }
+    test_directory! { ConstructorDefinition }
+    test_directory! { ContractDefinition }
+    test_directory! { DocComments }
+    test_directory! { EnumDefinition }
+    test_directory! { ErrorDefinition }
+    test_directory! { EventDefinition }
+    test_directory! { FunctionDefinition }
+    test_directory! { FunctionType }
+    test_directory! { ImportDirective }
+    test_directory! { ModifierDefinition }
+    test_directory! { StatementBlock }
+    test_directory! { StructDefinition }
+    test_directory! { TypeDefinition }
+    test_directory! { UsingDirective }
+    test_directory! { VariableDefinition }
+    test_directory! { ExpressionPrecedence }
+    test_directory! { WhileStatement }
+    test_directory! { DoWhileStatement }
+    test_directory! { ForStatement }
+    test_directory! { IfStatement }
+    test_directory! { VariableAssignment }
+    test_directory! { FunctionCallArgsStatement }
     test_directory! { ReturnStatement }
 }
