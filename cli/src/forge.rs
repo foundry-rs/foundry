@@ -64,7 +64,7 @@ fn main() -> eyre::Result<()> {
             }
         },
         Subcommands::Create(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.run())?;
         }
         Subcommands::Update { lib } => {
             let mut cmd = Command::new("git");
