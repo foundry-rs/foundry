@@ -65,6 +65,7 @@ impl TraceIdentifier for EtherscanIdentifier {
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi: Some(Cow::Owned(abi)),
+                    artifact_id: None,
                 })
                 .collect();
 

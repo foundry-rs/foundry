@@ -2009,6 +2009,7 @@ dependencies = [
  "parking_lot 0.12.0",
  "proptest",
  "revm",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

@@ -7,7 +7,7 @@ use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
     cache::CacheArgs,
-    config,
+    config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
     flatten,
@@ -59,7 +59,10 @@ pub enum Subcommands {
     #[clap(visible_alias = "s")]
     Script(ScriptArgs),
 
-    #[clap(visible_alias = "bi")]
+    #[clap(about = "Generate coverage reports.")]
+    Coverage(coverage::CoverageArgs),
+
+    #[clap(alias = "bi")]
     #[clap(about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 

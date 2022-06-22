@@ -28,7 +28,8 @@ pub use revm::Env;
 
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{
-    debug::DebugArena, executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceArena, CALLER,
+    coverage::HitMaps, debug::DebugArena, executor::inspector::DEFAULT_CREATE2_DEPLOYER,
+    trace::CallTraceArena, CALLER,
 };
 use bytes::Bytes;
 use ethers::{
@@ -108,6 +109,8 @@ pub struct CallResult<D: Detokenize> {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -138,6 +141,8 @@ pub struct RawCallResult {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -160,6 +165,7 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: BTreeMap::new(),
             traces: None,
+            coverage: None,
             debug: None,
             transactions: None,
             state_changeset: None,
@@ -297,6 +303,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -312,6 +319,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -361,7 +369,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -394,6 +402,7 @@ where
             stipend,
             logs,
             labels,
+            coverage,
             traces,
             debug,
             transactions,
@@ -424,6 +433,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -439,6 +449,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -488,7 +499,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        let InspectorData { logs, labels, traces, debug, coverage, cheatcodes, .. } =
             inspector.collect_inspector_states();
 
         let transactions = if let Some(cheats) = cheatcodes {
@@ -510,6 +521,7 @@ where
             logs: logs.to_vec(),
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset: Some(state_changeset),

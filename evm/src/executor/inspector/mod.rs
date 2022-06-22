@@ -10,6 +10,9 @@ pub use tracer::Tracer;
 mod debugger;
 pub use debugger::Debugger;
 
+mod coverage;
+pub use coverage::CoverageCollector;
+
 mod stack;
 pub use stack::{InspectorData, InspectorStack};
 
@@ -38,6 +41,8 @@ pub struct InspectorStackConfig {
     pub tracing: bool,
     /// Whether or not the debugger is enabled
     pub debugger: bool,
+    /// Whether or not coverage info should be collected
+    pub coverage: bool,
 }
 
 impl InspectorStackConfig {
@@ -56,6 +61,9 @@ impl InspectorStackConfig {
         }
         if self.debugger {
             stack.debugger = Some(Debugger::default());
+        }
+        if self.coverage {
+            stack.coverage = Some(CoverageCollector::default());
         }
         stack
     }

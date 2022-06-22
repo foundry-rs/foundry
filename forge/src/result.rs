@@ -3,6 +3,7 @@
 use crate::Address;
 use ethers::prelude::Log;
 use foundry_evm::{
+    coverage::HitMaps,
     fuzz::{CounterExample, FuzzedCases},
     trace::{CallTraceArena, TraceKind},
 };
@@ -62,6 +63,10 @@ pub struct TestResult {
 
     /// Traces
     pub traces: Vec<(TraceKind, CallTraceArena)>,
+
+    /// Raw coverage info
+    #[serde(skip)]
+    pub coverage: Option<HitMaps>,
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
