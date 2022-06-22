@@ -1670,7 +1670,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
-                // write_chunk_spaced!(self, expr.loc().end(), Some(false), "{}", "(")?;
                 write!(self.buf(), "(")?;
                 self.surrounded(expr.loc().end(), "", ")", Some(loc.end()), |fmt, _| {
                     let exprs = fmt.items_to_chunks(
@@ -2474,6 +2473,38 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.write_chunks_separated(&chunks, ",", multiline)?;
         Ok(())
     }
+
+    fn visit_revert(
+        &mut self,
+        loc: Loc,
+        error: &mut Option<IdentifierPath>,
+        args: &mut Vec<Expression>,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "revert")?;
+        if let Some(error) = error {
+            error.visit(self)?;
+        }
+        write!(self.buf(), "(")?;
+        if args.is_empty() {
+            write!(self.buf(), ")")?;
+        } else {
+            let first_args_loc = args.first().as_ref().unwrap().loc();
+            self.surrounded(first_args_loc.start(), "", ")", Some(loc.end()), |fmt, _| {
+                let exprs = fmt.items_to_chunks(
+                    Some(loc.end()),
+                    args.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                )?;
+
+                // fmt.write_prefix_comments_before(first_args_loc.start())?;
+                let multiline = fmt.are_chunks_separated_multiline("{});", &exprs, ", ")?;
+                fmt.write_chunks_separated(&exprs, ",", multiline)?;
+                Ok(())
+            })?
+        }
+        self.write_semicolon()?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2584,7 +2615,7 @@ mod tests {
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
         source_pt.visit(&mut f).unwrap();
 
-        println!("{}", source_formatted);
+        // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(
@@ -2640,4 +2671,5 @@ mod tests {
     test_directory! { IfStatement }
     test_directory! { VariableAssignment }
     test_directory! { FunctionCallArgsStatement }
+    test_directory! { RevertStatement }
 }
