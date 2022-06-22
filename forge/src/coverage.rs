@@ -68,22 +68,19 @@ fn format_cell(hits: usize, total: usize) -> Cell {
     cell
 }
 
-pub struct LcovReporter<W> {
+pub struct LcovReporter<'a> {
     /// Destination buffer
-    destination: W,
+    destination: &'a mut (dyn Write + 'a),
 }
 
-impl<W> LcovReporter<W> {
-    pub fn new(destination: W) -> Self {
+impl<'a> LcovReporter<'a> {
+    pub fn new(destination: &'a mut (dyn Write + 'a)) -> LcovReporter<'a> {
         Self { destination }
     }
 }
 
-impl<W> CoverageReporter for LcovReporter<W>
-where
-    W: Write,
-{
-    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
+impl<'a> CoverageReporter for LcovReporter<'a> {
+    fn report(self, map: CoverageMap) -> eyre::Result<()> {
         for file in map {
             let summary = file.summary();
 

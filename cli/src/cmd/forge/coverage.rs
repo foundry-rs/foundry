@@ -253,7 +253,7 @@ impl CoverageArgs {
             CoverageReportKind::Summary => SummaryReporter::default().report(map),
             // TODO: Sensible place to put the LCOV file
             CoverageReportKind::Lcov => {
-                LcovReporter::new(std::fs::File::create(root.join("lcov.info"))?).report(map)
+                LcovReporter::new(&mut std::fs::File::create(root.join("lcov.info"))?).report(map)
             }
             CoverageReportKind::Debug => DebugReporter::default().report(map),
         }
