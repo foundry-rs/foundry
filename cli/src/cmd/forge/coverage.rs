@@ -5,7 +5,7 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    utils,
+    utils::{self, p_println},
 };
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
@@ -74,10 +74,10 @@ impl Cmd for CoverageArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let (config, evm_opts) = self.configure()?;
         let (project, output) = self.build(&config)?;
-        println!("Analysing contracts...");
+        p_println!(!self.opts.silent => "Analysing contracts...");
         let (map, source_maps) = self.prepare(output.clone())?;
 
-        println!("Running tests...");
+        p_println!(!self.opts.silent => "Running tests...");
         self.collect(project, output, source_maps, map, config, evm_opts)
     }
 }
@@ -212,7 +212,7 @@ impl CoverageArgs {
         let root = project.paths.root;
 
         // Build the contract runner
-        let evm_spec = crate::utils::evm_spec(&config.evm_version);
+        let evm_spec = utils::evm_spec(&config.evm_version);
         let mut runner = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
