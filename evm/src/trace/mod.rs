@@ -357,7 +357,7 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let addr: String = match self.verbose {
+        let address: String = match self.verbose {
             true => format!("{:#x}", &self.address) as String,
             false => self.address.to_string() as String,
         };
@@ -369,7 +369,7 @@ impl fmt::Display for CallTrace {
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                self.address
+                address
             )?;
         } else {
             let (func, inputs) = match &self.data {
@@ -396,7 +396,7 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&addr)),
+                color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
                 if !self.value.is_zero() {
                     format!("{{value: {}}}", self.value)

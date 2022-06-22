@@ -38,7 +38,7 @@ pub struct RunArgs {
         help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
     )]
     quick: bool,
-    #[clap(long, short = 'v', help = "Prints full address", value_name = "VERBOSE")]
+    #[clap(long, short = 'v', help = "Prints full address")]
     verbose: bool,
     #[clap(
         long,
