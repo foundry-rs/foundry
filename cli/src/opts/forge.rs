@@ -49,29 +49,25 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(visible_alias = "t")]
-    #[clap(about = "Run the project's tests.")]
+    #[clap(visible_alias = "t", about = "Run the project's tests.")]
     Test(test::TestArgs),
 
     #[clap(
+        visible_alias = "s",
         about = "Run a smart contract as a script, building transactions that can be sent onchain."
     )]
-    #[clap(visible_alias = "s")]
     Script(ScriptArgs),
 
     #[clap(about = "Generate coverage reports.")]
     Coverage(coverage::CoverageArgs),
 
-    #[clap(alias = "bi")]
-    #[clap(about = "Generate Rust bindings for smart contracts.")]
+    #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(visible_alias = "b")]
-    #[clap(about = "Build the project's smart contracts.")]
+    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(visible_alias = "d")]
-    #[clap(about = "Debugs a single smart contract as a script.")]
+    #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
     Debug(DebugArgs),
 
     #[clap(
