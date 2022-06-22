@@ -22,7 +22,7 @@ use forge::{
     trace::identifier::LocalTraceIdentifier,
     MultiContractRunnerBuilder,
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::{figment::Figment, Config};
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel, thread};
 
@@ -170,9 +170,8 @@ impl CoverageArgs {
                         })
                         .collect();
 
-                    let items =
-                        Visitor::new(source.id, std::fs::read_to_string(&path)?, source_maps)
-                            .visit_ast(ast)?;
+                    let items = Visitor::new(source.id, fs::read_to_string(&path)?, source_maps)
+                        .visit_ast(ast)?;
 
                     if items.is_empty() {
                         continue
@@ -253,7 +252,7 @@ impl CoverageArgs {
             CoverageReportKind::Summary => SummaryReporter::default().report(map),
             // TODO: Sensible place to put the LCOV file
             CoverageReportKind::Lcov => {
-                LcovReporter::new(&mut std::fs::File::create(root.join("lcov.info"))?).report(map)
+                LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(map)
             }
             CoverageReportKind::Debug => DebugReporter::default().report(map),
         }
