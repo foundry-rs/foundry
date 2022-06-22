@@ -216,7 +216,7 @@ impl CoverageArgs {
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
             .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
-            .with_coverage()
+            .set_coverage(true)
             .build(root.clone(), output, evm_opts)?;
         let (tx, rx) = channel::<(String, SuiteResult)>();
 

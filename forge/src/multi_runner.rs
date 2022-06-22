@@ -171,8 +171,8 @@ impl MultiContractRunnerBuilder {
     }
 
     #[must_use]
-    pub fn with_coverage(mut self) -> Self {
-        self.coverage = true;
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.coverage = enable;
         self
     }
 }
