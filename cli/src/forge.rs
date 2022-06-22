@@ -1,5 +1,6 @@
 pub mod cmd;
 pub mod compile;
+mod handler;
 mod opts;
 mod suggestions;
 mod term;
@@ -18,7 +19,7 @@ use opts::forge::{Opts, Subcommands};
 use std::process::Command;
 
 fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 

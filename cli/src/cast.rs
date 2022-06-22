@@ -1,6 +1,7 @@
 pub mod cmd;
 pub mod compile;
 
+mod handler;
 mod suggestions;
 mod term;
 mod utils;
@@ -45,7 +46,7 @@ use std::{
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 
