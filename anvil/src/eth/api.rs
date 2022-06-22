@@ -1571,14 +1571,14 @@ impl EthApi {
         let (exit, _, gas, _) =
             self.backend.call(call_to_estimate, fees.clone(), block_number).await?;
         match exit {
-            Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
+            return_ok!() => {
                 // succeeded
             }
             Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
                 return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
-            Return::Revert => {
+            return_revert!() => {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {

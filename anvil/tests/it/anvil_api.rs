@@ -1,6 +1,5 @@
 //! tests for custom anvil endpoints
 
-use crate::next_port;
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
     prelude::Middleware,
@@ -10,8 +9,7 @@ use std::time::{Duration, SystemTime};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_port(next_port()).with_hardfork(Hardfork::Berlin)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Hardfork::Berlin)).await;
     let provider = handle.http_provider();
 
     let gas_price = 1337u64.into();
@@ -21,7 +19,7 @@ async fn can_set_gas_price() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let impersonate = Address::random();
@@ -54,7 +52,7 @@ async fn can_impersonate_account() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_mine_manually() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let start_num = provider.get_block_number().await.unwrap();
@@ -68,7 +66,7 @@ async fn can_mine_manually() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_set_next_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -95,7 +93,7 @@ async fn test_set_next_timestamp() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_timestamp_interval() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     api.evm_mine(None).await.unwrap();

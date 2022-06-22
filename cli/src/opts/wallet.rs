@@ -9,6 +9,7 @@ use ethers::{
     types::Address,
 };
 use eyre::{eyre, Result};
+use foundry_common::fs;
 use serde::Serialize;
 
 type SignerClient<T> = SignerMiddleware<Arc<Provider<RetryClient<Http>>>, T>;
@@ -192,7 +193,7 @@ pub trait WalletTrait {
     }
 
     fn get_from_mnemonic(&self, path: &str, index: u32) -> Result<LocalWallet> {
-        let mnemonic = std::fs::read_to_string(path)?.replace('\n', "");
+        let mnemonic = fs::read_to_string(path)?.replace('\n', "");
         Ok(MnemonicBuilder::<English>::default().phrase(mnemonic.as_str()).index(index)?.build()?)
     }
 

@@ -1,6 +1,6 @@
 //! various fork related test
 
-use crate::{abi::*, next_port, utils};
+use crate::{abi::*, utils};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
@@ -33,11 +33,7 @@ pub struct LocalFork {
 impl LocalFork {
     /// Spawns two nodes with the test config
     pub async fn new() -> Self {
-        Self::setup(
-            NodeConfig::test().with_port(next_port()),
-            NodeConfig::test().with_port(next_port()),
-        )
-        .await
+        Self::setup(NodeConfig::test(), NodeConfig::test()).await
     }
 
     /// Spawns two nodes where one is a fork of the other
@@ -52,7 +48,6 @@ impl LocalFork {
 
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
-        .with_port(next_port())
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
@@ -256,10 +251,7 @@ async fn can_deploy_greeter_on_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_on_rinkeby_fork() {
     let (_api, handle) = spawn(
-        NodeConfig::test()
-            .with_port(next_port())
-            .with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint()))
-            .silent(),
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint())).silent(),
     )
     .await;
     let provider = handle.http_provider();
@@ -284,7 +276,7 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_properly() {
-    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let account = origin_handle.dev_accounts().next().unwrap();
     let origin_provider = origin_handle.http_provider();
     let origin_nonce = 1u64.into();
@@ -292,12 +284,8 @@ async fn can_reset_properly() {
 
     assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
-    let (fork_api, fork_handle) = spawn(
-        NodeConfig::test()
-            .with_port(next_port())
-            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
-    )
-    .await;
+    let (fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
     assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
