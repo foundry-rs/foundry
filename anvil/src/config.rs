@@ -269,10 +269,11 @@ Chain ID:       {}
 // === impl NodeConfig ===
 
 impl NodeConfig {
-    /// Test config
+    /// Returns a new config intended to be used in tests, which does not print and binds to a
+    /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, silent: true, ..Default::default() }
+        Self { enable_tracing: false, silent: true, port: 0, ..Default::default() }
     }
 }
 
