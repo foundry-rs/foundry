@@ -5,7 +5,7 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    utils::{self, p_println},
+    utils::{self, p_println, FoundryPathExt},
 };
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
@@ -149,7 +149,7 @@ impl CoverageArgs {
             // instead of on a source file level. Repositories like Solmate
             // have a lot of abstract contracts that are being tested, and these
             // are usually defined in the test files themselves.
-            let is_test = path.ends_with(".t.sol");
+            let is_test = path.is_sol_test();
             let is_dependency = path.starts_with("lib");
             if is_test || is_dependency {
                 continue
