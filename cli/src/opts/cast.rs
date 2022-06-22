@@ -1,6 +1,6 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, run::RunArgs, wallet::WalletSubcommands},
+    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -825,35 +825,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     #[clap(name = "rpc")]
     #[clap(visible_alias = "rp")]
     #[clap(about = "Perform a raw JSON-RPC request")]
-    Rpc {
-        #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
-        rpc_url: Option<String>,
-        #[clap(
-            short,
-            long,
-            help = "Do not put parameters in an array",
-            long_help = r#"Do not put parameters in an array
-
-If --direct-params is passed the first PARAM will be taken as the value of "params". For example:
-
-rpc --direct-params eth_getBlockByNumber '["0x123", false]'
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-        )]
-        direct_params: bool,
-        #[clap(value_name = "METHOD", help = "RPC method name")]
-        method: String,
-        #[clap(
-            value_name = "PARAMS",
-            help = "RPC parameters",
-            long_help = r#"RPC parameters
-
-Parameters are interpreted as JSON and then fall back to string. For example:
-
-rpc eth_getBlockByNumber 0x123 false
-    => {"method": "eth_getBlockByNumber", "params": ["0x123", false] ... }"#
-        )]
-        params: Vec<String>,
-    },
+    Rpc(RpcArgs),
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

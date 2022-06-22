@@ -5,7 +5,7 @@ use foundry_cli_test_utils::{
     util::{TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
@@ -113,19 +113,33 @@ casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
 
-// test for cast_rpc with direct params
-casttest!(cast_rpc_direct_params, |_: TestProject, mut cmd: TestCommand| {
+// test for cast_rpc with raw params
+casttest!(cast_rpc_raw_params, |_: TestProject, mut cmd: TestCommand| {
     let eth_rpc_url = next_http_rpc_endpoint();
 
-    // Call `cast rpc --direct-params eth_getBlockByNumber '["0x123", false]'`
+    // Call `cast rpc eth_getBlockByNumber --raw '["0x123", false]'`
     cmd.args([
         "rpc",
         "--rpc-url",
         eth_rpc_url.as_str(),
-        "--direct-params",
         "eth_getBlockByNumber",
+        "--raw",
         r#"["0x123", false]"#,
     ]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
+});
+
+// test for cast_rpc with direct params
+casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc  eth_getBlockByNumber --raw
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "--raw"]).stdin(
+        |mut stdin| {
+            stdin.write_all(b"\n[\n\"0x123\",\nfalse\n]\n").unwrap();
+        },
+    );
     let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
