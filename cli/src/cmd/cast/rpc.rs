@@ -4,6 +4,7 @@ use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
 use futures::future::BoxFuture;
+use itertools::Itertools;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RpcArgs {
@@ -59,9 +60,9 @@ impl RpcArgs {
                     .into_iter()
                     .next()
                     .transpose()?
-                    .unwrap()
+                    .ok_or_else(|| eyre::format_err!("Empty JSON parameters"))?
             } else {
-                Self::to_json_or_string(params.into_iter().next().unwrap())
+                Self::to_json_or_string(params.into_iter().join(" "))
             }
         } else {
             serde_json::Value::Array(params.into_iter().map(Self::to_json_or_string).collect())

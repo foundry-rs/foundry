@@ -1909,6 +1909,7 @@ dependencies = [
  "globset",
  "hex",
  "indicatif 0.17.0-rc.11",
+ "itertools",
  "once_cell",
  "pretty_assertions",
  "proptest",
