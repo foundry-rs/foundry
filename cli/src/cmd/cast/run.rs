@@ -170,17 +170,12 @@ impl RunArgs {
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);
-                if self.verbose {
-                    for node in &mut trace.arena {
-                        node.trace.verbose = true;
-                    }
-                }
             }
 
             if self.debug {
                 run_debugger(result, decoder)?;
             } else {
-                print_traces(&mut result, decoder).await?;
+                print_traces(&mut result, decoder, self.verbose).await?;
             }
         }
         Ok(())
@@ -198,7 +193,11 @@ fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()
     }
 }
 
-async fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+async fn print_traces(
+    result: &mut RunResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
     if result.traces.is_empty() {
         eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
     }
@@ -206,7 +205,11 @@ async fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre
     println!("Traces:");
     for (_, trace) in &mut result.traces {
         decoder.decode(trace).await;
-        println!("{trace}");
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{:#}", trace);
+        }
     }
     println!();
 

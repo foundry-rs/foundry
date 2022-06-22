@@ -97,11 +97,16 @@ impl fmt::Display for CallTraceArena {
             idx: usize,
             left: &str,
             child: &str,
+            verbose: bool,
         ) -> fmt::Result {
             let node = &arena.arena[idx];
 
             // Display trace header
-            writeln!(writer, "{}{}", left, node.trace)?;
+            if !verbose {
+                writeln!(writer, "{}{}", left, node.trace)?;
+            } else {
+                writeln!(writer, "{}{:#}", left, node.trace)?;
+            }
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -123,7 +128,14 @@ impl fmt::Display for CallTraceArena {
                         })?;
                     }
                     LogCallOrder::Call(index) => {
-                        inner(arena, writer, node.children[*index], &left_prefix, &right_prefix)?;
+                        inner(
+                            arena,
+                            writer,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                            verbose,
+                        )?;
                     }
                 }
             }
@@ -145,7 +157,7 @@ impl fmt::Display for CallTraceArena {
             Ok(())
         }
 
-        inner(self, f, 0, "  ", "  ")
+        inner(self, f, 0, "  ", "  ", f.alternate())
     }
 }
 
@@ -279,8 +291,6 @@ pub struct CallTrace {
     pub depth: usize,
     /// Whether the call was successful
     pub success: bool,
-    /// Whether we print the full address
-    pub verbose: bool,
     /// The name of the contract, if any.
     ///
     /// The format is `"<artifact>:<contract>"` for easy lookup in local contracts.
@@ -325,7 +335,6 @@ impl CallTrace {
         self.output = new_trace.output;
         self.address = new_trace.address;
         self.gas_cost = new_trace.gas_cost;
-        self.verbose = new_trace.verbose;
     }
 
     /// Whether this is a contract creation or not
@@ -350,17 +359,14 @@ impl Default for CallTrace {
             gas_cost: Default::default(),
             status: Return::Continue,
             call_context: Default::default(),
-            verbose: false,
         }
     }
 }
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address: String = match self.verbose {
-            true => format!("{:#x}", &self.address) as String,
-            false => self.address.to_string() as String,
-        };
+        let address =
+            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
         if self.created() {
             write!(
                 f,
