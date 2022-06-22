@@ -54,7 +54,6 @@ use parking_lot::{Mutex, RwLock};
 use std::{str, collections::HashMap, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
-use bytes::{Bytes as StdBytes};
 
 pub mod fork_db;
 pub mod in_memory_db;
@@ -367,14 +366,14 @@ impl Backend {
 
     
     /// Write all chain data to serialized bytes buffer
-    pub fn dump_state(&self) -> StdBytes {
-        StdBytes::from(serde_json::to_string(&self.db.read().dump_state()).unwrap_or_default())
+    pub fn dump_state(&self) -> Bytes {
+        bytes::Bytes::from(serde_json::to_string(&self.db.read().dump_state()).unwrap_or_default()).into()
     }
 
     /// Deserialize and add all chain data to the backend storage
-    pub fn load_state(&self, buf: StdBytes) -> Result<bool, BlockchainError> {
+    pub fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
         let state: SerializableState = serde_json::from_str(
-            str::from_utf8(&buf).map_err(|_| BlockchainError::FailedToDecodeStateDump)?
+            str::from_utf8(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?
         ).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
         Ok(self.db.write().load_state(state))

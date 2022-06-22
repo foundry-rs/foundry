@@ -13,8 +13,6 @@ use foundry_evm::{
 
 use serde::{Serialize, Deserialize};
 
-use bytes::Bytes as StdBytes;
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SerializableState {
     pub accounts: HashMap<Address, AccountRecord>
@@ -24,7 +22,7 @@ pub struct SerializableState {
 pub struct AccountRecord {
     pub nonce: u64,
     pub balance: U256,
-    pub code: StdBytes,
+    pub code: Bytes,
     pub storage: HashMap<U256, U256>
 }
 

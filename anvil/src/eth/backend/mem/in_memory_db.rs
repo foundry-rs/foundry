@@ -86,7 +86,7 @@ impl Db for MemDb {
                     AccountRecord {
                         nonce: v.nonce,
                         balance: v.balance,
-                        code: self.inner.code_by_hash(v.code_hash),
+                        code: self.inner.code_by_hash(v.code_hash).into(),
                         storage: self.inner.storage().get(&k).unwrap_or(&Map::new()).clone()
                     }
                 )
@@ -138,7 +138,7 @@ impl From<AccountRecord> for AccountInfo {
         Self {
             balance: record.balance,
             code_hash: KECCAK_EMPTY, // will be set automatically
-            code: if record.code.is_empty() { Some(record.code) } else { None },
+            code: if record.code.0.is_empty() { None } else { Some(record.code.0) },
             nonce: record.nonce,
         }
     }

@@ -12,7 +12,6 @@ use ethers_core::{
     types::{Address, BlockId, BlockNumber, Bytes, TxHash, H256, U256},
 };
 use serde::{Deserialize, Deserializer};
-use bytes::Bytes as StdBytes;
 use ethers_core::utils::hex::FromHex;
 
 pub mod block;
@@ -283,8 +282,9 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_loadState",
         alias = "hardhat_loadState",
+        with = "sequence"
     )]
-    LoadState(#[serde(deserialize_with = "deserialize_hex")] StdBytes),
+    LoadState(Bytes),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
@@ -357,7 +357,7 @@ pub enum EthRpcCall {
     PubSub(EthPubSub),
 }
 
-fn deserialize_hex<'de, D>(d: D) -> Result<StdBytes, D::Error>
+fn deserialize_hex<'de, D>(d: D) -> Result<Bytes, D::Error>
 where
     D: Deserializer<'de>, 
 {
@@ -760,14 +760,7 @@ mod tests {
     fn test_serde_custom_load_state() {
         let s = r#"{"method": "anvil_loadState", "params": ["0x0001"] }"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let req = serde_json::from_value::<EthRequest>(value).unwrap();
-
-        let b: &[u8] = &[0,1];
-
-        match req {
-            EthRequest::LoadState(r) => assert_eq!(r, StdBytes::from(b)),
-            _ => panic!("wrong request type loaded")
-        }
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
