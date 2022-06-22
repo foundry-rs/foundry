@@ -455,6 +455,7 @@ async fn main() -> eyre::Result<()> {
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
         Subcommands::FourByteDecode { calldata } => {
+            let calldata = unwrap_or_stdin(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
