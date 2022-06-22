@@ -170,12 +170,9 @@ impl CoverageArgs {
                         })
                         .collect();
 
-                    let items = Visitor::new(
-                        source.id,
-                        std::fs::read_to_string(PathBuf::from(&path))?,
-                        source_maps,
-                    )
-                    .visit_ast(ast)?;
+                    let items =
+                        Visitor::new(source.id, std::fs::read_to_string(&path)?, source_maps)
+                            .visit_ast(ast)?;
 
                     if items.is_empty() {
                         continue
