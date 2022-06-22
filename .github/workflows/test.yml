@@ -9,6 +9,5 @@ name: test
 jobs:
   cross-platform:
     name: Cross-platform tests
-    needs: [ integration, lint, doc, unit ]
     uses: ./.github/workflows/cross-platform.yml
 
