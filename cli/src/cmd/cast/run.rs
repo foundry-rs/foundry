@@ -38,6 +38,8 @@ pub struct RunArgs {
         help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
     )]
     quick: bool,
+    #[clap(long, short = 'v', help = "Prints full address", value_name = "VERBOSE")]
+    verbose: bool,
     #[clap(
         long,
         help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
@@ -168,6 +170,11 @@ impl RunArgs {
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);
+                if self.verbose {
+                    for node in &mut trace.arena {
+                        node.trace.verbose = true;
+                    }
+                }
             }
 
             if self.debug {

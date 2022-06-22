@@ -279,6 +279,8 @@ pub struct CallTrace {
     pub depth: usize,
     /// Whether the call was successful
     pub success: bool,
+    /// Whether we print the full address
+    pub verbose: bool,
     /// The name of the contract, if any.
     ///
     /// The format is `"<artifact>:<contract>"` for easy lookup in local contracts.
@@ -323,6 +325,7 @@ impl CallTrace {
         self.output = new_trace.output;
         self.address = new_trace.address;
         self.gas_cost = new_trace.gas_cost;
+        self.verbose = new_trace.verbose;
     }
 
     /// Whether this is a contract creation or not
@@ -347,12 +350,17 @@ impl Default for CallTrace {
             gas_cost: Default::default(),
             status: Return::Continue,
             call_context: Default::default(),
+            verbose: false,
         }
     }
 }
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let addr: String = match self.verbose {
+            true => format!("{:#x}", &self.address) as String,
+            false => self.address.to_string() as String,
+        };
         if self.created() {
             write!(
                 f,
@@ -388,7 +396,7 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(self.label.as_ref().unwrap_or(&addr)),
                 color.paint(func),
                 if !self.value.is_zero() {
                     format!("{{value: {}}}", self.value)
