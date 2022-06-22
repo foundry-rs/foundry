@@ -1,4 +1,5 @@
-use ethers_core::types::ParseChainError;
+use crate::U256;
+use ethers_core::types::{ParseChainError, U64};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -19,6 +20,15 @@ impl Chain {
         match self {
             Chain::Named(chain) => *chain as u64,
             Chain::Id(id) => *id,
+        }
+    }
+
+    /// Helper function for checking if a chainid corresponds to a legacy chainid
+    /// without eip1559
+    pub fn is_legacy(&self) -> bool {
+        match self {
+            Chain::Named(c) => c.is_legacy(),
+            Chain::Id(_) => false,
         }
     }
 }
@@ -46,7 +56,13 @@ impl From<ethers_core::types::Chain> for Chain {
 
 impl From<u64> for Chain {
     fn from(id: u64) -> Self {
-        Chain::Id(id)
+        ethers_core::types::Chain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
+    }
+}
+
+impl From<U256> for Chain {
+    fn from(id: U256) -> Self {
+        id.as_u64().into()
     }
 }
 
@@ -56,6 +72,18 @@ impl From<Chain> for u64 {
             Chain::Named(c) => c as u64,
             Chain::Id(id) => id,
         }
+    }
+}
+
+impl From<Chain> for U64 {
+    fn from(c: Chain) -> Self {
+        u64::from(c).into()
+    }
+}
+
+impl From<Chain> for U256 {
+    fn from(c: Chain) -> Self {
+        u64::from(c).into()
     }
 }
 

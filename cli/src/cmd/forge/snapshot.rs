@@ -9,7 +9,7 @@ use crate::cmd::{
 };
 use clap::{Parser, ValueHint};
 use eyre::Context;
-use forge::TestKindGas;
+use forge::result::TestKindGas;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{

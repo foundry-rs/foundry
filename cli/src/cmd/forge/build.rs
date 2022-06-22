@@ -145,6 +145,14 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip)]
     pub revert_strings: Option<RevertStrings>,
+
+    #[clap(help_heading = "COMPILER OPTIONS", long, help = "Don't print anything on startup.")]
+    #[serde(skip)]
+    pub silent: bool,
+
+    #[clap(help_heading = "PROJECT OPTIONS", help = "Generate build info files.", long)]
+    #[serde(skip)]
+    pub build_info: bool,
 }
 
 impl CoreBuildArgs {
@@ -193,6 +201,10 @@ impl Provider for CoreBuildArgs {
 
         if self.force {
             dict.insert("force".to_string(), self.force.into());
+        }
+
+        if self.build_info {
+            dict.insert("build_info".to_string(), self.build_info.into());
         }
 
         if self.compiler.optimize {
@@ -262,7 +274,12 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        compile::compile(&project, self.names, self.sizes)
+
+        if self.args.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compile::compile(&project, self.names, self.sizes)
+        }
     }
 }
 
@@ -287,7 +304,7 @@ impl BuildArgs {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| {
             let config = Config::from(self);
-            vec![config.src, config.test]
+            vec![config.src, config.test, config.script]
         })
     }
 }
@@ -375,7 +392,7 @@ pub struct ProjectPathsArgs {
         long_help = "This a convenience flag and is the same as passing `--contracts contracts --lib-paths node_modules`.",
         long,
         conflicts_with = "contracts",
-        alias = "hh"
+        visible_alias = "hh"
     )]
     #[serde(skip)]
     pub hardhat: bool,

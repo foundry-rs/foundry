@@ -21,6 +21,21 @@ ethers::contract::abigen!(
             store(address,bytes32,bytes32)
             load(address,bytes32)(bytes32)
             ffi(string[])(bytes)
+            setEnv(string,string)
+            envBool(string)(bool)
+            envUint(string)(uint256)
+            envInt(string)(int256)
+            envAddress(string)(address)
+            envBytes32(string)(bytes32)
+            envString(string)(string)
+            envBytes(string)(bytes)
+            envBool(string,string)(bool[])
+            envUint(string,string)(uint256[])
+            envInt(string,string)(int256[])
+            envAddress(string,string)(address[])
+            envBytes32(string,string)(bytes32[])
+            envString(string,string)(string[])
+            envBytes(string,string)(bytes[])
             addr(uint256)(address)
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             prank(address)
@@ -48,6 +63,11 @@ ethers::contract::abigen!(
             setNonce(address,uint64)
             getNonce(address)
             chainId(uint256)
+            broadcast()
+            broadcast(address)
+            startBroadcast()
+            startBroadcast(address)
+            stopBroadcast()
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
@@ -60,7 +80,8 @@ pub static HARDHAT_CONSOLE_ADDRESS: Address = H160([
     0x2e, 0x6c, 0x6f, 0x67,
 ]);
 
-// Bindings for DS-style event logs
+// Bindings for DS-style event logs. Note that the array logs below are not actually part of DSTest,
+// but are part of forge-std, so are included here to ensure they are decoded in output logs.
 ethers::contract::abigen!(
     Console,
     r#"[
@@ -72,6 +93,8 @@ ethers::contract::abigen!(
             event log_uint               (uint)
             event log_bytes              (bytes)
             event log_string             (string)
+            event log_array              (uint256[] val)
+            event log_array              (int256[] val)
             event log_named_address      (string key, address val)
             event log_named_bytes32      (string key, bytes32 val)
             event log_named_decimal_int  (string key, int val, uint decimals)
@@ -80,6 +103,8 @@ ethers::contract::abigen!(
             event log_named_uint         (string key, uint val)
             event log_named_bytes        (string key, bytes val)
             event log_named_string       (string key, string val)
+            event log_named_array        (string key, uint256[] val)
+            event log_named_array        (string key, int256[] val)
     ]"#
 );
 pub use console_mod::{ConsoleEvents, CONSOLE_ABI};

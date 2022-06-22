@@ -27,12 +27,14 @@ pub use revm::db::DatabaseRef;
 pub use revm::Env;
 
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{
+    debug::DebugArena, executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceArena, CALLER,
+};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
-    types::Log,
+    types::{transaction::eip2718::TypedTransaction, Log},
 };
 use eyre::Result;
 use foundry_utils::IntoFunction;
@@ -41,7 +43,11 @@ use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+
+/// custom revm database implementations
+pub mod backend;
+pub mod snapshot;
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
@@ -59,6 +65,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
+        transactions: Option<VecDeque<TypedTransaction>>,
         state_changeset: Option<StateChangeset>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -103,6 +110,8 @@ pub struct CallResult<D: Detokenize> {
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -131,6 +140,8 @@ pub struct RawCallResult {
     pub traces: Option<CallTraceArena>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
+    /// Scripted transactions generated from this call
+    pub transactions: Option<VecDeque<TypedTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -150,6 +161,7 @@ impl Default for RawCallResult {
             labels: BTreeMap::new(),
             traces: None,
             debug: None,
+            transactions: None,
             state_changeset: None,
         }
     }
@@ -195,6 +207,25 @@ where
         Executor { db, env, inspector_config, gas_limit }
     }
 
+    /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
+    pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        let create2_deployer_account = self.db.basic(DEFAULT_CREATE2_DEPLOYER);
+
+        if create2_deployer_account.code.is_none() ||
+            create2_deployer_account.code.as_ref().unwrap().is_empty()
+        {
+            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            self.set_balance(creator, U256::MAX);
+            self.deploy(
+                creator,
+                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
+                U256::zero(),
+                None
+            )?;
+        }
+        Ok(())
+    }
+
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
         let mut account = self.db.basic(address);
@@ -234,8 +265,13 @@ where
     }
 
     /// Calls the `setUp()` function on a contract.
-    pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
-        self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)
+    pub fn setup(
+        &mut self,
+        from: Option<Address>,
+        address: Address,
+    ) -> std::result::Result<CallResult<()>, EvmError> {
+        let from = from.unwrap_or(*CALLER);
+        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -262,6 +298,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset,
         } = self.call_raw_committing(from, to, calldata, value)?;
         match status {
@@ -276,6 +313,7 @@ where
                     labels,
                     traces,
                     debug,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -291,6 +329,7 @@ where
                     traces,
                     debug,
                     labels,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -322,11 +361,27 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes } =
+        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
+
+        let transactions = if let Some(ref mut cheatcodes) = cheatcodes {
+            if !cheatcodes.broadcastable_transactions.is_empty() {
+                let transactions = Some(cheatcodes.broadcastable_transactions.clone());
+
+                // Clear broadcast state from cheatcode state
+                cheatcodes.broadcastable_transactions.clear();
+                cheatcodes.corrected_nonce = false;
+
+                transactions
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
@@ -341,6 +396,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset: None,
         })
     }
@@ -369,6 +425,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset,
         } = self.call_raw(from, to, calldata, value)?;
         match status {
@@ -383,6 +440,7 @@ where
                     labels,
                     traces,
                     debug,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -398,6 +456,7 @@ where
                     traces,
                     debug,
                     labels,
+                    transactions,
                     state_changeset,
                 })
             }
@@ -429,8 +488,19 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, .. } =
+        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
             inspector.collect_inspector_states();
+
+        let transactions = if let Some(cheats) = cheatcodes {
+            if !cheats.broadcastable_transactions.is_empty() {
+                Some(cheats.broadcastable_transactions)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -441,6 +511,7 @@ where
             labels,
             traces,
             debug,
+            transactions,
             state_changeset: Some(state_changeset),
         })
     }
@@ -482,6 +553,7 @@ where
                         debug,
                         labels,
                         state_changeset: None,
+                        transactions: None
                     });
                 }
             }
@@ -498,6 +570,7 @@ where
                     debug,
                     labels,
                     state_changeset: None,
+                    transactions: None,
                 })
             }
         };

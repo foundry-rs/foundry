@@ -6,7 +6,7 @@ use crate::{
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
         },
-        fees::INITIAL_BASE_FEE,
+        fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
     mem,
@@ -14,11 +14,10 @@ use crate::{
     FeeManager,
 };
 use anvil_server::ServerConfig;
-use colored::Colorize;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
-    providers::{Middleware, Provider},
+    providers::{Http, Middleware, Provider, RetryClient},
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
@@ -33,7 +32,12 @@ use foundry_evm::{
     revm::{BlockEnv, CfgEnv, SpecId, TxEnv},
 };
 use parking_lot::RwLock;
-use std::{net::IpAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use serde_json::{json, to_writer, Value};
+use std::{
+    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf,
+    str::FromStr, sync::Arc, time::Duration,
+};
+use yansi::Paint;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -69,9 +73,9 @@ pub struct NodeConfig {
     /// Default gas limit for all txs
     pub gas_limit: U256,
     /// Default gas price for all txs
-    pub gas_price: U256,
+    pub gas_price: Option<U256>,
     /// Default base fee
-    pub base_fee: U256,
+    pub base_fee: Option<U256>,
     /// The hardfork to use
     pub hardfork: Hardfork,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
@@ -106,15 +110,170 @@ pub struct NodeConfig {
     pub host: Option<IpAddr>,
     /// How transactions are sorted in the mempool
     pub transaction_order: TransactionOrder,
+    /// Filename to write anvil output as json
+    pub config_out: Option<String>,
+}
+
+impl NodeConfig {
+    fn as_string(&self, fork: Option<&ClientFork>) -> String {
+        let mut config_string: String = "".to_owned();
+        let _ = write!(config_string, "\n{}", Paint::green(BANNER));
+        let _ = write!(config_string, "\n    {}", VERSION_MESSAGE);
+        let _ = write!(
+            config_string,
+            "\n    {}",
+            Paint::green("https://github.com/foundry-rs/foundry")
+        );
+
+        let _ = write!(
+            config_string,
+            r#"
+
+Available Accounts
+==================
+"#
+        );
+        let balance = format_ether(self.genesis_balance);
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            let _ = write!(config_string, "\n({}) {:?} ({} ETH)", idx, wallet.address(), balance);
+        }
+
+        let _ = write!(
+            config_string,
+            r#"
+
+Private Keys
+==================
+"#
+        );
+
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            let hex = hex::encode(wallet.signer().to_bytes());
+            let _ = write!(config_string, "\n({}) 0x{}", idx, hex);
+        }
+
+        if let Some(ref gen) = self.account_generator {
+            let _ = write!(
+                config_string,
+                r#"
+
+Wallet
+==================
+Mnemonic:          {}
+Derivation path:   {}
+"#,
+                gen.phrase,
+                gen.get_derivation_path()
+            );
+        }
+
+        if (SpecId::from(self.hardfork) as u8) < (SpecId::LONDON as u8) {
+            let _ = write!(
+                config_string,
+                r#"
+Gas Price
+==================
+{}
+"#,
+                Paint::green(format!("\n{}", self.get_gas_price()))
+            );
+        } else {
+            let _ = write!(
+                config_string,
+                r#"
+
+Base Fee
+==================
+{}
+"#,
+                Paint::green(format!("\n{}", self.get_base_fee()))
+            );
+        }
+
+        let _ = write!(
+            config_string,
+            r#"
+Gas Limit
+==================
+{}
+"#,
+            Paint::green(format!("\n{}", self.gas_limit))
+        );
+
+        if let Some(fork) = fork {
+            let _ = write!(
+                config_string,
+                r#"
+Fork
+==================
+Endpoint:       {}
+Block number:   {}
+Block hash:     {:?}
+Chain ID:       {}
+
+"#,
+                fork.eth_rpc_url(),
+                fork.block_number(),
+                fork.block_hash(),
+                fork.chain_id()
+            );
+        }
+
+        config_string
+    }
+
+    fn as_json(&self, fork: Option<&ClientFork>) -> Value {
+        let mut wallet_description = HashMap::new();
+        let mut available_accounts = Vec::with_capacity(self.genesis_accounts.len());
+        let mut private_keys = Vec::with_capacity(self.genesis_accounts.len());
+
+        for wallet in &self.genesis_accounts {
+            available_accounts.push(format!("{:?}", wallet.address()));
+            private_keys.push(format!("0x{}", hex::encode(wallet.signer().to_bytes())));
+        }
+
+        if let Some(ref gen) = self.account_generator {
+            let phrase = gen.get_phrase().to_string();
+            let derivation_path = gen.get_derivation_path().to_string();
+
+            wallet_description.insert("derivation_path".to_string(), derivation_path);
+            wallet_description.insert("mnemonic".to_string(), phrase);
+        };
+
+        if let Some(fork) = fork {
+            json!({
+              "available_accounts": available_accounts,
+              "private_keys": private_keys,
+              "endpoint": fork.eth_rpc_url(),
+              "block_number": fork.block_number(),
+              "block_hash": fork.block_hash(),
+              "chain_id": fork.chain_id(),
+              "wallet": wallet_description,
+              "base_fee": format!("{}", self.get_base_fee()),
+              "gas_price": format!("{}", self.get_gas_price()),
+              "gas_limit": format!("{}", self.gas_limit),
+            })
+        } else {
+            json!({
+              "available_accounts": available_accounts,
+              "private_keys": private_keys,
+              "wallet": wallet_description,
+              "base_fee": format!("{}", self.get_base_fee()),
+              "gas_price": format!("{}", self.get_gas_price()),
+              "gas_limit": format!("{}", self.gas_limit),
+            })
+        }
+    }
 }
 
 // === impl NodeConfig ===
 
 impl NodeConfig {
-    /// Test config
+    /// Returns a new config intended to be used in tests, which does not print and binds to a
+    /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, silent: true, ..Default::default() }
+        Self { enable_tracing: false, silent: true, port: 0, ..Default::default() }
     }
 }
 
@@ -125,7 +284,7 @@ impl Default for NodeConfig {
         Self {
             chain_id: CHAIN_ID,
             gas_limit: U256::from(30_000_000),
-            gas_price: U256::from(20_000_000_000u64),
+            gas_price: None,
             hardfork: Hardfork::default(),
             signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
@@ -140,21 +299,26 @@ impl Default for NodeConfig {
             eth_rpc_url: None,
             fork_block_number: None,
             account_generator: None,
-            base_fee: INITIAL_BASE_FEE.into(),
+            base_fee: None,
             enable_tracing: true,
             no_storage_caching: false,
             server_config: Default::default(),
             host: None,
             transaction_order: Default::default(),
+            config_out: None,
         }
     }
 }
 
 impl NodeConfig {
-    /// Returns the default node configuration
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    /// Returns the base fee to use
+    pub fn get_base_fee(&self) -> U256 {
+        self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
+    }
+
+    /// Returns the base fee to use
+    pub fn get_gas_price(&self) -> U256 {
+        self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
     }
 
     /// Sets the chain ID
@@ -187,18 +351,14 @@ impl NodeConfig {
     /// Sets the gas price
     #[must_use]
     pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
-        if let Some(gas_price) = gas_price {
-            self.gas_price = gas_price.into();
-        }
+        self.gas_price = gas_price.map(Into::into);
         self
     }
 
     /// Sets the base fee
     #[must_use]
     pub fn with_base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
-        if let Some(base_fee) = base_fee {
-            self.base_fee = base_fee.into();
-        }
+        self.base_fee = base_fee.map(Into::into);
         self
     }
 
@@ -272,6 +432,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the file path to write the Anvil node's config info to.
+    #[must_use]
+    pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
+        self.config_out = config_out;
+        self
+    }
+
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
@@ -326,93 +493,19 @@ impl NodeConfig {
 
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) {
+        if self.config_out.is_some() {
+            let config_out = self.config_out.as_deref().unwrap();
+            to_writer(
+                &File::create(config_out).expect("Unable to create anvil config description file"),
+                &self.as_json(fork),
+            )
+            .expect("Failed writing json");
+        }
         if self.silent {
             return
         }
-        println!("{}", BANNER.green());
-        println!("    {}", VERSION_MESSAGE);
-        println!("    {}", "https://github.com/foundry-rs/foundry".green());
 
-        print!(
-            r#"
-Available Accounts
-==================
-"#
-        );
-        let balance = format_ether(self.genesis_balance);
-        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            println!("({}) {:?} ({} ETH)", idx, wallet.address(), balance);
-        }
-
-        print!(
-            r#"
-Private Keys
-==================
-"#
-        );
-
-        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let hex = hex::encode(wallet.signer().to_bytes());
-            println!("({}) 0x{}", idx, hex);
-        }
-
-        if let Some(ref gen) = self.account_generator {
-            print!(
-                r#"
-Wallet
-==================
-Mnemonic:          {}
-Derivation path:   {}
-"#,
-                gen.phrase,
-                gen.get_derivation_path()
-            );
-        }
-
-        print!(
-            r#"
-Base Fee
-==================
-{}
-"#,
-            format!("{}", self.base_fee).green()
-        );
-        print!(
-            r#"
-Gas Price
-==================
-{}
-"#,
-            format!("{}", self.gas_price).green()
-        );
-
-        print!(
-            r#"
-Gas Limit
-==================
-{}
-"#,
-            format!("{}", self.gas_limit).green()
-        );
-
-        if let Some(fork) = fork {
-            print!(
-                r#"
-Fork
-==================
-Endpoint:       {}
-Block number:   {}
-Block hash:     {:?}
-Chain ID:       {}
-"#,
-                fork.eth_rpc_url(),
-                fork.block_number(),
-                fork.block_hash(),
-                fork.chain_id()
-            );
-        }
-
-        println!();
+        println!("{}", self.as_string(fork))
     }
 
     /// Returns the path where the cache file should be stored
@@ -443,12 +536,12 @@ Chain ID:       {}
             },
             block: BlockEnv {
                 gas_limit: self.gas_limit,
-                basefee: self.base_fee,
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
-        let fees = FeeManager::new(self.base_fee, self.gas_price);
+        let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
@@ -456,7 +549,8 @@ Chain ID:       {}
         {
             // TODO make provider agnostic
             let provider = Arc::new(
-                Provider::try_from(&eth_rpc_url).expect("Failed to establish provider to fork url"),
+                Provider::<RetryClient<Http>>::new_client(&eth_rpc_url, 10, 1000)
+                    .expect("Failed to establish provider to fork url"),
             );
 
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
@@ -469,10 +563,27 @@ Chain ID:       {}
                 .get_block(BlockNumber::Number(fork_block_number.into()))
                 .await
                 .expect("Failed to get fork block")
-                .unwrap();
+                .unwrap_or_else(|| panic!("Failed to get fork block"));
 
             env.block.number = fork_block_number.into();
             fork_timestamp = Some(block.timestamp);
+
+            // if not set explicitly we use the base fee of the latest block
+            if self.base_fee.is_none() {
+                if let Some(base_fee) = block.base_fee_per_gas {
+                    self.base_fee = Some(base_fee);
+                    fees.set_base_fee(base_fee);
+                    env.block.basefee = base_fee;
+                }
+            }
+
+            // use remote gas price
+            if self.gas_price.is_none() {
+                if let Ok(gas_price) = provider.get_gas_price().await {
+                    self.gas_price = Some(gas_price);
+                    fees.set_gas_price(gas_price);
+                }
+            }
 
             let block_hash = block.hash.unwrap();
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
@@ -502,6 +613,7 @@ Chain ID:       {}
                     provider,
                     chain_id,
                     timestamp: block.timestamp.as_u64(),
+                    base_fee: block.base_fee_per_gas,
                 },
                 Arc::clone(&db),
             );
@@ -617,6 +729,10 @@ impl AccountGenerator {
     pub fn phrase(mut self, phrase: impl Into<String>) -> Self {
         self.phrase = phrase.into();
         self
+    }
+
+    fn get_phrase(&self) -> &str {
+        &self.phrase
     }
 
     #[must_use]

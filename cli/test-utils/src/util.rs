@@ -2,7 +2,7 @@ use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -24,6 +24,13 @@ use std::{
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// A lock used for pre-installing commonly used solc versions once.
+/// Pre-installing is useful, because if two forge test require a missing solc at the same time, one
+/// can encounter an OS error 26 textfile busy if it tries to write the freshly downloaded solc to
+/// the right location while the other test already did that and is currently executing this solc
+/// binary.
+static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // This stores `true` if the current terminal is a tty
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
@@ -66,11 +73,16 @@ pub fn clone_remote(
 ///
 /// The name given will be used to create the directory. Generally, it should
 /// correspond to the test name.
+#[track_caller]
 pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
     setup_forge_project(TestProject::new(name, style))
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    // preinstall commonly used solc once, we execute this here because this is the shared
+    // entrypoint used by all `forgetest!` macros
+    install_commonly_used_solc();
+
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -82,6 +94,19 @@ pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
     let cmd = test.cast_command();
     (test, cmd)
+}
+
+/// pre-installs commonly used solc versions
+fn install_commonly_used_solc() {
+    let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
+    if !*is_preinstalled {
+        let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
+        let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
+        v0_8_10.join().unwrap().unwrap();
+        v0_8_13.join().unwrap().unwrap();
+
+        *is_preinstalled = true;
+    }
 }
 
 /// `TestProject` represents a temporary project to run tests against.
@@ -217,6 +242,7 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
+    #[track_caller]
     pub fn forge_command(&self) -> TestCommand {
         let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
@@ -279,7 +305,9 @@ impl TestProject {
 impl Drop for TestCommand {
     fn drop(&mut self) {
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
-        let _ = std::env::set_current_dir(&self.saved_cwd);
+        if self.saved_cwd.exists() {
+            let _ = std::env::set_current_dir(&self.saved_cwd);
+        }
     }
 }
 
@@ -585,7 +613,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.*?)\.rs(.*)?Backtrace)").unwrap()
+    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
 });
 
 impl OutputExt for process::Output {
@@ -651,5 +679,17 @@ mod tests {
         } else {
             assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
+    }
+
+    #[test]
+    fn fixture_regex_matches() {
+        assert!(IGNORE_IN_FIXTURES.is_match(
+            r#"
+Location:
+   [35mcli/src/compile.rs[0m:[35m151[0m
+
+Backtrace omitted.
+        "#
+        ));
     }
 }

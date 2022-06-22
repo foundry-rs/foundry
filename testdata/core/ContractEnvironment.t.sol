@@ -21,7 +21,7 @@ contract ContractEnvironmentTest is DSTest {
         assertEq(block.number, 1, "block number is incorrect");
         assertEq(
             blockhash(block.number),
-            keccak256(abi.encodePacked(block.number)),
+                0x0,
             "blockhash is incorrect"
         );
         assertEq(block.coinbase, 0x0000000000000000000000000000000000000000, "coinbase is incorrect");

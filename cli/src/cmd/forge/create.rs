@@ -4,12 +4,12 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
     compile,
     opts::{forge::ContractInfo, EthereumOpts, WalletType},
-    utils::{parse_ether_value, parse_u256},
+    utils::{get_http_provider, parse_ether_value, parse_u256},
 };
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
-    prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
     solc::utils::RuntimeOrHandle,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
@@ -71,7 +71,16 @@ This is automatically enabled for common networks without EIP1559."#
     gas_price: Option<U256>,
 
     #[clap(
-        long = "gas-limit",
+        long,
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Nonce for the transaction.",
+        parse(try_from_str = parse_u256),
+        value_name = "NONCE"
+    )]
+    nonce: Option<U256>,
+
+    #[clap(
+    long = "gas-limit",
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas limit for the transaction.",
         env = "ETH_GAS_LIMIT",
@@ -128,8 +137,8 @@ impl CreateArgs {
     pub async fn run_create(self) -> Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        if self.json {
-            // Suppress compile stdout messages when printing json output
+        if self.json || self.opts.silent {
+            // Suppress compile stdout messages when printing json output or when silent
             compile::suppress_compile(&project)?;
         } else {
             compile::compile(&project, false, false)?;
@@ -155,9 +164,10 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = Config::from(&self.eth);
-        let provider = Provider::<Http>::try_from(
-            config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-        )?;
+        let provider = get_http_provider(
+            &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            false,
+        );
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
@@ -234,6 +244,11 @@ impl CreateArgs {
             deployer.tx.set_gas(gas_limit);
         }
 
+        // set nonce if specified
+        if let Some(nonce) = self.nonce {
+            deployer.tx.set_nonce(nonce);
+        }
+
         // set priority fee if specified
         if let Some(priority_fee) = self.priority_fee {
             if is_legacy {
@@ -303,6 +318,7 @@ impl CreateArgs {
             force: false,
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
+            libraries: vec![],
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await

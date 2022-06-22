@@ -1,4 +1,4 @@
-use crate::{ContractRunner, SuiteResult, TestFilter};
+use crate::{result::SuiteResult, ContractRunner, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -7,7 +7,8 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::executor::{
-    builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+    builder::Backend, inspector::CheatsConfig, opts::EvmOpts, DatabaseRef, Executor,
+    ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
@@ -28,6 +29,8 @@ pub struct MultiContractRunnerBuilder {
     pub evm_spec: Option<SpecId>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: Option<CheatsConfig>,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -61,10 +64,12 @@ impl MultiContractRunnerBuilder {
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
-        foundry_utils::link(
+        foundry_utils::link_with_nonce_or_address(
             BTreeMap::from_iter(contracts),
             &mut known_contracts,
+            Default::default(),
             evm_opts.sender,
+            U256::one(),
             &mut deployable_contracts,
             |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
@@ -89,8 +94,17 @@ impl MultiContractRunnerBuilder {
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
-                    deployable_contracts
-                        .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                    deployable_contracts.insert(
+                        id.clone(),
+                        (
+                            abi.clone(),
+                            bytecode,
+                            dependencies
+                                .into_iter()
+                                .map(|(_, bytecode)| bytecode)
+                                .collect::<Vec<_>>(),
+                        ),
+                    );
                 }
 
                 contract
@@ -113,6 +127,7 @@ impl MultiContractRunnerBuilder {
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
+            cheats_config: self.cheats_config.unwrap_or_default(),
         })
     }
 
@@ -145,6 +160,12 @@ impl MultiContractRunnerBuilder {
         self.fork = fork;
         self
     }
+
+    #[must_use]
+    pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
+        self.cheats_config = Some(cheats_config);
+        self
+    }
 }
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
@@ -169,6 +190,8 @@ pub struct MultiContractRunner {
     pub source_paths: BTreeMap<String, String>,
     /// The fork config
     pub fork: Option<Fork>,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: CheatsConfig,
 }
 
 impl MultiContractRunner {
@@ -248,8 +271,8 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
-                let mut builder = ExecutorBuilder::new()
-                    .with_cheatcodes(self.evm_opts.ffi)
+                let mut builder = ExecutorBuilder::default()
+                    .with_cheatcodes(self.cheats_config.clone())
                     .with_config(env.clone())
                     .with_spec(self.evm_spec)
                     .with_gas_limit(self.evm_opts.gas_limit());
@@ -319,11 +342,15 @@ mod tests {
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
+    use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
+    use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
-        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
+        MultiContractRunnerBuilder::default()
+            .sender(EVM_OPTS.sender)
+            .with_cheats_config(CheatsConfig::new(&Config::default(), &*EVM_OPTS))
     }
 
     /// Builds a non-tracing runner
@@ -346,7 +373,13 @@ mod tests {
         opts.fork_url = Some(rpc.to_string());
         let chain_id = opts.get_chain_id();
 
-        let fork = Some(Fork { cache_path: None, url: rpc.to_string(), pin_block: None, chain_id });
+        let fork = Some(Fork {
+            cache_path: None,
+            url: rpc.to_string(),
+            pin_block: None,
+            chain_id,
+            initial_backoff: 50,
+        });
         base_runner()
             .with_fork(fork)
             .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)
@@ -1012,8 +1045,23 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
 
+        // test `setEnv` first, and confirm that it can correctly set environment variables,
+        // so that we can use it in subsequent `env*` tests
+        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, true).unwrap();
+        let env_var_key = "_foundryCheatcodeSetEnvTestKey";
+        let env_var_val = "_foundryCheatcodeSetEnvTestVal";
+        let res = env::var(env_var_key);
+        assert!(
+            res.is_ok() && res.unwrap() == env_var_val,
+            "Test `testSetEnv` did not pass as expected.
+Reason: `setEnv` failed to set an environment variable `{}={}`",
+            env_var_key,
+            env_var_val
+        );
+
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
+        assert!(!suite_result.is_empty());
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);

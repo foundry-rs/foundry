@@ -1,16 +1,24 @@
 use crate::{opts::forge::ContractInfo, suggestions};
+
 use clap::Parser;
 use ethers::{
     abi::Abi,
-    prelude::cache::CacheEntry,
+    core::types::Chain,
+    prelude::ArtifactId,
     solc::{
-        artifacts::{CompactBytecode, CompactContractBytecode, CompactDeployedBytecode},
-        cache::SolFilesCache,
+        artifacts::{
+            CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
+        },
+        cache::{CacheEntry, SolFilesCache},
         Project,
     },
 };
+
+use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
-use std::path::PathBuf;
+
+use std::{collections::BTreeMap, path::PathBuf};
+use yansi::Paint;
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -124,4 +132,86 @@ impl From<RetryArgs> for Retry {
     fn from(r: RetryArgs) -> Self {
         Retry::new(r.retries, r.delay)
     }
+}
+
+pub fn needs_setup(abi: &Abi) -> bool {
+    let setup_fns: Vec<_> =
+        abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+
+    for setup_fn in setup_fns.iter() {
+        if setup_fn.name != "setUp" {
+            println!(
+                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                Paint::yellow("Warning:").bold(),
+                setup_fn.signature()
+            );
+        }
+    }
+
+    setup_fns.len() == 1 && setup_fns[0].name == "setUp"
+}
+
+pub fn unwrap_contracts(
+    contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    deployed_code: bool,
+) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
+    contracts
+        .iter()
+        .filter_map(|(id, c)| {
+            let bytecode = if deployed_code {
+                c.deployed_bytecode.clone().into_bytes()
+            } else {
+                c.bytecode.clone().object.into_bytes()
+            };
+
+            if let Some(bytecode) = bytecode {
+                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+            }
+            None
+        })
+        .collect()
+}
+
+#[macro_export]
+macro_rules! init_progress {
+    ($local:expr, $label:expr) => {{
+        let pb = ProgressBar::new($local.len() as u64);
+        let mut template =
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+        template += $label;
+        template += " ({eta})";
+        pb.set_style(
+            ProgressStyle::with_template(&template)
+                .unwrap()
+                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .progress_chars("#>-"),
+        );
+        pb
+    }};
+}
+
+#[macro_export]
+macro_rules! update_progress {
+    ($pb:ident, $index:expr) => {
+        $pb.set_position(($index + 1) as u64);
+    };
+}
+
+/// True if the network calculates gas costs differently.
+pub fn has_different_gas_calc(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+    }
+    false
+}
+
+/// True if it supports broadcasting in batches.
+pub fn has_batch_support(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return !matches!(
+            chain,
+            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        )
+    }
+    true
 }

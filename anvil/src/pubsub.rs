@@ -4,12 +4,14 @@ use crate::{
 };
 use anvil_core::eth::{
     block::Block,
-    filter::FilteredParams,
     receipt::{EIP658Receipt, Log, TypedReceipt},
     subscription::{SubscriptionId, SubscriptionResult},
 };
 use anvil_rpc::{request::Version, response::ResponseResult};
-use ethers::prelude::{Log as EthersLog, H256, H256 as TxHash, U64};
+use ethers::{
+    prelude::{Log as EthersLog, H256, H256 as TxHash, U64},
+    types::FilteredParams,
+};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
 use std::{

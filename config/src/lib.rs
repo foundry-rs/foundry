@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, U256};
+use ethers_core::types::{Address, H160, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -21,6 +21,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -30,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -38,14 +40,17 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
+mod rpc;
+pub use rpc::RpcEndpoints;
+
 pub mod cache;
 use cache::{Cache, ChainCache};
+
 mod chain;
 pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
-use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -92,6 +97,8 @@ pub struct Config {
     pub src: PathBuf,
     /// path of the test dir
     pub test: PathBuf,
+    /// path of the script dir
+    pub script: PathBuf,
     /// path to where artifacts shut be written to
     pub out: PathBuf,
     /// all library folders to include, `lib`, `node_modules`
@@ -104,6 +111,10 @@ pub struct Config {
     pub cache: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
+    /// where the broadcast logs are stored
+    pub broadcast: PathBuf,
+    /// additional solc allow paths
+    pub allow_paths: Vec<PathBuf>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -245,6 +256,9 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Multiple rpc endpoints and their aliases
+    #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
+    pub rpc_endpoints: RpcEndpoints,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -259,6 +273,11 @@ pub struct Config {
     /// included in solc's output selection, see also
     /// [OutputSelection](ethers_solc::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
+    /// Whether to emit additional build info files
+    ///
+    /// If set to `true`, `ethers-solc` will generate additional build info json files for every
+    /// new build, containing the `CompilerInput` and `CompilerOutput`
+    pub build_info: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -294,6 +313,11 @@ impl Config {
 
     /// The name of the directory foundry reserves for itself under the user's home directory: `~`
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
+
+    /// Default address for tx.origin
+    pub const DEFAULT_SENDER: H160 = H160([
+        0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
+    ]);
 
     /// Returns the current `Config`
     ///
@@ -332,6 +356,7 @@ impl Config {
     /// let config = Config::from_provider(figment);
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
+        trace!("load config with provider: {:?}", provider.metadata());
         match Self::try_from(provider) {
             Ok(config) => config,
             Err(errors) => {
@@ -405,6 +430,7 @@ impl Config {
 
         self.src = p(&root, &self.src);
         self.test = p(&root, &self.test);
+        self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
@@ -413,6 +439,8 @@ impl Config {
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
 
         self.cache_path = p(&root, &self.cache_path);
+
+        self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
         if let Some(ref mut model_checker) = self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
@@ -434,14 +462,40 @@ impl Config {
     pub fn sanitized(self) -> Self {
         let mut config = self.canonic();
 
-        // remove any potential duplicates
-        config.remappings.sort_unstable();
-        config.remappings.dedup();
+        config.sanitize_remappings();
 
         config.libs.sort_unstable();
         config.libs.dedup();
 
         config
+    }
+
+    /// Cleans up any duplicate `Remapping` and sorts them
+    ///
+    /// On windows this will convert any `\` in the remapping path into a `/`
+    pub fn sanitize_remappings(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            // force `/` in remappings on windows
+            use path_slash::PathBufExt;
+            self.remappings.iter_mut().for_each(|r| {
+                r.path.path = r.path.path.to_slash_lossy().into();
+            });
+        }
+        // remove any potential duplicates
+        self.remappings.sort_unstable();
+        self.remappings.dedup();
+    }
+
+    /// Returns the directory in which dependencies should be installed
+    ///
+    /// Returns the first dir from `libs` that is not `node_modules` or `lib` if `libs` is empty
+    pub fn install_lib_dir(&self) -> PathBuf {
+        self.libs
+            .iter()
+            .find(|p| !p.ends_with("node_modules"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("lib"))
     }
 
     /// Serves as the entrypoint for obtaining the project.
@@ -473,11 +527,13 @@ impl Config {
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
+            .allowed_paths(&self.allow_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
+            .set_build_info(cached & self.build_info)
             .set_no_artifacts(no_artifacts)
             .build()?;
 
@@ -554,6 +610,7 @@ impl Config {
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
+            .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.clone())
             .remappings(self.get_all_remappings())
@@ -583,6 +640,8 @@ impl Config {
             .iter()
             .map(|m| m.clone().into())
             .chain(self.get_source_dir_remapping())
+            .chain(self.get_test_dir_remapping())
+            .chain(self.get_script_dir_remapping())
             .collect()
     }
 
@@ -593,17 +652,22 @@ impl Config {
     ///
     /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
     pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
-        if let Some(src_dir_name) =
-            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
-        {
-            let mut src_remapping = Remapping {
-                name: format!("{src_dir_name}/"),
-                path: format!("{}", self.src.display()),
-            };
-            if !src_remapping.path.ends_with('/') {
-                src_remapping.path.push('/')
-            }
-            Some(src_remapping)
+        get_dir_remapping(&self.src)
+    }
+
+    /// Returns the remapping for the project's _test_ directory, but only if it exists
+    pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.test).exists() {
+            get_dir_remapping(&self.test)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the remapping for the project's _script_ directory, but only if it exists
+    pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
+        if self.__root.0.join(&self.script).exists() {
+            get_dir_remapping(&self.script)
         } else {
             None
         }
@@ -861,6 +925,10 @@ impl Config {
         }
         s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
 
+        if !self.rpc_endpoints.is_empty() {
+            s = s.replace("[rpc_endpoints]", &format!("[{}.rpc_endpoints]", self.profile));
+        }
+
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -895,24 +963,34 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
-    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    /// Returns the path to foundry rpc cache dir `~/.foundry/cache/rpc`
+    pub fn foundry_rpc_cache_dir() -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join("rpc"))
+    }
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/rpc/<chain>`
     pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+        Some(Self::foundry_rpc_cache_dir()?.join(chain_id.into().to_string()))
     }
 
-    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
-    pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/etherscan`
+    pub fn foundry_etherscan_cache_dir() -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join("etherscan"))
+    }
+
+    /// Returns the path to foundry's etherscan cache dir for `chain_id`
+    /// `~/.foundry/cache/etherscan/<chain>`
+    pub fn foundry_etherscan_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_etherscan_cache_dir()?.join(chain_id.into().to_string()))
     }
 
     /// Returns the path to the cache dir of the `block` on the `chain`
-    /// `~/.foundry/cache/<chain>/<block>
+    /// `~/.foundry/cache/rpc/<chain>/<block>
     pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
-    /// `~/.foundry/cache/<chain>/<block>/storage.json`
+    /// `~/.foundry/cache/rpc/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
         Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
@@ -994,19 +1072,43 @@ impl Config {
         Ok(())
     }
 
+    /// Clears the foundry etherscan cache
+    pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_etherscan_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_etherscan_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry etherscan cache for `chain`
+    pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_etherscan_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_etherscan_cache_dir for chain: {}", chain);
+        }
+
+        Ok(())
+    }
+
     /// List the data in the foundry cache
     pub fn list_foundry_cache() -> eyre::Result<Cache> {
-        if let Some(cache_dir) = Config::foundry_cache_dir() {
+        if let Some(cache_dir) = Config::foundry_rpc_cache_dir() {
             let mut cache = Cache { chains: vec![] };
             if !cache_dir.exists() {
                 return Ok(cache)
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    cache.chains.push(ChainCache {
-                        name: entry.file_name().to_string_lossy().into_owned(),
-                        blocks: Self::get_cached_blocks(&entry.path())?,
-                    })
+                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
+                        Err(_) => continue,
+                    }
                 }
                 Ok(cache)
             } else {
@@ -1019,9 +1121,18 @@ impl Config {
 
     /// List the cached data for `chain`
     pub fn list_foundry_chain_cache(chain: Chain) -> eyre::Result<ChainCache> {
+        let block_explorer_data_size = match Config::foundry_etherscan_chain_cache_dir(chain) {
+            Some(cache_dir) => Self::get_cached_block_explorer_data(&cache_dir)?,
+            None => eyre::bail!("failed to access foundry_etherscan_chain_cache_dir"),
+        };
+
         if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
             let blocks = Self::get_cached_blocks(&cache_dir)?;
-            Ok(ChainCache { name: chain.to_string(), blocks })
+            Ok(ChainCache {
+                name: chain.to_string(),
+                blocks,
+                block_explorer: block_explorer_data_size,
+            })
         } else {
             eyre::bail!("failed to get foundry_chain_cache_dir");
         }
@@ -1033,11 +1144,7 @@ impl Config {
         if !chain_path.exists() {
             return Ok(blocks)
         }
-        for block in chain_path
-            .read_dir()?
-            .flatten()
-            .filter(|x| x.file_type().unwrap().is_dir() && !x.file_name().eq("etherscan"))
-        {
+        for block in chain_path.read_dir()?.flatten().filter(|x| x.file_type().unwrap().is_dir()) {
             let filepath = block.path().join("storage.json");
             blocks.push((
                 block.file_name().to_string_lossy().into_owned(),
@@ -1045,6 +1152,26 @@ impl Config {
             ));
         }
         Ok(blocks)
+    }
+
+    //The path provided to this function should point to the etherscan cache for a chain
+    fn get_cached_block_explorer_data(chain_path: &Path) -> eyre::Result<u64> {
+        if !chain_path.exists() {
+            return Ok(0)
+        }
+
+        fn dir_size_recursive(mut dir: fs::ReadDir) -> eyre::Result<u64> {
+            dir.try_fold(0, |acc, file| {
+                let file = file?;
+                let size = match file.metadata()? {
+                    data if data.is_dir() => dir_size_recursive(fs::read_dir(file.path())?)?,
+                    data => data.len(),
+                };
+                Ok(acc + size)
+            })
+        }
+
+        dir_size_recursive(fs::read_dir(chain_path)?)
     }
 }
 
@@ -1225,10 +1352,13 @@ impl Default for Config {
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
+            script: "script".into(),
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
             cache_path: "cache".into(),
+            broadcast: "broadcast".into(),
+            allow_paths: vec![],
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
@@ -1253,8 +1383,8 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             ffi: false,
-            sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
-            tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
+            sender: Config::DEFAULT_SENDER,
+            tx_origin: Config::DEFAULT_SENDER,
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 1,
             fork_block_number: None,
@@ -1272,14 +1402,19 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
-            ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
-            __non_exhaustive: (),
+            ignored_error_codes: vec![
+                SolidityErrorCode::SpdxLicenseNotProvided,
+                SolidityErrorCode::CotractExceeds24576Bytes,
+            ],
             via_ir: false,
             rpc_storage_caching: Default::default(),
+            rpc_endpoints: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
             sparse_mode: false,
+            build_info: false,
+            __non_exhaustive: (),
         }
     }
 }
@@ -1359,6 +1494,9 @@ impl<'de> Deserialize<'de> for GasLimit {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// Warning that contract code size exceeds 24576 bytes (a limit introduced in Spurious
+    /// Dragon).
+    CotractExceeds24576Bytes,
     /// All other error codes
     Other(u64),
 }
@@ -1367,6 +1505,7 @@ impl From<SolidityErrorCode> for u64 {
     fn from(code: SolidityErrorCode) -> u64 {
         match code {
             SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::CotractExceeds24576Bytes => 5574,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -1376,6 +1515,7 @@ impl From<u64> for SolidityErrorCode {
     fn from(code: u64) -> Self {
         match code {
             1878 => SolidityErrorCode::SpdxLicenseNotProvided,
+            5574 => SolidityErrorCode::CotractExceeds24576Bytes,
             other => SolidityErrorCode::Other(other),
         }
     }
@@ -1567,14 +1707,24 @@ impl<'a> Provider for DappHardhatDirProvider<'a> {
                 .to_string()
                 .into(),
         );
-        dict.insert(
-            "libs".to_string(),
-            ProjectPathsConfig::find_libs(self.0)
-                .into_iter()
-                .map(|lib| lib.file_name().unwrap().to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .into(),
-        );
+
+        // detect libs folders:
+        //   if `lib` _and_ `node_modules` exists: include both
+        //   if only `node_modules` exists: include `node_modules`
+        //   include `lib` otherwise
+        let mut libs = vec![];
+        let node_modules = self.0.join("node_modules");
+        let lib = self.0.join("lib");
+        if node_modules.exists() {
+            if lib.exists() {
+                libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+            }
+            libs.push(node_modules.file_name().unwrap().to_string_lossy().to_string());
+        } else {
+            libs.push(lib.file_name().unwrap().to_string_lossy().to_string());
+        }
+
+        dict.insert("libs".to_string(), libs.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -1676,6 +1826,7 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        trace!("get all remappings from {:?}", self.root);
         /// prioritizes remappings that are closer: shorter `path`
         ///   - ("a", "1/2") over ("a", "1/2/3")
         fn insert_closest(mappings: &mut HashMap<String, PathBuf>, key: String, path: PathBuf) {
@@ -1719,8 +1870,19 @@ impl<'a> RemappingsProvider<'a> {
             insert_closest(&mut lib_remappings, r.name, r.path.into());
         }
         // use auto detection for all libs
-        for r in self.lib_paths.iter().map(|lib| self.root.join(lib)).flat_map(Remapping::find_many)
+        for r in self
+            .lib_paths
+            .iter()
+            .map(|lib| self.root.join(lib))
+            .inspect(|lib| {
+                trace!("find all remappings in lib path: {:?}", lib);
+            })
+            .flat_map(Remapping::find_many)
         {
+            // this is an additional safety check for weird auto-detected remappings
+            if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                continue
+            }
             insert_closest(&mut lib_remappings, r.name, r.path.into());
         }
 
@@ -1739,8 +1901,14 @@ impl<'a> RemappingsProvider<'a> {
 
     /// Returns all remappings declared in foundry.toml files of libraries
     fn lib_foundry_toml_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
-        self.lib_paths.iter().map(|p| self.root.join(p)).flat_map(foundry_toml_dirs).flat_map(
-            |lib: PathBuf| {
+        self.lib_paths
+            .iter()
+            .map(|p| self.root.join(p))
+            .flat_map(foundry_toml_dirs)
+            .inspect(|lib| {
+                trace!("find all remappings of nested foundry.toml lib: {:?}", lib);
+            })
+            .flat_map(|lib: PathBuf| {
                 // load config, of the nested lib if it exists
                 let config = Config::load_with_root(&lib).sanitized();
 
@@ -1770,8 +1938,7 @@ impl<'a> RemappingsProvider<'a> {
                     remappings.push(r);
                 }
                 remappings
-            },
-        )
+            })
     }
 }
 
@@ -1891,8 +2058,38 @@ mod tests {
 
     use super::*;
 
+    use crate::rpc::RpcEndpoint;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_install_dir() {
+        figment::Jail::expect_with(|jail| {
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['node_modules', 'lib']
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("lib"));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['custom', 'node_modules', 'lib']
+            "#,
+            )?;
+            let config = Config::load();
+            assert_eq!(config.install_lib_dir(), PathBuf::from("custom"));
+
+            Ok(())
+        });
+    }
 
     #[test]
     fn test_figment_is_default() {
@@ -1951,6 +2148,24 @@ mod tests {
             let config = Config::default();
             let paths_config = config.project_paths();
             assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_default_libs() {
+        figment::Jail::expect_with(|jail| {
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib")]);
+
+            fs::create_dir_all(jail.directory().join("node_modules")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("node_modules")]);
+
+            fs::create_dir_all(jail.directory().join("lib")).unwrap();
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("lib"), PathBuf::from("node_modules")]);
+
             Ok(())
         });
     }
@@ -2207,8 +2422,10 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
+                rpc_endpoints = { optimism = "https://example.com/", mainnet = "${RPC_MAINNET}" }
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
+                allow_paths = ["allow", "paths"]
             "#,
             )?;
 
@@ -2233,6 +2450,11 @@ mod tests {
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
                     revert_strings: Some(RevertStrings::Strip),
+                    allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
+                    rpc_endpoints: RpcEndpoints::new([
+                        ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                        ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                    ]),
                     ..Config::default()
                 }
             );
@@ -2882,6 +3104,38 @@ mod tests {
         assert_eq!(block1.1, 100);
         assert_eq!(block2.0, "2");
         assert_eq!(block2.1, 500);
+
+        chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn list_etherscan_cache() -> eyre::Result<()> {
+        fn fake_etherscan_cache(chain_path: &Path, address: &str, size_bytes: usize) {
+            let metadata_path = chain_path.join("sources");
+            let abi_path = chain_path.join("abi");
+            let _ = fs::create_dir(metadata_path.as_path());
+            let _ = fs::create_dir(abi_path.as_path());
+
+            let metadata_file_path = metadata_path.join(address);
+            let mut metadata_file = File::create(metadata_file_path).unwrap();
+            writeln!(metadata_file, "{}", vec![' '; size_bytes / 2 - 1].iter().collect::<String>())
+                .unwrap();
+
+            let abi_file_path = abi_path.join(address);
+            let mut abi_file = File::create(abi_file_path).unwrap();
+            writeln!(abi_file, "{}", vec![' '; size_bytes / 2 - 1].iter().collect::<String>())
+                .unwrap();
+        }
+
+        let chain_dir = tempdir()?;
+
+        fake_etherscan_cache(chain_dir.path(), "1", 100);
+        fake_etherscan_cache(chain_dir.path(), "2", 500);
+
+        let result = Config::get_cached_block_explorer_data(chain_dir.path())?;
+
+        assert_eq!(result, 600);
 
         chain_dir.close()?;
         Ok(())

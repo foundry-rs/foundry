@@ -1,13 +1,13 @@
 use ethers_core::{
     abi::Function,
     types::{
-        transaction::eip2718::TypedTransaction, Chain, Eip1559TransactionRequest, NameOrAddress,
+        transaction::eip2718::TypedTransaction, Eip1559TransactionRequest, NameOrAddress,
         TransactionRequest, H160, U256,
     },
 };
 use ethers_providers::Middleware;
-
-use eyre::{eyre, Result};
+use eyre::{eyre, Result, WrapErr};
+use foundry_config::Chain;
 use foundry_utils::{encode_args, get_func, get_func_etherscan};
 use futures::future::join_all;
 
@@ -49,16 +49,18 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         provider: &'a M,
         from: F,
         to: T,
-        chain: Chain,
+        chain: impl Into<Chain>,
         legacy: bool,
     ) -> Result<TxBuilder<'a, M>> {
+        let chain = chain.into();
         let from_addr = resolve_ens(provider, from).await?;
-        let to_addr = resolve_ens(provider, foundry_utils::resolve_addr(to, chain)?).await?;
+        let to_addr =
+            resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?).await?;
 
         let tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from_addr).to(to_addr).into()
+            TransactionRequest::new().from(from_addr).to(to_addr).chain_id(chain.id()).into()
         } else {
-            Eip1559TransactionRequest::new().from(from_addr).to(to_addr).into()
+            Eip1559TransactionRequest::new().from(from_addr).to(to_addr).chain_id(chain.id()).into()
         };
 
         Ok(Self { to: to_addr, chain, tx, func: None, etherscan_api_key: None, provider })
@@ -154,11 +156,13 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
             // if only calldata is provided, returning a dummy function
             get_func("x()")?
         } else {
+            let chain =
+                self.chain.try_into().wrap_err("resolving via etherscan requires a known chain")?;
             get_func_etherscan(
                 sig,
                 self.to,
                 &args,
-                self.chain,
+               chain,
                 self.etherscan_api_key.as_ref().unwrap_or_else(|| panic!(r#"Unable to determine the function signature from `{}`. To find the function signature from the deployed contract via its name instead, a valid ETHERSCAN_API_KEY must be set."#, sig)),
             )
             .await?
@@ -325,6 +329,7 @@ mod tests {
         assert_eq!(tx.gas_price().unwrap().as_u32(), 34);
         assert_eq!(tx.value().unwrap().as_u32(), 56);
         assert_eq!(tx.nonce().unwrap().as_u32(), 78);
+        assert_eq!(tx.chain_id().unwrap().as_u32(), 1);
         Ok(())
     }
 

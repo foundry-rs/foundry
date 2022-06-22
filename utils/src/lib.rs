@@ -4,13 +4,14 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, RawLog, Token,
     },
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode, Libraries},
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
@@ -19,12 +20,34 @@ use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt::Write,
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
 
 pub mod rpc;
 pub mod selectors;
+pub use selectors::decode_selector;
+
+/// Very simple fuzzy matching of contract bytecode.
+///
+/// Will fail for small contracts that are essentially all immutable variables.
+pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
+    let cutoff_len = usize::min(a.len(), b.len());
+    if cutoff_len == 0 {
+        return 1.0
+    }
+
+    let a = &a[..cutoff_len];
+    let b = &b[..cutoff_len];
+    let mut diff_chars = 0;
+    for i in 0..cutoff_len {
+        if a[i] != b[i] {
+            diff_chars += 1;
+        }
+    }
+    diff_chars as f64 / cutoff_len as f64
+}
 
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
@@ -32,22 +55,20 @@ pub struct PostLinkInput<'a, T, U> {
     pub known_contracts: &'a mut BTreeMap<ArtifactId, T>,
     pub id: ArtifactId,
     pub extra: &'a mut U,
-    pub dependencies: Vec<ethers_core::types::Bytes>,
+    pub dependencies: Vec<(String, ethers_core::types::Bytes)>,
 }
 
-pub fn link<T, U>(
+#[allow(clippy::too_many_arguments)]
+pub fn link_with_nonce_or_address<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
+    deployed_library_addresses: Libraries,
     sender: Address,
+    nonce: U256,
     extra: &mut U,
     link_key_construction: impl Fn(String, String) -> (String, String, String),
     post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
 ) -> eyre::Result<()> {
-    // we dont use mainnet state for evm_opts.sender so this will always be 1
-    // I am leaving this here so that in the future if this needs to change,
-    // its easy to find.
-    let nonce = U256::one();
-
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
         .iter()
@@ -99,6 +120,7 @@ pub fn link<T, U>(
                         &contracts_by_slug,
                         &link_tree,
                         &mut dependencies,
+                        &deployed_library_addresses,
                         nonce,
                         sender,
                     );
@@ -130,6 +152,7 @@ pub fn link<T, U>(
 /// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
 /// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
 /// will be filled with the predeploy libraries, initial nonce, and the sender.
+#[allow(clippy::too_many_arguments)]
 pub fn recurse_link<'a>(
     // target name
     target: String,
@@ -139,8 +162,10 @@ pub fn recurse_link<'a>(
     contracts: &'a BTreeMap<String, CompactContractBytecode>,
     // fname => Vec<(fname, file, key)>
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
-    // library deployment vector
-    deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // library deployment vector (file:contract:address, bytecode)
+    deployment: &'a mut Vec<(String, ethers_core::types::Bytes)>,
+    // deployed library addresses fname => adddress
+    deployed_library_addresses: &'a Libraries,
     // nonce to start at
     init_nonce: U256,
     // sender
@@ -160,7 +185,7 @@ pub fn recurse_link<'a>(
                 .expect("No target runtime");
 
             // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&target) {
+            if let Some(deps) = dependency_tree.get(next_target) {
                 if !deps.is_empty() {
                     // actually link the nested dependencies to this dependency
                     recurse_link(
@@ -169,23 +194,42 @@ pub fn recurse_link<'a>(
                         contracts,
                         dependency_tree,
                         deployment,
+                        deployed_library_addresses,
                         init_nonce,
                         sender,
                     );
                 }
             }
 
-            // calculate the address for linking this dependency
-            let addr =
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+            let mut deployed_address = None;
+
+            if let Some(library_file) = deployed_library_addresses
+                .libs
+                .get(&PathBuf::from_str(file).expect("Invalid library path."))
+            {
+                if let Some(address) = library_file.get(key) {
+                    deployed_address =
+                        Some(Address::from_str(address).expect("Invalid library address passed."));
+                }
+            }
+
+            let address = deployed_address.unwrap_or_else(|| {
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len())
+            });
 
             // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), addr);
-            target_bytecode.1.link(file, key, addr);
+            target_bytecode.0.link(file.clone(), key.clone(), address);
+            target_bytecode.1.link(file.clone(), key.clone(), address);
 
-            // push the dependency into the library deployment vector
-            deployment
-                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+            if deployed_address.is_none() {
+                let library = format!("{}:{}:0x{}", file, key, hex::encode(address));
+
+                // push the dependency into the library deployment vector
+                deployment.push((
+                    library,
+                    next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"),
+                ));
+            }
         });
     }
 }
@@ -403,6 +447,39 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(func.clone())
 }
 
+/// Given an event signature string, it tries to parse it as a `Event`
+pub fn get_event(sig: &str) -> Result<Event> {
+    let sig = if !sig.starts_with("event ") { format!("event {}", sig) } else { sig.to_string() };
+    let abi = parse_abi(&[&sig])?;
+    // get the event
+    let (_, event) = abi.events.iter().next().ok_or_else(|| eyre::eyre!("event name not found"))?;
+    let event = event.get(0).ok_or_else(|| eyre::eyre!("events array empty"))?;
+    Ok(event.clone())
+}
+
+/// Given an event without indexed parameters and a rawlog, it tries to return the event with the
+/// proper indexed parameters. Otherwise, it returns the original event.
+pub fn get_indexed_event(mut event: Event, raw_log: &RawLog) -> Event {
+    if !event.anonymous && raw_log.topics.len() > 1 {
+        let indexed_params = raw_log.topics.len() - 1;
+        let num_inputs = event.inputs.len();
+        let num_address_params =
+            event.inputs.iter().filter(|p| p.kind == ParamType::Address).count();
+
+        event.inputs.iter_mut().enumerate().for_each(|(index, param)| {
+            if param.name.is_empty() {
+                param.name = format!("param{index}");
+            }
+            if num_inputs == indexed_params ||
+                (num_address_params == indexed_params && param.kind == ParamType::Address)
+            {
+                param.indexed = true;
+            }
+        })
+    }
+    event
+}
+
 // Given a function name, address, and args, tries to parse it as a `Function` by fetching the
 // abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
 pub async fn get_func_etherscan(
@@ -518,11 +595,16 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
 /// Resolves an input to [`NameOrAddress`]. The input could also be a contract/token name supported
 /// by
 /// [`ethers-addressbook`](https://github.com/gakonst/ethers-rs/tree/master/ethers-addressbook).
-pub fn resolve_addr<T: Into<NameOrAddress>>(to: T, chain: Chain) -> eyre::Result<NameOrAddress> {
+pub fn resolve_addr<T: Into<NameOrAddress>>(
+    to: T,
+    chain: Option<Chain>,
+) -> eyre::Result<NameOrAddress> {
     Ok(match to.into() {
         NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
         NameOrAddress::Name(contract_or_ens) => {
             if let Some(contract) = contract(&contract_or_ens) {
+                let chain = chain
+                    .ok_or_else(|| eyre::eyre!("resolving contract requires a known chain"))?;
                 NameOrAddress::Address(contract.address(chain).ok_or_else(|| {
                     eyre::eyre!(
                         "contract: {} not found in addressbook for network: {}",
@@ -849,6 +931,15 @@ pub fn init_tracing_subscriber() {
         .ok();
 }
 
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block: Option<BlockId>,
+) -> Result<U256, ProviderError> {
+    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
+    provider.get_transaction_count(caller, block).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,10 +1022,12 @@ mod tests {
             .expect("could not get bytecode as str")
             .to_string();
 
-        link(
+        link_with_nonce_or_address(
             contracts,
             &mut known_contracts,
+            Default::default(),
             Address::default(),
+            U256::one(),
             &mut deployable_contracts,
             |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
@@ -944,10 +1037,10 @@ mod tests {
                     }
                     "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }
@@ -956,14 +1049,14 @@ mod tests {
                     }
                     "NestedLib.json:NestedLib" => {
                         assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
                     }
                     "LibraryConsumer.json:LibraryConsumer" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
-                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0].1), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1].1), lib_linked);
                         assert_ne!(
-                            hex::encode(&post_link_input.dependencies[2]),
+                            hex::encode(&post_link_input.dependencies[2].1),
                             *nested_lib_unlinked
                         );
                     }
@@ -981,7 +1074,7 @@ mod tests {
 
         // DAI:mainnet exists in ethers-addressbook (0x6b175474e89094c44da98b954eedeac495271d0f)
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Mainnet).ok(),
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Mainnet)).ok(),
             Some(NameOrAddress::Address(
                 Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap()
             ))
@@ -989,25 +1082,30 @@ mod tests {
 
         // DAI:goerli exists in ethers-adddressbook (0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844)
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Goerli).ok(),
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::Goerli)).ok(),
             Some(NameOrAddress::Address(
                 Address::from_str("0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844").unwrap()
             ))
         );
 
         // DAI:moonbean does not exist in addressbook
-        assert!(resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::MoonbeamDev).is_err());
+        assert!(
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Some(Chain::MoonbeamDev)).is_err()
+        );
 
         // If not present in addressbook, gets resolved to an ENS name.
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("contractnotpresent".to_string()), Chain::Mainnet)
-                .ok(),
+            resolve_addr(
+                NameOrAddress::Name("contractnotpresent".to_string()),
+                Some(Chain::Mainnet)
+            )
+            .ok(),
             Some(NameOrAddress::Name("contractnotpresent".to_string())),
         );
 
         // Nothing to resolve for an address.
         assert_eq!(
-            resolve_addr(NameOrAddress::Address(Address::zero()), Chain::Mainnet).ok(),
+            resolve_addr(NameOrAddress::Address(Address::zero()), Some(Chain::Mainnet)).ok(),
             Some(NameOrAddress::Address(Address::zero())),
         );
     }
@@ -1041,5 +1139,56 @@ mod tests {
             .to_string(),
             abi_to_solidity(&contract_abi, "").unwrap()
         );
+    }
+
+    #[test]
+    fn test_indexed_only_address() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog { topics: vec![event.signature(), param0, param2], data: param1.clone() };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // Only the address fields get indexed since total_params > num_indexed_params
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 2);
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
+    }
+
+    #[test]
+    fn test_indexed_all() {
+        let event = get_event("event Ev(address,uint256,address)").unwrap();
+
+        let param0 = H256::random();
+        let param1 = vec![3; 32];
+        let param2 = H256::random();
+        let log = RawLog {
+            topics: vec![event.signature(), param0, H256::from_slice(&param1), param2],
+            data: vec![],
+        };
+        let event = get_indexed_event(event, &log);
+
+        assert!(event.inputs.len() == 3);
+
+        // All parameters get indexed since num_indexed_params == total_params
+        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 3);
+        let parsed = event.parse_log(log).unwrap();
+
+        assert!(parsed.params[0].name == "param0");
+        assert!(parsed.params[0].value == Token::Address(param0.into()));
+        assert!(parsed.params[1].name == "param1");
+        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
+        assert!(parsed.params[2].name == "param2");
+        assert!(parsed.params[2].value == Token::Address(param2.into()));
     }
 }

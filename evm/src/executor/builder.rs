@@ -1,4 +1,4 @@
-use ethers::prelude::Provider;
+use ethers::providers::{Http, Provider, RetryClient};
 use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
@@ -15,6 +15,7 @@ use ethers::types::{H160, H256, U256};
 
 use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
 
+use crate::executor::inspector::CheatsConfig;
 use revm::AccountInfo;
 
 #[derive(Default, Debug)]
@@ -40,6 +41,8 @@ pub struct Fork {
     pub pin_block: Option<u64>,
     /// chain id retrieved from the endpoint
     pub chain_id: u64,
+    /// The initial retry backoff
+    pub initial_backoff: u64,
 }
 
 impl Fork {
@@ -51,10 +54,12 @@ impl Fork {
     /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
     /// required. See also [crate::executor::fork::SharedBackend]
     pub async fn spawn_backend(self, env: &Env) -> SharedBackend {
-        let Fork { cache_path, url, pin_block, chain_id } = self;
+        let Fork { cache_path, url, pin_block, chain_id, initial_backoff } = self;
 
-        let provider =
-            Arc::new(Provider::try_from(url.clone()).expect("Failed to establish provider"));
+        let provider = Arc::new(
+            Provider::<RetryClient<Http>>::new_client(url.clone().as_str(), 10, initial_backoff)
+                .expect("Failed to establish provider"),
+        );
 
         let mut meta = BlockchainDbMeta::new(env.clone(), url);
 
@@ -125,16 +130,11 @@ impl DatabaseRef for Backend {
 }
 
 impl ExecutorBuilder {
-    #[must_use]
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
+    pub fn with_cheatcodes(mut self, config: CheatsConfig) -> Self {
         self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
+            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price, config));
         self
     }
 

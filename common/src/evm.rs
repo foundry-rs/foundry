@@ -38,7 +38,7 @@ pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
-    #[clap(long, short, alias = "rpc-url", value_name = "URL")]
+    #[clap(long, short, visible_alias = "rpc-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
@@ -48,6 +48,13 @@ pub struct EvmArgs {
     #[clap(long, requires = "fork-url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
+
+    /// Initial retry backoff on encountering errors.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", value_name = "BACKOFF")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork_retry_backoff: Option<u64>,
 
     /// Explicitly disables the use of RPC caching.
     ///

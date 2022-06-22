@@ -5,18 +5,11 @@ use ethers::solc::{
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
-    forgetest, forgetest_ignore, forgetest_init,
+    forgetest, forgetest_init,
     util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::{fs, path::PathBuf};
-use yansi::Paint;
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
+use std::{env, fs, path::PathBuf};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -31,73 +24,195 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_cleaned();
 });
 
+// checks that `cache ls` can be invoked and displays the foundry cache
+forgetest!(
+    #[ignore]
+    can_cache_ls,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let block1 = 100;
+        let block2 = 101;
+
+        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+        let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
+        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+        let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        fs::create_dir_all(block1_cache_dir).unwrap();
+        fs::write(block1_file, "{}").unwrap();
+        fs::create_dir_all(block2_cache_dir).unwrap();
+        fs::write(block2_file, "{}").unwrap();
+        fs::create_dir_all(etherscan_cache_dir).unwrap();
+
+        cmd.args(["cache", "ls"]);
+        let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
+        let output_lines = output_string.split('\n').collect::<Vec<_>>();
+        println!("{output_string}");
+
+        assert_eq!(output_lines.len(), 6);
+        assert!(output_lines[0].starts_with("-️ mainnet ("));
+        assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
+        assert_eq!(output_lines[2], "");
+        assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
+        assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
+        assert_eq!(output_lines[5], "");
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
+
 // checks that `cache clean` can be invoked and cleans the foundry cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir = Config::foundry_cache_dir().unwrap();
-    let path = cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    cmd.args(["cache", "clean"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let path = cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        cmd.args(["cache", "clean"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!path.exists());
-});
+        assert!(!path.exists());
+    }
+);
+
+// checks that `cache clean --etherscan` can be invoked and only cleans the foundry etherscan cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest!(
+    #[ignore]
+    can_cache_clean_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "--etherscan"]);
+        cmd.assert_empty_stdout();
+
+        assert!(path.exists());
+        assert!(!etherscan_path.exists());
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
+
+// checks that `cache clean all --etherscan` can be invoked and only cleans the foundry etherscan
+// cache. This test is not isolated and modifies ~ so it is ignored
+forgetest!(
+    #[ignore]
+    can_cache_clean_all_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+        let rpc_path = rpc_cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(rpc_path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "all", "--etherscan"]);
+        cmd.assert_empty_stdout();
+
+        assert!(rpc_path.exists());
+        assert!(!etherscan_path.exists());
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean <chain>` can be invoked and cleans the chain cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir =
-        Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
-    let path = cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    cmd.args(["cache", "clean", "mainnet"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_chain,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!path.exists());
-});
+        assert!(!path.exists());
+        assert!(!etherscan_path.exists());
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
 // caches this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
-    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
-    let block1 = 100;
-    let block2 = 102;
-    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-    let block1_path = block1_cache_dir.as_path();
-    let block2_path = block2_cache_dir.as_path();
-    fs::create_dir_all(block1_path).unwrap();
-    fs::create_dir_all(block2_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_blocks,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let block1 = 100;
+        let block2 = 101;
+        let block3 = 102;
+        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+        let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        let block1_path = block1_cache_dir.as_path();
+        let block2_path = block2_cache_dir.as_path();
+        let block3_path = block3_cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(block1_path).unwrap();
+        fs::create_dir_all(block2_path).unwrap();
+        fs::create_dir_all(block3_path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!block1_path.exists());
-    assert!(!block2_path.exists());
-});
+        assert!(!block1_path.exists());
+        assert!(!block2_path.exists());
+        assert!(block3_path.exists());
+        assert!(etherscan_path.exists());
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
+
+// checks that `cache clean <chain> --etherscan` can be invoked and cleans the etherscan chain cache
+// this test is not isolated and modifies ~ so it is ignored
+forgetest!(
+    #[ignore]
+    can_cache_clean_chain_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir =
+            Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(Chain::Named(
+            ethers::prelude::Chain::Mainnet,
+        ))
+        .unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
+        cmd.assert_empty_stdout();
+
+        assert!(path.exists());
+        assert!(!etherscan_path.exists());
+
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
     cmd.args(["init", "--force"]).arg(prj.root());
     cmd.assert_non_empty_stdout();
 
-    let file = Config::find_config_file().unwrap();
-    assert_eq!(foundry_toml, file);
-
-    let s = read_string(&file);
+    let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-
-    // can detect root
-    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
-    let nested = prj.root().join("nested/nested");
-    pretty_err(&nested, std::fs::create_dir_all(&nested));
-
-    // even if nested
-    cmd.set_current_dir(&nested);
-    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
 });
 
 // checks that init works repeatedly
@@ -176,6 +291,25 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
 });
 
+// checks that forge can init with template
+forgetest!(can_init_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "foundry-rs/forge-template"]).arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("test").exists());
+});
+
+// checks that init fails when the provided template doesn't exist
+forgetest!(fail_init_nonexistent_template, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+    cmd.args(["init", "--template", "a"]).arg(prj.root());
+    cmd.assert_non_empty_stderr();
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
@@ -196,7 +330,6 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
 
 // checks that `clean` also works with the "out" value set in Config
 forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     let config = Config { out: "custom-out".into(), ..Default::default() };
     prj.write_config(config);
     cmd.arg("build");
@@ -213,7 +346,6 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
@@ -231,7 +363,6 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
 
 // checks that extra output works
 forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
@@ -296,7 +427,7 @@ warning[5667]: Warning: Unused function parameter. Remove or comment out the var
 });
 
 // tests that direct import paths are handled correctly
-forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(canhandle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
@@ -345,144 +476,6 @@ Compiler run successful
     ));
 });
 
-// Tests that the `run` command works correctly
-forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function run() external {
-        emit log_string("script ran");
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("run").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1751
-== Return ==
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run arbitrary functions
-forgetest!(can_execute_run_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function myFunction() external {
-        emit log_string("script ran");
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("run").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1751
-== Return ==
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run functions with arguments
-forgetest!(can_execute_run_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    event log_uint(uint);
-    function run(uint256 a, uint256 b) external {
-        emit log_string("script ran");
-        emit log_uint(a);
-        emit log_uint(b);
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("run").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 3957
-== Return ==
-== Logs ==
-  script ran
-  1
-  2
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run functions with return values
-forgetest!(can_execute_run_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function run() external returns (uint256 result, uint8) {
-        emit log_string("script ran");
-        return (255, 3);
-    }
-}"#,
-        )
-        .unwrap();
-    cmd.arg("run").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1836
-== Return ==
-result: uint256 255
-1: uint8 3
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    )));
-});
-
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
     // explicitly set to include the ipfs bytecode hash
@@ -520,13 +513,16 @@ contract Foo {
 });
 
 // test that `forge snapshot` commands work
-forgetest!(can_check_snapshot, |prj: TestProject, mut cmd: TestCommand| {
-    prj.insert_ds_test();
+forgetest!(
+    #[serial_test::serial]
+    can_check_snapshot,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.insert_ds_test();
 
-    prj.inner()
-        .add_source(
-            "ATest.t.sol",
-            r#"
+        prj.inner()
+            .add_source(
+                "ATest.t.sol",
+                r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
 import "./test.sol";
@@ -536,33 +532,20 @@ contract ATest is DSTest {
     }
 }
    "#,
-        )
-        .unwrap();
-    prj.inner()
-        .add_source(
-            "BTest.t.sol",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-import "./test.sol";
-contract BTest is DSTest {
-    function testExample() public {
-        assertTrue(true);
+            )
+            .unwrap();
+
+        cmd.arg("snapshot");
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_check_snapshot.stdout"),
+        );
+
+        cmd.arg("--check");
+        let _ = cmd.output();
     }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("snapshot");
-
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_check_snapshot.stdout"),
-    );
-
-    cmd.arg("--check");
-    let _ = cmd.output();
-});
+);
 
 // test that `forge build` does not print `(with warnings)` if there arent any
 forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
@@ -603,31 +586,35 @@ contract A {
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
-forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
-    let current_dir = std::env::current_dir().unwrap();
-    let root = current_dir
-        .join("../../foundry-integration-tests/testdata/spells-mainnet")
-        .to_string_lossy()
-        .to_string();
-    println!("project root: \"{root}\"");
+forgetest!(
+    #[ignore]
+    can_compile_local_spells,
+    |_: TestProject, mut cmd: TestCommand| {
+        let current_dir = std::env::current_dir().unwrap();
+        let root = current_dir
+            .join("../../foundry-integration-tests/testdata/spells-mainnet")
+            .to_string_lossy()
+            .to_string();
+        println!("project root: \"{root}\"");
 
-    let eth_rpc_url = next_http_rpc_endpoint();
-    let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
+        let eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+        let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
-    cmd.args([
-        "test",
-        "--root",
-        root.as_str(),
-        "--fork-url",
-        eth_rpc_url.as_str(),
-        "--fork-block-number",
-        "14435000",
-        "--libraries",
-        dss_exec_lib,
-        "-vvv",
-    ]);
-    cmd.print_output();
-});
+        cmd.args([
+            "test",
+            "--root",
+            root.as_str(),
+            "--fork-url",
+            eth_rpc_url.as_str(),
+            "--fork-block-number",
+            "14435000",
+            "--libraries",
+            dss_exec_lib,
+            "-vvv",
+        ]);
+        cmd.print_output();
+    }
+);
 
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj: TestProject, mut cmd: TestCommand| {
@@ -726,4 +713,42 @@ contract CTest is DSTest {
     // ensure unchanged cache file
     let cache_after = fs::read_to_string(prj.cache_path()).unwrap();
     assert_eq!(cache, cache_after);
+});
+
+// test to check that install/remove works properly
+forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    let remove = |cmd: &mut TestCommand, target: &str| {
+        cmd.forge_fuse().args(["remove", target]);
+        cmd.assert_non_empty_stdout();
+        assert!(!forge_std.exists());
+        assert!(!forge_std_mod.exists());
+        let submods = read_string(&git_mod_file);
+        assert!(!submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    remove(&mut cmd, "forge-std");
+
+    // install again and remove via relative path
+    install(&mut cmd);
+    remove(&mut cmd, "lib/forge-std");
 });

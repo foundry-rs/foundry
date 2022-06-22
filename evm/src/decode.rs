@@ -44,6 +44,8 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
             format!("{}: 0x{}", inner.key, hex::encode(inner.val))
         }
         LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+        LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
 
         e => e.to_string(),
     };

@@ -6,7 +6,7 @@ use crate::{
             cheats,
             cheats::CheatsManager,
             db::{Db, SerializableState},
-            executor::{ExecutedTransactions, TransactionExecutor},
+            executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -22,13 +22,12 @@ use crate::{
         in_memory_db::MemDb,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    revm::AccountInfo,
+    revm::{db::DatabaseRef, AccountInfo},
 };
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header},
         call::CallRequest,
-        filter::{Filter, FilteredParams},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
         utils::to_access_list,
@@ -39,14 +38,16 @@ use anvil_rpc::error::RpcError;
 use ethers::{
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
-        Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
+        Address, Block as EthersBlock, BlockId, Bytes, Filter, FilteredParams, Log, Trace,
         Transaction, TransactionReceipt,
     },
     utils::{keccak256, rlp},
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{
+        db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
+    },
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -57,7 +58,6 @@ use tracing::{trace, warn};
 
 pub mod fork_db;
 pub mod in_memory_db;
-pub mod snapshot;
 pub mod state;
 pub mod storage;
 
@@ -90,6 +90,8 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
+    /// A lock used to sync evm executor access
+    executor_lock: EvmExecutorLock,
 }
 
 impl Backend {
@@ -97,7 +99,7 @@ impl Backend {
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
         Self {
             db,
-            blockchain: Blockchain::default(),
+            blockchain: Blockchain::new(fees.is_eip1559().then(|| fees.base_fee())),
             states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
@@ -107,13 +109,14 @@ impl Backend {
             fees,
             genesis: Default::default(),
             active_snapshots: Arc::new(Mutex::new(Default::default())),
+            executor_lock: EvmExecutorLock::new(false),
         }
     }
 
     /// Creates a new empty blockchain backend
     pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
         let db = MemDb::default();
-        let fees = FeeManager::new(gas_price, gas_price);
+        let fees = FeeManager::new(env.read().cfg.spec_id, gas_price, gas_price);
         Self::new(Arc::new(RwLock::new(db)), env, fees)
     }
 
@@ -130,7 +133,7 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
-            Default::default()
+            Blockchain::new(fees.is_eip1559().then(|| fees.base_fee()))
         };
 
         let backend = Self {
@@ -138,6 +141,7 @@ impl Backend {
             blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
+            executor_lock: EvmExecutorLock::new(fork.is_some()),
             fork,
             time: Default::default(),
             cheats: Default::default(),
@@ -193,6 +197,9 @@ impl Backend {
                 env.cfg.chain_id = fork.chain_id().into();
                 env.block.number = fork.block_number().into();
                 self.time.set_start_timestamp(fork.timestamp());
+                let base_fee = fork.base_fee().unwrap_or_default();
+                self.fees.set_base_fee(base_fee);
+                env.block.basefee = base_fee;
             }
 
             // reset storage
@@ -294,12 +301,17 @@ impl Backend {
         self.db.write().set_storage_at(address, slot, val);
     }
 
+    /// Returns true for post London
+    pub fn is_eip1559(&self) -> bool {
+        (self.env().read().cfg.spec_id as u8) >= (SpecId::LONDON as u8)
+    }
+
     /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
         self.env().read().block.gas_limit
     }
 
-    /// Returns the current basefee
+    /// Returns the current base fee
     pub fn base_fee(&self) -> U256 {
         self.fees.base_fee()
     }
@@ -434,83 +446,113 @@ impl Backend {
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide.
-    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
+    pub async fn mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
+        self.do_mine_block(pool_transactions).await
+    }
+
+    async fn do_mine_block(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+    ) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
-        let current_base_fee = self.base_fee();
-        // acquire all locks
-        let mut env = self.env.write();
-        let mut db = self.db.write();
-        let mut storage = self.blockchain.storage.write();
+        let (outcome, header, block_hash) = {
+            let _lock = self.executor_lock.write().await;
 
-        // store current state
-        self.states.write().insert(storage.best_hash, db.current_state());
+            let current_base_fee = self.base_fee();
+            // acquire all locks
+            let mut env = self.env.write();
+            let mut db = self.db.write();
+            let mut storage = self.blockchain.storage.write();
 
-        // increase block number for this block
-        env.block.number = env.block.number.saturating_add(U256::one());
-        env.block.basefee = current_base_fee;
-        env.block.timestamp = self.time.next_timestamp().into();
+            // store current state
+            self.states.write().insert(storage.best_hash, db.current_state());
 
-        let executor = TransactionExecutor {
-            db: &mut *db,
-            validator: self,
-            pending: pool_transactions.into_iter(),
-            block_env: env.block.clone(),
-            cfg_env: env.cfg.clone(),
-            parent_hash: storage.best_hash,
-            gas_used: U256::zero(),
-        };
+            // increase block number for this block
+            env.block.number = env.block.number.saturating_add(U256::one());
+            env.block.basefee = current_base_fee;
+            env.block.timestamp = self.time.next_timestamp().into();
 
-        // create the new block with the current timestamp
-        let ExecutedTransactions { block, included, invalid } = executor.execute();
-        let BlockInfo { block, transactions, receipts } = block;
+            let executor = TransactionExecutor {
+                db: &mut *db,
+                validator: self,
+                pending: pool_transactions.into_iter(),
+                block_env: env.block.clone(),
+                cfg_env: env.cfg.clone(),
+                parent_hash: storage.best_hash,
+                gas_used: U256::zero(),
+            };
 
-        let header = block.header.clone();
+            // create the new block with the current timestamp
+            let ExecutedTransactions { block, included, invalid } = executor.execute();
+            let BlockInfo { block, transactions, receipts } = block;
 
-        let block_hash = block.header.hash();
-        let block_number: U64 = env.block.number.as_u64().into();
+            let header = block.header.clone();
 
-        trace!(
-            target: "backend",
-            "Mined block {} with {} tx {:?}",
-            block_number,
-            transactions.len(),
-            transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
-        );
+            let block_hash = block.header.hash();
+            let block_number: U64 = env.block.number.as_u64().into();
 
-        // update block metadata
-        storage.best_number = block_number;
-        storage.best_hash = block_hash;
+            trace!(
+                target: "backend",
+                "Mined block {} with {} tx {:?}",
+                block_number,
+                transactions.len(),
+                transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
+            );
 
-        storage.blocks.insert(block_hash, block);
-        storage.hashes.insert(block_number, block_hash);
+            // update block metadata
+            storage.best_number = block_number;
+            storage.best_hash = block_hash;
 
-        node_info!("");
-        // insert all transactions
-        for (info, receipt) in transactions.into_iter().zip(receipts) {
-            // log some tx info
-            {
-                node_info!("    Transaction: {:?}", info.transaction_hash);
-                if let Some(ref contract) = info.contract_address {
-                    node_info!("    Contract created: {:?}", contract);
+            storage.blocks.insert(block_hash, block);
+            storage.hashes.insert(block_number, block_hash);
+
+            node_info!("");
+            // insert all transactions
+            for (info, receipt) in transactions.into_iter().zip(receipts) {
+                // log some tx info
+                {
+                    node_info!("    Transaction: {:?}", info.transaction_hash);
+                    if let Some(ref contract) = info.contract_address {
+                        node_info!("    Contract created: {:?}", contract);
+                    }
+                    node_info!("    Gas used: {}", receipt.gas_used());
                 }
-                node_info!("    Gas used: {}", receipt.gas_used());
+
+                let mined_tx = MinedTransaction {
+                    info,
+                    receipt,
+                    block_hash,
+                    block_number: block_number.as_u64(),
+                };
+                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+            let timestamp = utc_from_secs(header.timestamp);
 
-            let mined_tx =
-                MinedTransaction { info, receipt, block_hash, block_number: block_number.as_u64() };
-            storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
-        }
-        let timestamp = utc_from_secs(header.timestamp);
+            node_info!("    Block Number: {}", block_number);
+            node_info!("    Block Hash: {:?}", block_hash);
+            node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
 
-        node_info!("    Block Number: {}", block_number);
-        node_info!("    Block Hash: {:?}", block_hash);
-        node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
+            let outcome = MinedBlockOutcome { block_number, included, invalid };
+
+            (outcome, header, block_hash)
+        };
+        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+            header.gas_used,
+            header.gas_limit,
+            header.base_fee_per_gas.unwrap_or_default(),
+        );
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
 
-        MinedBlockOutcome { block_number, included, invalid }
+        // update next base fee
+        self.fees.set_base_fee(next_block_base_fee.into());
+
+        outcome
     }
 
     /// Executes the `CallRequest` without writing to the DB
@@ -518,13 +560,16 @@ impl Backend {
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
-    pub fn call(
+    pub async fn call(
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
+
+        let _lock = self.executor_lock.read().await;
+
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -622,7 +667,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            let filter = filter.into();
+            let filter = filter;
             return Ok(fork.logs(&filter).await?)
         }
 
@@ -664,7 +709,7 @@ impl Backend {
                     removed: Some(false),
                 };
                 let mut is_match: bool = true;
-                if filter.address.is_some() && filter.topics.is_some() {
+                if filter.address.is_some() && filter.has_topics() {
                     if !params.filter_address(&log) || !params.filter_topics(&log) {
                         is_match = false;
                     }
@@ -672,7 +717,7 @@ impl Backend {
                     if !params.filter_address(&log) {
                         is_match = false;
                     }
-                } else if filter.topics.is_some() && !params.filter_topics(&log) {
+                } else if filter.has_topics() && !params.filter_topics(&log) {
                     is_match = false;
                 }
 
@@ -712,8 +757,7 @@ impl Backend {
 
             if fork.predates_fork(from) {
                 // this data is only available on the forked client
-                let mut filter: EthersFilter = filter.clone().into();
-                filter = filter.from_block(from).to_block(to_on_fork);
+                let filter = filter.clone().from_block(from).to_block(to_on_fork);
                 all_logs = fork.logs(&filter).await?;
 
                 // update the range
@@ -733,13 +777,14 @@ impl Backend {
     /// Returns the logs according to the filter
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>, BlockchainError> {
         trace!(target: "backend", "get logs [{:?}]", filter);
-        if let Some(hash) = filter.block_hash {
+        if let Some(hash) = filter.get_block_hash() {
             self.logs_for_block(filter, hash).await
         } else {
             let best = self.best_number().as_u64();
-            let to_block = filter.get_to_block_number().unwrap_or(best).min(best);
-
-            let from_block = filter.get_from_block_number().unwrap_or(best).min(best);
+            let to_block =
+                self.convert_block_number(filter.block_option.get_to_block().copied()).min(best);
+            let from_block =
+                self.convert_block_number(filter.block_option.get_from_block().copied()).min(best);
             self.logs_for_range(&filter, from_block, to_block).await
         }
     }
@@ -784,13 +829,13 @@ impl Backend {
     /// Returns all transactions given a block
     fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
         let mut transactions = Vec::with_capacity(block.transactions.len());
-        let base_fee = self.base_fee();
+        let base_fee = block.header.base_fee_per_gas;
         let storage = self.blockchain.storage.read();
         for hash in block.transactions.iter().map(|tx| tx.hash()) {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(tx, Some(block), Some(info), true, Some(base_fee));
+            let tx = transaction_build(tx, Some(block), Some(info), true, base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -882,9 +927,10 @@ impl Backend {
             extra_data,
             mix_hash,
             nonce,
+            base_fee_per_gas,
         } = header;
 
-        let block = EthersBlock {
+        EthersBlock {
             hash: Some(hash),
             parent_hash,
             uncles_hash: ommers_hash,
@@ -910,11 +956,8 @@ impl Backend {
             size: Some(size),
             mix_hash: Some(mix_hash),
             nonce: Some(nonce),
-            // TODO check
-            base_fee_per_gas: Some(self.base_fee()),
-        };
-
-        block
+            base_fee_per_gas,
+        }
     }
 
     /// Converts the `BlockNumber` into a numeric value
@@ -962,15 +1005,36 @@ impl Backend {
         }
     }
 
+    /// Helper function to execute a closure with the database at a specific block
+    pub fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
+    where
+        F: FnOnce(Box<dyn DatabaseRef + '_>) -> T,
+    {
+        let block_number: U256 = self.convert_block_number(block_number).into();
+
+        if block_number < self.env.read().block.number {
+            let states = self.states.read();
+            if let Some(state) =
+                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            {
+                return f(Box::new(state))
+            }
+        }
+        let db = self.db.read();
+        f(Box::new(&*db))
+    }
+
     pub async fn storage_at(
         &self,
         address: Address,
         index: U256,
-        _number: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<H256, BlockchainError> {
-        trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-        let val = self.db.read().storage(address, index);
-        Ok(u256_to_h256_be(val))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
+            let val = db.storage(address, index);
+            Ok(u256_to_h256_be(val))
+        })
     }
 
     /// Returns the code of the address
@@ -980,16 +1044,18 @@ impl Backend {
     pub async fn get_code(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
-        trace!(target: "backend", "get code for {:?}", address);
-        let account = self.db.read().basic(address);
-        let code = if let Some(code) = account.code {
-            code.into()
-        } else {
-            self.db.read().code_by_hash(account.code_hash).into()
-        };
-        Ok(code)
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get code for {:?}", address);
+            let account = db.basic(address);
+            let code = if let Some(code) = account.code {
+                code.into()
+            } else {
+                db.code_by_hash(account.code_hash).into()
+            };
+            Ok(code)
+        })
     }
 
     /// Returns the balance of the address
@@ -998,10 +1064,12 @@ impl Backend {
     pub async fn get_balance(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        trace!(target: "backend", "get balance for {:?}", address);
-        Ok(self.current_balance(address))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get balance for {:?}", address);
+            Ok(db.basic(address).balance)
+        })
     }
 
     /// Returns the nonce of the address
@@ -1010,10 +1078,12 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        _block: Option<BlockNumber>,
+        number: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        trace!(target: "backend", "get nonce for {:?}", address);
-        Ok(self.current_nonce(address))
+        self.with_database_at(number, |db| {
+            trace!(target: "backend", "get nonce for {:?}", address);
+            Ok(db.basic(address).nonce.into())
+        })
     }
 
     /// Returns the traces for the given transaction
@@ -1106,7 +1176,7 @@ impl Backend {
         let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
 
         let mut cumulative_gas_used = U256::zero();
-        for receipt in receipts.iter().take(index) {
+        for receipt in receipts.iter().take(index + 1) {
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
         }
 
@@ -1223,7 +1293,7 @@ impl Backend {
             (info, block, tx)
         };
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
     pub async fn transaction_by_hash(
@@ -1252,7 +1322,7 @@ impl Backend {
         };
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
-        Some(transaction_build(tx, Some(&block), Some(info), true, Some(self.base_fee())))
+        Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
     /// Returns a new block event stream
@@ -1303,6 +1373,10 @@ impl TransactionValidator for Backend {
         if nonce < account.nonce {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
+        }
+
+        if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
+            return Err(InvalidTransactionError::FeeTooLow)
         }
 
         let max_cost = tx.max_cost();

@@ -24,7 +24,8 @@ pub struct SizeReport {
 
 pub struct ContractInfo {
     pub size: usize,
-    pub is_test_contract: bool,
+    // A development contract is either a Script or a Test contract.
+    pub is_dev_contract: bool,
 }
 
 impl SizeReport {
@@ -32,14 +33,14 @@ impl SizeReport {
     pub fn max_size(&self) -> usize {
         let mut max_size = 0;
         for contract in self.contracts.values() {
-            if !contract.is_test_contract && contract.size > max_size {
+            if !contract.is_dev_contract && contract.size > max_size {
                 max_size = contract.size;
             }
         }
         max_size
     }
 
-    /// Returns true if all contracts are within the size limit, excluding test contracts.
+    /// Returns true if any contract exceeds the size limit, excluding test contracts.
     pub fn exceeds_size_limit(&self) -> bool {
         self.max_size() > CONTRACT_SIZE_LIMIT
     }
@@ -55,7 +56,7 @@ impl Display for SizeReport {
             Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
-        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_test_contract && c.size > 0);
+        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_dev_contract && c.size > 0);
         for (name, contract) in contracts {
             let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
             let color = match contract.size {
@@ -138,14 +139,15 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         }
 
         let now = std::time::Instant::now();
-        tracing::trace!(target : "forge_compile", "start compiling project");
+        tracing::trace!(target : "forge::compile", "start compiling project");
 
         let output = term::with_spinner_reporter(|| f(project))?;
 
         let elapsed = now.elapsed();
-        tracing::trace!(target : "forge_compile", "finished compiling after {:?}", elapsed);
+        tracing::trace!(target : "forge::compile", "finished compiling after {:?}", elapsed);
 
         if output.has_compiler_errors() {
+            tracing::warn!(target: "forge::compile", "compiled with errors");
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
@@ -180,13 +182,17 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
 
-                        let test_functions =
+                        let dev_functions =
                             contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
-                                |func| func.name.starts_with("test") || func.name.eq("IS_TEST"),
+                                |func| {
+                                    func.name.starts_with("test") ||
+                                        func.name.eq("IS_TEST") ||
+                                        func.name.eq("IS_SCRIPT")
+                                },
                             );
 
-                        let is_test_contract = test_functions.into_iter().count() > 0;
-                        size_report.contracts.insert(name, ContractInfo { size, is_test_contract });
+                        let is_dev_contract = dev_functions.into_iter().count() > 0;
+                        size_report.contracts.insert(name, ContractInfo { size, is_dev_contract });
                     }
                 }
 
@@ -230,8 +236,21 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 }
 
 /// Compile a set of files not necessarily included in the `project`'s source dir
-pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
+///
+/// If `silent` no solc related output will be emitted to stdout
+pub fn compile_files(
+    project: &Project,
+    files: Vec<PathBuf>,
+    silent: bool,
+) -> eyre::Result<ProjectCompileOutput> {
+    let output = if silent {
+        ethers::solc::report::with_scoped(
+            &ethers::solc::report::Report::new(NoReporter::default()),
+            || project.compile_files(files),
+        )
+    } else {
+        term::with_spinner_reporter(|| project.compile_files(files))
+    }?;
 
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())

@@ -1,21 +1,22 @@
 //! init command
 
 use crate::{
-    cmd::{forge::install::install, Cmd},
+    cmd::{
+        forge::install::{install, DependencyInstallOpts},
+        Cmd,
+    },
     opts::forge::Dependency,
-    utils::p_println,
+    utils::{p_println, CommandUtils},
 };
 use clap::{Parser, ValueHint};
+use ethers::solc::remappings::Remapping;
 use foundry_config::Config;
-
-use crate::cmd::forge::{install::DependencyInstallOpts, remappings};
-use yansi::Paint;
-
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
+use yansi::Paint;
 
 /// Command to initialize a new forge project
 #[derive(Debug, Clone, Parser)]
@@ -38,7 +39,7 @@ pub struct InitArgs {
         help = "Do not install dependencies from the network.",
         conflicts_with = "template",
         long,
-        alias = "no-deps"
+        visible_alias = "no-deps"
     )]
     offline: bool,
     #[clap(
@@ -79,9 +80,7 @@ impl Cmd for InitArgs {
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
                 .args(&["clone", "--recursive", &template, &root.display().to_string()])
-                .stdout(Stdio::piped())
-                .spawn()?
-                .wait()?;
+                .exec()?;
         } else {
             // check if target is empty
             if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
@@ -103,12 +102,18 @@ impl Cmd for InitArgs {
             let test = root.join("test");
             std::fs::create_dir_all(&test)?;
 
+            let script = root.join("script");
+            std::fs::create_dir_all(&script)?;
+
             // write the contract file
             let contract_path = src.join("Contract.sol");
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
             // write the tests
             let contract_path = test.join("Contract.t.sol");
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
+            // write the script
+            let contract_path = script.join("Contract.s.sol");
+            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.s.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
@@ -159,13 +164,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         std::fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
 
         // git init
-        Command::new("git")
-            .arg("init")
-            .current_dir(&root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-            .wait()?;
+        Command::new("git").arg("init").current_dir(&root).exec()?;
 
         // create github workflow
         let gh = root.join(".github").join("workflows");
@@ -174,13 +173,11 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         std::fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
 
         if !no_commit {
-            Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+            Command::new("git").args(&["add", "."]).current_dir(&root).exec()?;
             Command::new("git")
                 .args(&["commit", "-m", "chore: forge init"])
                 .current_dir(&root)
-                .stdout(Stdio::piped())
-                .spawn()?
-                .wait()?;
+                .exec()?;
         }
     }
 
@@ -191,7 +188,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 fn init_vscode(root: &Path) -> eyre::Result<()> {
     let remappings_file = root.join("remappings.txt");
     if !remappings_file.exists() {
-        let mut remappings = remappings::relative_remappings(&root.join("lib"), root)
+        let mut remappings = relative_remappings(&root.join("lib"), root)
             .into_iter()
             .map(|r| r.to_string())
             .collect::<Vec<_>>();
@@ -228,4 +225,13 @@ fn init_vscode(root: &Path) -> eyre::Result<()> {
     std::fs::write(settings_file, content)?;
 
     Ok(())
+}
+
+/// Returns all remappings found in the `lib` path relative to `root`
+fn relative_remappings(lib: &Path, root: &Path) -> Vec<Remapping> {
+    Remapping::find_many(lib)
+        .into_iter()
+        .map(|r| r.into_relative(root).to_relative_remapping())
+        .map(Into::into)
+        .collect()
 }
