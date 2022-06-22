@@ -366,7 +366,7 @@ impl ScriptArgs {
         let (target_path, target_source) = graph.node(*target_index).unpack();
         target_tree.insert(target_path, target_source);
 
-        let source_code: BTreeMap<u32, &str> = sources
+        let source_code = sources
             .iter()
             .filter_map(|(id, path)| {
                 let mut resolved = project
@@ -378,7 +378,7 @@ impl ScriptArgs {
                     resolved = project.root().join(&resolved);
                 }
 
-                target_tree.get(&resolved).map(|source| (*id, source.content.as_str()))
+                target_tree.get(&resolved).map(|source| (*id, source.content.clone()))
             })
             .collect();
 
