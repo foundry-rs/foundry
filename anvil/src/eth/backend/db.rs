@@ -15,12 +15,12 @@ use serde::{Serialize, Deserialize};
 
 use bytes::Bytes as StdBytes;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SerializableState {
     pub accounts: HashMap<Address, AccountRecord>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AccountRecord {
     pub nonce: u64,
     pub balance: U256,

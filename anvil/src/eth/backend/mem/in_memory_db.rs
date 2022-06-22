@@ -10,6 +10,7 @@ use bytes::Bytes;
 use ethers::prelude::{H160, H256};
 use foundry_evm::{revm::InMemoryDB, HashMap as Map};
 use tracing::{trace, warn};
+use forge::revm::KECCAK_EMPTY;
 
 /// In memory ` for anvil
 ///
@@ -85,16 +86,24 @@ impl Db for MemDb {
                     AccountRecord {
                         nonce: v.nonce,
                         balance: v.balance,
-                        code: v.code.unwrap_or_default(),
-                        storage: self.inner.storage().get(&k).unwrap().clone()
+                        code: self.inner.code_by_hash(v.code_hash),
+                        storage: self.inner.storage().get(&k).unwrap_or(&Map::new()).clone()
                     }
                 )
             }).collect()
         }
     }
 
-    fn load_state(&mut self, buf: SerializableState) -> bool {
-        false
+    fn load_state(&mut self, state: SerializableState) -> bool {
+        for (addr, account) in state.accounts.into_iter() {
+            self.insert_account(addr.clone(), account.clone().into());
+
+            for (k,v) in account.storage.into_iter() {
+                self.set_storage_at(addr, k, v);
+            }
+        }
+
+        true
     }
 
     /// Creates a new snapshot
@@ -121,5 +130,16 @@ impl Db for MemDb {
 
     fn current_state(&self) -> StateDb {
         StateDb::new(self.inner.clone())
+    }
+}
+
+impl From<AccountRecord> for AccountInfo {
+    fn from(record: AccountRecord) -> Self {
+        Self {
+            balance: record.balance,
+            code_hash: KECCAK_EMPTY, // will be set automatically
+            code: if record.code.is_empty() { Some(record.code) } else { None },
+            nonce: record.nonce,
+        }
     }
 }

@@ -261,7 +261,7 @@ impl EthApi {
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
                 self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
-            EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
+            EthRequest::DumpState(_) => self.anvil_dump_state().await.map(|v| format!("0x{0:x}", v)).to_rpc_result(),
             EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
@@ -1360,7 +1360,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: StdBytes) -> Result<bool> {
-        node_info!("anvil_loadState");
+        node_info!("anvil_loadState {:?}", std::str::from_utf8(&buf));
         self.backend.load_state(buf)
     }
 

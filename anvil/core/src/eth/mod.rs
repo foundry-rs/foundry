@@ -13,6 +13,7 @@ use ethers_core::{
 };
 use serde::{Deserialize, Deserializer};
 use bytes::Bytes as StdBytes;
+use ethers_core::utils::hex::FromHex;
 
 pub mod block;
 pub mod call;
@@ -280,10 +281,10 @@ pub enum EthRequest {
 
     /// Adds state previously dumped with `DumpState` to the current chain
     #[serde(
-        rename = "anvil_dumpState",
-        alias = "hardhat_dumpState"
+        rename = "anvil_loadState",
+        alias = "hardhat_loadState",
     )]
-    LoadState(StdBytes),
+    LoadState(#[serde(deserialize_with = "deserialize_hex")] StdBytes),
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
@@ -354,6 +355,30 @@ pub enum EthPubSub {
 pub enum EthRpcCall {
     Request(Box<EthRequest>),
     PubSub(EthPubSub),
+}
+
+fn deserialize_hex<'de, D>(d: D) -> Result<StdBytes, D::Error>
+where
+    D: Deserializer<'de>, 
+{
+    // first unwrap sequence
+    let mut seq = Vec::<String>::deserialize(d)?;
+    if seq.len() != 1 {
+        return Err(serde::de::Error::custom(format!(
+            "expected params sequence with length 1 but got {}",
+            seq.len()
+        )))
+    }
+
+    let hex = seq.remove(0);
+
+    if &hex[..2] != "0x" {
+        return Err(serde::de::Error::custom("Hex string should be 0x prefixed"));
+    }
+
+    Vec::from_hex(&hex[2..])
+        .map(Into::into)
+        .map_err(|_| serde::de::Error::custom("Invalid hex string"))
 }
 
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -733,9 +758,16 @@ mod tests {
 
     #[test]
     fn test_serde_custom_load_state() {
-        let s = r#"{"method": "anvil_loadState", "params": ["0x0"] }"#;
+        let s = r#"{"method": "anvil_loadState", "params": ["0x0001"] }"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let b: &[u8] = &[0,1];
+
+        match req {
+            EthRequest::LoadState(r) => assert_eq!(r, StdBytes::from(b)),
+            _ => panic!("wrong request type loaded")
+        }
     }
 
     #[test]
