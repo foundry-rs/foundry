@@ -4,8 +4,7 @@ use std::{collections::HashMap, io::Write, path::PathBuf};
 
 /// A coverage reporter.
 pub trait CoverageReporter {
-    fn build(&mut self, map: CoverageMap);
-    fn finalize(self) -> eyre::Result<()>;
+    fn report(self, map: CoverageMap) -> eyre::Result<()>;
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
@@ -26,10 +25,6 @@ impl Default for SummaryReporter {
 }
 
 impl SummaryReporter {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
         let mut row = Row::new();
         row.add_cell(name.into())
@@ -42,16 +37,14 @@ impl SummaryReporter {
 }
 
 impl CoverageReporter for SummaryReporter {
-    fn build(&mut self, map: CoverageMap) {
+    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
         for file in map {
             let summary = file.summary();
 
             self.total.add(&summary);
             self.add_row(file.path.to_string_lossy(), summary);
         }
-    }
 
-    fn finalize(mut self) -> eyre::Result<()> {
         self.add_row("Total", self.total.clone());
         println!("{}", self.table);
         Ok(())
@@ -78,13 +71,11 @@ fn format_cell(hits: usize, total: usize) -> Cell {
 pub struct LcovReporter<W> {
     /// Destination buffer
     destination: W,
-    /// The coverage map to write
-    map: Option<CoverageMap>,
 }
 
 impl<W> LcovReporter<W> {
     pub fn new(destination: W) -> Self {
-        Self { destination, map: None }
+        Self { destination }
     }
 }
 
@@ -92,13 +83,7 @@ impl<W> CoverageReporter for LcovReporter<W>
 where
     W: Write,
 {
-    fn build(&mut self, map: CoverageMap) {
-        self.map = Some(map);
-    }
-
-    fn finalize(mut self) -> eyre::Result<()> {
-        let map = self.map.ok_or_else(|| eyre::eyre!("no coverage map given to reporter"))?;
-
+    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
         for file in map {
             let summary = file.summary();
 
@@ -175,10 +160,6 @@ impl Default for DebugReporter {
 }
 
 impl DebugReporter {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
         let mut row = Row::new();
         row.add_cell(name.into())
@@ -191,7 +172,7 @@ impl DebugReporter {
 }
 
 impl CoverageReporter for DebugReporter {
-    fn build(&mut self, map: CoverageMap) {
+    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
         for file in map {
             let summary = file.summary();
 
@@ -204,9 +185,7 @@ impl CoverageReporter for DebugReporter {
                 }
             })
         }
-    }
 
-    fn finalize(mut self) -> eyre::Result<()> {
         self.add_row("Total", self.total.clone());
         println!("{}", self.table);
 

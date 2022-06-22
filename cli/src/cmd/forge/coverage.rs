@@ -250,23 +250,12 @@ impl CoverageArgs {
         let _ = handle.join();
 
         match self.report {
-            CoverageReportKind::Summary => {
-                let mut reporter = SummaryReporter::new();
-                reporter.build(map);
-                reporter.finalize()
-            }
+            CoverageReportKind::Summary => SummaryReporter::default().report(map),
             // TODO: Sensible place to put the LCOV file
             CoverageReportKind::Lcov => {
-                let mut reporter =
-                    LcovReporter::new(std::fs::File::create(root.join("lcov.info"))?);
-                reporter.build(map);
-                reporter.finalize()
+                LcovReporter::new(std::fs::File::create(root.join("lcov.info"))?).report(map)
             }
-            CoverageReportKind::Debug => {
-                let mut reporter = DebugReporter::new();
-                reporter.build(map);
-                reporter.finalize()
-            }
+            CoverageReportKind::Debug => DebugReporter::default().report(map),
         }
     }
 }
