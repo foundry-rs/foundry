@@ -189,37 +189,34 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        let output = match dunce::canonicalize(&self.path) {
-            // We got passed an existing path to the contract
-            Ok(target_contract) => self.compile_target(&target_contract, &project)?,
-            Err(_) => {
-                // We either got passed `contract_path:contract_name` or the contract name.
-                let contract = ContractInfo::from_str(&self.path)?;
-                let (path, output) = if let Some(path) = contract.path {
-                    let path = dunce::canonicalize(&path)?;
-                    let output = self.compile_target(&path, &project)?;
+        // We received a file path.
+        if let Ok(target_contract) = dunce::canonicalize(&self.path) {
+            let output = self.compile_target(&target_contract, &project)?;
+            return Ok((project, output))
+        }
 
-                    (path, output)
-                } else {
-                    let output = if self.opts.args.silent {
-                        compile::suppress_compile(&project)
-                    } else {
-                        compile::compile(&project, false, false)
-                    }?;
-                    let cache = SolFilesCache::read_joined(&project.paths)?;
+        let contract = ContractInfo::from_str(&self.path)?;
+        self.target_contract = Some(contract.name.clone());
 
-                    let res = get_cached_entry_by_name(&cache, &contract.name)?;
-                    (res.0, output)
-                };
+        // We received `contract_path:contract_name`
+        if let Some(path) = contract.path {
+            let path = dunce::canonicalize(&path)?;
+            let output = self.compile_target(&path, &project)?;
+            self.path = path.to_string_lossy().to_string();
+            return Ok((project, output))
+        }
 
-                self.path = path.to_string_lossy().to_string();
-                self.target_contract = Some(contract.name);
-                output
-            }
-        };
+        // We received `contract_name`, and we find out its file path.
+        let output = if self.opts.args.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compile::compile(&project, false, false)
+        }?;
+        let cache = SolFilesCache::read_joined(&project.paths)?;
 
-        // We always compile our contract path, since it's not possible to get srcmaps from cached
-        // artifacts
+        let (path, _) = get_cached_entry_by_name(&cache, &contract.name)?;
+        self.path = path.to_string_lossy().to_string();
+
         Ok((project, output))
     }
 
