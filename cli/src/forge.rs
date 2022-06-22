@@ -23,6 +23,8 @@ fn main() -> eyre::Result<()> {
     utils::subscriber();
     utils::enable_paint();
 
+    println!("os: {}, arch: {}", env::consts::OS, env::consts::ARCH);
+
     let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
