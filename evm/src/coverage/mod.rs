@@ -44,19 +44,24 @@ impl CoverageMap {
         self.sources.insert((version, source.id), SourceFile { path: path.into(), items });
     }
 
+    /// Processes data from a [HitMap] and sets hit counts for coverage items in this coverage map.
+    ///
+    /// This function should only be called *after* all the relevant sources have been processed and
+    /// added to the map (see [add_source]).
+    ///
+    /// NOTE(onbjerg): I've made an assumption here that the coverage items are laid out in
+    /// sorted order, ordered by their anchors.
+    ///
+    /// This assumption is based on the way we process the AST - we start at the root node,
+    /// and work our way down. If we change up how we process the AST, we *have* to either
+    /// change this logic to work with unsorted data, or sort the data prior to calling
+    /// this function.
     pub fn add_hit_map(
         &mut self,
         source_version: Version,
         source_map: &SourceMap,
         hit_map: HitMap,
     ) {
-        // NOTE(onbjerg): I've made an assumption here that the coverage items are laid out in
-        // sorted order, ordered by their offset in the source code.
-        //
-        // This assumption is based on the way we process the AST - we start at the root node,
-        // and work our way down. If we change up how we process the AST, we *have* to either
-        // change this logic to work with unsorted data, or sort the data prior to calling
-        // this function.
         for (ic, instruction_hits) in hit_map.hits.into_iter() {
             if instruction_hits == 0 {
                 continue
