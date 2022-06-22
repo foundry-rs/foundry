@@ -43,7 +43,7 @@ mod executor;
 mod receipts;
 mod sequence;
 
-use super::build::ProjectPathsArgs;
+use crate::cmd::forge::build::ProjectPathsArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);

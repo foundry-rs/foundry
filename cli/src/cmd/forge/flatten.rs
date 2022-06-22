@@ -1,5 +1,7 @@
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::cmd::Cmd;
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    Cmd,
+};
 use clap::{Parser, ValueHint};
 use foundry_common::fs;
 use foundry_config::Config;
