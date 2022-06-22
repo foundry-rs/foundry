@@ -47,7 +47,7 @@ pub enum TUIExitReason {
 mod op_effects;
 use op_effects::stack_indices_affected;
 
-pub struct Tui {
+pub struct Tui<'a> {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
@@ -56,10 +56,10 @@ pub struct Tui {
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
-    source_code: BTreeMap<u32, String>,
+    source_code: BTreeMap<u32, &'a str>,
 }
 
-impl Tui {
+impl<'a> Tui<'a> {
     /// Create a tui
     #[allow(unused_must_use)]
     pub fn new(
@@ -67,7 +67,7 @@ impl Tui {
         current_step: usize,
         identified_contracts: HashMap<Address, String>,
         known_contracts: HashMap<String, ContractBytecodeSome>,
-        source_code: BTreeMap<u32, String>,
+        source_code: BTreeMap<u32, &'a str>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -106,7 +106,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        source_code: &BTreeMap<u32, &str>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -155,7 +155,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        source_code: &BTreeMap<u32, &str>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -226,7 +226,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        source_code: &BTreeMap<u32, &str>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -328,7 +328,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
-        source_code: &BTreeMap<u32, String>,
+        source_code: &BTreeMap<u32, &str>,
         ic: usize,
         call_kind: CallKind,
         area: Rect,
@@ -909,7 +909,7 @@ impl Tui {
     }
 }
 
-impl Ui for Tui {
+impl<'a> Ui for Tui<'a> {
     fn start(mut self) -> Result<TUIExitReason> {
         // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
