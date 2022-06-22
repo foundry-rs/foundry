@@ -220,23 +220,19 @@ Examples:
     #[clap(about = "Get information about a block.")]
     Block {
         #[clap(
-            long,
-            short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
             parse(try_from_str = parse_block_id),
             value_name = "BLOCK"
         )]
         block: BlockId,
-        #[clap(long, env = "CAST_FULL_BLOCK")]
-        full: bool,
         #[clap(
-            long,
-            short,
             help = "If specified, only get the given field of the block.",
             value_name = "FIELD"
         )]
         field: Option<String>,
+        #[clap(long, env = "CAST_FULL_BLOCK")]
+        full: bool,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
