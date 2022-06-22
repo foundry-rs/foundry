@@ -366,7 +366,7 @@ impl Visitor {
         SourceLocation {
             start: loc.start,
             length: loc.length,
-            line: self.source[..loc.start].as_bytes().iter().filter(|&&c| c == b'\n').count() + 1,
+            line: self.source[..loc.start].lines().count() + 1,
         }
     }
 

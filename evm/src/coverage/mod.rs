@@ -23,7 +23,7 @@ use std::{
 #[derive(Default, Debug, Clone)]
 pub struct CoverageMap {
     /// A map of `(version, source id)` -> `source file`
-    sources: BTreeMap<(Version, u32), SourceFile>,
+    sources: HashMap<(Version, u32), SourceFile>,
 }
 
 impl CoverageMap {
@@ -97,7 +97,7 @@ impl CoverageMap {
 
 impl IntoIterator for CoverageMap {
     type Item = SourceFile;
-    type IntoIter = std::collections::btree_map::IntoValues<(Version, u32), Self::Item>;
+    type IntoIter = std::collections::hash_map::IntoValues<(Version, u32), Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.sources.into_values()
