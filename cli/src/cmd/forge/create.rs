@@ -124,6 +124,13 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 
     #[clap(long, help = "Verify contract after creation.")]
     verify: bool,
+
+    #[clap(
+        long = "verification-provider",
+        help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
+        default_value = "etherscan"
+    )]
+    verification_provider: verify::VerificationProvider,
 }
 
 impl Cmd for CreateArgs {
@@ -319,6 +326,7 @@ impl CreateArgs {
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
+            verifier: self.verification_provider,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
