@@ -23,7 +23,7 @@ fn main() -> eyre::Result<()> {
     utils::subscriber();
     utils::enable_paint();
 
-    println!("os: {}, arch: {}", env::consts::OS, env::consts::ARCH);
+    println!("os: {}, arch: {}", std::env::consts::OS, std::env::consts::ARCH);
 
     let opts = Opts::parse();
     match opts.sub {
