@@ -427,7 +427,7 @@ warning[5667]: Warning: Unused function parameter. Remove or comment out the var
 });
 
 // tests that direct import paths are handled correctly
-forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(canhandle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",

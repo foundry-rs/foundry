@@ -1963,6 +1963,7 @@ dependencies = [
  "ethers-core",
  "foundry-config",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

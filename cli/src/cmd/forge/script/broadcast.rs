@@ -283,7 +283,9 @@ impl ScriptArgs {
 
         // We don't store it in the transactions, since we want the most updated value. Right before
         // broadcasting.
-        let per_gas = {
+        let per_gas = if let Some(gas_price) = self.with_gas_price {
+            gas_price
+        } else {
             match new_txes.front().unwrap().typed_tx() {
                 TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
                     provider.get_gas_price().await?
@@ -291,6 +293,7 @@ impl ScriptArgs {
                 TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
             }
         };
+
         println!("\n==========================");
         println!("\nEstimated total gas used for script: {}", total_gas);
         println!(

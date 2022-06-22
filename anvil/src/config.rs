@@ -269,10 +269,11 @@ Chain ID:       {}
 // === impl NodeConfig ===
 
 impl NodeConfig {
-    /// Test config
+    /// Returns a new config intended to be used in tests, which does not print and binds to a
+    /// random, free port by setting it to `0`
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, silent: true, ..Default::default() }
+        Self { enable_tracing: false, silent: true, port: 0, ..Default::default() }
     }
 }
 
@@ -310,12 +311,6 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Returns the default node configuration
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
         self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
@@ -561,7 +556,8 @@ impl NodeConfig {
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
                 fork_block_number
             } else {
-                provider.get_block_number().await.expect("Failed to get fork block number").as_u64()
+                // pick the last block number but also ensure it's not pending anymore
+                find_latest_fork_block(&provider).await.expect("Failed to get fork block number")
             };
 
             let block = provider
@@ -601,8 +597,8 @@ impl NodeConfig {
 
             let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
 
-            // This will spawn the background thread that will use the provider to fetch blockchain
-            // data from the other client
+            // This will spawn the background thread that will use the provider to fetch
+            // blockchain data from the other client
             let backend = SharedBackend::spawn_backend_thread(
                 Arc::clone(&provider),
                 block_chain_db.clone(),
@@ -778,4 +774,26 @@ impl AccountGenerator {
         }
         wallets
     }
+}
+
+/// Finds the latest appropriate block to fork
+///
+/// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
+/// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
+async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Error> {
+    let mut num = provider.get_block_number().await?.as_u64();
+
+    // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
+    // leeway
+    for _ in 0..2 {
+        if let Some(block) = provider.get_block(num).await? {
+            if block.hash.is_some() {
+                break
+            }
+        }
+        // block not actually finalized, so we try the block before
+        num = num.saturating_sub(1)
+    }
+
+    Ok(num)
 }

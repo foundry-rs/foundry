@@ -18,7 +18,7 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ mod executor;
 mod receipts;
 mod sequence;
 
-use super::build::ProjectPathsArgs;
+use crate::cmd::forge::build::ProjectPathsArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -361,7 +361,7 @@ impl ScriptArgs {
                     .unwrap_or_else(|| PathBuf::from(path));
                 (
                     *id,
-                    std::fs::read_to_string(resolved).expect(&*format!(
+                    fs::read_to_string(resolved).expect(&*format!(
                         "Something went wrong reading the source file: {:?}",
                         path
                     )),
