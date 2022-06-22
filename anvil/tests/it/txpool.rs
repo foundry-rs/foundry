@@ -1,6 +1,5 @@
 //! txpool related tests
 
-use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
@@ -9,7 +8,7 @@ use ethers::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     api.anvil_set_auto_mine(false).await.unwrap();
 

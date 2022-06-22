@@ -1,9 +1,9 @@
+use super::{NestedValue, ScriptResult, VerifyBundle};
 use crate::{
     cmd::forge::{create::RETRY_VERIFY_ON_CREATE, verify},
     opts::forge::ContractInfo,
 };
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
-
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
@@ -11,8 +11,8 @@ use ethers::{
 };
 use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
+use foundry_common::fs;
 use foundry_config::Config;
-
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,8 +21,6 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use super::{NestedValue, ScriptResult, VerifyBundle};
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -68,7 +66,7 @@ impl ScriptSequence {
         target: &ArtifactId,
         chain_id: u64,
     ) -> eyre::Result<Self> {
-        let file = std::fs::read_to_string(ScriptSequence::get_path(
+        let file = fs::read_to_string(ScriptSequence::get_path(
             &config.broadcast,
             sig,
             target,
@@ -82,10 +80,10 @@ impl ScriptSequence {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             let path = self.path.to_string_lossy();
             //../run-latest.json
-            serde_json::to_writer(BufWriter::new(std::fs::File::create(&self.path)?), &self)?;
+            serde_json::to_writer(BufWriter::new(fs::create_file(&self.path)?), &self)?;
             //../run-[timestamp].json
             serde_json::to_writer(
-                BufWriter::new(std::fs::File::create(
+                BufWriter::new(fs::create_file(
                     path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
                 &self,
@@ -150,7 +148,7 @@ impl ScriptSequence {
         out.push(target_fname);
         out.push(format!("{chain_id}"));
 
-        std::fs::create_dir_all(&out)?;
+        fs::create_dir_all(&out)?;
 
         let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
         out.push(format!("{filename}-latest.json"));
