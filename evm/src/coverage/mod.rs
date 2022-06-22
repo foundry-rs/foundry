@@ -35,13 +35,13 @@ impl CoverageMap {
     /// jobs, and source IDs are only guaranteed to be stable across a single compile job.
     pub fn add_source(
         &mut self,
-        path: String,
+        path: impl Into<PathBuf>,
         source: VersionedSourceFile,
         items: Vec<CoverageItem>,
     ) {
         let VersionedSourceFile { version, source_file: source } = source;
 
-        self.sources.insert((version, source.id), SourceFile { path: PathBuf::from(path), items });
+        self.sources.insert((version, source.id), SourceFile { path: path.into(), items });
     }
 
     pub fn add_hit_map(
