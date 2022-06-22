@@ -41,7 +41,7 @@ impl CoverageReporter for SummaryReporter {
         for file in map {
             let summary = file.summary();
 
-            self.total.add(&summary);
+            self.total += &summary;
             self.add_row(file.path.to_string_lossy(), summary);
         }
 
@@ -176,7 +176,7 @@ impl CoverageReporter for DebugReporter {
         for file in map {
             let summary = file.summary();
 
-            self.total.add(&summary);
+            self.total += &summary;
             self.add_row(file.path.to_string_lossy(), summary);
 
             file.items.iter().for_each(|item| {

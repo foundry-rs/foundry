@@ -9,6 +9,7 @@ use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
+    ops::AddAssign,
     path::PathBuf,
     usize,
 };
@@ -331,9 +332,8 @@ pub struct CoverageSummary {
     pub function_hits: usize,
 }
 
-impl CoverageSummary {
-    /// Add the data of another [CoverageSummary] to this one.
-    pub fn add(&mut self, other: &CoverageSummary) {
+impl AddAssign<&Self> for CoverageSummary {
+    fn add_assign(&mut self, other: &Self) {
         self.line_count += other.line_count;
         self.line_hits += other.line_hits;
         self.statement_count += other.statement_count;
