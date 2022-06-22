@@ -282,21 +282,15 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
-                let mut builder = ExecutorBuilder::default()
+                let executor = ExecutorBuilder::default()
                     .with_cheatcodes(self.cheats_config.clone())
                     .with_config(env.clone())
                     .with_spec(self.evm_spec)
-                    .with_gas_limit(self.evm_opts.gas_limit());
+                    .with_gas_limit(self.evm_opts.gas_limit())
+                    .set_tracing(self.evm_opts.verbosity >= 3)
+                    .set_coverage(self.coverage)
+                    .build(db.clone());
 
-                if self.evm_opts.verbosity >= 3 {
-                    builder = builder.with_tracing();
-                }
-
-                if self.coverage {
-                    builder = builder.with_coverage();
-                }
-
-                let executor = builder.build(db.clone());
                 let result = self.run_tests(
                     &id.identifier(),
                     abi,
