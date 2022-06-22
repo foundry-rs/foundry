@@ -66,24 +66,10 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: build
-          args: --verbose --locked --bins --tests
-
-      - name: Run forge
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: run
-          args: --locked --bin forge -- --help
-
       - name: Run tests
         uses: actions-rs/cargo@v1
         if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --locked --workspace -- --skip fork
+          args: --locked --workspace -- --skip fork --nocapture
