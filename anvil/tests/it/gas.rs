@@ -71,8 +71,7 @@ async fn test_basefee_empty_block() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_respect_base_fee() {
     let base_fee = 50u64;
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_port(next_port()).with_base_fee(Some(base_fee))).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_base_fee(Some(base_fee))).await;
     let provider = handle.http_provider();
     let mut tx = TypedTransaction::default();
     tx.set_value(100u64);
