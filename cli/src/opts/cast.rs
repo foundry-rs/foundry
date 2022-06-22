@@ -516,7 +516,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
-        calldata: String,
+        calldata: Option<String>,
     },
     #[clap(name = "4byte-event")]
     #[clap(visible_aliases = &["4e", "4be"])]
