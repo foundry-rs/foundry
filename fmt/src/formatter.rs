@@ -2067,19 +2067,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
         write_chunk!(self, "{{")?;
 
-        self.indented(1, |fmt| {
-            if let Some(statement) = statements.first() {
-                fmt.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
-                fmt.write_whitespace_separator(true)?;
-            } else {
-                return Ok(())
-            }
+        if let Some(statement) = statements.first() {
+            self.write_whitespace_separator(true)?;
+            self.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
+        }
 
+        self.indented(1, |fmt| {
             fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
+            fmt.write_postfix_comments_before(loc.end())?;
+            fmt.write_prefix_comments_before(loc.end())?;
             Ok(())
         })?;
 
-        self.write_postfix_comments_before(loc.end())?;
         if !statements.is_empty() {
             self.write_whitespace_separator(true)?;
         }
@@ -2489,10 +2488,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
         self.write_prefix_comments_before(loc.start())?;
-        write_chunk!(self, loc.start(), "return")?;
-        expr.as_mut().map(|expr| expr.visit(self)).transpose()?;
-        write_chunk!(self, loc.end(), ";")?;
-        self.write_postfix_comments_before(loc.end())?;
+
+        let mut write_return = |fmt: &mut Self| -> Result<()> {
+            write_chunk!(fmt, loc.start(), "return")?;
+            expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
+            write_chunk!(fmt, loc.end(), ";")?;
+            Ok(())
+        };
+
+        self.grouped(|fmt| write_return(fmt))?;
         Ok(())
     }
 }
