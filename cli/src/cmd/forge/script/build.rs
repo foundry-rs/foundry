@@ -6,7 +6,7 @@ use crate::{
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
-        ProjectCompileOutput, ProjectPathsConfig,
+        ProjectCompileOutput,
     },
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{Address, U256},
@@ -191,24 +191,13 @@ impl ScriptArgs {
 
         let output = match dunce::canonicalize(&self.path) {
             // We got passed an existing path to the contract
-            Ok(target_contract) => {
-                self.standalone_check(&target_contract, &project.paths)?;
-
-                compile::compile_files(&project, vec![target_contract], self.opts.args.silent)?
-            }
+            Ok(target_contract) => self.compile_target(&target_contract, &project)?,
             Err(_) => {
                 // We either got passed `contract_path:contract_name` or the contract name.
                 let contract = ContractInfo::from_str(&self.path)?;
                 let (path, output) = if let Some(path) = contract.path {
                     let path = dunce::canonicalize(&path)?;
-
-                    self.standalone_check(&path, &project.paths)?;
-
-                    let output = compile::compile_files(
-                        &project,
-                        vec![path.clone()],
-                        self.opts.args.silent,
-                    )?;
+                    let output = self.compile_target(&path, &project)?;
 
                     (path, output)
                 } else {
@@ -234,18 +223,28 @@ impl ScriptArgs {
         Ok((project, output))
     }
 
-    /// Throws an error if `target` is a standalone script and `verify` is requested. We only allow
-    /// `verify` inside projects.
-    fn standalone_check(
+    /// Compiles target path. Throws an error if `target` is a standalone script and `verify` is
+    /// requested. We only allow `verify` inside projects.
+    fn compile_target(
         &self,
-        target_contract: &PathBuf,
-        project_paths: &ProjectPathsConfig,
-    ) -> eyre::Result<()> {
-        let graph = Graph::resolve(project_paths)?;
-        if graph.files().get(target_contract).is_none() && self.verify {
-            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+        target_path: &PathBuf,
+        project: &Project,
+    ) -> eyre::Result<ProjectCompileOutput> {
+        let graph = Graph::resolve(&project.paths)?;
+
+        // Checking if it's a standalone script, or part of a project.
+        if graph.files().get(target_path).is_none() {
+            if self.verify {
+                eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+            }
+            return compile::compile_files(project, vec![target_path.clone()], self.opts.args.silent)
         }
-        Ok(())
+
+        if self.opts.args.silent {
+            compile::suppress_compile(project)
+        } else {
+            compile::compile(project, false, false)
+        }
     }
 }
 
