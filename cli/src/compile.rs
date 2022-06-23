@@ -6,7 +6,11 @@ use ethers::{
     prelude::Graph,
     solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput},
 };
-use std::{collections::BTreeMap, fmt::Display, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -268,7 +272,7 @@ pub fn compile_files(
 ///
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
 pub fn compile_target(
-    target_path: &PathBuf,
+    target_path: &Path,
     project: &Project,
     silent: bool,
     verify: bool,
@@ -280,7 +284,7 @@ pub fn compile_target(
         if verify {
             eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
         }
-        return compile_files(project, vec![target_path.clone()], silent)
+        return compile_files(project, vec![target_path.to_path_buf()], silent)
     }
 
     if silent {
