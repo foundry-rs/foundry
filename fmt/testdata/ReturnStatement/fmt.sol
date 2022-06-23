@@ -14,8 +14,7 @@ contract ReturnStatement {
         }
 
         /* return empty 4 */
-        return;
-        // return empty 5
+        return; // return empty 5
     }
 
     function returnSingleValue(uint256 val) external returns (uint256) {
@@ -37,10 +36,9 @@ contract ReturnStatement {
             return 2
                 ** // return single 3
                 3; // return single 4
-            /* return single 5 */
         }
 
-        return value(); // return single 6
+        return value(); // return single 5
     }
 
     function returnMultipleValues(uint256 val)

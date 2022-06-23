@@ -14,7 +14,7 @@ contract ReturnStatement {
         }
 
         /* return empty 4 */ return 
-        // return empty 5
+            // return empty 5
         ;
     }
 
@@ -36,10 +36,10 @@ contract ReturnStatement {
         if (val == 4) {
             /* return single 2 */ return 2** // return single 3
             3 // return single 4
-                            /* return single 5 */;
+            ;
         }
 
-        return  value() // return single 6
+        return  value() // return single 5
         ;
     }
 
