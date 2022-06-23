@@ -50,7 +50,7 @@ impl InspectorStackConfig {
         let mut stack =
             InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
 
-        stack.cheatcodes = self.cheatcodes.clone();
+        stack.cheatcodes = self.create_cheatcodes();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {
             cheatcodes.block = Some(self.block.clone());
             cheatcodes.gas_price = Some(self.gas_price);
@@ -66,5 +66,11 @@ impl InspectorStackConfig {
             stack.coverage = Some(CoverageCollector::default());
         }
         stack
+    }
+
+    fn create_cheatcodes(&self) -> Option<Cheatcodes> {
+        let cheatcodes = self.cheatcodes.clone();
+
+        cheatcodes.map(|cheatcodes| Cheatcodes { context: Default::default(), ..cheatcodes })
     }
 }
