@@ -36,7 +36,7 @@ contract ReturnStatement {
         if (val == 4) {
             /* return single 2 */ return 2** // return single 3
             3 // return single 4
-                        /* return single 5 */;
+                            /* return single 5 */;
         }
 
         return  value() // return single 6
@@ -51,6 +51,10 @@ contract ReturnStatement {
             return /* return mul 4 */
             (
                 987654321, 1234567890,/* return mul 5 */ false); }
+
+        if (val == 2) {
+            return /* return mul 6 */ ( 1234567890 + 987654321  + 87654123536, 987654321 + 1234567890  + 124245235235, true);  
+        }
 
         return someFunction().getValue().modifyValue().negate().scaleBySomeFactor(1000).transformToTuple();
     }

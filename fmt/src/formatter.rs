@@ -2489,14 +2489,49 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
         self.write_prefix_comments_before(loc.start())?;
 
-        let mut write_return = |fmt: &mut Self| -> Result<()> {
+        if expr.is_none() {
+            write_chunk!(self, loc.end(), "return;")?;
+            return Ok(())
+        }
+
+        let expr = expr.as_mut().unwrap();
+        let expr_loc_start = expr.loc().start();
+        let write_return = |fmt: &mut Self| -> Result<()> {
             write_chunk!(fmt, loc.start(), "return")?;
-            expr.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-            write_chunk!(fmt, loc.end(), ";")?;
+            fmt.write_postfix_comments_before(expr_loc_start)?;
             Ok(())
         };
 
-        self.grouped(|fmt| write_return(fmt))?;
+        let mut write_return_with_expr = |fmt: &mut Self| -> Result<()> {
+            if fmt.try_on_single_line(|fmt| {
+                write_return(fmt)?;
+                expr.visit(fmt)
+            })? {
+                return Ok(())
+            }
+
+            let mut fit_on_next_line = false;
+            let tx = fmt.transact(|fmt| {
+                fmt.grouped(|fmt| {
+                    write_return(fmt)?;
+                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
+                    Ok(())
+                })?;
+                Ok(())
+            })?;
+            if fit_on_next_line {
+                tx.commit()?;
+                return Ok(())
+            }
+
+            write_return(fmt)?;
+            expr.visit(fmt)?;
+            Ok(())
+        };
+
+        write_return_with_expr(self)?;
+        write_chunk!(self, loc.end(), ";")?;
+        // self.write_semicolon()?;
         Ok(())
     }
 }

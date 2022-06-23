@@ -58,6 +58,14 @@ contract ReturnStatement {
             );
         }
 
+        if (val == 2) {
+            return /* return mul 6 */ (
+                1234567890 + 987654321 + 87654123536,
+                987654321 + 1234567890 + 124245235235,
+                true
+            );
+        }
+
         return someFunction().getValue().modifyValue().negate()
             .scaleBySomeFactor(1000).transformToTuple();
     }
