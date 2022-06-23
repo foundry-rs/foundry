@@ -367,18 +367,18 @@ impl ScriptArgs {
         target_tree.insert(target_path, target_source);
 
         let source_code = sources
-            .iter()
+            .into_iter()
             .filter_map(|(id, path)| {
                 let mut resolved = project
                     .paths
-                    .resolve_library_import(&PathBuf::from(path))
-                    .unwrap_or_else(|| PathBuf::from(path));
+                    .resolve_library_import(&PathBuf::from(&path))
+                    .unwrap_or_else(|| PathBuf::from(&path));
 
                 if !resolved.is_absolute() {
                     resolved = project.root().join(&resolved);
                 }
 
-                target_tree.get(&resolved).map(|source| (*id, source.content.clone()))
+                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
             })
             .collect();
 
