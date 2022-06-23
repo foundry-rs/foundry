@@ -1,4 +1,4 @@
-use ethers_core::types::{Block, Transaction, TransactionReceipt, H256, U256, *};
+use ethers_core::types::*;
 
 pub fn to_bytes(uint: U256) -> Bytes {
     let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
@@ -272,6 +272,12 @@ impl UIfmt for U64 {
     }
 }
 
+impl UIfmt for H64 {
+    fn pretty(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
 impl UIfmt for bool {
     fn pretty(&self) -> String {
         self.to_string()
@@ -533,7 +539,7 @@ value                   0");
             get_pretty_block_attr(_block.clone(), "mixHash".to_string())
         );
         assert_eq!(
-            Some("0".to_string()),
+            Some("0x0000000000000000".to_string()),
             get_pretty_block_attr(_block.clone(), "nonce".to_string())
         );
         assert_eq!(
