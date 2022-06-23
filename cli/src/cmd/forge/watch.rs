@@ -56,7 +56,7 @@ pub struct WatchArgs {
         min_values = 0,
         multiple_values = true,
         multiple_occurrences = false,
-        help = "Watches the given files or folders for changes. If no paths are specified, the source directory of the project is watched."
+        help = "Watches the given files or directories for changes. If no paths are provided, the source and test directories of the project are watched."
     )]
     pub watch: Option<Vec<PathBuf>>,
 }

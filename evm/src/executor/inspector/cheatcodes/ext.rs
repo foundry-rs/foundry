@@ -1,4 +1,4 @@
-use crate::abi::HEVMCalls;
+use crate::{abi::HEVMCalls, executor::inspector::Cheatcodes};
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
@@ -7,7 +7,13 @@ use ethers::{
     utils::hex::FromHex,
 };
 use serde::Deserialize;
-use std::{env, fs::File, io::Read, path::Path, process::Command, str::FromStr};
+use std::{
+    env, fs,
+    io::{BufRead, BufReader, Read, Write},
+    path::Path,
+    process::Command,
+    str::FromStr,
+};
 
 fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
     let output = Command::new(&args[0])
@@ -63,7 +69,7 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
     };
 
     let mut buffer = String::new();
-    File::open(path)
+    fs::File::open(path)
         .map_err(|err| err.to_string().encode())?
         .read_to_string(&mut buffer)
         .map_err(|err| err.to_string().encode())?;
@@ -154,7 +160,69 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         .map_err(|e| e.into())
 }
 
-pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
+fn read_file(path: &str) -> Result<Bytes, Bytes> {
+    let data = fs::read_to_string(path).map_err(|err| err.to_string().encode())?;
+
+    Ok(abi::encode(&[Token::String(data)]).into())
+}
+
+fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    // Get reader for previously opened file to continue reading OR initialize new reader
+    let reader =
+        state.context.opened_read_files.entry(path.to_string()).or_insert(BufReader::new(
+            fs::File::open(path).map_err(|err| err.to_string().encode())?,
+        ));
+
+    let mut line: String = String::new();
+    reader.read_line(&mut line).map_err(|err| err.to_string().encode())?;
+
+    // Remove trailing newline character, preserving others for cases where it may be important
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+
+    Ok(abi::encode(&[Token::String(line)]).into())
+}
+
+fn write_file(path: &str, data: &str) -> Result<Bytes, Bytes> {
+    std::fs::write(path, data).map_err(|err| err.to_string().encode())?;
+
+    Ok(Bytes::new())
+}
+
+fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(|err| err.to_string().encode())?;
+
+    writeln!(file, "{line}").map_err(|err| err.to_string().encode())?;
+
+    Ok(Bytes::new())
+}
+
+fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    state.context.opened_read_files.remove(path);
+
+    Ok(Bytes::new())
+}
+
+fn remove_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    close_file(state, path)?;
+    fs::remove_file(path).map_err(|err| err.to_string().encode())?;
+
+    Ok(Bytes::new())
+}
+
+pub fn apply(
+    state: &mut Cheatcodes,
+    ffi_enabled: bool,
+    call: &HEVMCalls,
+) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if !ffi_enabled {
@@ -181,6 +249,12 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
         }
         HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::ReadFile(inner) => read_file(&inner.0),
+        HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
+        HEVMCalls::WriteFile(inner) => write_file(&inner.0, &inner.1),
+        HEVMCalls::WriteLine(inner) => write_line(&inner.0, &inner.1),
+        HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
+        HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         _ => return None,
     })
 }

@@ -53,12 +53,11 @@ pub struct ScriptTester {
 }
 
 impl ScriptTester {
-    pub fn new(mut cmd: TestCommand, port: u16, current_dir: &Path) -> Self {
+    pub fn new(mut cmd: TestCommand, endpoint: &str, current_dir: &Path) -> Self {
         ScriptTester::link_testdata(current_dir).unwrap();
         cmd.set_current_dir(current_dir);
 
         let target_contract = current_dir.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
-        let url = format!("http://127.0.0.1:{port}");
 
         cmd.args([
             "script",
@@ -68,7 +67,7 @@ impl ScriptTester {
             "--root",
             current_dir.to_str().unwrap(),
             "--fork-url",
-            url.as_str(),
+            endpoint,
             "-vvvvv",
         ]);
 
@@ -83,7 +82,7 @@ impl ScriptTester {
                 "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string(),
                 "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a".to_string(),
             ],
-            provider: Provider::<Http>::try_from(url).unwrap(),
+            provider: Provider::<Http>::try_from(endpoint).unwrap(),
             nonces: BTreeMap::default(),
             cmd,
         }

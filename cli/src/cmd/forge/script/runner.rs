@@ -40,7 +40,7 @@ impl<DB: DatabaseRef> ScriptRunner<DB> {
         self.executor.set_nonce(self.sender, sender_nonce.as_u64());
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(*CALLER, U256::MAX);
+        self.executor.set_balance(CALLER, U256::MAX);
 
         // Deploy libraries
         let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
@@ -63,7 +63,7 @@ impl<DB: DatabaseRef> ScriptRunner<DB> {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(*CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
+        } = self.executor.deploy(CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 

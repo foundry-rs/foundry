@@ -1,14 +1,16 @@
 use crate::{
     cmd::{get_cached_entry_by_name, unwrap_contracts},
     compile,
-    opts::forge::ContractInfo,
 };
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
         ProjectCompileOutput, ProjectPathsConfig,
     },
-    solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+    solc::{
+        artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        info::ContractInfo,
+    },
     types::{Address, U256},
 };
 use eyre::{Context, ContextCompat};

@@ -1965,6 +1965,7 @@ dependencies = [
  "ethers-core",
  "foundry-config",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -2000,6 +2001,7 @@ dependencies = [
  "ethers",
  "eyre",
  "foundry-common",
+ "foundry-config",
  "foundry-utils",
  "futures",
  "hashbrown 0.12.0",
@@ -2008,6 +2010,7 @@ dependencies = [
  "parking_lot 0.12.0",
  "proptest",
  "revm",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

@@ -68,6 +68,13 @@ ethers::contract::abigen!(
             startBroadcast()
             startBroadcast(address)
             stopBroadcast()
+            readFile(string)(string)
+            writeFile(string,string)
+            openFile(string)
+            readLine(string)(string)
+            writeLine(string,string)
+            closeFile(string)
+            removeFile(string)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

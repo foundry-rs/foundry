@@ -1,6 +1,7 @@
 pub mod cmd;
 pub mod compile;
 
+mod handler;
 mod suggestions;
 mod term;
 mod utils;
@@ -22,6 +23,7 @@ use ethers::{
     types::{Address, NameOrAddress, U256},
 };
 use eyre::WrapErr;
+use foundry_common::fs;
 use foundry_config::Chain;
 use foundry_utils::{
     format_tokens,
@@ -44,7 +46,7 @@ use std::{
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 
@@ -92,7 +94,7 @@ async fn main() -> eyre::Result<()> {
                     var.as_bytes().to_hex()
                 }
                 s if s.starts_with('/') => {
-                    let input = std::fs::read(s)?;
+                    let input = fs::read(s)?;
                     input.to_hex()
                 }
                 s => {
@@ -453,6 +455,7 @@ async fn main() -> eyre::Result<()> {
             sigs.iter().for_each(|sig| println!("{}", sig));
         }
         Subcommands::FourByteDecode { calldata } => {
+            let calldata = unwrap_or_stdin(calldata)?;
             let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
@@ -572,8 +575,8 @@ async fn main() -> eyre::Result<()> {
             // print or write to file
             match output_location {
                 Some(loc) => {
-                    std::fs::create_dir_all(&loc.parent().unwrap())?;
-                    std::fs::write(&loc, res)?;
+                    fs::create_dir_all(&loc.parent().unwrap())?;
+                    fs::write(&loc, res)?;
                     println!("Saved interface at {}", loc.display());
                 }
                 None => {

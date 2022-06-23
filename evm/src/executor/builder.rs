@@ -15,6 +15,7 @@ use ethers::types::{H160, H256, U256};
 
 use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
 
+use crate::executor::inspector::CheatsConfig;
 use revm::AccountInfo;
 
 #[derive(Default, Debug)]
@@ -129,30 +130,32 @@ impl DatabaseRef for Backend {
 }
 
 impl ExecutorBuilder {
-    #[must_use]
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Enables cheatcodes on the executor.
     #[must_use]
-    pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
+    pub fn with_cheatcodes(mut self, config: CheatsConfig) -> Self {
         self.inspector_config.cheatcodes =
-            Some(Cheatcodes::new(ffi, self.env.block.clone(), self.env.tx.gas_price));
+            Some(Cheatcodes::new(self.env.block.clone(), self.env.tx.gas_price, config));
         self
     }
 
-    /// Enables tracing
+    /// Enables or disables tracing
     #[must_use]
-    pub fn with_tracing(mut self) -> Self {
-        self.inspector_config.tracing = true;
+    pub fn set_tracing(mut self, enable: bool) -> Self {
+        self.inspector_config.tracing = enable;
         self
     }
 
-    /// Enables the debugger
+    /// Enables or disables the debugger
     #[must_use]
-    pub fn with_debugger(mut self) -> Self {
-        self.inspector_config.debugger = true;
+    pub fn set_debugger(mut self, enable: bool) -> Self {
+        self.inspector_config.debugger = enable;
+        self
+    }
+
+    /// Enables or disables coverage collection
+    #[must_use]
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.inspector_config.coverage = enable;
         self
     }
 

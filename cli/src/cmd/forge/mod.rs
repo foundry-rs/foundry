@@ -41,6 +41,7 @@ pub mod bind;
 pub mod build;
 pub mod cache;
 pub mod config;
+pub mod coverage;
 pub mod create;
 pub mod debug;
 pub mod flatten;
