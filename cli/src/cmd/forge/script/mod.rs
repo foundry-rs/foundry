@@ -354,7 +354,6 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         let (sources, artifacts) =
             filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
-
         let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
         let flattened = calls.last().expect("we should have collected debug info").flatten(0);
         let tui = Tui::new(flattened, 0, decoder.contracts.clone(), artifacts, sources)?;

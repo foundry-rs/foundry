@@ -13,7 +13,7 @@ use ethers::{
 };
 use eyre::{Context, ContextCompat};
 use foundry_utils::PostLinkInput;
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;
 
 use super::*;
@@ -228,7 +228,7 @@ impl ScriptArgs {
 }
 
 /// Resolve the import tree of our target path, and get only the artifacts and
-/// sources we need.
+/// sources we need. If it's a standalone script, don't filter anything out.
 pub fn filter_sources_and_artifacts(
     target: &str,
     sources: BTreeMap<u32, String>,
@@ -238,15 +238,23 @@ pub fn filter_sources_and_artifacts(
     // Find all imports
     let graph = Graph::resolve(&project.paths)?;
     let target_path = project.root().join(target);
-    let target_index = graph.files().get(&target_path).expect("");
-    let mut target_tree = graph
-        .all_imported_nodes(*target_index)
-        .map(|index| graph.node(index).unpack())
-        .collect::<BTreeMap<_, _>>();
+    let mut target_tree = BTreeMap::new();
+    let mut is_standalone = false;
 
-    // Add our target into the tree as well.
-    let (target_path, target_source) = graph.node(*target_index).unpack();
-    target_tree.insert(target_path, target_source);
+    if let Some(target_index) = graph.files().get(&target_path) {
+        target_tree.extend(
+            graph
+                .all_imported_nodes(*target_index)
+                .map(|index| graph.node(index).unpack())
+                .collect::<BTreeMap<_, _>>(),
+        );
+
+        // Add our target into the tree as well.
+        let (target_path, target_source) = graph.node(*target_index).unpack();
+        target_tree.insert(target_path, target_source);
+    } else {
+        is_standalone = true;
+    }
 
     let sources = sources
         .into_iter()
@@ -260,13 +268,29 @@ pub fn filter_sources_and_artifacts(
                 resolved = project.root().join(&resolved);
             }
 
-            target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+            if !is_standalone {
+                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+            } else {
+                Some((
+                    id,
+                    fs::read_to_string(&resolved).expect(&*format!(
+                        "Something went wrong reading the source file: {:?}",
+                        path
+                    )),
+                ))
+            }
         })
         .collect();
 
     let artifacts = highlevel_known_contracts
         .into_iter()
-        .filter_map(|(id, artifact)| target_tree.get(&id.source).map(|_| (id.name, artifact)))
+        .filter_map(|(id, artifact)| {
+            if !is_standalone {
+                target_tree.get(&id.source).map(|_| (id.name, artifact))
+            } else {
+                Some((id.name, artifact))
+            }
+        })
         .collect();
 
     Ok((sources, artifacts))
