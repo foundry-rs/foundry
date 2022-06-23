@@ -1,11 +1,14 @@
 //! tests for custom anvil endpoints
-
+use crate::abi::*;
 use anvil::{spawn, Hardfork, NodeConfig};
 use ethers::{
-    prelude::Middleware,
+    prelude::{Middleware, SignerMiddleware},
     types::{Address, BlockNumber, TransactionRequest, U256},
 };
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
@@ -48,6 +51,50 @@ async fn can_impersonate_account() {
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
     assert!(res.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_contract() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let provider = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract =
+        Greeter::deploy(provider, "Hello World!".to_string()).unwrap().send().await.unwrap();
+    let impersonate = greeter_contract.address();
+
+    let to = Address::random();
+    let val = 1337u64;
+
+    let provider = handle.http_provider();
+
+    // fund the impersonated account
+    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
+
+    let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
+
+    let res = provider.send_transaction(tx.clone(), None).await;
+    assert!(res.is_err());
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    api.anvil_impersonate_account(impersonate).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res.from, impersonate);
+
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, val.into());
+
+    api.anvil_stop_impersonating_account(impersonate).await.unwrap();
+    let res = provider.send_transaction(tx, None).await;
+    assert!(res.is_err());
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
