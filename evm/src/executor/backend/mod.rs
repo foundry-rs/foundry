@@ -11,7 +11,7 @@ use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef, EmptyDB},
     Account, AccountInfo, Database, DatabaseCommit, Env, Inspector, Log, Return, SubRoutine,
-    TransactOut,
+    TransactOut, TransactTo,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
@@ -115,11 +115,17 @@ pub struct Backend {
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
     /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
-    /// to know if there was an assert that failed after the snapshot was taken so that we can
+    /// to know if there was an `assert` that failed after the snapshot was taken so that we can
     /// check if the test function passed all asserts even across snapshots. When a snapshot is
     /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
-    /// if the `failed` variable is set
-    has_failure_in_reverted_snapshot: bool,
+    /// if the `_failed` variable is set,
+    /// additionally
+    has_failure__snapshot: bool,
+    /// Tracks the address of a Test contract
+    ///
+    /// This address can be used to inspect the state of the contract when a test is being
+    /// executed. E.g. the `_failed` variable of `DSTest`
+    test_contract: Option<Address>,
 }
 
 // === impl Backend ===
@@ -147,7 +153,9 @@ impl Backend {
             db,
             created_forks: Default::default(),
             snapshots: Default::default(),
-            has_failure_in_reverted_snapshot: false,
+            has_failure__snapshot: false,
+            // not yet known
+            test_contract: None,
         }
     }
 
@@ -160,7 +168,8 @@ impl Backend {
             created_forks: Default::default(),
             db,
             snapshots: Default::default(),
-            has_failure_in_reverted_snapshot: false,
+            has_failure__snapshot: false,
+            test_contract: None,
         }
     }
 
@@ -168,7 +177,43 @@ impl Backend {
         self.db.insert_cache(address, account)
     }
 
-    /// Executes the configured transaction of the `env` without commiting state changes
+    /// Sets the address of the `DSTest` contract that is being executed
+    pub fn set_test_contract(&mut self, addr: Address) -> &mut Self {
+        self.test_contract = Some(addr);
+        self
+    }
+
+    /// Returns the address of the set `DSTest` contract
+    pub fn test_contract_address(&self) -> Option<Address> {
+        self.test_contract
+    }
+
+    /// Checks if a test function failed
+    ///
+    /// DSTest will not revert inside its `assertEq`-like functions which allows
+    /// to test multiple assertions in 1 test function while also preserving logs.
+    /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
+    pub fn is_failed(&self) -> bool {
+        self.has_failure__snapshot ||
+            self.test_contract_address()
+                .map(|addr| self.is_failed_test_contract(addr))
+                .unwrap_or_default()
+    }
+
+    pub fn is_failed_test_contract(&self, address: Address) -> bool {
+        /**
+         contract DSTest {
+            bool public IS_TEST = true;
+            // slot 0 offset 1 => second byte of slot0
+            bool private _failed;
+         }
+        */
+        let value = self.storage(address, U256::zero());
+        let failed = value != 0;
+        failed
+    }
+
+    /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
         mut env: Env,
@@ -177,6 +222,9 @@ impl Backend {
     where
         INSP: Inspector<Self>,
     {
+        if let TransactTo::Call(to) = env.tx.transact_to {
+            self.test_contract = Some(to);
+        }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
 }
@@ -192,11 +240,17 @@ impl DatabaseExt for Backend {
 
     fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
         if let Some(mut snapshot) = self.snapshots.remove(id) {
-            // TODO needs to store additioanl logs and whether there was a failure by looking at the
+            // need to check whether DSTest's `failed` variable is set to `true` which means an
+            // error occurred either during the snapshot or even before
+            if self.is_failed() {
+                self.has_failure__snapshot = true;
+            }
 
+            // merge additional logs
+            snapshot.merge(subroutine);
             let BackendSnapshot { db, subroutine } = snapshot;
-            // subroutine
             self.db = db;
+
             trace!(target: "backend", "Reverted snapshot {}", id);
             Some(subroutine)
         } else {

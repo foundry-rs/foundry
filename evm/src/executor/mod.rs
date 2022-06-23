@@ -298,10 +298,10 @@ impl Executor {
     }
 
     /// Executes the test function call
-    pub fn execute<D: Detokenize, T: Tokenize, F: IntoFunction>(
+    pub fn execute_test<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
         from: Address,
-        to: Address,
+        test_contract: Address,
         func: F,
         args: T,
         value: U256,
@@ -313,7 +313,7 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
-        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_env(from, TransactTo::Call(test_contract), calldata, value);
         let (status, out, gas, state_changeset, logs) =
             self.backend_mut().inspect_ref(env, &mut inspector);
 

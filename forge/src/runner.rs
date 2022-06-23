@@ -296,7 +296,7 @@ impl<'a> ContractRunner<'a> {
         // Run unit test
         let start = Instant::now();
         let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
-            match self.executor.execute::<(), _, _>(
+            match self.executor.execute_test::<(), _, _>(
                 self.sender,
                 address,
                 func.clone(),
