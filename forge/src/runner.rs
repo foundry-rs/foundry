@@ -67,7 +67,7 @@ impl<'a> ContractRunner<'a> {
     pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
-        self.executor.set_balance(*CALLER, U256::MAX);
+        self.executor.set_balance(CALLER, U256::MAX);
 
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
         self.executor.set_nonce(self.sender, 1);
@@ -200,6 +200,7 @@ impl<'a> ContractRunner<'a> {
                         logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
+                        coverage: None,
                         labeled_addresses: BTreeMap::new(),
                     },
                 )]
@@ -222,6 +223,7 @@ impl<'a> ContractRunner<'a> {
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
+                        coverage: None,
                         labeled_addresses: setup.labeled_addresses,
                     },
                 )]
@@ -293,44 +295,50 @@ impl<'a> ContractRunner<'a> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, execution_traces, state_changeset) = match self
-            .executor
-            .execute::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
-        {
-            Ok(CallResult {
-                reverted,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, None, gas, stipend, execution_trace, state_changeset)
-            }
-            Err(EvmError::Execution {
-                reverted,
-                reason,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, Some(reason), gas, stipend, execution_trace, state_changeset)
-            }
-            Err(err) => {
-                tracing::error!(?err);
-                return Err(err.into())
-            }
-        };
+        let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
+            match self.executor.execute::<(), _, _>(
+                self.sender,
+                address,
+                func.clone(),
+                (),
+                0.into(),
+                self.errors,
+            ) {
+                Ok(CallResult {
+                    reverted,
+                    gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    coverage,
+                    labels: new_labels,
+                    state_changeset,
+                    ..
+                }) => {
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    (reverted, None, gas, stipend, execution_trace, coverage, state_changeset)
+                }
+                Err(EvmError::Execution {
+                    reverted,
+                    reason,
+                    gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    labels: new_labels,
+                    state_changeset,
+                    ..
+                }) => {
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
+                }
+                Err(err) => {
+                    tracing::error!(?err);
+                    return Err(err.into())
+                }
+            };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         let success = self.executor.is_success(
@@ -354,6 +362,7 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
+            coverage,
             labeled_addresses,
         })
     }
@@ -395,6 +404,8 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
+            // TODO: Maybe support coverage for fuzz tests
+            coverage: None,
             labeled_addresses,
         })
     }

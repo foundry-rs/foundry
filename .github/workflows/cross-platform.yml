@@ -87,6 +87,7 @@ jobs:
 
       - name: Run tests
         uses: actions-rs/cargo@v1
+        if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test

@@ -36,6 +36,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Script(cmd) => {
             utils::block_on(cmd.run_script())?;
         }
+        Subcommands::Coverage(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
         }

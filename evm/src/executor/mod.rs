@@ -37,7 +37,10 @@ pub mod inspector;
 pub mod opts;
 pub mod snapshot;
 
-use crate::executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER};
+use crate::{
+    coverage::HitMaps,
+    executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
+};
 pub use builder::ExecutorBuilder;
 
 /// A mapping of addresses to their changed state.
@@ -160,7 +163,7 @@ impl Executor {
         from: Option<Address>,
         address: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
-        let from = from.unwrap_or(*CALLER);
+        let from = from.unwrap_or(CALLER);
         self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
@@ -187,6 +190,7 @@ impl Executor {
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -202,6 +206,7 @@ impl Executor {
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -251,7 +256,7 @@ impl Executor {
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -284,6 +289,7 @@ impl Executor {
             stipend,
             logs,
             labels,
+            coverage,
             traces,
             debug,
             transactions,
@@ -455,7 +461,7 @@ impl Executor {
         if success {
             // Check if a DSTest assertion failed
             let call =
-                executor.call::<bool, _, _>(*CALLER, address, "failed()(bool)", (), 0.into(), None);
+                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;
@@ -548,6 +554,8 @@ pub struct CallResult<D: Detokenize> {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -578,6 +586,8 @@ pub struct RawCallResult {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -600,6 +610,7 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: BTreeMap::new(),
             traces: None,
+            coverage: None,
             debug: None,
             transactions: None,
             state_changeset: None,
@@ -636,7 +647,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+    let InspectorData { logs, labels, traces, debug, cheatcodes, coverage, .. } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {
@@ -658,6 +669,7 @@ fn convert_executed_call(
         logs: logs.to_vec(),
         labels,
         traces,
+        coverage,
         debug,
         transactions,
         state_changeset: Some(state_changeset),
@@ -678,6 +690,7 @@ fn convert_call_result<D: Detokenize>(
         logs,
         labels,
         traces,
+        coverage,
         debug,
         transactions,
         state_changeset,
@@ -694,6 +707,7 @@ fn convert_call_result<D: Detokenize>(
                 logs,
                 labels,
                 traces,
+                coverage,
                 debug,
                 transactions,
                 state_changeset,

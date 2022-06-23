@@ -46,6 +46,8 @@ pub struct MultiContractRunner {
     pub fork: Option<CreateFork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: CheatsConfig,
+    /// Whether or not to collect coverage info
+    pub coverage: bool,
 }
 
 impl MultiContractRunner {
@@ -138,6 +140,7 @@ impl MultiContractRunner {
                         .with_spec(self.evm_spec)
                         .with_gas_limit(self.evm_opts.gas_limit())
                         .set_tracing(self.evm_opts.verbosity >= 3)
+                        .set_coverage(self.coverage)
                         .build(db.clone());
 
                     let result = self.run_tests(
@@ -209,6 +212,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: Option<CheatsConfig>,
+    /// Whether or not to collect coverage info
+    pub coverage: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -306,6 +311,7 @@ impl MultiContractRunnerBuilder {
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default(),
+            coverage: self.coverage,
         })
     }
 
@@ -342,6 +348,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
         self.cheats_config = Some(cheats_config);
+        self
+    }
+
+    #[must_use]
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.coverage = enable;
         self
     }
 }
@@ -1062,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn test_envs() {
+    fn test_cheats() {
         let mut runner = runner();
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,

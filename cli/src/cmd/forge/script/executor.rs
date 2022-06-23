@@ -150,17 +150,15 @@ impl ScriptArgs {
         // the db backend that serves all the data
         let db = Backend::spawn(script_config.evm_opts.get_fork(env.clone()));
 
-        let mut builder = ExecutorBuilder::default()
+        let executor = ExecutorBuilder::default()
             .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
             .with_spec(utils::evm_spec(&script_config.config.evm_version))
-            .set_tracing(script_config.evm_opts.verbosity >= 3)
-            .with_gas_limit(script_config.evm_opts.gas_limit());
+            .with_gas_limit(script_config.evm_opts.gas_limit())
+            .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug)
+            .set_debugger(self.debug)
+            .build(db);
 
-        if self.debug {
-            builder = builder.with_tracing().with_debugger();
-        }
-
-        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(executor, script_config.evm_opts.initial_balance, sender)
     }
 }

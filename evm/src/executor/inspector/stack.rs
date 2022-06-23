@@ -1,5 +1,10 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
-use crate::{debug::DebugArena, executor::backend::DatabaseExt, trace::CallTraceArena};
+use crate::{
+    coverage::HitMaps,
+    debug::DebugArena,
+    executor::{backend::DatabaseExt, inspector::CoverageCollector},
+    trace::CallTraceArena,
+};
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
 use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
@@ -22,6 +27,7 @@ pub struct InspectorData {
     pub labels: BTreeMap<Address, String>,
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
+    pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
 }
 
@@ -35,6 +41,7 @@ pub struct InspectorStack {
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub debugger: Option<Debugger>,
+    pub coverage: Option<CoverageCollector>,
 }
 
 impl InspectorStack {
@@ -48,6 +55,7 @@ impl InspectorStack {
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),
+            coverage: self.coverage.map(|coverage| coverage.maps),
             cheatcodes: self.cheatcodes,
         }
     }
@@ -65,7 +73,13 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.coverage,
+                &mut self.tracer,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let status = inspector.initialize_interp(interpreter, data, is_static);
 
@@ -87,7 +101,13 @@ where
     ) -> Return {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let status = inspector.step(interpreter, data, is_static);
 
@@ -144,7 +164,13 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (status, gas, retdata) = inspector.call(data, call, is_static);
 
@@ -169,7 +195,13 @@ where
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (new_status, new_gas, new_retdata) = inspector.call_end(
                     data,
@@ -198,7 +230,13 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (status, addr, gas, retdata) = inspector.create(data, call);
 
@@ -223,7 +261,13 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
-            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            [
+                &mut self.debugger,
+                &mut self.tracer,
+                &mut self.coverage,
+                &mut self.logs,
+                &mut self.cheatcodes
+            ],
             {
                 let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
                     data,
