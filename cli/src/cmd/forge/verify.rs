@@ -1,7 +1,12 @@
 //! Verify contract source on etherscan
 
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
+use crate::{
+    cmd::{
+        forge::build::{CoreBuildArgs, ProjectPathsArgs},
+        RetryArgs,
+    },
+    opts::forge::ContractInfo,
+};
 use clap::Parser;
 use ethers::{
     abi::Address,

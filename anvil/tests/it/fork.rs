@@ -1,11 +1,11 @@
 //! various fork related test
 
-use crate::{abi::*, next_port, utils};
+use crate::{abi::*, utils};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
     core::rand,
-    prelude::{LocalWallet, Middleware, SignerMiddleware},
+    prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
     signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
@@ -33,11 +33,7 @@ pub struct LocalFork {
 impl LocalFork {
     /// Spawns two nodes with the test config
     pub async fn new() -> Self {
-        Self::setup(
-            NodeConfig::test().with_port(next_port()),
-            NodeConfig::test().with_port(next_port()),
-        )
-        .await
+        Self::setup(NodeConfig::test(), NodeConfig::test()).await
     }
 
     /// Spawns two nodes where one is a fork of the other
@@ -52,7 +48,6 @@ impl LocalFork {
 
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
-        .with_port(next_port())
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
@@ -256,10 +251,7 @@ async fn can_deploy_greeter_on_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deploy_greeter_on_rinkeby_fork() {
     let (_api, handle) = spawn(
-        NodeConfig::test()
-            .with_port(next_port())
-            .with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint()))
-            .silent(),
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_rinkeby_http_rpc_endpoint())).silent(),
     )
     .await;
     let provider = handle.http_provider();
@@ -284,7 +276,7 @@ async fn can_deploy_greeter_on_rinkeby_fork() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_properly() {
-    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let account = origin_handle.dev_accounts().next().unwrap();
     let origin_provider = origin_handle.http_provider();
     let origin_nonce = 1u64.into();
@@ -292,12 +284,8 @@ async fn can_reset_properly() {
 
     assert_eq!(origin_nonce, origin_provider.get_transaction_count(account, None).await.unwrap());
 
-    let (fork_api, fork_handle) = spawn(
-        NodeConfig::test()
-            .with_port(next_port())
-            .with_eth_rpc_url(Some(origin_handle.http_endpoint())),
-    )
-    .await;
+    let (fork_api, fork_handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
 
     let fork_provider = fork_handle.http_provider();
     assert_eq!(origin_nonce, fork_provider.get_transaction_count(account, None).await.unwrap());
@@ -441,4 +429,34 @@ async fn test_fork_nft_set_approve_all() {
 
     let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
     assert_eq!(real_onwer, wallet.address());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/1920>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_can_send_opensea_tx() {
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(14983338u64))
+            .with_blocktime(Some(Duration::from_millis(5000))),
+    )
+    .await;
+
+    let sender: Address = "0x8fdbae54b6d9f3fc2c649e3dd4602961967fd42f".parse().unwrap();
+
+    // transfer: impersonate real sender
+    api.anvil_impersonate_account(sender).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let input: Bytes = "0xfb0f3ee1000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003ff2e795f5000000000000000000000000000023f28ae3e9756ba982a6290f9081b6a84900b758000000000000000000000000004c00500000ad104d7dbd00e3ae0a5c00560c0000000000000000000000000003235b597a78eabcb08ffcb4d97411073211dbcb0000000000000000000000000000000000000000000000000000000000000e72000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000062ad47c20000000000000000000000000000000000000000000000000000000062d43104000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000df44e65d2a2cf40000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000001c6bf526340000000000000000000000000008de9c5a032463c561423387a9648c5c7bcc5bc900000000000000000000000000000000000000000000000000005543df729c0000000000000000000000000006eb234847a9e3a546539aac57a071c01dc3f398600000000000000000000000000000000000000000000000000000000000000416d39b5352353a22cf2d44faa696c2089b03137a13b5acfee0366306f2678fede043bc8c7e422f6f13a3453295a4a063dac7ee6216ab7bade299690afc77397a51c00000000000000000000000000000000000000000000000000000000000000".parse().unwrap();
+    let to: Address = "0x00000000006c3852cbef3e08e8df289169ede581".parse().unwrap();
+    let tx = TransactionRequest::new()
+        .from(sender)
+        .to(to)
+        .value(20000000000000000u64)
+        .data(input)
+        .gas_price(22180711707u64);
+
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
 }

@@ -13,7 +13,7 @@ use clap::{AppSettings, Parser};
 use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
 use forge::{
     decode::decode_console_logs,
-    executor::opts::EvmOpts,
+    executor::{inspector::CheatsConfig, opts::EvmOpts},
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
@@ -498,6 +498,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
+        .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
         .build(project.paths.root, output, evm_opts)?;
 
     if args.debug.is_some() {

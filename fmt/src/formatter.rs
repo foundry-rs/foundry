@@ -1677,7 +1677,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
-
                 write!(self.buf(), "(")?;
 
                 if exprs.is_empty() {
@@ -2486,6 +2485,38 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_revert(
+        &mut self,
+        loc: Loc,
+        error: &mut Option<IdentifierPath>,
+        args: &mut Vec<Expression>,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "revert")?;
+        if let Some(error) = error {
+            error.visit(self)?;
+        }
+        write!(self.buf(), "(")?;
+        if args.is_empty() {
+            write!(self.buf(), ")")?;
+        } else {
+            let first_args_loc = args.first().as_ref().unwrap().loc();
+            self.surrounded(first_args_loc.start(), "", ")", Some(loc.end()), |fmt, _| {
+                let exprs = fmt.items_to_chunks(
+                    Some(loc.end()),
+                    args.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                )?;
+
+                // fmt.write_prefix_comments_before(first_args_loc.start())?;
+                let multiline = fmt.are_chunks_separated_multiline("{});", &exprs, ", ")?;
+                fmt.write_chunks_separated(&exprs, ",", multiline)?;
+                Ok(())
+            })?
+        }
+        self.write_semicolon()?;
+
+        Ok(())
+    }
+
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
         self.write_prefix_comments_before(loc.start())?;
 
@@ -2531,7 +2562,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         write_return_with_expr(self)?;
         write_chunk!(self, loc.end(), ";")?;
-        // self.write_semicolon()?;
         Ok(())
     }
 }
@@ -2700,5 +2730,6 @@ mod tests {
     test_directory! { IfStatement }
     test_directory! { VariableAssignment }
     test_directory! { FunctionCallArgsStatement }
+    test_directory! { RevertStatement }
     test_directory! { ReturnStatement }
 }

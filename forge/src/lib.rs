@@ -1,6 +1,9 @@
 /// Gas reports
 pub mod gas_report;
 
+/// Coverage reports
+pub mod coverage;
+
 /// The Forge test runner
 mod runner;
 pub use runner::ContractRunner;

@@ -3114,12 +3114,9 @@ mod tests {
         fn fake_etherscan_cache(chain_path: &Path, address: &str, size_bytes: usize) {
             let metadata_path = chain_path.join("sources");
             let abi_path = chain_path.join("abi");
-            match fs::create_dir(metadata_path.as_path()) {
-                _ => {}
-            }
-            match fs::create_dir(abi_path.as_path()) {
-                _ => {}
-            }
+            let _ = fs::create_dir(metadata_path.as_path());
+            let _ = fs::create_dir(abi_path.as_path());
+
             let metadata_file_path = metadata_path.join(address);
             let mut metadata_file = File::create(metadata_file_path).unwrap();
             writeln!(metadata_file, "{}", vec![' '; size_bytes / 2 - 1].iter().collect::<String>())

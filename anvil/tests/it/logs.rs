@@ -1,6 +1,6 @@
 //! log/event related tests
 
-use crate::{abi::*, next_port};
+use crate::abi::*;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     middleware::SignerMiddleware,
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
-    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -49,7 +49,7 @@ async fn get_past_events() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_all_events() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -75,7 +75,7 @@ async fn get_all_events() {
     for _ in 0..num_tx {
         let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
         let tx = func.send().await.unwrap();
-        api.mine_one();
+        api.mine_one().await;
         let _receipt = tx.await.unwrap();
     }
     let logs = client.get_logs(&Filter::new().from_block(BlockNumber::Earliest)).await.unwrap();
@@ -86,7 +86,7 @@ async fn get_all_events() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_install_filter() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -113,7 +113,7 @@ async fn can_install_filter() {
     for _ in 0..num_logs {
         let func = contract.method::<_, H256>("setValue", "hi".to_owned()).unwrap();
         let tx = func.send().await.unwrap();
-        api.mine_one();
+        api.mine_one().await;
         let _receipt = tx.await.unwrap();
         let logs = client.get_filter_changes::<_, Log>(filter).await.unwrap();
         assert_eq!(logs.len(), 1);
@@ -128,7 +128,7 @@ async fn can_install_filter() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn watch_events() {
-    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
 
