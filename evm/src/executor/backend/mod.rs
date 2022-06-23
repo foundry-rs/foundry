@@ -120,7 +120,7 @@ pub struct Backend {
     /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
     /// if the `_failed` variable is set,
     /// additionally
-    has_failure__snapshot: bool,
+    has_failure_snapshot: bool,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being
@@ -153,7 +153,7 @@ impl Backend {
             db,
             created_forks: Default::default(),
             snapshots: Default::default(),
-            has_failure__snapshot: false,
+            has_failure_snapshot: false,
             // not yet known
             test_contract: None,
         }
@@ -168,7 +168,7 @@ impl Backend {
             created_forks: Default::default(),
             db,
             snapshots: Default::default(),
-            has_failure__snapshot: false,
+            has_failure_snapshot: false,
             test_contract: None,
         }
     }
@@ -188,20 +188,21 @@ impl Backend {
         self.test_contract
     }
 
-    /// Checks if a test function failed
-    ///
-    /// DSTest will not revert inside its `assertEq`-like functions which allows
-    /// to test multiple assertions in 1 test function while also preserving logs.
-    /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
+    /// Checks if the test contract associated with this backend failed, See [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.has_failure__snapshot ||
+        self.has_failure_snapshot ||
             self.test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
     }
 
+    /// Checks if the given test function failed
+    ///
+    /// DSTest will not revert inside its `assertEq`-like functions which allows
+    /// to test multiple assertions in 1 test function while also preserving logs.
+    /// Instead, it stores whether an `assert` failed in a boolean variable that we can read
     pub fn is_failed_test_contract(&self, address: Address) -> bool {
-        /**
+        /*
          contract DSTest {
             bool public IS_TEST = true;
             // slot 0 offset 1 => second byte of slot0
@@ -209,8 +210,8 @@ impl Backend {
          }
         */
         let value = self.storage(address, U256::zero());
-        let failed = value != 0;
-        failed
+        
+        value.byte(1) != 0
     }
 
     /// Executes the configured test call of the `env` without commiting state changes
@@ -243,7 +244,7 @@ impl DatabaseExt for Backend {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
             if self.is_failed() {
-                self.has_failure__snapshot = true;
+                self.has_failure_snapshot = true;
             }
 
             // merge additional logs
