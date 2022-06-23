@@ -3,14 +3,14 @@ use super::verify;
 use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
     compile,
-    opts::{forge::ContractInfo, EthereumOpts, WalletType},
+    opts::{EthereumOpts, WalletType},
     utils::{get_http_provider, parse_ether_value, parse_u256},
 };
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::utils::RuntimeOrHandle,
+    solc::{info::ContractInfo, utils::RuntimeOrHandle},
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 use eyre::{Context, Result};
