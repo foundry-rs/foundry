@@ -10,6 +10,7 @@ on:
 
 env:
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+  CARGO_TERM_COLOR: always
 
 jobs:
   prepare:
