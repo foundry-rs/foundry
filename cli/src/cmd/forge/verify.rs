@@ -1,11 +1,8 @@
 //! Verify contract source on etherscan
 
-use crate::{
-    cmd::{
-        forge::build::{CoreBuildArgs, ProjectPathsArgs},
-        RetryArgs,
-    },
-    opts::forge::ContractInfo,
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    RetryArgs,
 };
 use clap::Parser;
 use ethers::{
@@ -19,6 +16,7 @@ use ethers::{
     solc::{
         artifacts::{BytecodeHash, Source},
         cache::CacheEntry,
+        info::ContractInfo,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
