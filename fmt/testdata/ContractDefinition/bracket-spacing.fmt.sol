@@ -19,7 +19,8 @@ contract SampleContract {
         pure
         returns (uint256)
     // comment 18
-    { // comment 19
+    {
+        // comment 19
         return arg1 > arg2 ? arg1 : arg2;
     }
 }
