@@ -135,7 +135,10 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source == std::path::Path::new(&extra.target_fname) {
+                    if id.source ==
+                        dunce::canonicalize(&extra.target_fname)
+                            .expect("Could not canonicalize target path")
+                    {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
