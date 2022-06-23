@@ -78,7 +78,7 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
 pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
-    FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)
+    FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), CALLER)
 }
 
 pub mod filter {

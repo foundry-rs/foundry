@@ -276,7 +276,7 @@ where
         from: Option<Address>,
         address: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
-        let from = from.unwrap_or(*CALLER);
+        let from = from.unwrap_or(CALLER);
         self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
@@ -622,7 +622,7 @@ where
         if success {
             // Check if a DSTest assertion failed
             let call =
-                executor.call::<bool, _, _>(*CALLER, address, "failed()(bool)", (), 0.into(), None);
+                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;

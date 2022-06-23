@@ -14,7 +14,7 @@ pub mod coverage;
 /// Forge test execution backends
 pub mod executor;
 
-use ethers::types::{ActionType, CallType};
+use ethers::types::{ActionType, CallType, H160};
 pub use executor::abi;
 
 /// Fuzzing wrapper for executors
@@ -26,18 +26,20 @@ pub mod utils;
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::{self, HashMap};
-use once_cell::sync::Lazy;
 pub use revm;
 use revm::{CallScheme, CreateScheme};
 use serde::{Deserialize, Serialize};
 
-/// Stores a random caller address to be used as _sender_ account for:
+/// Stores the caller address to be used as _sender_ account for:
 ///     - deploying Test contracts
 ///     - deploying Script contracts
 ///
-/// The address is randomly initialized once for each program and is constant for the duration of
-/// the existence of this program.
-pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
+/// The address was derived from `address(uint160(uint256(keccak256("foundry default caller"))))`
+/// and is equal to 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38.
+pub static CALLER: Address = H160([
+    0x18, 0x04, 0xc8, 0xAB, 0x1F, 0x12, 0xE6, 0xbb, 0xF3, 0x89, 0x4D, 0x40, 0x83, 0xF3, 0x3E, 0x07,
+    0x30, 0x9D, 0x1F, 0x38,
+]);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CallKind {
