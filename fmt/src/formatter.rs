@@ -2534,15 +2534,40 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             )?;
             stmt.visit(self)?;
         }
-        // for clause in clauses {
-        //     let (loc, ident, param, stmt) = match clause {
-        //         CatchClause::Simple(loc, param, stmt) => (loc, None, *param, stmt),
-        //         CatchClause::Named(loc, ident, param, stmt) => {
-        //             (loc, Some(ident), Some(param), stmt)
-        //         }
-        //     };
-        // }
-        self.visit_source(loc)
+        for clause in clauses {
+            let (loc, ident, mut param, stmt) = match clause {
+                CatchClause::Simple(loc, param, stmt) => (loc, None, param.as_mut(), stmt),
+                CatchClause::Named(loc, ident, param, stmt) => {
+                    (loc, Some(ident), Some(param), stmt)
+                }
+            };
+
+            let chunk = self.chunked(loc.start(), Some(stmt.loc().start()), |fmt| {
+                write_chunk!(fmt, "catch")?;
+                if let Some(ident) = ident.as_ref() {
+                    write_chunk!(fmt, ident.loc.start(), "{}", ident.name)?;
+                }
+                if let Some(param) = param.as_mut() {
+                    let mut chunk =
+                        fmt.chunked(param.loc.start(), Some(stmt.loc().start()), |fmt| {
+                            fmt.surrounded(
+                                param.loc.start(),
+                                "(",
+                                ")",
+                                Some(param.loc.end()),
+                                |fmt, _| param.visit(fmt),
+                            )
+                        })?;
+                    chunk.needs_space = Some(false);
+                    fmt.write_chunk(&chunk)?;
+                }
+                Ok(())
+            })?;
+
+            self.write_chunk(&chunk)?;
+            stmt.visit(self)?;
+        }
+        Ok(())
     }
 }
 
