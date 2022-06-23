@@ -5,7 +5,7 @@ use ethers::{
     abi::{Abi, Function},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
-        ArtifactId, Bytes, Graph, Project,
+        ArtifactId, Bytes, Project,
     },
     types::{transaction::eip2718::TypedTransaction, Address, Log, TransactionRequest, U256},
 };
@@ -30,7 +30,7 @@ use std::{
 use yansi::Paint;
 
 mod build;
-use build::BuildOutput;
+use build::{filter_sources_and_artifacts, BuildOutput};
 
 mod runner;
 use runner::ScriptRunner;
@@ -352,50 +352,13 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        // Resolve the dependency tree of our target contract path, so we get only the artifacts and
-        // sources' references we need.
-        let graph = Graph::resolve(&project.paths)?;
-        let target_path = project.root().join(&self.path);
-        let target_index = graph.files().get(&target_path).expect("");
-        let mut target_tree = graph
-            .all_imported_nodes(*target_index)
-            .map(|index| graph.node(index).unpack())
-            .collect::<BTreeMap<_, _>>();
-
-        // Insert our target into the tree.
-        let (target_path, target_source) = graph.node(*target_index).unpack();
-        target_tree.insert(target_path, target_source);
-
-        let source_code = sources
-            .into_iter()
-            .filter_map(|(id, path)| {
-                let mut resolved = project
-                    .paths
-                    .resolve_library_import(&PathBuf::from(&path))
-                    .unwrap_or_else(|| PathBuf::from(&path));
-
-                if !resolved.is_absolute() {
-                    resolved = project.root().join(&resolved);
-                }
-
-                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
-            })
-            .collect();
+        let (sources, artifacts) =
+            filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
 
         let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
         let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-        let tui = Tui::new(
-            flattened,
-            0,
-            decoder.contracts.clone(),
-            highlevel_known_contracts
-                .into_iter()
-                .filter_map(|(id, artifact)| {
-                    target_tree.get(&id.source).map(|_| (id.name, artifact))
-                })
-                .collect(),
-            source_code,
-        )?;
+        let tui = Tui::new(flattened, 0, decoder.contracts.clone(), artifacts, sources)?;
+
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }

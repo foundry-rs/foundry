@@ -245,6 +245,51 @@ impl ScriptArgs {
     }
 }
 
+/// Resolve the import tree of our target path, and get only the artifacts and
+/// sources we need.
+pub fn filter_sources_and_artifacts(
+    target: &str,
+    sources: BTreeMap<u32, String>,
+    highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    project: Project,
+) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
+    // Find all imports
+    let graph = Graph::resolve(&project.paths)?;
+    let target_path = project.root().join(target);
+    let target_index = graph.files().get(&target_path).expect("");
+    let mut target_tree = graph
+        .all_imported_nodes(*target_index)
+        .map(|index| graph.node(index).unpack())
+        .collect::<BTreeMap<_, _>>();
+
+    // Add our target into the tree as well.
+    let (target_path, target_source) = graph.node(*target_index).unpack();
+    target_tree.insert(target_path, target_source);
+
+    let sources = sources
+        .into_iter()
+        .filter_map(|(id, path)| {
+            let mut resolved = project
+                .paths
+                .resolve_library_import(&PathBuf::from(&path))
+                .unwrap_or_else(|| PathBuf::from(&path));
+
+            if !resolved.is_absolute() {
+                resolved = project.root().join(&resolved);
+            }
+
+            target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+        })
+        .collect();
+
+    let artifacts = highlevel_known_contracts
+        .into_iter()
+        .filter_map(|(id, artifact)| target_tree.get(&id.source).map(|_| (id.name, artifact)))
+        .collect();
+
+    Ok((sources, artifacts))
+}
+
 struct ExtraLinkingInfo<'a> {
     no_target_name: bool,
     target_fname: String,
