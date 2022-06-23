@@ -160,13 +160,43 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         .map_err(|e| e.into())
 }
 
-fn read_file(path: &str) -> Result<Bytes, Bytes> {
+macro_rules! check_path_allowed {
+    ($state:ident, $path:ident) => {
+        // Get parent directory of the file that user wants to read/write.
+        let directory = Path::new($path)
+            .parent()
+            .ok_or("Can't get parent directory for the provided path".to_string().encode())?;
+
+        // Check it's a directory and it exists.
+        if !directory.is_dir() {
+            return Err("Parent directory of the file is not a directory. Is it exist?"
+                .to_string()
+                .encode()
+                .into())
+        }
+
+        // Get an absolute path for the directory.
+        // We can't do it with the file path because `fs::canonicalize` requires the file to exist.
+        let path = fs::canonicalize(directory).map_err(|err| err.to_string().encode())?;
+
+        // Check if any of the allowed paths is the prefix for our directory path.
+        if !$state.config.allowed_paths.iter().any(|allowed_path| path.starts_with(allowed_path)) {
+            return Err("Path is not allowed.".to_string().encode().into())
+        }
+    };
+}
+
+fn read_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
     let data = fs::read_to_string(path).map_err(|err| err.to_string().encode())?;
 
     Ok(abi::encode(&[Token::String(data)]).into())
 }
 
 fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader =
         state.context.opened_read_files.entry(path.to_string()).or_insert(BufReader::new(
@@ -187,13 +217,17 @@ fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     Ok(abi::encode(&[Token::String(line)]).into())
 }
 
-fn write_file(path: &str, data: &str) -> Result<Bytes, Bytes> {
-    std::fs::write(path, data).map_err(|err| err.to_string().encode())?;
+fn write_file(state: &mut Cheatcodes, path: &str, data: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
+    fs::write(path, data).map_err(|err| err.to_string().encode())?;
 
     Ok(Bytes::new())
 }
 
-fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
+fn write_line(state: &mut Cheatcodes, path: &str, line: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
     let mut file = fs::OpenOptions::new()
         .append(true)
         .create(true)
@@ -206,12 +240,16 @@ fn write_line(path: &str, line: &str) -> Result<Bytes, Bytes> {
 }
 
 fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
     state.context.opened_read_files.remove(path);
 
     Ok(Bytes::new())
 }
 
 fn remove_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+    check_path_allowed!(state, path);
+
     close_file(state, path)?;
     fs::remove_file(path).map_err(|err| err.to_string().encode())?;
 
@@ -249,10 +287,10 @@ pub fn apply(
         }
         HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
-        HEVMCalls::ReadFile(inner) => read_file(&inner.0),
+        HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
         HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
-        HEVMCalls::WriteFile(inner) => write_file(&inner.0, &inner.1),
-        HEVMCalls::WriteLine(inner) => write_line(&inner.0, &inner.1),
+        HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
+        HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         _ => return None,

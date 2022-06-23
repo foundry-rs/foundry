@@ -63,5 +63,7 @@ contract FileTest is DSTest {
         cheats.removeFile(path);
         cheats.writeLine(path, data);
         assertEq(cheats.readLine(path), data);
+
+        cheats.removeFile(path);
     }
 }
