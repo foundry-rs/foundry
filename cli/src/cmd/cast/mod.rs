@@ -6,5 +6,6 @@
 //! [`foundry_config::Config`].
 
 pub mod find_block;
+pub mod rpc;
 pub mod run;
 pub mod wallet;
