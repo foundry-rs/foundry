@@ -2534,10 +2534,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         };
 
         let mut write_return_with_expr = |fmt: &mut Self| -> Result<()> {
-            if fmt.try_on_single_line(|fmt| {
+            let fits_on_single = fmt.try_on_single_line(|fmt| {
                 write_return(fmt)?;
                 expr.visit(fmt)
-            })? {
+            })?;
+            if fits_on_single {
                 return Ok(())
             }
 
