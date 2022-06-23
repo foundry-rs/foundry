@@ -191,7 +191,12 @@ impl ScriptArgs {
 
         // We received a file path.
         if let Ok(target_contract) = dunce::canonicalize(&self.path) {
-            let output = self.compile_target(&target_contract, &project)?;
+            let output = compile::compile_target(
+                &target_contract,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+            )?;
             return Ok((project, output))
         }
 
@@ -201,12 +206,13 @@ impl ScriptArgs {
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
             let path = dunce::canonicalize(&path)?;
-            let output = self.compile_target(&path, &project)?;
+            let output =
+                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
 
-        // We received `contract_name`, and we find out its file path.
+        // We received `contract_name`, and need to find out its file path.
         let output = if self.opts.args.silent {
             compile::suppress_compile(&project)
         } else {
@@ -218,30 +224,6 @@ impl ScriptArgs {
         self.path = path.to_string_lossy().to_string();
 
         Ok((project, output))
-    }
-
-    /// Compiles target path. Throws an error if `target` is a standalone script and `verify` is
-    /// requested. We only allow `verify` inside projects.
-    fn compile_target(
-        &self,
-        target_path: &PathBuf,
-        project: &Project,
-    ) -> eyre::Result<ProjectCompileOutput> {
-        let graph = Graph::resolve(&project.paths)?;
-
-        // Checking if it's a standalone script, or part of a project.
-        if graph.files().get(target_path).is_none() {
-            if self.verify {
-                eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
-            }
-            return compile::compile_files(project, vec![target_path.clone()], self.opts.args.silent)
-        }
-
-        if self.opts.args.silent {
-            compile::suppress_compile(project)
-        } else {
-            compile::compile(project, false, false)
-        }
     }
 }
 

@@ -2,7 +2,10 @@
 
 use crate::term;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
-use ethers::solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput};
+use ethers::{
+    prelude::Graph,
+    solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput},
+};
 use std::{collections::BTreeMap, fmt::Display, path::PathBuf};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
@@ -257,4 +260,32 @@ pub fn compile_files(
     }
     println!("{output}");
     Ok(output)
+}
+
+/// Compiles target file path.
+///
+/// If `silent` no solc related output will be emitted to stdout.
+///
+/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
+pub fn compile_target(
+    target_path: &PathBuf,
+    project: &Project,
+    silent: bool,
+    verify: bool,
+) -> eyre::Result<ProjectCompileOutput> {
+    let graph = Graph::resolve(&project.paths)?;
+
+    // Checking if it's a standalone script, or part of a project.
+    if graph.files().get(target_path).is_none() {
+        if verify {
+            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+        }
+        return compile_files(project, vec![target_path.clone()], silent)
+    }
+
+    if silent {
+        suppress_compile(project)
+    } else {
+        compile(project, false, false)
+    }
 }
