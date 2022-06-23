@@ -38,6 +38,8 @@ pub struct RunArgs {
         help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
     )]
     quick: bool,
+    #[clap(long, short = 'v', help = "Prints full address")]
+    verbose: bool,
     #[clap(
         long,
         help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
@@ -173,7 +175,7 @@ impl RunArgs {
             if self.debug {
                 run_debugger(result, decoder)?;
             } else {
-                print_traces(&mut result, decoder).await?;
+                print_traces(&mut result, decoder, self.verbose).await?;
             }
         }
         Ok(())
@@ -191,7 +193,11 @@ fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()
     }
 }
 
-async fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+async fn print_traces(
+    result: &mut RunResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
     if result.traces.is_empty() {
         eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
     }
@@ -199,7 +205,11 @@ async fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre
     println!("Traces:");
     for (_, trace) in &mut result.traces {
         decoder.decode(trace).await;
-        println!("{trace}");
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{:#}", trace);
+        }
     }
     println!();
 
