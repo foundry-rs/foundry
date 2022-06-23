@@ -210,7 +210,9 @@ impl Cmd for InspectArgs {
                 if pretty {
                     if let Some(storage_layout) = &artifact.storage_layout {
                         let mut table = Table::new();
-                        table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"]);
+                        table.set_header(vec![
+                            "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
+                        ]);
 
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
