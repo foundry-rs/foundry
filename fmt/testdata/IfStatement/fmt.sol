@@ -29,7 +29,8 @@ contract IfStatement {
         }
 
         /* comment1 */
-        if ( /* comment2 */ /* comment3 */ condition) { // comment4
+        if ( /* comment2 */ /* comment3 */ condition) {
+            // comment4
             // comment5
             execute();
         } // comment6
@@ -39,7 +40,8 @@ contract IfStatement {
         } // comment7
         /* comment8 */
         /* comment9 */
-        else if ( /* comment10 */ anotherLongCondition) { // comment11
+        else if ( /* comment10 */ anotherLongCondition) {
+            // comment11
             /* comment12 */
             execute();
         } // comment13
