@@ -2505,6 +2505,45 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_try(
+        &mut self,
+        loc: Loc,
+        expr: &mut Expression,
+        returns: &mut Option<(Vec<(Loc, Option<Parameter>)>, Box<Statement>)>,
+        clauses: &mut Vec<CatchClause>,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "try")?;
+        expr.visit(self)?;
+        if let Some((params, stmt)) = returns {
+            let byte_offset = params.first().map_or(stmt.loc().start(), |p| p.0.start());
+            self.surrounded(
+                byte_offset,
+                "returns (",
+                ")",
+                params.last().map(|p| p.0.end()),
+                |fmt, _| {
+                    let chunks = fmt.items_to_chunks(
+                        Some(stmt.loc().start()),
+                        params.iter_mut().map(|(loc, ref mut ident)| Ok((*loc, ident))),
+                    )?;
+                    let multiline = fmt.are_chunks_separated_multiline("{})", &chunks, ", ")?;
+                    fmt.write_chunks_separated(&chunks, ",", multiline)?;
+                    Ok(())
+                },
+            )?;
+            stmt.visit(self)?;
+        }
+        // for clause in clauses {
+        //     let (loc, ident, param, stmt) = match clause {
+        //         CatchClause::Simple(loc, param, stmt) => (loc, None, *param, stmt),
+        //         CatchClause::Named(loc, ident, param, stmt) => {
+        //             (loc, Some(ident), Some(param), stmt)
+        //         }
+        //     };
+        // }
+        self.visit_source(loc)
+    }
 }
 
 #[cfg(test)]
@@ -2672,4 +2711,5 @@ mod tests {
     test_directory! { VariableAssignment }
     test_directory! { FunctionCallArgsStatement }
     test_directory! { RevertStatement }
+    test_directory! { TryStatement }
 }
