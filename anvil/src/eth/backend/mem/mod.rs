@@ -47,6 +47,7 @@ use foundry_evm::{
     revm,
     revm::{
         db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
+        KECCAK_EMPTY,
     },
     utils::u256_to_h256_be,
 };
@@ -173,6 +174,34 @@ impl Backend {
             for (account, info) in self.genesis.account_infos() {
                 db.insert_account(account, info);
             }
+        }
+    }
+
+    /// Sets the account to impersonate
+    ///
+    /// Returns `true` if the account is already impersonated
+    pub fn impersonate(&self, addr: Address) -> bool {
+        if self.cheats.is_impersonated(addr) {
+            return true
+        }
+        // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
+        // the code hash to `KECCAK_EMPTY` temporarily
+        let mut account = self.db.read().basic(addr);
+        let mut code_hash = None;
+        if account.code_hash != KECCAK_EMPTY {
+            code_hash = Some(std::mem::replace(&mut account.code_hash, KECCAK_EMPTY));
+            self.db.write().insert_account(addr, account);
+        }
+        self.cheats.impersonate(addr, code_hash)
+    }
+
+    /// Removes the account that from the impersonated set
+    pub fn stop_impersonating(&self, addr: Address) {
+        if let Some(code_hash) = self.cheats.stop_impersonating(&addr) {
+            let mut db = self.db.write();
+            let mut account = db.basic(addr);
+            account.code_hash = code_hash;
+            db.insert_account(addr, account)
         }
     }
 
