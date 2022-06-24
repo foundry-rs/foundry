@@ -1,5 +1,3 @@
-extern crate core;
-
 /// Decoding helpers
 pub mod decode;
 
