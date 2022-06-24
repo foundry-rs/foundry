@@ -103,23 +103,23 @@ interface Cheats {
     function startBroadcast(address) external;
     // Stops collecting onchain transactions
     function stopBroadcast() external;
-    // Reads the entire content of file to string, (path) => (data)
+    // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
     function readFile(string calldata) external returns (string memory);
     // Reads next line of file to string, (path) => (line)
     function readLine(string calldata) external returns (string memory);
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
-    // (path, data) => ()
+    // Path is relative to the project root. (path, data) => ()
     function writeFile(string calldata, string calldata) external;
     // Writes line to file, creating a file if it does not exist.
-    // (path, data) => ()
+    // Path is relative to the project root. (path, data) => ()
     function writeLine(string calldata, string calldata) external;
     // Closes file for reading, resetting the offset and allowing to read it from beginning with readLine.
-    // (path) => ()
+    // Path is relative to the project root. (path) => ()
     function closeFile(string calldata) external;
     // Removes file. This cheatcode will revert in the following situations, but is not limited to just these cases:
     // - Path points to a directory.
     // - The file doesn't exist.
     // - The user lacks permissions to remove the file.
-    // (path) => ()
+    // Path is relative to the project root. (path) => ()
     function removeFile(string calldata) external;
 }
