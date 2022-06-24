@@ -19,7 +19,7 @@ mod fuzz;
 mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
-use crate::executor::backend::snapshot::BackendSnapshot;
+use crate::{abi::CHEATCODE_ADDRESS, executor::backend::snapshot::BackendSnapshot};
 pub use in_memory_db::MemDb;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
@@ -125,7 +125,7 @@ pub struct Backend {
     ///
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
-    test_contract: Option<Address>,
+    test_contract_context: Option<Address>,
 }
 
 // === impl Backend ===
@@ -155,7 +155,7 @@ impl Backend {
             snapshots: Default::default(),
             has_failure_snapshot: false,
             // not yet known
-            test_contract: None,
+            test_contract_context: None,
         }
     }
 
@@ -169,7 +169,7 @@ impl Backend {
             db,
             snapshots: Default::default(),
             has_failure_snapshot: false,
-            test_contract: None,
+            test_contract_context: None,
         }
     }
 
@@ -179,16 +179,17 @@ impl Backend {
 
     /// Sets the address of the `DSTest` contract that is being executed
     pub fn set_test_contract(&mut self, addr: Address) -> &mut Self {
-        self.test_contract = Some(addr);
+        self.test_contract_context = Some(addr);
         self
     }
 
     /// Returns the address of the set `DSTest` contract
     pub fn test_contract_address(&self) -> Option<Address> {
-        self.test_contract
+        self.test_contract_context
     }
 
-    /// Checks if the test contract associated with this backend failed, See [Self::is_failed_test_contract]
+    /// Checks if the test contract associated with this backend failed, See
+    /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
         self.has_failure_snapshot ||
             self.test_contract_address()
@@ -210,8 +211,17 @@ impl Backend {
          }
         */
         let value = self.storage(address, U256::zero());
-        
+
         value.byte(1) != 0
+    }
+
+    /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
+    /// in "failed"
+    /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
+    pub fn is_global_failure(&self) -> bool {
+        let index = U256::from(&b"failed"[..]);
+        let value = self.storage(CHEATCODE_ADDRESS, index);
+        value == U256::one()
     }
 
     /// Executes the configured test call of the `env` without commiting state changes
@@ -224,7 +234,7 @@ impl Backend {
         INSP: Inspector<Self>,
     {
         if let TransactTo::Call(to) = env.tx.transact_to {
-            self.test_contract = Some(to);
+            self.test_contract_context = Some(to);
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
