@@ -6,7 +6,9 @@ use ethers::{
     prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer, H160},
     types::{NameOrAddress, H256, U256},
     utils,
+    utils::keccak256,
 };
+use once_cell::sync::Lazy;
 use revm::{CreateInputs, Database, EVMData};
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
@@ -14,6 +16,10 @@ pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
 ]);
 pub const MISSING_CREATE2_DEPLOYER: &str =
     "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]";
+
+// keccak(Error(string))
+pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
+pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
@@ -118,4 +124,8 @@ pub fn process_create<DB: Database>(
             (calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce)
         }
     }
+}
+
+pub fn encode_error(reason: impl ToString) -> Bytes {
+    [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
 }

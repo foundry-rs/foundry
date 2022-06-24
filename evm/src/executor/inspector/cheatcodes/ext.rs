@@ -1,4 +1,7 @@
-use crate::{abi::HEVMCalls, executor::inspector::Cheatcodes};
+use crate::{
+    abi::HEVMCalls,
+    executor::inspector::{cheatcodes::util, Cheatcodes},
+};
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
@@ -10,20 +13,17 @@ use serde::Deserialize;
 use std::{
     env, fs,
     io::{BufRead, BufReader, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     str::FromStr,
 };
 
 fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
-    let output = Command::new(&args[0])
-        .args(&args[1..])
-        .output()
-        .map_err(|err| err.to_string().encode())?
-        .stdout;
+    let output =
+        Command::new(&args[0]).args(&args[1..]).output().map_err(util::encode_error)?.stdout;
     let output = unsafe { std::str::from_utf8_unchecked(&output) };
     let decoded = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(output))
-        .map_err(|err| err.to_string().encode())?;
+        .map_err(util::encode_error)?;
 
     Ok(abi::encode(&[Token::Bytes(decoded.to_vec())]).into())
 }
@@ -70,12 +70,11 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
 
     let mut buffer = String::new();
     fs::File::open(path)
-        .map_err(|err| err.to_string().encode())?
+        .map_err(util::encode_error)?
         .read_to_string(&mut buffer)
-        .map_err(|err| err.to_string().encode())?;
+        .map_err(util::encode_error)?;
 
-    let bytecode = serde_json::from_str::<ArtifactBytecode>(&buffer)
-        .map_err(|err| err.to_string().encode())?;
+    let bytecode = serde_json::from_str::<ArtifactBytecode>(&buffer).map_err(util::encode_error)?;
 
     if let Some(bin) = bytecode.into_inner() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
@@ -161,50 +160,45 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
 }
 
 macro_rules! check_path_allowed {
-    ($state:ident, $path:ident) => {
-        // Get parent directory of the file that user wants to read/write.
-        let directory = Path::new($path)
-            .parent()
-            .ok_or("Can't get parent directory for the provided path".to_string().encode())?;
-
-        // Check it's a directory and it exists.
-        if !directory.is_dir() {
-            return Err("Parent directory of the file is not a directory. Is it exist?"
-                .to_string()
-                .encode()
-                .into())
-        }
-
-        // Get an absolute path for the directory.
-        // We can't do it with the file path because `fs::canonicalize` requires the file to exist.
-        let path = fs::canonicalize(directory).map_err(|err| err.to_string().encode())?;
-
-        // Check if any of the allowed paths is the prefix for our directory path.
-        if !$state.config.allowed_paths.iter().any(|allowed_path| path.starts_with(allowed_path)) {
-            return Err("Path is not allowed.".to_string().encode().into())
+    ($state:ident, $absolute_path:ident) => {
+        // Check if any of the allowed paths is the prefix for our absolute path.
+        if !$state
+            .config
+            .allowed_paths
+            .iter()
+            .any(|allowed_path| $absolute_path.starts_with(allowed_path))
+        {
+            return Err(util::encode_error("Path is not allowed."))
         }
     };
 }
 
-fn read_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+fn full_path(state: &mut Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
+    state.config.root.join(path)
+}
+
+fn read_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
-    let data = fs::read_to_string(path).map_err(|err| err.to_string().encode())?;
+    let data = fs::read_to_string(path).map_err(util::encode_error)?;
 
     Ok(abi::encode(&[Token::String(data)]).into())
 }
 
-fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
     // Get reader for previously opened file to continue reading OR initialize new reader
-    let reader =
-        state.context.opened_read_files.entry(path.to_string()).or_insert(BufReader::new(
-            fs::File::open(path).map_err(|err| err.to_string().encode())?,
-        ));
+    let reader = state
+        .context
+        .opened_read_files
+        .entry(path.clone())
+        .or_insert(BufReader::new(fs::File::open(&path).map_err(util::encode_error)?));
 
     let mut line: String = String::new();
-    reader.read_line(&mut line).map_err(|err| err.to_string().encode())?;
+    reader.read_line(&mut line).map_err(util::encode_error)?;
 
     // Remove trailing newline character, preserving others for cases where it may be important
     if line.ends_with('\n') {
@@ -217,41 +211,42 @@ fn read_line(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     Ok(abi::encode(&[Token::String(line)]).into())
 }
 
-fn write_file(state: &mut Cheatcodes, path: &str, data: &str) -> Result<Bytes, Bytes> {
+fn write_file(state: &mut Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
-    fs::write(path, data).map_err(|err| err.to_string().encode())?;
+    fs::write(path, data).map_err(util::encode_error)?;
 
     Ok(Bytes::new())
 }
 
-fn write_line(state: &mut Cheatcodes, path: &str, line: &str) -> Result<Bytes, Bytes> {
+fn write_line(state: &mut Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
-    let mut file = fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .map_err(|err| err.to_string().encode())?;
+    let mut file =
+        fs::OpenOptions::new().append(true).create(true).open(path).map_err(util::encode_error)?;
 
-    writeln!(file, "{line}").map_err(|err| err.to_string().encode())?;
+    writeln!(file, "{line}").map_err(util::encode_error)?;
 
     Ok(Bytes::new())
 }
 
-fn close_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
-    state.context.opened_read_files.remove(path);
+    state.context.opened_read_files.remove(&path);
 
     Ok(Bytes::new())
 }
 
-fn remove_file(state: &mut Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
+fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
     check_path_allowed!(state, path);
 
-    close_file(state, path)?;
-    fs::remove_file(path).map_err(|err| err.to_string().encode())?;
+    close_file(state, &path)?;
+    fs::remove_file(&path).map_err(util::encode_error)?;
 
     Ok(Bytes::new())
 }

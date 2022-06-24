@@ -15,6 +15,7 @@ pub struct CheatsConfig {
     /// All known endpoints and their aliases
     pub rpc_endpoints: Arc<RpcEndpoints>,
 
+    pub root: PathBuf,
     pub allowed_paths: Vec<PathBuf>,
 }
 
@@ -31,6 +32,7 @@ impl CheatsConfig {
             ffi: evm_opts.ffi,
             rpc_storage_caching: Arc::new(config.rpc_storage_caching.clone()),
             rpc_endpoints: Arc::new(config.rpc_endpoints.clone()),
+            root: config.__root.0.clone(),
             allowed_paths,
         }
     }

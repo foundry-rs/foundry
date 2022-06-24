@@ -37,6 +37,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
+    path::PathBuf,
 };
 
 mod config;
@@ -100,7 +101,7 @@ pub struct Cheatcodes {
 #[derive(Debug, Default)]
 pub struct Context {
     //// Buffered readers for files opened for reading (path => BufReader mapping)
-    pub opened_read_files: HashMap<String, BufReader<File>>,
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
 }
 
 /// Every time we clone `Context`, we want it to be empty
