@@ -731,6 +731,7 @@ fn test(
         // reattach the thread
         let _ = handle.join();
 
+        trace!(target: "forge::test", "received {} results", results.len());
         Ok(TestOutcome::new(results, allow_failure))
     }
 }
