@@ -340,7 +340,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         );
 
         // Record test execution time
-        tracing::debug!(
+        tracing::trace!(
             duration = ?start.elapsed(),
             %success,
             %gas
