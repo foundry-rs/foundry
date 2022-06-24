@@ -150,7 +150,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
                     }
                     Err(err) => {
-
                         error!(reason=?err, contract= ?address, "setUp failed");
                         (
                             true,
