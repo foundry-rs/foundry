@@ -226,12 +226,9 @@ impl Visitor {
             NodeType::YulIf => {
                 self.visit_expression(
                     node.attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                        .ok_or_else(|| eyre::eyre!("yul if statement had no condition"))?,
                 )?;
-
-                let body: Node = node
-                    .attribute("body")
-                    .ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
+                let body = node.body.ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
 
                 // We need to store the current branch ID here since visiting the body of either of
                 // the if blocks may increase `self.branch_id` in the case of nested if statements.
@@ -249,7 +246,7 @@ impl Visitor {
                     anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
-                self.visit_block(body)?;
+                self.visit_block(*body)?;
 
                 Ok(())
             }
