@@ -61,6 +61,7 @@ impl CoverageMap {
         &mut self,
         source_version: Version,
         source_map: &SourceMap,
+        contract_name: &str,
         hit_map: HitMap,
     ) {
         for (ic, instruction_hits) in hit_map.hits.into_iter() {
@@ -79,14 +80,9 @@ impl CoverageMap {
             // Get the coverage items corresponding to the source ID in the source map.
             if let Some(source) = self.sources.get_mut(&(source_version.clone(), source_id)) {
                 for item in source.items.iter_mut() {
-                    // We've reached a point where we will no longer be able to map this
-                    // instruction to coverage items
-                    /*if ic > item.anchor() {
-                        break;
-                    }*/
-
                     // We found a matching coverage item, but there may be more
-                    if ic == item.anchor() {
+                    let anchor = item.anchor();
+                    if ic == anchor.instruction && contract_name == anchor.contract {
                         item.increment_hits(instruction_hits);
                     }
                 }
@@ -165,6 +161,21 @@ impl SourceFile {
     }
 }
 
+/// An item anchor describes what instruction (and what contract) marks a [CoverageItem] as covered.
+#[derive(Clone, Debug)]
+pub struct ItemAnchor {
+    /// The instruction counter that constitutes this anchor
+    pub instruction: usize,
+    /// The contract in which the instruction is in
+    pub contract: String,
+}
+
+impl Display for ItemAnchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.contract, self.instruction)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum CoverageItem {
     /// An executable line in the code.
@@ -172,7 +183,7 @@ pub enum CoverageItem {
         /// The location of the line in the source code.
         loc: SourceLocation,
         /// The instruction counter that covers this line.
-        anchor: usize,
+        anchor: ItemAnchor,
         /// The number of times this item was hit.
         hits: u64,
     },
@@ -182,7 +193,7 @@ pub enum CoverageItem {
         /// The location of the statement in the source code.
         loc: SourceLocation,
         /// The instruction counter that covers this statement.
-        anchor: usize,
+        anchor: ItemAnchor,
         /// The number of times this statement was hit.
         hits: u64,
     },
@@ -192,7 +203,7 @@ pub enum CoverageItem {
         /// The location of the branch in the source code.
         loc: SourceLocation,
         /// The instruction counter that covers this branch.
-        anchor: usize,
+        anchor: ItemAnchor,
         /// The ID that identifies the branch.
         ///
         /// There may be multiple items with the same branch ID - they belong to the same branch,
@@ -213,7 +224,7 @@ pub enum CoverageItem {
         /// The location of the function in the source code.
         loc: SourceLocation,
         /// The instruction counter that covers this function.
-        anchor: usize,
+        anchor: ItemAnchor,
         /// The name of the function.
         name: String,
         /// The number of times this item was hit.
@@ -231,12 +242,12 @@ impl CoverageItem {
         }
     }
 
-    pub fn anchor(&self) -> usize {
+    pub fn anchor(&self) -> &ItemAnchor {
         match self {
             Self::Line { anchor, .. } |
             Self::Statement { anchor, .. } |
             Self::Branch { anchor, .. } |
-            Self::Function { anchor, .. } => *anchor,
+            Self::Function { anchor, .. } => anchor,
         }
     }
 

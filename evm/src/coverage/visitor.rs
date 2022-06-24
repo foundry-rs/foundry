@@ -1,4 +1,4 @@
-use super::{BranchKind, CoverageItem, SourceLocation};
+use super::{BranchKind, CoverageItem, ItemAnchor, SourceLocation};
 use ethers::{
     prelude::sourcemap::SourceMap,
     solc::artifacts::ast::{self, Ast, Node, NodeType},
@@ -353,7 +353,7 @@ impl Visitor {
         {
             self.items.push(CoverageItem::Line {
                 loc: source_location.clone(),
-                anchor: item.anchor(),
+                anchor: item.anchor().clone(),
                 hits: 0,
             });
             self.last_line = source_location.line;
@@ -370,8 +370,9 @@ impl Visitor {
         }
     }
 
-    fn anchor_for(&self, loc: &ast::SourceLocation) -> usize {
-        self.source_maps
+    fn anchor_for(&self, loc: &ast::SourceLocation) -> ItemAnchor {
+        let instruction_counter = self
+            .source_maps
             .get(&self.context)
             .and_then(|source_map| {
                 source_map
@@ -392,6 +393,8 @@ impl Visitor {
                     })
                     .map(|(ic, _)| ic)
             })
-            .unwrap_or(loc.start)
+            .unwrap_or(loc.start);
+
+        ItemAnchor { instruction: instruction_counter, contract: self.context.clone() }
     }
 }
