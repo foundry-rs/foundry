@@ -15,7 +15,10 @@ pub struct CheatsConfig {
     /// All known endpoints and their aliases
     pub rpc_endpoints: RpcEndpoints,
 
+    /// Project root
     pub root: PathBuf,
+
+    /// Paths (directories) where file reading/writing is allowed
     pub allowed_paths: Vec<PathBuf>,
 }
 
