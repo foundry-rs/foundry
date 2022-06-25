@@ -1568,7 +1568,7 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, _, gas, _) =
+        let (exit, out, gas, _) =
             self.backend.call(call_to_estimate, fees.clone(), block_number).await?;
         match exit {
             return_ok!() => {
@@ -1601,7 +1601,7 @@ impl EthApi {
                     }
                 } else {
                     // the transaction did fail due to lack of gas from the user
-                    Err(InvalidTransactionError::Revert(request.data).into())
+                    Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into())
                 }
             }
             reason => {
