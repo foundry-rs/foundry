@@ -1536,6 +1536,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     Ok(())
                 })?;
             }
+            Expression::Ternary(loc, cond, first_expr, second_expr) => {
+                let mut chunks = vec![];
+
+                chunks.push(
+                    self.chunked(loc.start(), Some(first_expr.loc().start()), |fmt| {
+                        cond.visit(fmt)
+                    })?,
+                );
+                chunks.push(self.chunked(
+                    first_expr.loc().start(),
+                    Some(second_expr.loc().start()),
+                    |fmt| {
+                        write_chunk!(fmt, "?")?;
+                        first_expr.visit(fmt)
+                    },
+                )?);
+                chunks.push(self.chunked(second_expr.loc().start(), Some(loc.end()), |fmt| {
+                    write_chunk!(fmt, ":")?;
+                    second_expr.visit(fmt)
+                })?);
+
+                if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
+                    self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
+                }
+            }
             Expression::Variable(ident) => {
                 write_chunk!(self, loc.end(), "{}", ident.name)?;
             }
@@ -2773,4 +2798,5 @@ mod tests {
     test_directory! { RevertNamedArgsStatement }
     test_directory! { ReturnStatement }
     test_directory! { TryStatement }
+    test_directory! { TernaryExpression }
 }

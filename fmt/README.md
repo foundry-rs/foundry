@@ -57,7 +57,7 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
 - [ ] NamedFunctionCall
 - [x] New
 - [x] Delete
-- [ ] Ternary
+- [x] Ternary
 - [x] Type
     - [x] Address
     - [x] Address Payable
