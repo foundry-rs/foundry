@@ -2615,7 +2615,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(fmt, "catch")?;
                 if let Some(ident) = ident.as_ref() {
                     fmt.write_postfix_comments_before(
-                        param.as_ref().map(|p| p.loc.start()).unwrap_or(ident.loc.end()),
+                        param.as_ref().map(|p| p.loc.start()).unwrap_or_else(|| ident.loc.end()),
                     )?;
                     write_chunk!(fmt, ident.loc.start(), "{}", ident.name)?;
                 }
@@ -2648,13 +2648,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         // write try chunk first
         if let Some(chunk) = chunks.next() {
-            let chunk_str = self.simulate_to_string(|fmt| fmt.write_chunk(&chunk))?;
+            let chunk_str = self.simulate_to_string(|fmt| fmt.write_chunk(chunk))?;
             write!(self.buf(), "{chunk_str}")?;
             prev_multiline = chunk_str.contains('\n');
         }
 
         while let Some(chunk) = chunks.next() {
-            let chunk_str = self.simulate_to_string(|fmt| fmt.write_chunk(&chunk))?;
+            let chunk_str = self.simulate_to_string(|fmt| fmt.write_chunk(chunk))?;
             let multiline = chunk_str.contains('\n');
             self.indented_if(!multiline, 1, |fmt| {
                 chunk.needs_space = Some(false);
