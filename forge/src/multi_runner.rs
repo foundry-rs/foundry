@@ -118,6 +118,8 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
+        tracing::info!(include_fuzz_tests= ?include_fuzz_tests, "running all tests");
+
         let db = Backend::spawn(self.fork.take());
 
         let results =
@@ -142,16 +144,20 @@ impl MultiContractRunner {
                         .set_tracing(self.evm_opts.verbosity >= 3)
                         .set_coverage(self.coverage)
                         .build(db.clone());
+                    let identifier = id.identifier();
+                    tracing::trace!(contract= ?identifier, "start executing all tests in contract");
 
                     let result = self.run_tests(
-                        &id.identifier(),
+                        &identifier,
                         abi,
                         executor,
                         deploy_code.clone(),
                         libs,
                         (filter, include_fuzz_tests),
                     )?;
-                    Ok((id.identifier(), result))
+
+                    tracing::trace!(contract= ?identifier, "executed all tests in contract");
+                    Ok((identifier, result))
                 })
                 .filter_map(Result::<_>::ok)
                 .filter(|(_, results)| !results.is_empty())
@@ -374,14 +380,13 @@ mod tests {
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
-        MultiContractRunnerBuilder::default()
-            .sender(EVM_OPTS.sender)
-            .with_cheats_config(CheatsConfig::new(&Config::default(), &*EVM_OPTS))
+        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
     }
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
         base_runner()
+            .with_cheats_config(CheatsConfig::new(&Config::with_root(PROJECT.root()), &*EVM_OPTS))
             .build(
                 &(*PROJECT).paths.root,
                 (*COMPILED).clone(),

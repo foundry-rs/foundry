@@ -11,6 +11,9 @@ contract FileTest is DSTest {
         string memory path = "../testdata/fixtures/File/read.txt";
 
         assertEq(cheats.readFile(path), "hello readable world\nthis is the second line!");
+
+        cheats.expectRevert("Path is not allowed.");
+        cheats.readFile("/etc/hosts");
     }
 
     function testReadLine() public {
@@ -19,6 +22,9 @@ contract FileTest is DSTest {
         assertEq(cheats.readLine(path), "hello readable world");
         assertEq(cheats.readLine(path), "this is the second line!");
         assertEq(cheats.readLine(path), "");
+
+        cheats.expectRevert("Path is not allowed.");
+        cheats.readLine("/etc/hosts");
     }
 
     function testWriteFile() public {
@@ -29,6 +35,9 @@ contract FileTest is DSTest {
         assertEq(cheats.readFile(path), data);
 
         cheats.removeFile(path);
+
+        cheats.expectRevert("Path is not allowed.");
+        cheats.writeFile("/etc/hosts", "malicious stuff");
     }
 
     function testWriteLine() public {
@@ -43,6 +52,9 @@ contract FileTest is DSTest {
         assertEq(cheats.readFile(path), string.concat(line1, "\n", line2, "\n"));
 
         cheats.removeFile(path);
+
+        cheats.expectRevert("Path is not allowed.");
+        cheats.writeLine("/etc/hosts", "malicious stuff");
     }
 
     function testCloseFile() public {
@@ -63,5 +75,10 @@ contract FileTest is DSTest {
         cheats.removeFile(path);
         cheats.writeLine(path, data);
         assertEq(cheats.readLine(path), data);
+
+        cheats.removeFile(path);
+
+        cheats.expectRevert("Path is not allowed.");
+        cheats.removeFile("/etc/hosts");
     }
 }

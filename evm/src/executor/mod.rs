@@ -23,6 +23,7 @@ use revm::{
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
 use std::collections::{BTreeMap, VecDeque};
+use tracing::trace;
 
 /// custom revm database implementations
 pub mod backend;
@@ -374,6 +375,7 @@ impl Executor {
         value: U256,
         abi: Option<&Abi>,
     ) -> std::result::Result<DeployResult, EvmError> {
+        trace!(sender=?from, "deploying contract");
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
 
@@ -431,6 +433,8 @@ impl Executor {
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
+
+        trace!(address=?address, "deployed contract");
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }

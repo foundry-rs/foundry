@@ -22,6 +22,8 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs::File,
     io::BufReader,
+    path::PathBuf,
+    sync::Arc,
 };
 
 /// Cheatcodes related to the execution environment.
@@ -95,7 +97,7 @@ pub struct Cheatcodes {
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
-    pub config: CheatsConfig,
+    pub config: Arc<CheatsConfig>,
 
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
@@ -104,7 +106,7 @@ pub struct Cheatcodes {
 #[derive(Debug, Default)]
 pub struct Context {
     //// Buffered readers for files opened for reading (path => BufReader mapping)
-    pub opened_read_files: HashMap<String, BufReader<File>>,
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
 }
 
 /// Every time we clone `Context`, we want it to be empty
@@ -120,7 +122,7 @@ impl Cheatcodes {
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
-            config,
+            config: Arc::new(config),
             ..Default::default()
         }
     }

@@ -4,10 +4,15 @@ use std::{fs, path::Path};
 
 type Result<T> = std::result::Result<T, FsPathError>;
 
-/// Wrapper for `std::File::create`
+/// Wrapper for `std::fs::File::create`
 pub fn create_file(path: impl AsRef<Path>) -> Result<fs::File> {
     let path = path.as_ref();
     fs::File::create(path).map_err(|err| FsPathError::create_file(err, path))
+}
+/// Wrapper for `std::fs::remove_file`
+pub fn remove_file(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    fs::remove_file(path).map_err(|err| FsPathError::remove_file(err, path))
 }
 
 /// Wrapper for `std::fs::read`
@@ -50,4 +55,10 @@ pub fn remove_dir(path: impl AsRef<Path>) -> Result<()> {
 pub fn remove_dir_all(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     fs::remove_dir_all(path).map_err(|err| FsPathError::remove_dir(err, path))
+}
+
+/// Wrapper for `std::fs::File::open`
+pub fn open(path: impl AsRef<Path>) -> Result<fs::File> {
+    let path = path.as_ref();
+    fs::File::open(path).map_err(|err| FsPathError::open(err, path))
 }
