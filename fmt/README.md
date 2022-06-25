@@ -34,10 +34,10 @@ See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86
 - [x] DoWhile
 - [x] Continue
 - [x] Break
-- [ ] Return
-- [ ] Revert
+- [x] Return
+- [x] Revert
 - [x] Emit
-- [ ] Try
+- [x] Try
 - [x] DocComment
 
 ### Expressions
@@ -52,8 +52,8 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
 - [ ] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral , AddressLiteral
 - [ ] ArraySubscript, ArraySlice
 - [x] MemberAccess
-- [ ] FunctionCall
-- [ ] FunctionCallBlock
+- [x] FunctionCall
+- [x] FunctionCallBlock
 - [ ] NamedFunctionCall
 - [x] New
 - [x] Delete
