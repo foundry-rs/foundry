@@ -98,9 +98,10 @@ pub struct Backend {
 impl Backend {
     /// Create a new instance of in-mem backend.
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
+        let blockchain = Blockchain::new(&*env.read(), fees.is_eip1559().then(|| fees.base_fee()));
         Self {
             db,
-            blockchain: Blockchain::new(fees.is_eip1559().then(|| fees.base_fee())),
+            blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
             fork: None,
@@ -134,7 +135,7 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
-            Blockchain::new(fees.is_eip1559().then(|| fees.base_fee()))
+            Blockchain::new(&*env.read(), fees.is_eip1559().then(|| fees.base_fee()))
         };
 
         let backend = Self {
