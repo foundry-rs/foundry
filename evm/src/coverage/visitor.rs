@@ -8,8 +8,6 @@ use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
 pub struct Visitor {
-    /// The source ID containing the AST being walked.
-    source_id: u32,
     /// The source code that contains the AST being walked.
     source: String,
     /// Source maps for this specific source file, keyed by the contract name.
@@ -18,7 +16,6 @@ pub struct Visitor {
     /// The contract whose AST we are currently walking
     context: String,
     /// The current branch ID
-    // TODO: Does this need to be unique across files?
     branch_id: usize,
     /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
     last_line: usize,
@@ -28,8 +25,8 @@ pub struct Visitor {
 }
 
 impl Visitor {
-    pub fn new(source_id: u32, source: String, source_maps: HashMap<String, SourceMap>) -> Self {
-        Self { source_id, source, source_maps, ..Default::default() }
+    pub fn new(source: String, source_maps: HashMap<String, SourceMap>) -> Self {
+        Self { source, source_maps, ..Default::default() }
     }
 
     pub fn visit_ast(mut self, ast: Ast) -> eyre::Result<Vec<CoverageItem>> {
@@ -275,7 +272,6 @@ impl Visitor {
         //  yulfunctioncall
         match node.node_type {
             NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
-                // TODO: Should we explore the subexpressions?
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
                     anchor: self.anchor_for(&node.src),
@@ -293,7 +289,6 @@ impl Visitor {
                 Ok(())
             }
             NodeType::Conditional => {
-                // TODO: Do we count these as branches?
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
                     anchor: self.anchor_for(&node.src),
@@ -378,7 +373,7 @@ impl Visitor {
             .and_then(|source_map| {
                 source_map.iter().enumerate().find_map(|(ic, element)| {
                     let source_id = element.index?;
-                    if source_id == self.source_id &&
+                    if source_id as usize == loc.index? &&
                         element.offset >= loc.start &&
                         element.offset + element.length <= loc.start + loc.length?
                     {
