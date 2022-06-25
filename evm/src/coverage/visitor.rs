@@ -84,7 +84,7 @@ impl Visitor {
             // Skip virtual functions
             Some(body) if !is_virtual => {
                 self.push_item(CoverageItem::Function {
-                    name,
+                    name: format!("{}.{}", self.context, name),
                     loc: self.source_location_for(&node.src),
                     anchor: self.anchor_for(&body.src),
                     hits: 0,
