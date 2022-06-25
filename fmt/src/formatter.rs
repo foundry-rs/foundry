@@ -2361,8 +2361,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut args_iter = args.iter_mut().peekable();
         let mut chunks = Vec::new();
         while let Some(NamedArgument { loc: arg_loc, name, expr }) = args_iter.next() {
-            let next_byte_offset =
-                args_iter.peek().map(|NamedArgument { loc, .. }| loc.start()).unwrap_or(loc.end());
+            let next_byte_offset = args_iter
+                .peek()
+                .map(|NamedArgument { loc: arg_loc, .. }| arg_loc.start())
+                .unwrap_or_else(|| loc.end());
             chunks.push(self.chunked(arg_loc.start(), Some(next_byte_offset), |fmt| {
                 write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
                 expr.visit(fmt)
