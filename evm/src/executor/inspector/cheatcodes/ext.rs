@@ -9,18 +9,23 @@ use ethers::{
     types::{Address, I256, U256},
     utils::hex::FromHex,
 };
+use foundry_common::fs;
 use serde::Deserialize;
 use std::{
-    env, fs,
-    io::{BufRead, BufReader, Read, Write},
+    env,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
 };
 
-fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
-    let output =
-        Command::new(&args[0]).args(&args[1..]).output().map_err(util::encode_error)?.stdout;
+fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
+    let output = Command::new(&args[0])
+        .current_dir(&state.config.root)
+        .args(&args[1..])
+        .output()
+        .map_err(util::encode_error)?
+        .stdout;
     let output = unsafe { std::str::from_utf8_unchecked(&output) };
     let decoded = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(output))
         .map_err(util::encode_error)?;
@@ -68,13 +73,8 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
         out_dir.join(format!("{file}/{contract_name}.json"))
     };
 
-    let mut buffer = String::new();
-    fs::File::open(path)
-        .map_err(util::encode_error)?
-        .read_to_string(&mut buffer)
-        .map_err(util::encode_error)?;
-
-    let bytecode = serde_json::from_str::<ArtifactBytecode>(&buffer).map_err(util::encode_error)?;
+    let data = fs::read_to_string(path).map_err(util::encode_error)?;
+    let bytecode = serde_json::from_str::<ArtifactBytecode>(&data).map_err(util::encode_error)?;
 
     if let Some(bin) = bytecode.into_inner() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
@@ -159,27 +159,13 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         .map_err(|e| e.into())
 }
 
-macro_rules! check_path_allowed {
-    ($state:ident, $absolute_path:ident) => {
-        // Check if any of the allowed paths is the prefix for our absolute path.
-        if !$state
-            .config
-            .allowed_paths
-            .iter()
-            .any(|allowed_path| $absolute_path.starts_with(allowed_path))
-        {
-            return Err(util::encode_error("Path is not allowed."))
-        }
-    };
-}
-
-fn full_path(state: &mut Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
+fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
     state.config.root.join(path)
 }
 
-fn read_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
 
@@ -188,14 +174,14 @@ fn read_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader = state
         .context
         .opened_read_files
         .entry(path.clone())
-        .or_insert(BufReader::new(fs::File::open(&path).map_err(util::encode_error)?));
+        .or_insert(BufReader::new(fs::open(path).map_err(util::encode_error)?));
 
     let mut line: String = String::new();
     reader.read_line(&mut line).map_err(util::encode_error)?;
@@ -211,21 +197,24 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
     Ok(abi::encode(&[Token::String(line)]).into())
 }
 
-fn write_file(state: &mut Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
+fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
     fs::write(path, data).map_err(util::encode_error)?;
 
     Ok(Bytes::new())
 }
 
-fn write_line(state: &mut Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
+fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
-    let mut file =
-        fs::OpenOptions::new().append(true).create(true).open(path).map_err(util::encode_error)?;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(util::encode_error)?;
 
     writeln!(file, "{line}").map_err(util::encode_error)?;
 
@@ -234,7 +223,7 @@ fn write_line(state: &mut Cheatcodes, path: impl AsRef<Path>, line: &str) -> Res
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
     state.context.opened_read_files.remove(&path);
 
@@ -243,7 +232,7 @@ fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, B
 
 fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    check_path_allowed!(state, path);
+    state.config.ensure_path_allowed(&path)?;
 
     close_file(state, &path)?;
     fs::remove_file(&path).map_err(util::encode_error)?;
@@ -261,7 +250,7 @@ pub fn apply(
             if !ffi_enabled {
                 Err("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts.".to_string().encode().into())
             } else {
-                ffi(&inner.0)
+                ffi(state, &inner.0)
             }
         }
         HEVMCalls::GetCode(inner) => get_code(&inner.0),

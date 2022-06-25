@@ -1,6 +1,7 @@
-use crate::executor::opts::EvmOpts;
+use crate::executor::{inspector::cheatcodes::util, opts::EvmOpts};
+use bytes::Bytes;
 use foundry_config::{cache::StorageCachingConfig, Config, RpcEndpoints};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
@@ -38,5 +39,17 @@ impl CheatsConfig {
             root: config.__root.0.clone(),
             allowed_paths,
         }
+    }
+
+    pub fn is_path_allowed(&self, path: impl AsRef<Path>) -> bool {
+        return self.allowed_paths.iter().any(|allowed_path| path.as_ref().starts_with(allowed_path))
+    }
+
+    pub fn ensure_path_allowed(&self, path: impl AsRef<Path>) -> Result<(), Bytes> {
+        if !self.is_path_allowed(path) {
+            return Err(util::encode_error("Path is not allowed."))
+        }
+
+        Ok(())
     }
 }
