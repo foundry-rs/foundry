@@ -165,7 +165,7 @@ fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
 
 fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
 
@@ -174,7 +174,7 @@ fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes>
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader = state
@@ -199,7 +199,7 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
 
 fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     fs::write(path, data).map_err(util::encode_error)?;
 
@@ -208,7 +208,7 @@ fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<
 
 fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     let mut file = std::fs::OpenOptions::new()
         .append(true)
@@ -223,7 +223,7 @@ fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     state.context.opened_read_files.remove(&path);
 
@@ -232,7 +232,7 @@ fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, B
 
 fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
     let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path)?;
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     close_file(state, &path)?;
     fs::remove_file(&path).map_err(util::encode_error)?;

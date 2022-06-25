@@ -1,5 +1,4 @@
-use crate::executor::{inspector::cheatcodes::util, opts::EvmOpts};
-use bytes::Bytes;
+use crate::executor::opts::EvmOpts;
 use foundry_config::{cache::StorageCachingConfig, Config, RpcEndpoints};
 use std::path::{Path, PathBuf};
 
@@ -45,9 +44,9 @@ impl CheatsConfig {
         return self.allowed_paths.iter().any(|allowed_path| path.as_ref().starts_with(allowed_path))
     }
 
-    pub fn ensure_path_allowed(&self, path: impl AsRef<Path>) -> Result<(), Bytes> {
+    pub fn ensure_path_allowed(&self, path: impl AsRef<Path>) -> Result<(), String> {
         if !self.is_path_allowed(path) {
-            return Err(util::encode_error("Path is not allowed."))
+            return Err("Path is not allowed.".to_string())
         }
 
         Ok(())
