@@ -560,6 +560,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6afcd980b5f3a45017c57e57a2fcccbb351cc43a356ce117ef760ef8052b89b0"
+dependencies = [
+ "bzip2-sys",
+ "libc",
+]
+
+[[package]]
+name = "bzip2-sys"
+version = "0.1.11+1.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "camino"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -959,6 +980,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59a6001667ab124aebae2a495118e11d30984c3a653e99d86d58971708cf5e4b"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b540bd8bc810d3885c6ea91e2018302f68baba2129ab3e88f32389ee9370880d"
+dependencies = [
+ "cfg-if 1.0.0",
 ]
 
 [[package]]
@@ -1439,7 +1469,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1454,7 +1484,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1465,7 +1495,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1483,7 +1513,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1505,7 +1535,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1519,7 +1549,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1549,7 +1579,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1565,7 +1595,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1589,7 +1619,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1625,7 +1655,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1648,7 +1678,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#c7e1237a6bc0aba3a771c24c2c1754ad1e1faab4"
+source = "git+https://github.com/gakonst/ethers-rs#9947cbc187fd57b74fbf264745478493e861e395"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
@@ -1799,6 +1829,16 @@ name = "fixedbitset"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37ab347416e802de484e4d03c7316c48f1ecb56574dfd4a46a80f173ce1de04d"
+
+[[package]]
+name = "flate2"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f82b0f4c27ad9f8bfd1f3208d882da2b09c301bc1c828fd3a00d0216d2fbbff6"
+dependencies = [
+ "crc32fast",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "fnv"
@@ -4469,6 +4509,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c77f4e7f65455545c2153c1253d25056825e77ee2533f0e41deb65a93a34852f"
+dependencies = [
+ "cfg-if 1.0.0",
+ "cpufeatures",
+ "digest 0.10.3",
+]
+
+[[package]]
 name = "sha2"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4736,9 +4787,9 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7caafeac3fe8a93a9f2d1d1f80d14123b0dfbae8491be3c26bb8c44aed5d9ea"
+checksum = "a55e00b6f95abd889ce398bd7eab2a9c62cd27281cf1bfba70847340557434cf"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -4762,13 +4813,14 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zip",
 ]
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75aa6ad8700fbb48da032bfaa543c2f0afc07aacd5de9810d285819a586d9480"
+checksum = "ac21094817e231b55e691c925262bb0658894d0760ea1163e981885247b7cd02"
 dependencies = [
  "build_const",
  "hex",
@@ -4927,7 +4979,14 @@ dependencies = [
  "itoa",
  "libc",
  "num_threads",
+ "time-macros",
 ]
+
+[[package]]
+name = "time-macros"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tiny-keccak"
@@ -5749,3 +5808,52 @@ name = "zeroize"
 version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eb5728b8afd3f280a869ce1d4c554ffaed35f45c231fc41bfbd0381bef50317"
+
+[[package]]
+name = "zip"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf225bcf73bb52cbb496e70475c7bd7a3f769df699c0020f6c7bd9a96dcf0b8d"
+dependencies = [
+ "aes",
+ "byteorder",
+ "bzip2",
+ "constant_time_eq",
+ "crc32fast",
+ "crossbeam-utils",
+ "flate2",
+ "hmac 0.12.1",
+ "pbkdf2 0.10.1",
+ "sha1",
+ "time 0.3.9",
+ "zstd",
+]
+
+[[package]]
+name = "zstd"
+version = "0.10.2+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f4a6bd64f22b5e3e94b4e238669ff9f10815c27a5180108b849d24174a83847"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "4.1.6+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94b61c51bb270702d6167b8ce67340d2754b088d0c091b06e593aa772c3ee9bb"
+dependencies = [
+ "libc",
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "1.6.3+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc49afa5c8d634e75761feda8c592051e7eeb4683ba827211eb0d731d3402ea8"
+dependencies = [
+ "cc",
+ "libc",
+]
