@@ -1,10 +1,13 @@
 use std::cmp::Ordering;
 
 use super::Cheatcodes;
-use crate::abi::HEVMCalls;
+use crate::{
+    abi::HEVMCalls,
+    executor::inspector::cheatcodes::util::{ERROR_PREFIX, REVERT_PREFIX},
+};
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiEncode, RawLog},
+    abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
 use revm::{return_ok, Database, EVMData, Return};
@@ -55,16 +58,25 @@ pub fn handle_expect_revert(
         return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
-    let (err, actual_revert): (_, Bytes) = match retdata {
-        _ if retdata.len() >= 4 && retdata[0..4] == [8, 195, 121, 160] => {
+    let string_data = match retdata {
+        _ if retdata.len() >= REVERT_PREFIX.len() &&
+            retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
+        {
+            Some(&retdata[4..])
+        }
+        _ if retdata.len() >= ERROR_PREFIX.len() &&
+            &retdata[..ERROR_PREFIX.len()] == ERROR_PREFIX.as_slice() =>
+        {
+            Some(&retdata[ERROR_PREFIX.len()..])
+        }
+        _ => None,
+    };
+
+    let (err, actual_revert): (_, Bytes) = match string_data {
+        Some(data) => {
             // It's a revert string, so we do some conversion to perform the check
-            let decoded_data: Bytes =
-                ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &retdata[4..])
-                    .expect("String error code, but data is not a string")[0]
-                    .clone()
-                    .into_bytes()
-                    .expect("Cannot fail as this is bytes")
-                    .into();
+            let decoded_data = ethers::prelude::Bytes::decode(data)
+                .expect("String error code, but data can't be decoded as bytes");
 
             (
                 format!(
@@ -78,7 +90,7 @@ pub fn handle_expect_revert(
                 )
                 .encode()
                 .into(),
-                decoded_data,
+                decoded_data.0,
             )
         }
         _ => (

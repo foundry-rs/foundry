@@ -373,7 +373,10 @@ mod tests {
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
-        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.clone()).unwrap()
+        base_runner()
+            .with_cheats_config(CheatsConfig::new(&Config::with_root(PROJECT.root()), &*EVM_OPTS))
+            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.clone())
+            .unwrap()
     }
 
     /// Builds a tracing runner
