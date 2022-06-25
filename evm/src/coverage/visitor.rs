@@ -1,17 +1,20 @@
-use super::{BranchKind, CoverageItem, ItemAnchor, SourceLocation};
+use super::{CoverageItem, ItemAnchor, SourceLocation};
 use ethers::{
-    prelude::sourcemap::SourceMap,
+    prelude::{sourcemap::SourceMap, Bytes},
     solc::artifacts::ast::{self, Ast, Node, NodeType},
 };
-use std::collections::HashMap;
+use revm::{opcode, spec_opcode_gas, SpecId};
+use std::{borrow::Cow, collections::HashMap};
 use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
-pub struct Visitor {
+pub struct Visitor<'a> {
     /// The source code that contains the AST being walked.
     source: String,
     /// Source maps for this specific source file, keyed by the contract name.
     source_maps: HashMap<String, SourceMap>,
+    /// Bytecodes for this specific source file, keyed by the contract name.
+    bytecodes: HashMap<String, Cow<'a, Bytes>>,
 
     /// The contract whose AST we are currently walking
     context: String,
@@ -24,9 +27,13 @@ pub struct Visitor {
     items: Vec<CoverageItem>,
 }
 
-impl Visitor {
-    pub fn new(source: String, source_maps: HashMap<String, SourceMap>) -> Self {
-        Self { source, source_maps, ..Default::default() }
+impl<'a> Visitor<'a> {
+    pub fn new(
+        source: String,
+        source_maps: HashMap<String, SourceMap>,
+        bytecodes: HashMap<String, Cow<'a, Bytes>>,
+    ) -> Self {
+        Self { source, source_maps, bytecodes, ..Default::default() }
     }
 
     pub fn visit_ast(mut self, ast: Ast) -> eyre::Result<Vec<CoverageItem>> {
@@ -83,7 +90,7 @@ impl Visitor {
                 self.push_item(CoverageItem::Function {
                     name: format!("{}.{}", self.context, name),
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&body.src),
+                    anchor: self.anchor_for(&body.src)?,
                     hits: 0,
                 });
                 self.visit_block(*body)
@@ -126,7 +133,7 @@ impl Visitor {
             NodeType::YulLeave => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 Ok(())
@@ -135,7 +142,7 @@ impl Visitor {
             NodeType::VariableDeclarationStatement => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 if let Some(expr) = node.attribute("initialValue") {
@@ -195,26 +202,16 @@ impl Visitor {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.push_item(CoverageItem::Branch {
-                    branch_id,
-                    path_id: 0,
-                    kind: BranchKind::True,
-                    loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&true_body.src),
-                    hits: 0,
-                });
+                let (false_branch, true_branch) = self.find_branches(&node.src, branch_id)?;
+
+                // Process the true branch
+                self.push_item(true_branch);
                 self.visit_block_or_statement(true_body)?;
 
+                // Process the false branch
+                self.push_item(false_branch);
                 let false_body: Option<Node> = node.attribute("falseBody");
                 if let Some(false_body) = false_body {
-                    self.push_item(CoverageItem::Branch {
-                        branch_id,
-                        path_id: 1,
-                        kind: BranchKind::False,
-                        loc: self.source_location_for(&node.src),
-                        anchor: self.anchor_for(&false_body.src),
-                        hits: 0,
-                    });
                     self.visit_block_or_statement(false_body)?;
                 }
 
@@ -238,9 +235,8 @@ impl Visitor {
                 self.push_item(CoverageItem::Branch {
                     branch_id,
                     path_id: 0,
-                    kind: BranchKind::True,
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 self.visit_block(*body)?;
@@ -274,7 +270,7 @@ impl Visitor {
             NodeType::Assignment | NodeType::UnaryOperation | NodeType::BinaryOperation => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 Ok(())
@@ -283,7 +279,7 @@ impl Visitor {
                 // TODO: Handle assert and require
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 Ok(())
@@ -291,7 +287,7 @@ impl Visitor {
             NodeType::Conditional => {
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
-                    anchor: self.anchor_for(&node.src),
+                    anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
                 Ok(())
@@ -366,25 +362,153 @@ impl Visitor {
     ///
     /// If the anchor is executed at any point, then the source range defined by `loc` is considered
     /// to be covered.
-    fn anchor_for(&self, loc: &ast::SourceLocation) -> ItemAnchor {
-        let instruction = self
-            .source_maps
+    fn anchor_for(&self, loc: &ast::SourceLocation) -> eyre::Result<ItemAnchor> {
+        let source_map = self.source_maps.get(&self.context).ok_or_else(|| {
+            eyre::eyre!("could not find anchor for node: we do not have a source map")
+        })?;
+
+        let instruction = source_map
+            .iter()
+            .enumerate()
+            .find_map(|(ic, element)| {
+                if element.index? as usize == loc.index? &&
+                    element.offset >= loc.start &&
+                    element.offset + element.length <= loc.start + loc.length?
+                {
+                    return Some(ic)
+                }
+
+                None
+            })
+            .ok_or_else(|| {
+                eyre::eyre!("could not find anchor: no matching instruction in range")
+            })?;
+
+        Ok(ItemAnchor { instruction, contract: self.context.clone() })
+    }
+
+    /// Finds the true and false branches for a node.
+    ///
+    /// This finds the relevant anchors and creates coverage items for both of them. These anchors
+    /// are found using the bytecode of the contract in the range of the branching node.
+    ///
+    /// For `IfStatement` nodes, the template is generally:
+    /// ```text
+    /// <condition>
+    /// PUSH <ic if false>
+    /// JUMPI
+    /// <true branch>
+    /// <...>
+    /// <false branch>
+    /// ```
+    ///
+    /// For `assert` and `require`, the template is generally:
+    ///
+    /// ```text
+    /// PUSH <ic if true>
+    /// JUMPI
+    /// <revert>
+    /// <...>
+    /// <true branch>
+    /// ```
+    ///
+    /// This function will look for the last JUMPI instruction, backtrack to find the instruction
+    /// counter of the first branch, and return an item for that instruction counter, and the
+    /// instruction counter immediately after the JUMPI instruction.
+    fn find_branches(
+        &self,
+        loc: &ast::SourceLocation,
+        branch_id: usize,
+    ) -> eyre::Result<(CoverageItem, CoverageItem)> {
+        // TODO: Refactor
+        let source_map = self.source_maps.get(&self.context).ok_or_else(|| {
+            eyre::eyre!("could not find anchors for branches: we do not have a source map")
+        })?;
+        let bytecode = self
+            .bytecodes
             .get(&self.context)
-            .and_then(|source_map| {
-                source_map.iter().enumerate().find_map(|(ic, element)| {
-                    let source_id = element.index?;
-                    if source_id as usize == loc.index? &&
-                        element.offset >= loc.start &&
-                        element.offset + element.length <= loc.start + loc.length?
-                    {
-                        return Some(ic)
+            .ok_or_else(|| {
+                eyre::eyre!("could not find anchors for branches: we do not have the bytecode")
+            })?
+            .clone();
+
+        // NOTE(onbjerg): We use `SpecId::LATEST` here since it does not matter; the only difference
+        // is the gas cost.
+        let opcode_infos = spec_opcode_gas(SpecId::LATEST);
+        let mut pc = 0;
+        let mut cumulative_push_size = 0;
+        let mut first_branch_ic = None;
+        let mut second_branch_pc = None;
+        while pc < bytecode.0.len() {
+            let op = bytecode.0[pc];
+
+            // We found a push, so we do some PC -> IC translation accounting, but we also check if
+            // this push is coupled with the JUMPI we are interested in.
+            if opcode_infos[op as usize].is_push {
+                // TODO: Error handling
+                // TODO: Find the *LAST* JUMPI
+                let element = &source_map[pc - cumulative_push_size];
+
+                // Do push byte accounting
+                let push_size = (op - opcode::PUSH1 + 1) as usize;
+                pc += push_size;
+                cumulative_push_size += push_size;
+
+                // Check if we are in the source range we are interested in, and if the next opcode
+                // is a JUMPI
+                if first_branch_ic.is_none() &&
+                    element.index.unwrap() as usize == loc.index.unwrap() &&
+                    element.offset >= loc.start &&
+                    element.offset + element.length <= loc.start + loc.length.unwrap_or_default() &&
+                    bytecode.0[pc + 1] == opcode::JUMPI
+                {
+                    // We do not support program counters bigger than usize. This is also an
+                    // assumption in REVM, so this is just a sanity check.
+                    if push_size > 8 {
+                        eyre::bail!("we found a branch, but it refers to a program counter bigger than 64 bits.");
                     }
 
-                    None
-                })
-            })
-            .unwrap_or(loc.start);
+                    first_branch_ic = Some(pc + 1 - cumulative_push_size);
 
-        ItemAnchor { instruction, contract: self.context.clone() }
+                    // Convert PC to a usize
+                    let mut pc_bytes: [u8; 8] = [0; 8];
+                    for push_byte_index in 0..push_size {
+                        pc_bytes[8 - push_size + push_byte_index] =
+                            bytecode.0[pc - push_size + 1 + push_byte_index];
+                    }
+                    second_branch_pc = Some(usize::from_be_bytes(pc_bytes));
+                }
+            } else if let Some(second_branch_pc) = second_branch_pc {
+                if pc == second_branch_pc {
+                    // We've reached the PC of the second branch. At this point we know the IC of
+                    // both branches
+                    return Ok((
+                        CoverageItem::Branch {
+                            branch_id,
+                            path_id: 0,
+                            loc: self.source_location_for(&loc),
+                            anchor: ItemAnchor {
+                                instruction: first_branch_ic.unwrap(),
+                                contract: self.context.clone(),
+                            },
+                            hits: 0,
+                        },
+                        CoverageItem::Branch {
+                            branch_id,
+                            path_id: 1,
+                            loc: self.source_location_for(&loc),
+                            anchor: ItemAnchor {
+                                instruction: second_branch_pc - cumulative_push_size,
+                                contract: self.context.clone(),
+                            },
+                            hits: 0,
+                        },
+                    ))
+                }
+            }
+            pc += 1;
+        }
+
+        eyre::bail!("could not detect branches")
     }
 }
