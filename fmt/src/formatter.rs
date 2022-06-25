@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::{
     comments::{CommentStringExt, CommentWithMetadata, Comments},
+    macros::*,
     solang_ext::*,
     visit::{Visitable, Visitor},
 };
@@ -317,94 +318,6 @@ pub struct Formatter<'a, W> {
     temp_bufs: Vec<FormatBuffer<String>>,
     context: Context,
     comments: Comments,
-}
-
-macro_rules! write_chunk {
-    ($self:expr, $format_str:literal) => {{
-        write_chunk!($self, $format_str,)
-    }};
-    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
-        $self.write_chunk(&format!($format_str, $($arg)*).into())
-    }};
-    ($self:expr, $loc:expr) => {{
-        write_chunk!($self, $loc, "")
-    }};
-    ($self:expr, $loc:expr, $format_str:literal) => {{
-        write_chunk!($self, $loc, $format_str,)
-    }};
-    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, None, None, format_args!($format_str, $($arg)*),);
-        $self.write_chunk(&chunk)
-    }};
-    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
-        write_chunk!($self, $loc, $end_loc, $format_str,)
-    }};
-    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, Some($end_loc), None, format_args!($format_str, $($arg)*),);
-        $self.write_chunk(&chunk)
-    }};
-    ($self:expr, $loc:expr, $end_loc:expr, $needs_space:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, Some($end_loc), Some($needs_space), format_args!($format_str, $($arg)*),);
-        $self.write_chunk(&chunk)
-    }};
-}
-
-macro_rules! writeln_chunk {
-    ($self:expr) => {{
-        writeln_chunk!($self, "")
-    }};
-    ($self:expr, $format_str:literal) => {{
-        writeln_chunk!($self, $format_str,)
-    }};
-    ($self:expr, $format_str:literal, $($arg:tt)*) => {{
-        write_chunk!($self, "{}\n", format_args!($format_str, $($arg)*))
-    }};
-    ($self:expr, $loc:expr) => {{
-        writeln_chunk!($self, $loc, "")
-    }};
-    ($self:expr, $loc:expr, $format_str:literal) => {{
-        writeln_chunk!($self, $loc, $format_str,)
-    }};
-    ($self:expr, $loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        write_chunk!($self, $loc, "{}\n", format_args!($format_str, $($arg)*))
-    }};
-    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal) => {{
-        writeln_chunk!($self, $loc, $end_loc, $format_str,)
-    }};
-    ($self:expr, $loc:expr, $end_loc:expr, $format_str:literal, $($arg:tt)*) => {{
-        write_chunk!($self, $loc, $end_loc, "{}\n", format_args!($format_str, $($arg)*))
-    }};
-}
-
-macro_rules! write_chunk_spaced {
-    ($self:expr, $loc:expr, $needs_space:expr, $format_str:literal) => {{
-        write_chunk_spaced!($self, $loc, $needs_space, $format_str,)
-    }};
-    ($self:expr, $loc:expr, $needs_space:expr, $format_str:literal, $($arg:tt)*) => {{
-        let chunk = $self.chunk_at($loc, None, $needs_space, format_args!($format_str, $($arg)*),);
-        $self.write_chunk(&chunk)
-    }};
-}
-
-macro_rules! buf_fn {
-    ($vis:vis fn $name:ident(&self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
-        $vis fn $name(&self, $($arg_name : $arg_ty),*) $(-> $ret)? {
-            if self.temp_bufs.is_empty() {
-                self.buf.$name($($arg_name),*)
-            } else {
-                self.temp_bufs.last().unwrap().$name($($arg_name),*)
-            }
-        }
-    };
-    ($vis:vis fn $name:ident(&mut self $(,)? $($arg_name:ident : $arg_ty:ty),*) $(-> $ret:ty)?) => {
-        $vis fn $name(&mut self, $($arg_name : $arg_ty),*) $(-> $ret)? {
-            if self.temp_bufs.is_empty() {
-                self.buf.$name($($arg_name),*)
-            } else {
-                self.temp_bufs.last_mut().unwrap().$name($($arg_name),*)
-            }
-        }
-    };
 }
 
 /// An action which may be committed to a Formatter
@@ -1681,7 +1594,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
                 write!(self.buf(), "(")?;
-
                 if exprs.is_empty() {
                     write!(self.buf(), ")")?;
                 } else {
@@ -2457,20 +2369,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let mut args_iter = args.iter_mut().peekable();
         let mut chunks = Vec::new();
         while let Some(NamedArgument { loc, name, expr }) = args_iter.next() {
-            chunks.push(self.chunked(
-                loc.start(),
-                args_iter.peek().map(|NamedArgument { loc, .. }| loc.start()),
-                |fmt| {
-                    fmt.grouped(|fmt| {
-                        write_chunk!(fmt, name.loc.end(), "{}:", name.name)?;
-                        expr.visit(fmt)
-                    })?;
-                    Ok(())
-                },
-            )?);
+            let next_byte_offset = args_iter.peek().map(|NamedArgument { loc, .. }| loc.start());
+            chunks.push(self.chunked(loc.start(), next_byte_offset, |fmt| {
+                fmt.grouped(|fmt| {
+                    write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
+                    expr.visit(fmt)
+                })?;
+                Ok(())
+            })?);
         }
 
-        let multiline = self.are_chunks_separated_multiline("{}", &chunks, ",")?;
+        if let Some(first) = chunks.first_mut() {
+            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
+                first.needs_space = Some(false);
+            }
+        }
+        let multiline = self.are_chunks_separated_multiline("{}}", &chunks, ",")?;
         if let Some(first) = chunks.first_mut() {
             if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
                 first.needs_space = Some(false);
@@ -2478,7 +2392,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
-        let closing_bracket = format!("{}{}", if multiline { "\n" } else { "" }, "}");
+        let prefix = if multiline { "\n" } else { "" };
+        let closing_bracket = format!("{}{}", prefix, "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
         write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;
 
@@ -2506,12 +2421,39 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     args.iter_mut().map(|expr| Ok((expr.loc(), expr))),
                 )?;
 
-                // fmt.write_prefix_comments_before(first_args_loc.start())?;
                 let multiline = fmt.are_chunks_separated_multiline("{});", &exprs, ", ")?;
                 fmt.write_chunks_separated(&exprs, ",", multiline)?;
                 Ok(())
             })?
         }
+        self.write_semicolon()?;
+
+        Ok(())
+    }
+
+    fn visit_revert_named_args(
+        &mut self,
+        loc: Loc,
+        error: &mut Option<IdentifierPath>,
+        args: &mut Vec<NamedArgument>,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "revert")?;
+        let mut error_indented = false;
+        if let Some(error) = error {
+            if !self.try_on_single_line(|fmt| error.visit(fmt))? {
+                error.visit(self)?;
+                error_indented = true;
+            }
+        }
+
+        if args.is_empty() {
+            write!(self.buf(), "({{}});")?;
+            return Ok(())
+        }
+
+        write!(self.buf(), "(")?;
+        self.indented_if(error_indented, 1, |fmt| fmt.visit_args(loc, args))?;
+        write!(self.buf(), ")")?;
         self.write_semicolon()?;
 
         Ok(())
@@ -2841,6 +2783,7 @@ mod tests {
     test_directory! { VariableAssignment }
     test_directory! { FunctionCallArgsStatement }
     test_directory! { RevertStatement }
+    test_directory! { RevertNamedArgsStatement }
     test_directory! { ReturnStatement }
     test_directory! { TryStatement }
 }
