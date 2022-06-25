@@ -501,7 +501,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             postfixes: next_byte_offset
                 .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
                 .unwrap_or_default(),
-            needs_space, // TODO:
+            needs_space,
         }
     }
 
@@ -518,7 +518,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         let postfixes = next_byte_offset
             .map(|byte_offset| self.comments.remove_postfixes_before(byte_offset))
             .unwrap_or_default();
-        Ok(Chunk { postfixes_before, prefixes, content, postfixes, needs_space: None }) // TODO:
+        Ok(Chunk { postfixes_before, prefixes, content, postfixes, needs_space: None })
     }
 
     /// Create a chunk given a [Visitable] item
@@ -1540,32 +1540,24 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, loc.end(), "{}", ident.name)?;
             }
             Expression::MemberAccess(_, expr, ident) => {
-                let (remaining, mut chunks) = {
-                    let chunk_member_access =
-                        |fmt: &mut Self, ident: &mut Identifier, expr: &mut Box<Expression>| {
-                            fmt.chunked(ident.loc.start(), Some(expr.loc().start()), |fmt| {
-                                ident.visit(fmt)
-                            })
-                        };
+                let chunk_member_access =
+                    |fmt: &mut Self, ident: &mut Identifier, expr: &mut Box<Expression>| {
+                        fmt.chunked(ident.loc.start(), Some(expr.loc().start()), |fmt| {
+                            ident.visit(fmt)
+                        })
+                    };
 
-                    let mut chunks: Vec<Chunk> = vec![chunk_member_access(self, ident, expr)?];
-                    let mut remaining = expr.as_mut();
-
-                    while let Expression::MemberAccess(_, inner_expr, inner_ident) = remaining {
-                        chunks.push(chunk_member_access(self, inner_ident, inner_expr)?);
-                        remaining = inner_expr;
-                    }
-
-                    chunks.reverse();
-                    (remaining, chunks)
-                };
-
-                self.visit_expr(remaining.loc(), remaining)?;
-
-                chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
-                if let Some(last) = chunks.last_mut() {
-                    last.needs_space = Some(false);
+                let mut chunks: Vec<Chunk> = vec![chunk_member_access(self, ident, expr)?];
+                let mut remaining = expr.as_mut();
+                while let Expression::MemberAccess(_, inner_expr, inner_ident) = remaining {
+                    chunks.push(chunk_member_access(self, inner_ident, inner_expr)?);
+                    remaining = inner_expr;
                 }
+
+                chunks.reverse();
+                chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+
+                remaining.visit(self)?;
                 if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
                     self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
                 }
@@ -2363,19 +2355,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_args(&mut self, _loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
+    fn visit_args(&mut self, loc: Loc, args: &mut Vec<NamedArgument>) -> Result<(), Self::Error> {
         write!(self.buf(), "{{")?;
 
         let mut args_iter = args.iter_mut().peekable();
         let mut chunks = Vec::new();
-        while let Some(NamedArgument { loc, name, expr }) = args_iter.next() {
-            let next_byte_offset = args_iter.peek().map(|NamedArgument { loc, .. }| loc.start());
-            chunks.push(self.chunked(loc.start(), next_byte_offset, |fmt| {
-                fmt.grouped(|fmt| {
-                    write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
-                    expr.visit(fmt)
-                })?;
-                Ok(())
+        while let Some(NamedArgument { loc: arg_loc, name, expr }) = args_iter.next() {
+            let next_byte_offset =
+                args_iter.peek().map(|NamedArgument { loc, .. }| loc.start()).unwrap_or(loc.end());
+            chunks.push(self.chunked(arg_loc.start(), Some(next_byte_offset), |fmt| {
+                write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
+                expr.visit(fmt)
             })?);
         }
 
@@ -2385,14 +2375,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         }
         let multiline = self.are_chunks_separated_multiline("{}}", &chunks, ",")?;
-        if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty() && first.postfixes_before.is_empty() {
-                first.needs_space = Some(false);
-            }
-        }
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
-        let prefix = if multiline { "\n" } else { "" };
+        let prefix = if multiline && !self.is_beginning_of_line() { "\n" } else { "" };
         let closing_bracket = format!("{}{}", prefix, "}");
         let closing_bracket_loc = args.last().unwrap().loc.end();
         write_chunk_spaced!(self, closing_bracket_loc, Some(false), "{closing_bracket}")?;

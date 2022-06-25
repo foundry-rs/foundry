@@ -20,14 +20,13 @@ contract RevertNamedArgsStatement {
                         message: "some reason"
             });
         
-        revert SomeVeryVeryVeryLongErrorNameWithNamedArgumentsThatExceedsMaximumLength({ val: 0, ts: block.timestamp, message: "something happened that caused execution to revert"});
+        revert SomeVeryVeryVeryLongErrorNameWithNamedArgumentsThatExceedsMaximumLength({ val: 0, ts: 0x00, message: "something unpredictable happened that caused execution to revert"});
 
         revert // comment1 
         ({});
 
          revert /* comment2 */ SimpleError /* comment3 */ ({ // comment4 
-        val:0
-        // comment 5
+        val:0 // comment 5
         });
     }
 }
