@@ -18,7 +18,7 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::{evm::EvmArgs, fs};
+use foundry_common::evm::EvmArgs;
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ use std::{
 use yansi::Paint;
 
 mod build;
-use build::BuildOutput;
+use build::{filter_sources_and_artifacts, BuildOutput};
 
 mod runner;
 use runner::ScriptRunner;
@@ -352,35 +352,12 @@ impl ScriptArgs {
         project: Project,
         highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        let source_code: BTreeMap<u32, String> = sources
-            .iter()
-            .map(|(id, path)| {
-                let resolved = project
-                    .paths
-                    .resolve_library_import(&PathBuf::from(path))
-                    .unwrap_or_else(|| PathBuf::from(path));
-                (
-                    *id,
-                    fs::read_to_string(resolved).expect(&*format!(
-                        "Something went wrong reading the source file: {:?}",
-                        path
-                    )),
-                )
-            })
-            .collect();
-
+        let (sources, artifacts) =
+            filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
         let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
         let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-        let tui = Tui::new(
-            flattened,
-            0,
-            decoder.contracts.clone(),
-            highlevel_known_contracts
-                .into_iter()
-                .map(|(id, artifact)| (id.name, artifact))
-                .collect(),
-            source_code,
-        )?;
+        let tui = Tui::new(flattened, 0, decoder.contracts.clone(), artifacts, sources)?;
+
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }

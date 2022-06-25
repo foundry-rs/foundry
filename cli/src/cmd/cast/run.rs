@@ -184,10 +184,9 @@ impl RunArgs {
 
 fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
     // TODO Get source from etherscan
-    let source_code: BTreeMap<u32, String> = BTreeMap::new();
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
+    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), BTreeMap::new())?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }

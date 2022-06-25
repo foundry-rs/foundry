@@ -16,6 +16,7 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
+use tracing::{error, trace};
 
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
@@ -137,23 +138,28 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Optionally call the `setUp` function
         Ok(if setup {
-            tracing::trace!("setting up");
-            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
-                .executor
-                .setup(None, address)
-            {
-                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
-                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
-                    (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
-                }
-                Err(e) => (
-                    true,
-                    Vec::new(),
-                    None,
-                    BTreeMap::new(),
-                    Some(format!("Setup failed: {}", &e.to_string())),
-                ),
-            };
+            trace!("setting up");
+            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) =
+                match self.executor.setup(None, address) {
+                    Ok(CallResult { traces, labels, logs, .. }) => {
+                        trace!(contract=?address, "successfully setUp test");
+                        (false, logs, traces, labels, None)
+                    }
+                    Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                        error!(reason=?reason, contract= ?address, "setUp failed");
+                        (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
+                    }
+                    Err(err) => {
+                        error!(reason=?err, contract= ?address, "setUp failed");
+                        (
+                            true,
+                            Vec::new(),
+                            None,
+                            BTreeMap::new(),
+                            Some(format!("Setup failed: {}", &err.to_string())),
+                        )
+                    }
+                };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
             logs.extend_from_slice(&setup_logs);
 
@@ -340,7 +346,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         );
 
         // Record test execution time
-        tracing::debug!(
+        tracing::trace!(
             duration = ?start.elapsed(),
             %success,
             %gas

@@ -1,6 +1,6 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, run::RunArgs, wallet::WalletSubcommands},
+    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -818,6 +818,10 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
+    #[clap(name = "rpc")]
+    #[clap(visible_alias = "rp")]
+    #[clap(about = "Perform a raw JSON-RPC request")]
+    Rpc(RpcArgs),
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

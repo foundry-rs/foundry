@@ -205,53 +205,6 @@ pub struct CompilerArgs {
     pub extra_output_files: Vec<ContractOutputSelection>,
 }
 
-/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
-/// optional.
-#[derive(Clone, Debug)]
-pub struct ContractInfo {
-    /// Location of the contract
-    pub path: Option<String>,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for ContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let err = "contract source info format must be `<path>:<contractname>` or `<contractname>`";
-        let mut iter = s.rsplit(':');
-        let name = iter.next().ok_or_else(|| eyre::eyre!(err))?.trim().to_string();
-        let path = iter.next().map(str::to_string);
-
-        if name.ends_with(".sol") || name.contains('/') {
-            eyre::bail!(err)
-        }
-
-        Ok(Self { path, name })
-    }
-}
-
-/// Represents the common dapp argument pattern `<path>:<contractname>`
-#[derive(Clone, Debug)]
-pub struct FullContractInfo {
-    /// Location of the contract
-    pub path: String,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for FullContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (path, name) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{s}`"))?;
-        Ok(Self { path: path.to_string(), name: name.trim().to_string() })
-    }
-}
-
 /// A git dependency which will be installed as a submodule
 ///
 /// A dependency can be provided as a raw URL, or as a path to a Github repository
@@ -335,6 +288,7 @@ impl FromStr for Dependency {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::solc::info::ContractInfo;
 
     #[test]
     fn parses_dependencies() {

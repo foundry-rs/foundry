@@ -55,7 +55,7 @@ contract TryStatement {
         catch /* comment6 */ {}
 
         // comment7
-        try unknown.empty() /* comment8 */ {
+        try unknown.empty() { // comment8 
             unknown.doSomething();
         } /* comment9 */ catch /* comment10 */ Error(string memory) {
             unknown.handleError();

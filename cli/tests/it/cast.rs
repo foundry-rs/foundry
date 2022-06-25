@@ -5,7 +5,7 @@ use foundry_cli_test_utils::{
     util::{TestCommand, TestProject},
 };
 use foundry_utils::rpc::next_http_rpc_endpoint;
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 
 // tests that the `cast block` command works correctly
 casttest!(latest_block, |_: TestProject, mut cmd: TestCommand| {
@@ -107,4 +107,55 @@ casttest!(cast_rlp, |_: TestProject, mut cmd: TestCommand| {
     cmd.args(["--from-rlp", "0xcbc58455556666c0c0c2c1c0"]);
     let out = cmd.stdout_lossy();
     assert!(out.contains("[[\"0x55556666\"],[],[],[[[]]]]"), "{}", out);
+});
+
+// test for cast_rpc without arguments
+casttest!(cast_rpc_no_args, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_chainId`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_chainId"]);
+    let output = cmd.stdout_lossy();
+    assert_eq!(output.trim_end(), r#""0x1""#);
+});
+
+// test for cast_rpc with arguments
+casttest!(cast_rpc_with_args, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_getBlockByNumber 0x123 false`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
+});
+
+// test for cast_rpc with raw params
+casttest!(cast_rpc_raw_params, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_getBlockByNumber --raw '["0x123", false]'`
+    cmd.args([
+        "rpc",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+        "eth_getBlockByNumber",
+        "--raw",
+        r#"["0x123", false]"#,
+    ]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
+});
+
+// test for cast_rpc with direct params
+casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `echo "\n[\n\"0x123\",\nfalse\n]\n" | cast rpc  eth_getBlockByNumber --raw
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "--raw"]).stdin(
+        |mut stdin| {
+            stdin.write_all(b"\n[\n\"0x123\",\nfalse\n]\n").unwrap();
+        },
+    );
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });

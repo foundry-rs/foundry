@@ -238,8 +238,13 @@ impl CoverageArgs {
                         })
                         .for_each(|(id, source_map, hits)| {
                             // TODO: Distinguish between creation/runtime in a smart way
-                            map.add_hit_map(id.version.clone(), &source_map.0, hits.clone());
-                            map.add_hit_map(id.version, &source_map.1, hits.clone())
+                            map.add_hit_map(
+                                id.version.clone(),
+                                &source_map.0,
+                                &id.name,
+                                hits.clone(),
+                            );
+                            map.add_hit_map(id.version, &source_map.1, &id.name, hits.clone())
                         });
                 }
             }

@@ -267,6 +267,8 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
+        tracing::info!(include_fuzz_tests= ?include_fuzz_tests, "running all tests");
+
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(self.evm_opts.evm_env());
 
@@ -282,6 +284,9 @@ impl MultiContractRunner {
             })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(id, (abi, deploy_code, libs))| {
+                let identifier = id.identifier();
+                tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+
                 let executor = ExecutorBuilder::default()
                     .with_cheatcodes(self.cheats_config.clone())
                     .with_config(env.clone())
@@ -292,14 +297,16 @@ impl MultiContractRunner {
                     .build(db.clone());
 
                 let result = self.run_tests(
-                    &id.identifier(),
+                    &identifier,
                     abi,
                     executor,
                     deploy_code.clone(),
                     libs,
                     (filter, include_fuzz_tests),
                 )?;
-                Ok((id.identifier(), result))
+
+                tracing::trace!(contract= ?identifier, "executed all tests in contract");
+                Ok((identifier, result))
             })
             .filter_map(Result::<_>::ok)
             .filter(|(_, results)| !results.is_empty())
@@ -310,6 +317,8 @@ impl MultiContractRunner {
                 (name, result)
             })
             .collect::<BTreeMap<_, _>>();
+
+        tracing::info!(num_tests= ?results.len(),"ran all tests");
         Ok(results)
     }
 

@@ -9,7 +9,6 @@ env:
   # Will resolve to foundry-rs/foundry
   IMAGE_NAME: ${{ github.repository }}
 
-
 jobs:
   build:
 

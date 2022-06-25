@@ -45,6 +45,7 @@ use revm::{
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::{BTreeMap, VecDeque};
+use tracing::trace;
 
 /// custom revm database implementations
 pub mod backend;
@@ -276,6 +277,7 @@ where
         from: Option<Address>,
         address: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
+        trace!(contract=?address, "calling setUp()");
         let from = from.unwrap_or(CALLER);
         self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
@@ -536,6 +538,7 @@ where
         value: U256,
         abi: Option<&Abi>,
     ) -> std::result::Result<DeployResult, EvmError> {
+        trace!(sender=?from, "deploying contract");
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
@@ -592,6 +595,8 @@ where
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
+
+        trace!(address=?address, "deployed contract");
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
