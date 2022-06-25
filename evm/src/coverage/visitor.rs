@@ -367,31 +367,29 @@ impl Visitor {
         }
     }
 
+    /// Maps a source range to a single instruction, called an anchor.
+    ///
+    /// If the anchor is executed at any point, then the source range defined by `loc` is considered
+    /// to be covered.
     fn anchor_for(&self, loc: &ast::SourceLocation) -> ItemAnchor {
-        let instruction_counter = self
+        let instruction = self
             .source_maps
             .get(&self.context)
             .and_then(|source_map| {
-                source_map
-                    .iter()
-                    .enumerate()
-                    .find(|(_, element)| {
-                        element
-                            .index
-                            .and_then(|source_id| {
-                                Some(
-                                    source_id == self.source_id &&
-                                        element.offset >= loc.start &&
-                                        element.offset + element.length <=
-                                            loc.start + loc.length?,
-                                )
-                            })
-                            .unwrap_or_default()
-                    })
-                    .map(|(ic, _)| ic)
+                source_map.iter().enumerate().find_map(|(ic, element)| {
+                    let source_id = element.index?;
+                    if source_id == self.source_id &&
+                        element.offset >= loc.start &&
+                        element.offset + element.length <= loc.start + loc.length?
+                    {
+                        return Some(ic)
+                    }
+
+                    None
+                })
             })
             .unwrap_or(loc.start);
 
-        ItemAnchor { instruction: instruction_counter, contract: self.context.clone() }
+        ItemAnchor { instruction, contract: self.context.clone() }
     }
 }
