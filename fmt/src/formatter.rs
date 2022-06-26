@@ -1,6 +1,6 @@
 //! A Solidity formatter
 
-use std::fmt::{Debug, Write};
+use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
@@ -1464,8 +1464,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Unit(_, expr, unit) => {
                 expr.visit(self)?;
                 let unit_loc = unit.loc();
-                let unit = UnitStr(unit);
-                write_chunk!(self, unit_loc.start(), unit_loc.end(), "{}", unit.as_ref())?;
+                write_chunk!(self, unit_loc.start(), unit_loc.end(), "{}", unit.as_str())?;
             }
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;

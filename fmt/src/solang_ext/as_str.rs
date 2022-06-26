@@ -1,9 +1,12 @@
 use solang_parser::pt::Unit;
 
-pub struct UnitStr<'a>(pub &'a mut Unit);
-impl<'a> AsRef<str> for UnitStr<'a> {
-    fn as_ref(&self) -> &'a str {
-        match self.0 {
+pub trait AsStr {
+    fn as_str(&self) -> &str;
+}
+
+impl AsStr for Unit {
+    fn as_str(&self) -> &str {
+        match self {
             Unit::Seconds(_) => "seconds",
             Unit::Minutes(_) => "minutes",
             Unit::Hours(_) => "hours",
