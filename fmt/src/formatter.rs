@@ -1505,14 +1505,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write!(self.buf(), "]")?;
             }
             Expression::ArrayLiteral(loc, exprs) => {
-                write!(self.buf(), "[")?;
+                write_chunk!(self, loc.start(), "[")?;
                 let chunks = self.items_to_chunks(
                     Some(loc.end()),
                     exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
                 )?;
                 let multiline = self.are_chunks_separated_multiline("{}]", &chunks, ",")?;
-                self.write_chunks_separated(&chunks, ",", multiline)?;
-                write!(self.buf(), "]")?;
+                self.indented_if(multiline, 1, |fmt| {
+                    fmt.write_chunks_separated(&chunks, ",", multiline)?;
+                    if multiline {
+                        fmt.write_prefix_comments_before(loc.end())?;
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    Ok(())
+                })?;
+                self.write_prefix_comments_before(loc.end())?;
+                write_chunk!(self, loc.end(), "]")?;
             }
             Expression::PreIncrement(..) |
             Expression::PostIncrement(..) |
