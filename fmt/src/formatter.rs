@@ -1475,6 +1475,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 };
                 write_chunk!(self, loc.start(), loc.end(), "{str}")?;
             }
+            Expression::This(loc) => {
+                write_chunk!(self, loc.start(), loc.end(), "this")?;
+            }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
@@ -2875,4 +2878,5 @@ mod tests {
     test_directory! { NamedFunctionCallExpression }
     test_directory! { ArrayExpressions }
     test_directory! { UnitExpression }
+    test_directory! { ThisExpression }
 }
