@@ -5,6 +5,7 @@
 pub mod errors;
 pub mod evm;
 pub mod fs;
+pub mod fmt;
 
 /// The dev chain-id, inherited from hardhat
 pub const DEV_CHAIN_ID: u64 = 31337;
