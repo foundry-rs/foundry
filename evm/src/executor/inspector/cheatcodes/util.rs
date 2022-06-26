@@ -2,11 +2,12 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
-    abi::{AbiEncode, Address, ParamType, Token},
+    abi::{AbiEncode, Address, Token},
     prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer, H160},
-    types::{NameOrAddress, H256, U256, I256},
+    types::{NameOrAddress, H256, U256 },
     utils,
 };
+use foundry_common::fmt::*;
 use std::str;
 use revm::{CreateInputs, Database, EVMData};
 
