@@ -1461,13 +1461,74 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },
+            Expression::Unit(_, expr, unit) => {
+                expr.visit(self)?;
+                let unit_loc = unit.loc();
+                write_chunk!(self, unit_loc.start(), unit_loc.end(), "{}", unit.as_str())?;
+            }
+            Expression::This(loc) => {
+                write_chunk!(self, loc.start(), loc.end(), "this")?;
+            }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
-                if let Some(size_exp) = size_exp {
-                    size_exp.visit(self)?;
-                }
+                size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
                 write!(self.buf(), "]")?;
+            }
+            Expression::ArraySlice(loc, expr, start, end) => {
+                expr.visit(self)?;
+                write!(self.buf(), "[")?;
+                let mut write_slice = |fmt: &mut Self, multiline| -> Result<()> {
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    fmt.grouped(|fmt| {
+                        start.as_mut().map(|start| start.visit(fmt)).transpose()?;
+                        write!(fmt.buf(), ":")?;
+                        if start.is_some() && multiline {
+                            fmt.write_whitespace_separator(true)?;
+                        }
+                        if let Some(end) = end {
+                            let mut chunk =
+                                fmt.chunked(end.loc().start(), Some(loc.end()), |fmt| {
+                                    end.visit(fmt)
+                                })?;
+                            if chunk.prefixes.is_empty() && chunk.postfixes_before.is_empty() {
+                                chunk.needs_space = Some(false);
+                            }
+                            fmt.write_chunk(&chunk)?;
+                        }
+                        Ok(())
+                    })?;
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    Ok(())
+                };
+
+                if !self.try_on_single_line(|fmt| write_slice(fmt, false))? {
+                    self.indented(1, |fmt| write_slice(fmt, true))?;
+                }
+
+                write!(self.buf(), "]")?;
+            }
+            Expression::ArrayLiteral(loc, exprs) => {
+                write_chunk!(self, loc.start(), "[")?;
+                let chunks = self.items_to_chunks(
+                    Some(loc.end()),
+                    exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                )?;
+                let multiline = self.are_chunks_separated_multiline("{}]", &chunks, ",")?;
+                self.indented_if(multiline, 1, |fmt| {
+                    fmt.write_chunks_separated(&chunks, ",", multiline)?;
+                    if multiline {
+                        fmt.write_prefix_comments_before(loc.end())?;
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    Ok(())
+                })?;
+                self.write_prefix_comments_before(loc.end())?;
+                write_chunk!(self, loc.end(), "]")?;
             }
             Expression::PreIncrement(..) |
             Expression::PostIncrement(..) |
@@ -1610,10 +1671,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
-                write!(self.buf(), "(")?;
                 if exprs.is_empty() {
-                    write!(self.buf(), ")")?;
+                    write!(self.buf(), "()")?;
                 } else {
+                    write!(self.buf(), "(")?;
                     self.surrounded(expr.loc().end(), "", ")", Some(loc.end()), |fmt, _| {
                         let exprs = fmt.items_to_chunks(
                             Some(loc.end()),
@@ -1625,6 +1686,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         Ok(())
                     })?;
                 }
+            }
+            Expression::NamedFunctionCall(loc, expr, args) => {
+                self.visit_expr(expr.loc(), expr)?;
+                write!(self.buf(), "(")?;
+                self.visit_args(*loc, args)?;
+                write!(self.buf(), ")")?;
             }
             Expression::FunctionCallBlock(_, expr, stmt) => {
                 expr.visit(self)?;
@@ -1926,20 +1993,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
-        let mut name = self.visit_to_chunk(
-            structure.name.loc.start(),
-            Some(structure.loc.end()),
-            &mut structure.name,
-        )?;
-        name.content = format!("struct {}", name.content);
-        self.write_chunk(&name)?;
+        self.grouped(|fmt| {
+            write_chunk!(fmt, structure.name.loc.start(), "struct")?;
+            structure.name.visit(fmt)?;
+            if structure.fields.is_empty() {
+                return fmt.write_empty_brackets()
+            }
 
-        if structure.fields.is_empty() {
-            self.write_empty_brackets()?;
-        } else {
-            self.surrounded(
+            write!(fmt.buf(), " {{")?;
+            fmt.surrounded(
                 structure.fields.first().unwrap().loc.start(),
-                "{",
+                "",
                 "}",
                 Some(structure.loc.end()),
                 |fmt, _multiline| {
@@ -1954,8 +2018,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     }
                     Ok(())
                 },
-            )?;
-        }
+            )
+        })?;
 
         Ok(())
     }
@@ -2391,8 +2455,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 .map(|NamedArgument { loc: arg_loc, .. }| arg_loc.start())
                 .unwrap_or_else(|| loc.end());
             chunks.push(self.chunked(arg_loc.start(), Some(next_byte_offset), |fmt| {
-                write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
-                expr.visit(fmt)
+                fmt.grouped(|fmt| {
+                    write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
+                    expr.visit(fmt)
+                })?;
+                Ok(())
             })?);
         }
 
@@ -2799,4 +2866,8 @@ mod tests {
     test_directory! { ReturnStatement }
     test_directory! { TryStatement }
     test_directory! { TernaryExpression }
+    test_directory! { NamedFunctionCallExpression }
+    test_directory! { ArrayExpressions }
+    test_directory! { UnitExpression }
+    test_directory! { ThisExpression }
 }
