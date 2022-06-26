@@ -1467,6 +1467,53 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
                 write!(self.buf(), "]")?;
             }
+            Expression::ArraySlice(loc, expr, start, end) => {
+                expr.visit(self)?;
+                write!(self.buf(), "[")?;
+                let mut write_slice = |fmt: &mut Self, multiline| -> Result<()> {
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    fmt.grouped(|fmt| {
+                        start.as_mut().map(|start| start.visit(fmt)).transpose()?;
+                        write!(fmt.buf(), ":")?;
+                        if start.is_some() && multiline {
+                            fmt.write_whitespace_separator(true)?;
+                        }
+                        if let Some(end) = end {
+                            let mut chunk =
+                                fmt.chunked(end.loc().start(), Some(loc.end()), |fmt| {
+                                    end.visit(fmt)
+                                })?;
+                            if chunk.prefixes.is_empty() && chunk.postfixes_before.is_empty() {
+                                chunk.needs_space = Some(false);
+                            }
+                            fmt.write_chunk(&chunk)?;
+                        }
+                        Ok(())
+                    })?;
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    Ok(())
+                };
+
+                if !self.try_on_single_line(|fmt| write_slice(fmt, false))? {
+                    self.indented(1, |fmt| write_slice(fmt, true))?;
+                }
+
+                write!(self.buf(), "]")?;
+            }
+            Expression::ArrayLiteral(loc, exprs) => {
+                write!(self.buf(), "[")?;
+                let chunks = self.items_to_chunks(
+                    Some(loc.end()),
+                    exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))),
+                )?;
+                let multiline = self.are_chunks_separated_multiline("{}]", &chunks, ",")?;
+                self.write_chunks_separated(&chunks, ",", multiline)?;
+                write!(self.buf(), "]")?;
+            }
             Expression::PreIncrement(..) |
             Expression::PostIncrement(..) |
             Expression::PreDecrement(..) |
@@ -2804,4 +2851,5 @@ mod tests {
     test_directory! { TryStatement }
     test_directory! { TernaryExpression }
     test_directory! { NamedFunctionCallExpression }
+    test_directory! { ArrayExpressions }
 }
