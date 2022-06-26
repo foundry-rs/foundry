@@ -1464,9 +1464,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
-                if let Some(size_exp) = size_exp {
-                    size_exp.visit(self)?;
-                }
+                size_exp.as_mut().map(|size| size.visit(self)).transpose()?;
                 write!(self.buf(), "]")?;
             }
             Expression::PreIncrement(..) |
@@ -1610,10 +1608,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
-                write!(self.buf(), "(")?;
                 if exprs.is_empty() {
-                    write!(self.buf(), ")")?;
+                    write!(self.buf(), "()")?;
                 } else {
+                    write!(self.buf(), "(")?;
                     self.surrounded(expr.loc().end(), "", ")", Some(loc.end()), |fmt, _| {
                         let exprs = fmt.items_to_chunks(
                             Some(loc.end()),
@@ -1625,6 +1623,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         Ok(())
                     })?;
                 }
+            }
+            Expression::NamedFunctionCall(loc, expr, args) => {
+                self.visit_expr(expr.loc(), expr)?;
+                write!(self.buf(), "(")?;
+                self.visit_args(*loc, args)?;
+                write!(self.buf(), ")")?;
             }
             Expression::FunctionCallBlock(_, expr, stmt) => {
                 expr.visit(self)?;
@@ -1926,20 +1930,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> Result<()> {
-        let mut name = self.visit_to_chunk(
-            structure.name.loc.start(),
-            Some(structure.loc.end()),
-            &mut structure.name,
-        )?;
-        name.content = format!("struct {}", name.content);
-        self.write_chunk(&name)?;
+        self.grouped(|fmt| {
+            write_chunk!(fmt, structure.name.loc.start(), "struct")?;
+            structure.name.visit(fmt)?;
+            if structure.fields.is_empty() {
+                return fmt.write_empty_brackets()
+            }
 
-        if structure.fields.is_empty() {
-            self.write_empty_brackets()?;
-        } else {
-            self.surrounded(
+            write!(fmt.buf(), " {{")?;
+            fmt.surrounded(
                 structure.fields.first().unwrap().loc.start(),
-                "{",
+                "",
                 "}",
                 Some(structure.loc.end()),
                 |fmt, _multiline| {
@@ -1954,8 +1955,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     }
                     Ok(())
                 },
-            )?;
-        }
+            )
+        })?;
 
         Ok(())
     }
@@ -2391,8 +2392,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 .map(|NamedArgument { loc: arg_loc, .. }| arg_loc.start())
                 .unwrap_or_else(|| loc.end());
             chunks.push(self.chunked(arg_loc.start(), Some(next_byte_offset), |fmt| {
-                write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
-                expr.visit(fmt)
+                fmt.grouped(|fmt| {
+                    write_chunk!(fmt, name.loc.start(), "{}: ", name.name)?;
+                    expr.visit(fmt)
+                })?;
+                Ok(())
             })?);
         }
 
@@ -2799,4 +2803,5 @@ mod tests {
     test_directory! { ReturnStatement }
     test_directory! { TryStatement }
     test_directory! { TernaryExpression }
+    test_directory! { NamedFunctionCallExpression }
 }
