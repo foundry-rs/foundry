@@ -426,3 +426,18 @@ impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
         Some(loc)
     }
 }
+
+impl LineOfCode for Unit {
+    fn loc(&self) -> Loc {
+        match *self {
+            Unit::Seconds(loc) => loc,
+            Unit::Minutes(loc) => loc,
+            Unit::Hours(loc) => loc,
+            Unit::Days(loc) => loc,
+            Unit::Weeks(loc) => loc,
+            Unit::Wei(loc) => loc,
+            Unit::Gwei(loc) => loc,
+            Unit::Ether(loc) => loc,
+        }
+    }
+}
