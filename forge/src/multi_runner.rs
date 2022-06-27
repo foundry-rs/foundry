@@ -528,7 +528,13 @@ mod tests {
                 ),
                 (
                     "core/PaymentFailure.t.sol:PaymentFailureTest",
-                    vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
+                    vec![(
+                        "testCantPay()",
+                        false,
+                        Some("EvmError: Revert".to_string()),
+                        None,
+                        None,
+                    )],
                 ),
                 (
                     "core/LibraryLinking.t.sol:LibraryLinkingTest",
