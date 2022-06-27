@@ -94,6 +94,22 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
         self
     }
 
+    /// Set priority gas price
+    pub fn set_priority_gas_price(&mut self, v: U256) -> &mut Self {
+        if let TypedTransaction::Eip1559(tx) = &mut self.tx {
+            tx.max_priority_fee_per_gas = Some(v)
+        }
+        self
+    }
+
+    /// Set priority gas price, if `v` is not None
+    pub fn priority_gas_price(&mut self, v: Option<U256>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_priority_gas_price(value);
+        }
+        self
+    }
+
     /// Set value
     pub fn set_value(&mut self, v: U256) -> &mut Self {
         self.tx.set_value(v);
