@@ -44,6 +44,39 @@ Gas used: 1751
     ),));
 });
 
+// Tests that the `run` command works correctly when path *and* script name is specified
+forgetest!(can_execute_script_command_fqn, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(format!("{}:Foo", script.display()));
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 1751
+
+== Logs ==
+  script ran
+",
+        Paint::green("Script ran successfully.")
+    ),));
+});
+
 // Tests that the run command can run arbitrary functions
 forgetest!(can_execute_script_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
