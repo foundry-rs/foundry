@@ -421,6 +421,12 @@ mod tests {
             "We did not run as many contracts as we expected"
         );
         for (contract_name, tests) in &expecteds {
+            assert!(
+                actuals.contains_key(*contract_name),
+                "We did not run the contract {}",
+                contract_name
+            );
+
             assert_eq!(
                 actuals[*contract_name].len(),
                 expecteds[contract_name].len(),
