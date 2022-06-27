@@ -4,6 +4,9 @@ on:
 
 name: cross-platform
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})

@@ -268,7 +268,7 @@ value                   0");
             get_pretty_block_attr(_block.clone(), "mixHash".to_string())
         );
         assert_eq!(
-            Some("0".to_string()),
+            Some("0x0000000000000000".to_string()),
             get_pretty_block_attr(_block.clone(), "nonce".to_string())
         );
         assert_eq!(

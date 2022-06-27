@@ -158,3 +158,50 @@ async fn test_solc_revert_example() {
         assert!(err.contains("code: 3"));
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/1871>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_another_revert_message() {
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    uint256 public number;
+
+    function setNumber(uint256 num) public {
+        require(num != 0, "RevertStringFooBar");
+        number = num;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let client = Arc::new(SignerMiddleware::new(provider, wallets[0].clone()));
+
+    // deploy successfully
+    let factory = ContractFactory::new(abi.clone().unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await.unwrap();
+
+    let contract = Contract::new(
+        contract.address(),
+        abi.unwrap(),
+        SignerMiddleware::new(handle.http_provider(), wallets[1].clone()),
+    );
+    let call = contract.method::<_, ()>("setNumber", U256::zero()).unwrap();
+    let resp = call.send().await;
+
+    let err = resp.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("execution reverted: RevertStringFooBar"));
+}

@@ -1071,7 +1071,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_impersonateAccount");
-        self.backend.cheats().impersonate(address);
+        self.backend.impersonate(address);
         Ok(())
     }
 
@@ -1080,7 +1080,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.cheats().stop_impersonating(&address);
+        self.backend.stop_impersonating(address);
         Ok(())
     }
 
@@ -1568,7 +1568,7 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, _, gas, _) =
+        let (exit, out, gas, _) =
             self.backend.call(call_to_estimate, fees.clone(), block_number).await?;
         match exit {
             return_ok!() => {
@@ -1601,7 +1601,7 @@ impl EthApi {
                     }
                 } else {
                     // the transaction did fail due to lack of gas from the user
-                    Err(InvalidTransactionError::Revert(request.data).into())
+                    Err(InvalidTransactionError::Revert(Some(convert_transact_out(&out))).into())
                 }
             }
             reason => {

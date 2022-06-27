@@ -1,4 +1,4 @@
-use super::{BranchKind, CoverageItem, SourceLocation};
+use super::{BranchKind, CoverageItem, ItemAnchor, SourceLocation};
 use ethers::{
     prelude::sourcemap::SourceMap,
     solc::artifacts::ast::{self, Ast, Node, NodeType},
@@ -226,12 +226,9 @@ impl Visitor {
             NodeType::YulIf => {
                 self.visit_expression(
                     node.attribute("condition")
-                        .ok_or_else(|| eyre::eyre!("while statement had no condition"))?,
+                        .ok_or_else(|| eyre::eyre!("yul if statement had no condition"))?,
                 )?;
-
-                let body: Node = node
-                    .attribute("body")
-                    .ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
+                let body = node.body.ok_or_else(|| eyre::eyre!("yul if statement had no body"))?;
 
                 // We need to store the current branch ID here since visiting the body of either of
                 // the if blocks may increase `self.branch_id` in the case of nested if statements.
@@ -249,7 +246,7 @@ impl Visitor {
                     anchor: self.anchor_for(&node.src),
                     hits: 0,
                 });
-                self.visit_block(body)?;
+                self.visit_block(*body)?;
 
                 Ok(())
             }
@@ -353,7 +350,7 @@ impl Visitor {
         {
             self.items.push(CoverageItem::Line {
                 loc: source_location.clone(),
-                anchor: item.anchor(),
+                anchor: item.anchor().clone(),
                 hits: 0,
             });
             self.last_line = source_location.line;
@@ -366,12 +363,13 @@ impl Visitor {
         SourceLocation {
             start: loc.start,
             length: loc.length,
-            line: self.source[..loc.start].lines().count() + 1,
+            line: self.source[..loc.start].lines().count(),
         }
     }
 
-    fn anchor_for(&self, loc: &ast::SourceLocation) -> usize {
-        self.source_maps
+    fn anchor_for(&self, loc: &ast::SourceLocation) -> ItemAnchor {
+        let instruction_counter = self
+            .source_maps
             .get(&self.context)
             .and_then(|source_map| {
                 source_map
@@ -392,6 +390,8 @@ impl Visitor {
                     })
                     .map(|(ic, _)| ic)
             })
-            .unwrap_or(loc.start)
+            .unwrap_or(loc.start);
+
+        ItemAnchor { instruction: instruction_counter, contract: self.context.clone() }
     }
 }

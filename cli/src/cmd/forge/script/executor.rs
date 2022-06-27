@@ -86,11 +86,12 @@ impl ScriptArgs {
         let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
             .contracts
             .iter()
-            .filter_map(|(addr, contract_name)| {
+            .filter_map(|(addr, contract_id)| {
+                let contract_name = utils::get_contract_name(contract_id);
                 if let Some((_, (abi, _))) =
-                    contracts.iter().find(|(artifact, _)| artifact.name == *contract_name)
+                    contracts.iter().find(|(artifact, _)| artifact.name == contract_name)
                 {
-                    return Some((*addr, (contract_name.clone(), abi)))
+                    return Some((*addr, (contract_name.to_string(), abi)))
                 }
                 None
             })

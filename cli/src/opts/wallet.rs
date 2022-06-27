@@ -187,7 +187,7 @@ pub trait WalletTrait {
     }
 
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
-        let privk = private_key.strip_prefix("0x").unwrap_or(private_key);
+        let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
         LocalWallet::from_str(privk)
             .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
     }
