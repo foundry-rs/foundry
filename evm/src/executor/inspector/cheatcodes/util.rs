@@ -3,14 +3,14 @@ use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::{AbiEncode, Address, Token},
-    prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer, H160},
-    types::{NameOrAddress, H256, U256 },
+    prelude::{k256::ecdsa::SigningKey, Lazy, LocalWallet, Signer, H160},
+    types::{NameOrAddress, H256, U256},
     utils,
     utils::keccak256,
 };
 use foundry_common::fmt::*;
-use std::str;
 use revm::{CreateInputs, Database, EVMData};
+use std::str;
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
@@ -72,12 +72,24 @@ pub fn apply<DB: Database>(
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
         }
-        HEVMCalls::ToString0(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
-        HEVMCalls::ToString2(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
-        HEVMCalls::ToString3(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
-        HEVMCalls::ToString4(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
-        HEVMCalls::ToString5(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
-        HEVMCalls::ToString6(inner) => Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into()),
+        HEVMCalls::ToString0(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString2(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString3(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString4(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString5(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString6(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
         _ => return None,
     })
 }

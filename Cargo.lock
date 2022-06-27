@@ -628,6 +628,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
+ "foundry-common",
  "foundry-config",
  "foundry-evm",
  "foundry-utils",
@@ -2006,6 +2007,7 @@ dependencies = [
  "ethers-core",
  "foundry-config",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -1,7 +1,5 @@
-use ethers_core::types::{Block, Transaction, TransactionReceipt, H256, U256, *};
+use ethers_core::types::{Block, Transaction, TransactionReceipt};
 use foundry_common::fmt::*;
-
-
 
 pub fn get_pretty_tx_attr(transaction: Transaction, attr: String) -> Option<String> {
     return match attr.as_str() {
@@ -66,8 +64,6 @@ pub fn get_pretty_tx_receipt_attr(receipt: TransactionReceipt, attr: String) -> 
         _ => None,
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
