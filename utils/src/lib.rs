@@ -16,7 +16,6 @@ use ethers_solc::{
 };
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
-use revm::return_ok;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
