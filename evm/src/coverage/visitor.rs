@@ -486,7 +486,7 @@ impl<'a> Visitor<'a> {
                         CoverageItem::Branch {
                             branch_id,
                             path_id: 0,
-                            loc: self.source_location_for(&loc),
+                            loc: self.source_location_for(loc),
                             anchor: ItemAnchor {
                                 instruction: first_branch_ic.unwrap(),
                                 contract: self.context.clone(),
@@ -496,7 +496,7 @@ impl<'a> Visitor<'a> {
                         CoverageItem::Branch {
                             branch_id,
                             path_id: 1,
-                            loc: self.source_location_for(&loc),
+                            loc: self.source_location_for(loc),
                             anchor: ItemAnchor {
                                 instruction: second_branch_pc - cumulative_push_size,
                                 contract: self.context.clone(),
