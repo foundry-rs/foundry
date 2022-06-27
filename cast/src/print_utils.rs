@@ -1,4 +1,4 @@
-use ethers_core::types::{Block, Transaction, TransactionReceipt};
+use ethers_core::types::{Block, Bytes, Transaction, TransactionReceipt, H256, U64};
 use foundry_common::fmt::*;
 
 pub fn get_pretty_tx_attr(transaction: Transaction, attr: String) -> Option<String> {

@@ -10,7 +10,6 @@ use ethers::{
 };
 use foundry_common::fmt::*;
 use revm::{CreateInputs, Database, EVMData};
-use std::str;
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
