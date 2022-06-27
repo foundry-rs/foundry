@@ -372,6 +372,14 @@ Examples:
         )]
         gas_price: Option<U256>,
         #[clap(
+            long = "priority-gas-price",
+            help = "Max priority fee per gas for EIP1559 transactions.",
+            env = "ETH_PRIORITY_GAS_PRICE",
+            parse(try_from_str = parse_ether_value),
+            value_name = "PRICE"
+        )]
+        priority_gas_price: Option<U256>,
+        #[clap(
             long,
             help = "Ether to send in the transaction.",
             long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
