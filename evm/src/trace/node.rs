@@ -143,9 +143,20 @@ impl CallTraceNode {
                                 );
                             }
                         }
-                    } else if let Ok(decoded_error) =
-                        foundry_utils::decode_revert(&bytes[..], Some(errors))
-                    {
+                    } else if let Ok(decoded_error) = foundry_utils::decode_revert(
+                        &bytes[..],
+                        Some(errors),
+                        Some(self.trace.status),
+                    ) {
+                        self.trace.output =
+                            RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
+                    }
+                } else {
+                    if let Ok(decoded_error) = foundry_utils::decode_revert(
+                        &bytes[..],
+                        Some(errors),
+                        Some(self.trace.status),
+                    ) {
                         self.trace.output =
                             RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
                     }

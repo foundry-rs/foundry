@@ -28,7 +28,7 @@ pub(crate) fn decode_cheatcode_inputs(
 ) -> Option<Vec<String>> {
     match func.name.as_str() {
         "expectRevert" => {
-            foundry_utils::decode_revert(data, Some(errors)).ok().map(|decoded| vec![decoded])
+            foundry_utils::decode_revert(data, Some(errors), None).ok().map(|decoded| vec![decoded])
         }
         _ => None,
     }

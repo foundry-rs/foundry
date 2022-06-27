@@ -127,7 +127,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    status: Return,
+    pub(crate) status: Return,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -328,7 +328,7 @@ where
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = foundry_utils::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -458,7 +458,7 @@ where
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = foundry_utils::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -573,7 +573,7 @@ where
                 }
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = foundry_utils::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 return Err(EvmError::Execution {
                     reverted: true,

@@ -2078,6 +2078,7 @@ dependencies = [
  "futures",
  "hex",
  "reqwest",
+ "revm",
  "rlp",
  "rustc-hex",
  "serde",
@@ -4104,9 +4105,8 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1affcd38e2d1a4570699f8cf35f0668c886febdba1b857771b20cf81025ada1d"
+version = "1.6.0"
+source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#67e8ca98fe521442b454b1a49eb399a87b6fea20"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4124,8 +4124,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd6aae8f44783ef6ff39fc22c9c999dfa0e17b79d663b752730c02a025935185"
+source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#67e8ca98fe521442b454b1a49eb399a87b6fea20"
 dependencies = [
  "bytes",
  "k256",

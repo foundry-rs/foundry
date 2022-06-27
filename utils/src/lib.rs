@@ -16,6 +16,7 @@ use ethers_solc::{
 };
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
+use revm::return_ok;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
@@ -302,7 +303,11 @@ pub fn flatten_known_contracts(
 
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
-pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
+pub fn decode_revert(
+    error: &[u8],
+    maybe_abi: Option<&Abi>,
+    status: Option<revm::Return>,
+) -> Result<String> {
     if error.len() >= 4 {
         match error[0..4] {
             // keccak(Panic(uint256))
@@ -364,7 +369,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                     let len = U256::from(&err_data[32..64]).as_usize();
                     if err_data.len() > 64 + len {
                         let actual_err = &err_data[64..64 + len];
-                        if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
+                        if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
                             // check if its a builtin
                             return Ok(decoded)
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
@@ -380,7 +385,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                 let err_data = &error[4..];
                 if err_data.len() == 32 {
                     let actual_err = &err_data[..4];
-                    if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
+                    if let Ok(decoded) = decode_revert(actual_err, maybe_abi, None) {
                         // it's a known selector
                         return Ok(decoded)
                     }
@@ -417,6 +422,12 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
             }
         }
     } else {
+        if let Some(status) = status {
+            use revm::Return;
+            if !matches!(status, revm::return_ok!()) {
+                return Ok(format!("EvmError: {:?}", status))
+            }
+        }
         Err(eyre::Error::msg("Not enough error data to decode"))
     }
 }

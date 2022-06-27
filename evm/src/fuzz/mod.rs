@@ -104,6 +104,7 @@ where
                 });
                 Ok(())
             } else {
+                let status = call.status;
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
@@ -113,6 +114,7 @@ where
                     match foundry_utils::decode_revert(
                         counterexample.borrow().1.result.as_ref(),
                         errors,
+                        Some(status),
                     ) {
                         Ok(e) => e,
                         Err(_) => "".to_string(),
