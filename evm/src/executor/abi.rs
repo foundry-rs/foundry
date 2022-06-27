@@ -102,6 +102,7 @@ ethers::contract::abigen!(
             event log_string             (string)
             event log_array              (uint256[] val)
             event log_array              (int256[] val)
+            event log_array              (address[] val)
             event log_named_address      (string key, address val)
             event log_named_bytes32      (string key, bytes32 val)
             event log_named_decimal_int  (string key, int val, uint decimals)
@@ -112,6 +113,7 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             event log_named_array        (string key, uint256[] val)
             event log_named_array        (string key, int256[] val)
+            event log_named_array        (string key, address[] val)
     ]"#
 );
 pub use console_mod::{ConsoleEvents, CONSOLE_ABI};
