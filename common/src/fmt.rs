@@ -1,6 +1,6 @@
 //! Contains a helper pretty() function to print human redeable string versions of usual ethers
 //! types
-use ethers_core::types::{Block, Transaction, TransactionReceipt, H256, U256, *};
+use ethers_core::types::*;
 use std::str;
 
 ///
@@ -11,12 +11,11 @@ use std::str;
 /// use foundry_common::fmt;
 /// let boolean: bool = true;
 /// let string = boolean.pretty();
-///```
+/// ```
 pub trait UIfmt {
     /// Return a pretty-fied string version of the value
     fn pretty(&self) -> String;
 }
-
 
 impl UIfmt for bool {
     fn pretty(&self) -> String {
@@ -41,6 +40,12 @@ impl UIfmt for H160 {
     }
 }
 
+impl UIfmt for H64 {
+    fn pretty(&self) -> String {
+        format!("{:#x}", self)
+    }
+}
+
 impl UIfmt for H256 {
     fn pretty(&self) -> String {
         format!("{:#x}", self)
@@ -53,7 +58,7 @@ impl UIfmt for Bytes {
     }
 }
 
-impl UIfmt for [u8;32]{
+impl UIfmt for [u8; 32] {
     fn pretty(&self) -> String {
         let res = str::from_utf8(self).unwrap().trim_matches(char::from(0));
         String::from(res)
@@ -65,7 +70,6 @@ impl UIfmt for U64 {
         self.to_string()
     }
 }
-
 
 impl UIfmt for Bloom {
     fn pretty(&self) -> String {
@@ -287,7 +291,6 @@ value                   {}",
         )
     }
 }
-
 
 fn tab_paragraph(paragraph: String) -> String {
     paragraph.lines().into_iter().fold("".to_string(), |acc, x| acc + "\t" + x + "\n")
