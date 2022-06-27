@@ -202,7 +202,7 @@ impl<'a> Visitor<'a> {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                let (false_branch, true_branch) = self.find_branches(&node.src, branch_id)?;
+                let (true_branch, false_branch) = self.find_branches(&node.src, branch_id)?;
 
                 // Process the true branch
                 self.push_item(true_branch);
@@ -276,12 +276,24 @@ impl<'a> Visitor<'a> {
                 Ok(())
             }
             NodeType::FunctionCall => {
-                // TODO: Handle assert and require
                 self.push_item(CoverageItem::Statement {
                     loc: self.source_location_for(&node.src),
                     anchor: self.anchor_for(&node.src)?,
                     hits: 0,
                 });
+
+                let name = node
+                    .other
+                    .get("expression")
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str());
+                if let Some("assert" | "require") = name {
+                    let (false_branch, true_branch) =
+                        self.find_branches(&node.src, self.branch_id)?;
+                    self.push_item(true_branch);
+                    self.push_item(false_branch);
+                    self.branch_id += 1;
+                }
                 Ok(())
             }
             NodeType::Conditional => {
@@ -468,9 +480,10 @@ impl<'a> Visitor<'a> {
                         eyre::bail!("we found a branch, but it refers to a program counter bigger than 64 bits.");
                     }
 
-                    first_branch_ic = Some(pc + 1 - cumulative_push_size);
+                    // The first branch is the opcode directly after JUMPI
+                    first_branch_ic = Some(pc + 2 - cumulative_push_size);
 
-                    // Convert PC to a usize
+                    // Convert the push bytes for the second branch's PC to a usize
                     let mut pc_bytes: [u8; 8] = [0; 8];
                     for push_byte_index in 0..push_size {
                         pc_bytes[8 - push_size + push_byte_index] =
