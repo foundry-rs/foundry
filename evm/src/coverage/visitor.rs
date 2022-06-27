@@ -432,7 +432,6 @@ impl<'a> Visitor<'a> {
         loc: &ast::SourceLocation,
         branch_id: usize,
     ) -> eyre::Result<(CoverageItem, CoverageItem)> {
-        // TODO: Refactor
         let source_map = self.source_maps.get(&self.context).ok_or_else(|| {
             eyre::eyre!("could not find anchors for branches: we do not have a source map")
         })?;
@@ -447,17 +446,16 @@ impl<'a> Visitor<'a> {
         // NOTE(onbjerg): We use `SpecId::LATEST` here since it does not matter; the only difference
         // is the gas cost.
         let opcode_infos = spec_opcode_gas(SpecId::LATEST);
-        let mut pc = 0;
-        let mut cumulative_push_size = 0;
         let mut first_branch_ic = None;
         let mut second_branch_pc = None;
+        let mut pc = 0;
+        let mut cumulative_push_size = 0;
         while pc < bytecode.0.len() {
             let op = bytecode.0[pc];
 
             // We found a push, so we do some PC -> IC translation accounting, but we also check if
             // this push is coupled with the JUMPI we are interested in.
             if opcode_infos[op as usize].is_push {
-                // TODO: Error handling
                 // TODO: Find the *LAST* JUMPI
                 let element = &source_map[pc - cumulative_push_size];
 
@@ -468,10 +466,14 @@ impl<'a> Visitor<'a> {
 
                 // Check if we are in the source range we are interested in, and if the next opcode
                 // is a JUMPI
-                if first_branch_ic.is_none() &&
-                    element.index.unwrap() as usize == loc.index.unwrap() &&
+                let source_ids_match =
+                    element.index.zip(loc.index).map_or(false, |(a, b)| a as usize == b);
+                let is_in_source_range = source_ids_match &&
                     element.offset >= loc.start &&
-                    element.offset + element.length <= loc.start + loc.length.unwrap_or_default() &&
+                    element.offset + element.length <=
+                        loc.start + loc.length.unwrap_or_default();
+                if is_in_source_range &&
+                    first_branch_ic.is_none() &&
                     bytecode.0[pc + 1] == opcode::JUMPI
                 {
                     // We do not support program counters bigger than usize. This is also an
@@ -484,40 +486,44 @@ impl<'a> Visitor<'a> {
                     first_branch_ic = Some(pc + 2 - cumulative_push_size);
 
                     // Convert the push bytes for the second branch's PC to a usize
+                    let push_bytes_start = pc - push_size + 1;
                     let mut pc_bytes: [u8; 8] = [0; 8];
-                    for push_byte_index in 0..push_size {
-                        pc_bytes[8 - push_size + push_byte_index] =
-                            bytecode.0[pc - push_size + 1 + push_byte_index];
+                    for (i, push_byte) in bytecode.0[push_bytes_start..push_bytes_start + push_size]
+                        .iter()
+                        .enumerate()
+                    {
+                        pc_bytes[8 - push_size + i] = *push_byte;
                     }
                     second_branch_pc = Some(usize::from_be_bytes(pc_bytes));
                 }
-            } else if let Some(second_branch_pc) = second_branch_pc {
-                if pc == second_branch_pc {
-                    // We've reached the PC of the second branch. At this point we know the IC of
-                    // both branches
-                    return Ok((
-                        CoverageItem::Branch {
-                            branch_id,
-                            path_id: 0,
-                            loc: self.source_location_for(loc),
-                            anchor: ItemAnchor {
-                                instruction: first_branch_ic.unwrap(),
-                                contract: self.context.clone(),
-                            },
-                            hits: 0,
+            } else if Some(pc) == second_branch_pc {
+                // We've reached the PC of the second branch. At this point we know the IC of
+                // both branches
+                return Ok((
+                    CoverageItem::Branch {
+                        branch_id,
+                        path_id: 0,
+                        loc: self.source_location_for(loc),
+                        anchor: ItemAnchor {
+                            instruction: first_branch_ic
+                                .expect("we should know the first branch if we know the second"),
+                            contract: self.context.clone(),
                         },
-                        CoverageItem::Branch {
-                            branch_id,
-                            path_id: 1,
-                            loc: self.source_location_for(loc),
-                            anchor: ItemAnchor {
-                                instruction: second_branch_pc - cumulative_push_size,
-                                contract: self.context.clone(),
-                            },
-                            hits: 0,
+                        hits: 0,
+                    },
+                    CoverageItem::Branch {
+                        branch_id,
+                        path_id: 1,
+                        loc: self.source_location_for(loc),
+                        anchor: ItemAnchor {
+                            instruction: second_branch_pc
+                                .expect("we just checked second_branch_pc; qed") -
+                                cumulative_push_size,
+                            contract: self.context.clone(),
                         },
-                    ))
-                }
+                        hits: 0,
+                    },
+                ))
             }
             pc += 1;
         }
