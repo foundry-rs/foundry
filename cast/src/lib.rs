@@ -1342,18 +1342,13 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///
-    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
-    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    ///    assert_eq!(Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256","42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn index(
-        from_type: &str,
-        to_type: &str,
-        from_value: &str,
-        slot_number: &str,
-    ) -> Result<String> {
-        let sig = format!("x({from_type},{to_type})");
+    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+        let sig = format!("x({from_type},uint256)");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
