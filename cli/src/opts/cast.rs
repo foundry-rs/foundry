@@ -503,8 +503,6 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     Index {
         #[clap(help = "The mapping key type.", value_name = "KEY_TYPE")]
         key_type: String,
-        #[clap(help = "The mapping value type.", value_name = "VALUE_TYPE")]
-        value_type: String,
         #[clap(help = "The mapping key.", value_name = "KEY")]
         key: String,
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
