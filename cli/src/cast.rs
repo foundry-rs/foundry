@@ -15,10 +15,8 @@ use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
-    core::{
-        abi::AbiParser,
-        types::{BlockId, BlockNumber::Latest, H256},
-    },
+    abi::HumanReadableParser,
+    core::types::{BlockId, BlockNumber::Latest, H256},
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
 };
@@ -679,7 +677,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Sig { sig } => {
-            let selector = AbiParser::default().parse_function(&sig).unwrap().short_signature();
+            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
