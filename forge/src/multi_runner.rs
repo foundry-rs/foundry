@@ -1214,16 +1214,9 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner
-            .test(
-                &Filter::new(
-                    ".*",
-                    ".*",
-                    format!(".*core{}Abstract.t.sol", std::path::MAIN_SEPARATOR).as_str(),
-                ),
-                None,
-                true,
-            )
+            .test(&Filter::new(".*", ".*", format!(".*Abstract.t.sol").as_str()), None, true)
             .unwrap();
+        println!("{:?}", results.keys());
         assert!(results
             .get(
                 format!("core{}Abstract.t.sol:AbstractTestBase", std::path::MAIN_SEPARATOR)
