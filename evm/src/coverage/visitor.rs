@@ -84,6 +84,16 @@ impl<'a> Visitor<'a> {
             return Ok(())
         }
 
+        // TODO(onbjerg): Re-enable constructor parsing when we walk both the deployment and runtime
+        // sourcemaps. Currently this fails because we are trying to look for anchors in the runtime
+        // sourcemap.
+        // TODO(onbjerg): Figure out why we cannot find anchors for the receive function
+        let kind: String =
+            node.attribute("kind").ok_or_else(|| eyre::eyre!("function has no kind"))?;
+        if kind == "constructor" || kind == "receive" {
+            return Ok(())
+        }
+
         match node.body.take() {
             // Skip virtual functions
             Some(body) if !is_virtual => {
@@ -376,7 +386,10 @@ impl<'a> Visitor<'a> {
     /// to be covered.
     fn anchor_for(&self, loc: &ast::SourceLocation) -> eyre::Result<ItemAnchor> {
         let source_map = self.source_maps.get(&self.context).ok_or_else(|| {
-            eyre::eyre!("could not find anchor for node: we do not have a source map")
+            eyre::eyre!(
+                "could not find anchor for node: we do not have a source map for {}",
+                self.context
+            )
         })?;
 
         let instruction = source_map
@@ -393,7 +406,11 @@ impl<'a> Visitor<'a> {
                 None
             })
             .ok_or_else(|| {
-                eyre::eyre!("could not find anchor: no matching instruction in range")
+                eyre::eyre!(
+                    "could not find anchor: no matching instruction in range {}:{}",
+                    self.context,
+                    loc
+                )
             })?;
 
         Ok(ItemAnchor { instruction, contract: self.context.clone() })
@@ -433,13 +450,19 @@ impl<'a> Visitor<'a> {
         branch_id: usize,
     ) -> eyre::Result<(CoverageItem, CoverageItem)> {
         let source_map = self.source_maps.get(&self.context).ok_or_else(|| {
-            eyre::eyre!("could not find anchors for branches: we do not have a source map")
+            eyre::eyre!(
+                "could not find anchors for branches: we do not have a source map for {}",
+                self.context
+            )
         })?;
         let bytecode = self
             .bytecodes
             .get(&self.context)
             .ok_or_else(|| {
-                eyre::eyre!("could not find anchors for branches: we do not have the bytecode")
+                eyre::eyre!(
+                    "could not find anchors for branches: we do not have the bytecode for {}",
+                    self.context
+                )
             })?
             .clone();
 
@@ -528,6 +551,6 @@ impl<'a> Visitor<'a> {
             pc += 1;
         }
 
-        eyre::bail!("could not detect branches")
+        eyre::bail!("could not detect branches in range {}", loc)
     }
 }
