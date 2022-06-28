@@ -74,6 +74,9 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString0(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
+        HEVMCalls::ToString1(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
         HEVMCalls::ToString2(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
@@ -84,9 +87,6 @@ pub fn apply<DB: Database>(
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
         HEVMCalls::ToString5(inner) => {
-            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
-        }
-        HEVMCalls::ToString6(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
         _ => return None,
