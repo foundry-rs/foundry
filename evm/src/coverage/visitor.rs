@@ -4,7 +4,10 @@ use ethers::{
     solc::artifacts::ast::{self, Ast, Node, NodeType},
 };
 use revm::{opcode, spec_opcode_gas, SpecId};
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, HashMap},
+};
 use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
@@ -469,18 +472,26 @@ impl<'a> Visitor<'a> {
         // NOTE(onbjerg): We use `SpecId::LATEST` here since it does not matter; the only difference
         // is the gas cost.
         let opcode_infos = spec_opcode_gas(SpecId::LATEST);
+
+        let mut ic_map: BTreeMap<usize, usize> = BTreeMap::new();
         let mut first_branch_ic = None;
         let mut second_branch_pc = None;
         let mut pc = 0;
         let mut cumulative_push_size = 0;
         while pc < bytecode.0.len() {
             let op = bytecode.0[pc];
+            ic_map.insert(pc, pc - cumulative_push_size);
 
             // We found a push, so we do some PC -> IC translation accounting, but we also check if
             // this push is coupled with the JUMPI we are interested in.
             if opcode_infos[op as usize].is_push {
-                // TODO: Find the *LAST* JUMPI
-                let element = &source_map[pc - cumulative_push_size];
+                let element = if let Some(element) = source_map.get(pc - cumulative_push_size) {
+                    element
+                } else {
+                    // NOTE(onbjerg): For some reason the last few bytes of the bytecode do not have
+                    // a source map associated, so at that point we just stop searching
+                    break
+                };
 
                 // Do push byte accounting
                 let push_size = (op - opcode::PUSH1 + 1) as usize;
@@ -491,14 +502,10 @@ impl<'a> Visitor<'a> {
                 // is a JUMPI
                 let source_ids_match =
                     element.index.zip(loc.index).map_or(false, |(a, b)| a as usize == b);
-                let is_in_source_range = source_ids_match &&
-                    element.offset >= loc.start &&
+                let is_in_source_range = element.offset >= loc.start &&
                     element.offset + element.length <=
                         loc.start + loc.length.unwrap_or_default();
-                if is_in_source_range &&
-                    first_branch_ic.is_none() &&
-                    bytecode.0[pc + 1] == opcode::JUMPI
-                {
+                if source_ids_match && is_in_source_range && bytecode.0[pc + 1] == opcode::JUMPI {
                     // We do not support program counters bigger than usize. This is also an
                     // assumption in REVM, so this is just a sanity check.
                     if push_size > 8 {
@@ -519,38 +526,34 @@ impl<'a> Visitor<'a> {
                     }
                     second_branch_pc = Some(usize::from_be_bytes(pc_bytes));
                 }
-            } else if Some(pc) == second_branch_pc {
-                // We've reached the PC of the second branch. At this point we know the IC of
-                // both branches
-                return Ok((
-                    CoverageItem::Branch {
-                        branch_id,
-                        path_id: 0,
-                        loc: self.source_location_for(loc),
-                        anchor: ItemAnchor {
-                            instruction: first_branch_ic
-                                .expect("we should know the first branch if we know the second"),
-                            contract: self.context.clone(),
-                        },
-                        hits: 0,
-                    },
-                    CoverageItem::Branch {
-                        branch_id,
-                        path_id: 1,
-                        loc: self.source_location_for(loc),
-                        anchor: ItemAnchor {
-                            instruction: second_branch_pc
-                                .expect("we just checked second_branch_pc; qed") -
-                                cumulative_push_size,
-                            contract: self.context.clone(),
-                        },
-                        hits: 0,
-                    },
-                ))
             }
             pc += 1;
         }
 
-        eyre::bail!("could not detect branches in range {}", loc)
+        match (first_branch_ic, second_branch_pc) {
+            (Some(first_branch_ic), Some(second_branch_pc)) => Ok((
+                CoverageItem::Branch {
+                    branch_id,
+                    path_id: 0,
+                    loc: self.source_location_for(loc),
+                    anchor: ItemAnchor {
+                        instruction: first_branch_ic,
+                        contract: self.context.clone()
+                    },
+                    hits: 0,
+                },
+                CoverageItem::Branch {
+                    branch_id,
+                    path_id: 1,
+                    loc: self.source_location_for(loc),
+                    anchor: ItemAnchor {
+                        instruction: *ic_map.get(&second_branch_pc).expect("we cannot translate the program counter of the second branch to an instruction counter"),
+                        contract: self.context.clone()
+                    },
+                    hits: 0
+                }
+            )),
+            _ => eyre::bail!("could not detect branches in range {}", loc)
+        }
     }
 }
