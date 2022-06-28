@@ -4,20 +4,17 @@ use ethers::{
     solc::artifacts::ast::{self, Ast, Node, NodeType},
 };
 use revm::{opcode, spec_opcode_gas, SpecId};
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, HashMap},
-};
+use std::collections::{BTreeMap, HashMap};
 use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
-pub struct Visitor<'a> {
+pub struct Visitor {
     /// The source code that contains the AST being walked.
     source: String,
     /// Source maps for this specific source file, keyed by the contract name.
     source_maps: HashMap<String, SourceMap>,
     /// Bytecodes for this specific source file, keyed by the contract name.
-    bytecodes: HashMap<String, Cow<'a, Bytes>>,
+    bytecodes: HashMap<String, Bytes>,
 
     /// The contract whose AST we are currently walking
     context: String,
@@ -30,11 +27,11 @@ pub struct Visitor<'a> {
     items: Vec<CoverageItem>,
 }
 
-impl<'a> Visitor<'a> {
+impl Visitor {
     pub fn new(
         source: String,
         source_maps: HashMap<String, SourceMap>,
-        bytecodes: HashMap<String, Cow<'a, Bytes>>,
+        bytecodes: HashMap<String, Bytes>,
     ) -> Self {
         Self { source, source_maps, bytecodes, ..Default::default() }
     }

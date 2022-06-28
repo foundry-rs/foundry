@@ -24,7 +24,7 @@ use forge::{
 };
 use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::{figment::Figment, Config};
-use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::mpsc::channel, thread};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel, thread};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -147,12 +147,15 @@ impl CoverageArgs {
             .collect();
 
         // Get bytecodes
-        let bytecodes: HashMap<ArtifactId, (Cow<Bytes>, Cow<Bytes>)> = artifacts
+        let bytecodes: HashMap<ArtifactId, (Bytes, Bytes)> = artifacts
             .iter()
             .filter_map(|(id, artifact)| {
                 Some((
                     id.clone(),
-                    (artifact.get_bytecode_bytes()?, artifact.get_deployed_bytecode_bytes()?),
+                    (
+                        artifact.get_bytecode_bytes()?.into_owned(),
+                        artifact.get_deployed_bytecode_bytes()?.into_owned(),
+                    ),
                 ))
             })
             .collect();
@@ -184,7 +187,7 @@ impl CoverageArgs {
                             (id.name.clone(), source_map.clone())
                         })
                         .collect();
-                    let bytecodes: HashMap<String, Cow<Bytes>> = bytecodes
+                    let bytecodes: HashMap<String, Bytes> = bytecodes
                         .iter()
                         .filter(|(id, _)| {
                             id.version == versioned_source.version &&
