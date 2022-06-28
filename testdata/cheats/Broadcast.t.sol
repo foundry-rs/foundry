@@ -160,6 +160,9 @@ contract BroadcastTestNoLinking is DSTest {
     }
 
     function deployMany() public {
+
+        assert(cheats.getNonce(msg.sender) == 0);
+
         cheats.startBroadcast();
 
         for(uint i; i< 100; i++) {
@@ -177,6 +180,25 @@ contract BroadcastTestNoLinking is DSTest {
         cheats.stopBroadcast();
     
     }
+    function errorStaticCall() public {
+        cheats.broadcast();
+        NoLink test11 = new NoLink();
+
+        cheats.broadcast();
+        test11.view_me();
+    }
+}
+
+contract BroadcastMix is DSTest {
+
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
     function more() internal {
         cheats.broadcast();
         NoLink test11 = new NoLink();
@@ -224,14 +246,6 @@ contract BroadcastTestNoLinking is DSTest {
 
         more();
     }
-
-    function errorStaticCall() public {
-        cheats.broadcast();
-        NoLink test11 = new NoLink();
-
-        cheats.broadcast();
-        test11.view_me();
-    }
 }
 
 
@@ -239,6 +253,10 @@ contract BroadcastTestSetup is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function setUp() public {
+
+        // It predeployed a library first
+        assert(cheats.getNonce(msg.sender) == 1);
+
         cheats.broadcast();
         Test t = new Test();
 

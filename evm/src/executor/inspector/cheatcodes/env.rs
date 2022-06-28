@@ -213,6 +213,8 @@ pub fn apply<DB: Database>(
             }
         }
         HEVMCalls::GetNonce(inner) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
             data.subroutine.load_account(inner.0, data.db);
@@ -250,7 +252,7 @@ pub fn apply<DB: Database>(
 }
 
 /// When using `forge script`, the script method is called using the address from `--sender`.
-/// That leads to the its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
+/// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 fn correct_sender_nonce(
     sender: &Address,
