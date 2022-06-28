@@ -446,8 +446,8 @@ impl TestCommand {
     pub fn stdout(&mut self) -> String {
         let o = self.output();
         let stdout = String::from_utf8_lossy(&o.stdout);
-        match stdout.parse() {
-            Ok(t) => t,
+        match stdout.parse::<String>() {
+            Ok(t) => t.replace("\r\n", "\n"),
             Err(err) => {
                 panic!("could not convert from string: {:?}\n\n{}", err, stdout);
             }
@@ -457,12 +457,12 @@ impl TestCommand {
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
         let output = self.execute();
-        String::from_utf8_lossy(&output.stderr).to_string()
+        String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n")
     }
 
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).to_string()
+        String::from_utf8_lossy(&self.output().stdout).to_string().replace("\r\n", "\n")
     }
 
     /// Returns the output but does not expect that the command was successful
@@ -635,7 +635,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
 });
 
 impl OutputExt for process::Output {
