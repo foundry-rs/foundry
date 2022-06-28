@@ -563,8 +563,19 @@ impl NodeConfig {
             let block = provider
                 .get_block(BlockNumber::Number(fork_block_number.into()))
                 .await
-                .expect("Failed to get fork block")
-                .unwrap_or_else(|| panic!("Failed to get fork block"));
+                .expect("Failed to get fork block");
+
+            let block = if let Some(block) = block {
+                block
+            } else {
+                if let Ok(latest_block) = provider.get_block_number().await {
+                    panic!(
+                        "Failed to get block for block number: {}\nlatest block number: {}",
+                        fork_block_number, latest_block
+                    );
+                }
+                panic!("Failed to get block for block number: {}", fork_block_number)
+            };
 
             env.block.number = fork_block_number.into();
             fork_timestamp = Some(block.timestamp);
