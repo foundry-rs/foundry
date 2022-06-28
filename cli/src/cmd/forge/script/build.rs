@@ -135,9 +135,8 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source ==
-                        dunce::canonicalize(&extra.target_fname)
-                            .expect("Could not canonicalize target path")
+                    if dunce::canonicalize(&id.source).expect("Could not canonicalize source path") ==
+                        std::path::PathBuf::from(&extra.target_fname)
                     {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
@@ -151,7 +150,11 @@ impl ScriptArgs {
                     let split: Vec<&str> = extra.target_fname.split(':').collect();
                     let path = std::path::Path::new(split[0]);
                     let name = split[1];
-                    if path == id.source && name == id.name {
+                    if path ==
+                        dunce::canonicalize(&id.source)
+                            .expect("Could not canonicalize source path") &&
+                        name == id.name
+                    {
                         *extra.dependencies = dependencies;
                         *extra.contract = contract.clone();
                         extra.matched = true;
