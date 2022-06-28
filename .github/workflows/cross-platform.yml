@@ -1,4 +1,4 @@
-on: 
+on:
   workflow_dispatch:
   workflow_call:
 
@@ -18,8 +18,8 @@ jobs:
         job:
           # The OS is used for the runner
           # The target is used by Cargo
-         - os: windows-latest
-           target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout sources
@@ -38,8 +38,15 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      # required for forge commands that use git
-      - name: setup git config
+      # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
+      - name: Windows setup
+        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
+        run: |
+          wsl --install --distribution Ubuntu
+        shell: pwsh
+
+      # Required for forge commands that use git
+      - name: Setup git
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "<>"
