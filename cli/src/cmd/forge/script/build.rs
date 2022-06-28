@@ -168,7 +168,9 @@ impl ScriptArgs {
             },
         )?;
 
-        let target = extra_info.target_id.expect("Target not found?");
+        let target = extra_info
+            .target_id
+            .expect(format!("Could not find target contract: {}", target_fname));
 
         let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
             run_dependencies.into_iter().unzip();
