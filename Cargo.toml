@@ -25,6 +25,11 @@ debug = 0
 [profile.dev.package]
 # These speed up local tests
 ethers-solc.opt-level = 3
+revm.opt-level = 3
+
+[profile.test.package]
+# These will speed up all forge script related integration tests
+axum.opt-level = 3
 
 # local "release" mode
 [profile.local]

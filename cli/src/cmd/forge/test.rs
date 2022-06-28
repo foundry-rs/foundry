@@ -4,22 +4,23 @@ use crate::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
         Cmd,
     },
+    compile,
     compile::ProjectCompiler,
     suggestions, utils,
     utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
-use ethers::solc::FileFilter;
+use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
 use forge::{
     decode::decode_console_logs,
-    executor::opts::EvmOpts,
+    executor::{inspector::CheatsConfig, opts::EvmOpts},
     gas_report::GasReport,
+    result::{SuiteResult, TestKind, TestResult},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
-    TestOptions,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
@@ -32,6 +33,7 @@ use std::{
     thread,
     time::Duration,
 };
+use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -100,26 +102,26 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn with_merged_config(&self) -> Self {
-        let config = Config::load();
+    pub fn with_merged_config(&self, config: &Config) -> Self {
         let mut filter = self.clone();
         if filter.test_pattern.is_none() {
-            filter.test_pattern = config.test_pattern.map(|p| p.into());
+            filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
         }
         if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.test_pattern_inverse.map(|p| p.into());
+            filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config.contract_pattern.map(|p| p.into());
+            filter.contract_pattern = config.contract_pattern.clone().map(|p| p.into());
         }
         if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse = config.contract_pattern_inverse.map(|p| p.into());
+            filter.contract_pattern_inverse =
+                config.contract_pattern_inverse.clone().map(|p| p.into());
         }
         if filter.path_pattern.is_none() {
-            filter.path_pattern = config.path_pattern;
+            filter.path_pattern = config.path_pattern.clone();
         }
         if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config.path_pattern_inverse;
+            filter.path_pattern_inverse = config.path_pattern_inverse.clone();
         }
         filter
     }
@@ -259,7 +261,7 @@ pub struct TestArgs {
         long,
         env = "ETHERSCAN_API_KEY",
         help = "Set etherscan api key to better decode traces",
-        value_name = "KEY"
+        value_name = "ETHERSCAN_KEY"
     )]
     etherscan_api_key: Option<String>,
 
@@ -281,8 +283,8 @@ impl TestArgs {
     }
 
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
-    pub fn filter(&self) -> Filter {
-        self.filter.with_merged_config()
+    pub fn filter(&self, config: &Config) -> Filter {
+        self.filter.with_merged_config(config)
     }
 
     /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
@@ -318,6 +320,7 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
+        trace!(target: "forge::test", "executing test command");
         custom_run(self, true)
     }
 }
@@ -331,7 +334,7 @@ pub struct Test {
     /// The signature of the solidity test
     pub signature: String,
     /// Result of the executed solidity test
-    pub result: forge::TestResult,
+    pub result: TestResult,
 }
 
 impl Test {
@@ -364,17 +367,17 @@ impl TestOutcome {
     }
 
     /// Iterator over all succeeding tests and their names
-    pub fn successes(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.success)
     }
 
     /// Iterator over all failing tests and their names
-    pub fn failures(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| !t.success)
     }
 
     /// Iterator over all tests and their names
-    pub fn tests(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+    pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
     }
 
@@ -431,7 +434,7 @@ impl TestOutcome {
     }
 }
 
-fn short_test_result(name: &str, result: &forge::TestResult) {
+fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
@@ -483,13 +486,15 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         ..Default::default()
     };
     let fuzzer = proptest::test_runner::TestRunner::new(cfg);
-    let mut filter = args.filter();
+    let mut filter = args.filter(&config);
 
     // Set up the project
     let project = config.project()?;
     let compiler = ProjectCompiler::default();
     let output = if config.sparse_mode {
         compiler.compile_sparse(&project, filter.clone())
+    } else if args.opts.silent {
+        compile::suppress_compile(&project)
     } else {
         compiler.compile(&project)
     }?;
@@ -508,6 +513,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
+        .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
         .build(project.paths.root, output, evm_opts)?;
 
     if args.debug.is_some() {
@@ -604,6 +610,7 @@ fn test(
     test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
+    trace!(target: "forge::test", "running all tests");
     if runner.count_filtered_tests(&filter) == 0 {
         let filter_str = filter.to_string();
         if filter_str.is_empty() {
@@ -638,7 +645,7 @@ fn test(
         let etherscan_identifier = EtherscanIdentifier::new(
             remote_chain_id,
             config.etherscan_api_key,
-            remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
+            remote_chain_id.and_then(Config::foundry_etherscan_chain_cache_dir),
             cache_ttl,
         );
 
@@ -685,6 +692,7 @@ fn test(
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
+                    let rt = RuntimeOrHandle::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
                         decoder.identify(trace, &etherscan_identifier);
@@ -706,7 +714,7 @@ fn test(
                         // We decode the trace if we either need to build a gas report or we need
                         // to print it
                         if should_include || gas_reporting {
-                            decoder.decode(trace);
+                            rt.block_on(decoder.decode(trace));
                         }
 
                         if should_include {
@@ -739,6 +747,7 @@ fn test(
         // reattach the thread
         let _ = handle.join();
 
+        trace!(target: "forge::test", "received {} results", results.len());
         Ok(TestOutcome::new(results, allow_failure))
     }
 }

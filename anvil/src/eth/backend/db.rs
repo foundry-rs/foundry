@@ -4,7 +4,9 @@ use crate::{revm::AccountInfo, U256};
 use ethers::{
     prelude::{Address, Bytes, H160},
     types::H256,
+    utils::keccak256,
 };
+use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
@@ -32,6 +34,12 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) {
         let mut info = self.basic(address);
+        let code_hash = if code.as_ref().is_empty() {
+            KECCAK_EMPTY
+        } else {
+            H256::from_slice(&keccak256(code.as_ref())[..])
+        };
+        info.code_hash = code_hash;
         info.code = Some(code.to_vec().into());
         self.insert_account(address, info);
     }

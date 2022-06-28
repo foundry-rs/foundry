@@ -4,14 +4,15 @@ pub mod forge;
 mod multi_wallet;
 mod wallet;
 
+use std::sync::Arc;
+
 pub use multi_wallet::*;
 pub use wallet::*;
-
-use std::convert::TryFrom;
 
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
+    prelude::RetryClient,
     providers::{Http, Provider},
     signers::{HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
     types::{Address, Chain, U256},
@@ -60,9 +61,9 @@ pub struct EthereumOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub etherscan_api_key: Option<String>,
 
-    #[clap(long, env = "CHAIN", default_value = "mainnet", value_name = "CHAIN_NAME")]
+    #[clap(long, env = "CHAIN", value_name = "CHAIN_NAME")]
     #[serde(skip)]
-    pub chain: Chain,
+    pub chain: Option<Chain>,
 
     #[clap(flatten, next_help_heading = "WALLET OPTIONS")]
     #[serde(skip)]
@@ -86,7 +87,11 @@ impl EthereumOpts {
 
     #[allow(unused)]
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
-        self.signer_with(chain_id, Provider::try_from(self.rpc_url()?)?).await
+        self.signer_with(
+            chain_id,
+            Arc::new(Provider::<RetryClient<Http>>::new_client(self.rpc_url()?, 10, 1000)?),
+        )
+        .await
     }
 
     /// Returns a [`SignerMiddleware`] corresponding to the provided private key, mnemonic or hw
@@ -94,7 +99,7 @@ impl EthereumOpts {
     pub async fn signer_with(
         &self,
         chain_id: U256,
-        provider: Provider<Http>,
+        provider: Arc<Provider<RetryClient<Http>>>,
     ) -> eyre::Result<Option<WalletType>> {
         if self.wallet.ledger {
             let derivation = match &self.wallet.hd_path {

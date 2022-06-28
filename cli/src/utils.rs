@@ -1,7 +1,7 @@
 use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
-    prelude::{Http, Provider, TransactionReceipt},
+    prelude::{Http, Provider, RetryClient, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
     utils::format_units,
@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -217,6 +218,7 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
             pin_block: evm_opts.fork_block_number,
             cache_path: cache_storage,
             chain_id,
+            initial_backoff: evm_opts.fork_retry_backoff.unwrap_or(50),
         };
         return Some(fork)
     }
@@ -254,44 +256,54 @@ pub fn enable_paint() {
 
 /// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
 /// node) and with the default, `7s` if otherwise.
-pub fn get_http_provider(url: &str) -> Provider<Http> {
-    let provider = Provider::try_from(url).expect("Bad fork provider.");
+pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClient<Http>>> {
+    let (max_retry, initial_backoff) = if aggressive { (1000, 1) } else { (10, 1000) };
 
-    if url.contains("127.0.0.1") || url.contains("localhost") {
+    let provider = Provider::<RetryClient<Http>>::new_client(url, max_retry, initial_backoff)
+        .expect("Bad fork provider.");
+
+    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
         provider.interval(Duration::from_millis(100))
     } else {
         provider
-    }
+    })
 }
 
-pub fn print_receipt(receipt: &TransactionReceipt, nonce: U256) -> eyre::Result<()> {
+pub fn print_receipt(receipt: &TransactionReceipt) {
     let mut contract_address = "".to_string();
     if let Some(addr) = receipt.contract_address {
         contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
     }
 
     let gas_used = receipt.gas_used.unwrap_or_default();
-    let gas_price = receipt.effective_gas_price.expect("no gas price");
-    let paid = format_units(gas_used.mul(gas_price), 18)?;
+    let gas_price = receipt.effective_gas_price.unwrap_or_default();
 
-    let check = if receipt.status.unwrap().is_zero() {
+    let gas_details = if gas_price.is_zero() {
+        format!("Gas Used: {gas_used}")
+    } else {
+        let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
+        let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+        format!(
+            "Paid: {} ETH ({gas_used} gas * {} gwei)",
+            paid.trim_end_matches('0'),
+            gas_price.trim_end_matches('0').trim_end_matches('.')
+        )
+    };
+
+    let check = if receipt.status.unwrap_or_default().is_zero() {
         Emoji("❌ ", " [Failed] ")
     } else {
         Emoji("✅ ", " [Success] ")
     };
 
     println!(
-        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\nNonce: {}\nPaid: {} ETH ({} gas * {} gwei)",
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
         check,
         hex::encode(receipt.transaction_hash.as_bytes()),
         contract_address,
-        receipt.block_number.expect("no block_number"),
-        nonce,
-        paid.trim_end_matches('0'),
-        gas_used,
-        format_units(gas_price, 9)?.trim_end_matches('0').trim_end_matches('.')
+        receipt.block_number.unwrap_or_default(),
+        gas_details
     );
-    Ok(())
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -304,6 +316,7 @@ pub trait CommandUtils {
 }
 
 impl CommandUtils for Command {
+    #[track_caller]
     fn exec(&mut self) -> eyre::Result<Output> {
         let output = self.output()?;
         if !&output.status.success() {
@@ -313,6 +326,7 @@ impl CommandUtils for Command {
         Ok(output)
     }
 
+    #[track_caller]
     fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
         let output = self.exec()?;
         let stdout = String::from_utf8_lossy(&output.stdout);

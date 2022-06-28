@@ -10,11 +10,12 @@ use anvil_rpc::{
 use axum::{
     extract::Extension,
     http::{header, HeaderValue, Method},
-    routing::post,
+    routing::{post, IntoMakeService},
     Router, Server,
 };
+use hyper::server::conn::AddrIncoming;
 use serde::de::DeserializeOwned;
-use std::{fmt, future::Future, net::SocketAddr};
+use std::{fmt, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{trace, warn};
 
@@ -25,6 +26,9 @@ mod ws;
 pub use crate::ws::{WsContext, WsRpcHandler};
 pub use config::ServerConfig;
 
+/// Type alias for the configured axum server
+pub type AnvilServer = Server<AddrIncoming, IntoMakeService<Router>>;
+
 /// Configures an [axum::Server] that handles RPC-Calls, both HTTP requests and requests via
 /// websocket
 pub fn serve_http_ws<Http, Ws>(
@@ -32,7 +36,7 @@ pub fn serve_http_ws<Http, Ws>(
     config: ServerConfig,
     http: Http,
     ws: Ws,
-) -> impl Future<Output = hyper::Result<()>>
+) -> AnvilServer
 where
     Http: RpcHandler,
     Ws: WsRpcHandler,
@@ -62,11 +66,7 @@ where
 }
 
 /// Configures an [axum::Server] that handles RPC-Calls listing for POST on `/`
-pub fn serve_http<Http>(
-    addr: SocketAddr,
-    config: ServerConfig,
-    http: Http,
-) -> impl Future<Output = hyper::Result<()>>
+pub fn serve_http<Http>(addr: SocketAddr, config: ServerConfig, http: Http) -> AnvilServer
 where
     Http: RpcHandler,
 {

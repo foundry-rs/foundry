@@ -16,11 +16,13 @@ contract HelloWorld {
     /// Constructs the dude
     /// @param age The dude's age
     constructor(uint256 age) {
-        theDude = Person({
-            age: age,
-            wallet: msg.sender
-        });
+        theDude = Person({age: age, wallet: msg.sender});
     }
+
+    /**
+     * @dev does nothing
+     */
+    function example() public {}
 
     /**
      * @dev Calculates a rectangle's surface and perimeter.

@@ -26,9 +26,10 @@ pub use revm::db::DatabaseRef;
 
 pub use revm::Env;
 
-use self::inspector::{Fuzzer, InspectorData, InspectorStackConfig};
 use crate::{
+    coverage::HitMaps,
     debug::DebugArena,
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
     trace::CallTraceArena,
     CALLER,
@@ -47,6 +48,13 @@ use revm::{
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::{BTreeMap, VecDeque};
+use tracing::trace;
+
+use self::inspector::{Fuzzer, InspectorData, InspectorStackConfig};
+
+/// custom revm database implementations
+pub mod backend;
+pub mod snapshot;
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;
@@ -107,6 +115,8 @@ pub struct CallResult<D: Detokenize> {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -137,6 +147,8 @@ pub struct RawCallResult {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -159,6 +171,7 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: BTreeMap::new(),
             traces: None,
+            coverage: None,
             debug: None,
             transactions: None,
             state_changeset: None,
@@ -204,6 +217,25 @@ where
         );
 
         Executor { db, env, inspector_config, gas_limit }
+    }
+
+    /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
+    pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        let create2_deployer_account = self.db.basic(DEFAULT_CREATE2_DEPLOYER);
+
+        if create2_deployer_account.code.is_none() ||
+            create2_deployer_account.code.as_ref().unwrap().is_empty()
+        {
+            let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+            self.set_balance(creator, U256::MAX);
+            self.deploy(
+                creator,
+                hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
+                U256::zero(),
+                None
+            )?;
+        }
+        Ok(())
     }
 
     /// Set the balance of an account.
@@ -259,7 +291,8 @@ where
         from: Option<Address>,
         address: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
-        let from = from.unwrap_or(*CALLER);
+        trace!(contract=?address, "calling setUp()");
+        let from = from.unwrap_or(CALLER);
         self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
@@ -286,6 +319,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -301,6 +335,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -350,7 +385,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -383,6 +418,7 @@ where
             stipend,
             logs,
             labels,
+            coverage,
             traces,
             debug,
             transactions,
@@ -413,6 +449,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -428,6 +465,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -477,7 +515,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        let InspectorData { logs, labels, traces, debug, coverage, cheatcodes, .. } =
             inspector.collect_inspector_states();
 
         let transactions = if let Some(cheats) = cheatcodes {
@@ -499,6 +537,7 @@ where
             logs: logs.to_vec(),
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset: Some(state_changeset),
@@ -513,6 +552,7 @@ where
         value: U256,
         abi: Option<&Abi>,
     ) -> std::result::Result<DeployResult, EvmError> {
+        trace!(sender=?from, "deploying contract");
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
@@ -570,6 +610,8 @@ where
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
 
+        trace!(address=?address, "deployed contract");
+
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
 
@@ -599,7 +641,7 @@ where
         if success {
             // Check if a DSTest assertion failed
             let call =
-                executor.call::<bool, _, _>(*CALLER, address, "failed()(bool)", (), 0.into(), None);
+                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;

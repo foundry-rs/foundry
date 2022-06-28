@@ -1,6 +1,7 @@
 //! Cast
 //!
 //! TODO
+use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -8,7 +9,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units},
+    utils::{self, get_contract_address, keccak256, parse_units, rlp},
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -17,11 +18,13 @@ pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
+use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 mod print_utils;
+mod rlp_converter;
 mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -623,6 +626,30 @@ where
         };
         Ok(receipt)
     }
+
+    /// Perform a raw JSON-RPC request
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let result = cast.rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
+    ///     .await?;
+    /// println!("{}", result);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn rpc<T>(&self, method: &str, params: T) -> Result<String>
+    where
+        T: std::fmt::Debug + serde::Serialize + Send + Sync,
+    {
+        let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
+        Ok(serde_json::to_string(&res)?)
+    }
 }
 
 pub struct InterfaceSource {
@@ -991,7 +1018,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
-        let (sign, value) = match value.as_bytes().get(0) {
+        let (sign, value) = match value.as_bytes().first() {
             Some(b'+') => (Sign::Positive, &value[1..]),
             Some(b'-') => (Sign::Negative, &value[1..]),
             _ => (Sign::Positive, value),
@@ -1079,6 +1106,46 @@ impl SimpleCast {
             "eth" | "ether" => ethers_core::utils::format_units(value, 18),
             _ => ethers_core::utils::format_units(value, 18),
         }?)
+    }
+
+    /// Encodes hex data or list of hex data to hexadecimal rlp
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
+    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
+    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_rlp(value: &str) -> Result<String> {
+        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let item = Item::value_to_item(&val)?;
+        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    }
+
+    /// Decodes rlp encoded list with hex data
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::from_rlp("0x0f".to_string()).unwrap(), "\"0x0f\"");
+    ///     assert_eq!(Cast::from_rlp("0x33".to_string()).unwrap(), "\"0x33\"");
+    ///     assert_eq!(Cast::from_rlp("0xc161".to_string()).unwrap(), "[\"0x61\"]");
+    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[\"0x61\",\"0x62\"]");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_rlp(value: String) -> Result<String> {
+        let striped_value = strip_0x(&value);
+        let bytes = hex::decode(striped_value).expect("Could not decode hex");
+        let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
+        Ok(format!("{}", item))
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1275,18 +1342,13 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///
-    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
-    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    ///    assert_eq!(Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256","42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn index(
-        from_type: &str,
-        to_type: &str,
-        from_value: &str,
-        slot_number: &str,
-    ) -> Result<String> {
-        let sig = format!("x({from_type},{to_type})");
+    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+        let sig = format!("x({from_type},uint256)");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)

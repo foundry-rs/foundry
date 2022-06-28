@@ -1,7 +1,9 @@
 //! Verify contract source on etherscan
 
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    RetryArgs,
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -10,14 +12,16 @@ use ethers::{
         utils::lookup_compiler_version,
         Client,
     },
+    prelude::artifacts::StandardJsonCompilerInput,
     solc::{
         artifacts::{BytecodeHash, Source},
         cache::CacheEntry,
+        info::ContractInfo,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{Chain, Config, SolcReq};
+use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -99,6 +103,15 @@ pub struct VerifyArgs {
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     pub project_paths: ProjectPathsArgs,
+
+    #[clap(
+        help_heading = "LINKER OPTIONS",
+        help = "Set pre-linked libraries.",
+        long,
+        env = "DAPP_LIBRARIES",
+        value_name = "LIBRARIES"
+    )]
+    pub libraries: Vec<String>,
 }
 
 impl VerifyArgs {
@@ -114,13 +127,14 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err("Failed to submit contract verification")?;
 
                 if resp.status == "0" {
-                    if resp.message == "Contract source code already verified" {
+                    if resp.result == "Contract source code already verified" {
                         return Ok(None)
                     }
 
@@ -144,7 +158,7 @@ impl VerifyArgs {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}#code",
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(self.address)
@@ -159,6 +173,8 @@ impl VerifyArgs {
                 };
                 return check_args.run().await
             }
+        } else {
+            println!("Contract source code already verified");
         }
 
         Ok(())
@@ -178,13 +194,15 @@ impl VerifyArgs {
             use_solc: None,
             offline: false,
             force: false,
-            libraries: vec![],
+            libraries: self.libraries.clone(),
             via_ir: false,
             revert_strings: None,
+            silent: false,
+            build_info: false,
         };
 
         let project = build_args.project()?;
-        let config = Config::load();
+        let config = Config::load_with_root(find_project_root_path().unwrap());
 
         if self.contract.path.is_none() && !config.cache {
             eyre::bail!(
@@ -385,10 +403,18 @@ To skip this solc dry, pass `--force`.
         target: &Path,
         version: &Version,
     ) -> eyre::Result<(String, String, CodeFormat)> {
-        let input = project
+        let mut input: StandardJsonCompilerInput = project
             .standard_json_input(target)
             .wrap_err("Failed to get standard json input")?
             .normalize_evm_version(version);
+
+        input.settings.libraries.libs = input
+            .settings
+            .libraries
+            .libs
+            .into_iter()
+            .map(|(f, libs)| (f.strip_prefix(&project.root()).unwrap_or(&f).to_path_buf(), libs))
+            .collect();
 
         let source =
             serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;

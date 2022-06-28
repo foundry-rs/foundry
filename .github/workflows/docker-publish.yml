@@ -9,7 +9,6 @@ env:
   # Will resolve to foundry-rs/foundry
   IMAGE_NAME: ${{ github.repository }}
 
-
 jobs:
   build:
 
@@ -17,7 +16,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2

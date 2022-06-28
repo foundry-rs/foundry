@@ -2,7 +2,7 @@ use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -24,6 +24,13 @@ use std::{
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// A lock used for pre-installing commonly used solc versions once.
+/// Pre-installing is useful, because if two forge test require a missing solc at the same time, one
+/// can encounter an OS error 26 textfile busy if it tries to write the freshly downloaded solc to
+/// the right location while the other test already did that and is currently executing this solc
+/// binary.
+static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 // This stores `true` if the current terminal is a tty
 pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
@@ -66,11 +73,16 @@ pub fn clone_remote(
 ///
 /// The name given will be used to create the directory. Generally, it should
 /// correspond to the test name.
+#[track_caller]
 pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
     setup_forge_project(TestProject::new(name, style))
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    // preinstall commonly used solc once, we execute this here because this is the shared
+    // entrypoint used by all `forgetest!` macros
+    install_commonly_used_solc();
+
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -82,6 +94,19 @@ pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
     let cmd = test.cast_command();
     (test, cmd)
+}
+
+/// pre-installs commonly used solc versions
+fn install_commonly_used_solc() {
+    let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
+    if !*is_preinstalled {
+        let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
+        let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
+        v0_8_10.join().unwrap().unwrap();
+        v0_8_13.join().unwrap().unwrap();
+
+        *is_preinstalled = true;
+    }
 }
 
 /// `TestProject` represents a temporary project to run tests against.
@@ -217,6 +242,7 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
+    #[track_caller]
     pub fn forge_command(&self) -> TestCommand {
         let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
@@ -225,6 +251,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
@@ -238,6 +265,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
@@ -279,7 +307,9 @@ impl TestProject {
 impl Drop for TestCommand {
     fn drop(&mut self) {
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
-        let _ = std::env::set_current_dir(&self.saved_cwd);
+        if self.saved_cwd.exists() {
+            let _ = std::env::set_current_dir(&self.saved_cwd);
+        }
     }
 }
 
@@ -306,7 +336,6 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 }
 
 /// A simple wrapper around a process::Command with some conveniences.
-#[derive(Debug)]
 pub struct TestCommand {
     saved_cwd: PathBuf,
     /// The project used to launch this command.
@@ -315,6 +344,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    stdin_fun: Option<Box<dyn FnOnce(process::ChildStdin)>>,
 }
 
 impl TestCommand {
@@ -360,6 +390,11 @@ impl TestCommand {
         A: AsRef<OsStr>,
     {
         self.cmd.args(args);
+        self
+    }
+
+    pub fn stdin(&mut self, fun: impl FnOnce(process::ChildStdin) + 'static) -> &mut TestCommand {
+        self.stdin_fun = Some(Box::new(fun));
         self
     }
 
@@ -421,7 +456,7 @@ impl TestCommand {
 
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         String::from_utf8_lossy(&output.stderr).to_string()
     }
 
@@ -432,18 +467,33 @@ impl TestCommand {
 
     /// Returns the output but does not expect that the command was successful
     pub fn unchecked_output(&mut self) -> process::Output {
-        self.cmd.output().unwrap()
+        self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
     pub fn output(&mut self) -> process::Output {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         self.expect_success(output)
+    }
+
+    /// Executes command, applies stdin function and returns output
+    pub fn execute(&mut self) -> process::Output {
+        let mut child = self
+            .cmd
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .stdin(process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        if let Some(fun) = self.stdin_fun.take() {
+            fun(child.stdin.take().unwrap())
+        }
+        child.wait_with_output().unwrap()
     }
 
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
         println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
@@ -454,14 +504,14 @@ impl TestCommand {
         if let Some(parent) = name.parent() {
             fs::create_dir_all(parent).unwrap();
         }
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
         fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
     pub fn assert_err(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -481,7 +531,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stderr.
     pub fn assert_non_empty_stderr(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() || o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -501,7 +551,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stdout.
     pub fn assert_non_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -521,7 +571,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that nothing was printed to stdout.
     pub fn assert_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || !o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -585,7 +635,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.*?)\.rs(.*)?Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
+    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
 });
 
 impl OutputExt for process::Output {
@@ -651,5 +701,17 @@ mod tests {
         } else {
             assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
+    }
+
+    #[test]
+    fn fixture_regex_matches() {
+        assert!(IGNORE_IN_FIXTURES.is_match(
+            r#"
+Location:
+   [35mcli/src/compile.rs[0m:[35m151[0m
+
+Backtrace omitted.
+        "#
+        ));
     }
 }

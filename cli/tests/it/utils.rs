@@ -17,6 +17,7 @@ pub fn etherscan_key(chain: Chain) -> Option<String> {
         Chain::Fantom | Chain::FantomTestnet => {
             std::env::var("FTMSCAN_API_KEY").or_else(|_| std::env::var("FANTOMSCAN_API_KEY")).ok()
         }
+        Chain::OptimismKovan => std::env::var("OP_KOVAN_API_KEY").ok(),
         _ => std::env::var("ETHERSCAN_API_KEY").ok(),
     }
 }
@@ -28,7 +29,7 @@ pub fn network_rpc_key(chain: &str) -> Option<String> {
 
 pub fn network_private_key(chain: &str) -> Option<String> {
     let key = format!("{}_PRIVATE_KEY", chain.to_uppercase());
-    std::env::var(&key).ok()
+    std::env::var(&key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
 }
 
 /// Represents external input required for executing verification requests

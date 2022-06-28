@@ -11,6 +11,8 @@ keywords = ["ethereum", "web3"]
 [dependencies]
 foundry-utils = { path = "../utils" }
 foundry-evm = { path = "./../evm" }
+foundry-config = { path = "./../config" }
+
 futures = "0.3.17"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -18,13 +20,13 @@ ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-featu
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
+serde = "1.0.136"
 serde_json = "1.0.67"
 chrono = "0.2"
 hex = "0.4.3"
 
 [dev-dependencies]
 async-trait = "0.1.53"
-serde = "1.0.136"
 tokio = "1.17.0"
 thiserror = "1.0.30"
 

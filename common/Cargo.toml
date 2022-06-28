@@ -26,3 +26,4 @@ clap = { version = "3.0.10", features = [
 
 #  misc
 serde = "1.0.133"
+thiserror = "1.0.31"

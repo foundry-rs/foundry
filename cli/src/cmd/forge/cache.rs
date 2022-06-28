@@ -5,7 +5,7 @@ use std::str::FromStr;
 use strum::VariantNames;
 
 use crate::cmd::Cmd;
-use cache::{Cache, ChainCache};
+use cache::Cache;
 use ethers::prelude::Chain;
 use eyre::Result;
 use foundry_config::{cache, Chain as FoundryConfigChain, Config};
@@ -37,6 +37,7 @@ impl FromStr for ChainOrAll {
 }
 
 #[derive(Debug, Parser)]
+#[clap(group = clap::ArgGroup::new("etherscan-blocks").multiple(false))]
 pub struct CleanArgs {
     // TODO refactor to dedup shared logic with ClapChain in opts/mod
     #[clap(
@@ -54,9 +55,13 @@ pub struct CleanArgs {
         multiple_values(true),
         use_value_delimiter(true),
         require_value_delimiter(true),
-        value_name = "BLOCKS"
+        value_name = "BLOCKS",
+        group = "etherscan-blocks"
     )]
     blocks: Vec<u64>,
+
+    #[clap(long, group = "etherscan-blocks")]
+    etherscan: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -84,12 +89,18 @@ impl Cmd for CleanArgs {
     type Output = ();
 
     fn run(self) -> Result<Self::Output> {
-        let CleanArgs { chains, blocks } = self;
+        let CleanArgs { chains, blocks, etherscan } = self;
 
         for chain_or_all in chains {
             match chain_or_all {
-                ChainOrAll::Chain(chain) => clean_chain_cache(chain, blocks.to_vec())?,
-                ChainOrAll::All => Config::clean_foundry_cache()?,
+                ChainOrAll::Chain(chain) => clean_chain_cache(chain, blocks.to_vec(), etherscan)?,
+                ChainOrAll::All => {
+                    if etherscan {
+                        Config::clean_foundry_etherscan_cache()?;
+                    } else {
+                        Config::clean_foundry_cache()?
+                    }
+                }
             }
         }
 
@@ -105,7 +116,9 @@ impl Cmd for LsArgs {
         let mut cache = Cache::default();
         for chain_or_all in chains {
             match chain_or_all {
-                ChainOrAll::Chain(chain) => cache.chains.push(list_chain_cache(chain)?),
+                ChainOrAll::Chain(chain) => {
+                    cache.chains.push(Config::list_foundry_chain_cache(chain.into())?)
+                }
                 ChainOrAll::All => cache = Config::list_foundry_cache()?,
             }
         }
@@ -114,26 +127,22 @@ impl Cmd for LsArgs {
     }
 }
 
-fn clean_chain_cache(chain: Chain, blocks: Vec<u64>) -> Result<()> {
-    if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
-        if blocks.is_empty() {
-            Config::clean_foundry_chain_cache(foundry_chain)?;
-        } else {
-            for block in blocks {
-                Config::clean_foundry_block_cache(foundry_chain, block)?;
-            }
+fn clean_chain_cache(
+    chain: impl Into<FoundryConfigChain>,
+    blocks: Vec<u64>,
+    etherscan: bool,
+) -> Result<()> {
+    let chain = chain.into();
+    if blocks.is_empty() {
+        Config::clean_foundry_etherscan_chain_cache(chain)?;
+        if etherscan {
+            return Ok(())
         }
+        Config::clean_foundry_chain_cache(chain)?;
     } else {
-        eyre::bail!("failed to map chain");
+        for block in blocks {
+            Config::clean_foundry_block_cache(chain, block)?;
+        }
     }
-
     Ok(())
-}
-
-fn list_chain_cache(chain: Chain) -> Result<ChainCache> {
-    if let Ok(foundry_chain) = FoundryConfigChain::try_from(chain) {
-        Config::list_foundry_chain_cache(foundry_chain)
-    } else {
-        eyre::bail!("failed to recognise chain: {}", chain);
-    }
 }

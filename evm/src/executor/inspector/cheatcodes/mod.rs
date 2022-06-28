@@ -33,7 +33,16 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::Arc,
+};
+
+mod config;
+pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -41,9 +50,6 @@ use std::collections::{BTreeMap, VecDeque};
 /// mocking addresses, signatures and altering call reverts.
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
-    /// Whether FFI is enabled or not
-    pub ffi: bool,
-
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -85,15 +91,34 @@ pub struct Cheatcodes {
 
     /// Scripting based transactions
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
+
+    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    pub config: Arc<CheatsConfig>,
+
+    /// Test-scoped context holding data that needs to be reset every test run
+    pub context: Context,
+}
+
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
+    pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
-            ffi,
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
+            config: Arc::new(config),
             ..Default::default()
         }
     }
@@ -112,7 +137,7 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }

@@ -1,8 +1,10 @@
-use crate::{opts::forge::ContractInfo, suggestions};
+use crate::suggestions;
+
 use clap::Parser;
 use ethers::{
     abi::Abi,
-    prelude::{ArtifactId, TransactionReceipt, TxHash},
+    core::types::Chain,
+    prelude::ArtifactId,
     solc::{
         artifacts::{
             CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
@@ -10,17 +12,13 @@ use ethers::{
         cache::{CacheEntry, SolFilesCache},
         Project,
     },
-    types::transaction::eip2718::TypedTransaction,
 };
-use foundry_config::Config;
+
+use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, VecDeque},
-    io::BufWriter,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+
+use ethers::solc::info::ContractInfo;
+use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
 /// Common trait for all cli commands
@@ -156,136 +154,65 @@ pub fn needs_setup(abi: &Abi) -> bool {
 
 pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    deployed_code: bool,
 ) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
     contracts
         .iter()
-        .map(|(id, c)| {
-            (
-                id.clone(),
-                (
-                    c.abi.clone(),
-                    c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
-                ),
-            )
+        .filter_map(|(id, c)| {
+            let bytecode = if deployed_code {
+                c.deployed_bytecode.clone().into_bytes()
+            } else {
+                c.bytecode.clone().object.into_bytes()
+            };
+
+            if let Some(bytecode) = bytecode {
+                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+            }
+            None
         })
         .collect()
 }
 
-/// Helper that saves the transactions sequence and its state on which transactions have been
-/// broadcasted
-#[derive(Deserialize, Serialize, Clone)]
-pub struct ScriptSequence {
-    pub transactions: VecDeque<TypedTransaction>,
-    pub receipts: Vec<TransactionReceipt>,
-    pub pending: Vec<TxHash>,
-    pub path: PathBuf,
-    pub timestamp: u64,
+#[macro_export]
+macro_rules! init_progress {
+    ($local:expr, $label:expr) => {{
+        let pb = ProgressBar::new($local.len() as u64);
+        let mut template =
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+        template += $label;
+        template += " ({eta})";
+        pb.set_style(
+            ProgressStyle::with_template(&template)
+                .unwrap()
+                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .progress_chars("#>-"),
+        );
+        pb
+    }};
 }
 
-impl ScriptSequence {
-    pub fn new(
-        transactions: VecDeque<TypedTransaction>,
-        sig: &str,
-        target: &ArtifactId,
-        config: &Config,
-        chain_id: u64,
-    ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
-
-        Ok(ScriptSequence {
-            transactions,
-            receipts: vec![],
-            pending: vec![],
-            path,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Wrong system time.")
-                .as_secs(),
-        })
-    }
-
-    pub fn load(
-        config: &Config,
-        sig: &str,
-        target: &ArtifactId,
-        chain_id: u64,
-    ) -> eyre::Result<Self> {
-        let file = std::fs::read_to_string(ScriptSequence::get_path(
-            &config.broadcast,
-            sig,
-            target,
-            chain_id,
-        )?)?;
-        serde_json::from_str(&file).map_err(|e| e.into())
-    }
-
-    pub fn save(&mut self) -> eyre::Result<()> {
-        if !self.transactions.is_empty() {
-            self.timestamp =
-                SystemTime::now().duration_since(UNIX_EPOCH).expect("Wrong system time.").as_secs();
-
-            let path = self.path.to_str().expect("Invalid path.");
-
-            //../run-latest.json
-            serde_json::to_writer(BufWriter::new(std::fs::File::create(path)?), &self)?;
-            //../run-timestamp.json
-            serde_json::to_writer(
-                BufWriter::new(std::fs::File::create(
-                    &path.replace("latest.json", &format!("{}.json", self.timestamp)),
-                )?),
-                &self,
-            )?;
-
-            println!(
-                "\nTransactions saved to: {}\n",
-                self.path.to_str().expect(
-                    "Couldn't convert path to string. Transactions were written to file though."
-                )
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
-        self.receipts.push(receipt);
-    }
-
-    pub fn add_receipts(&mut self, receipts: Vec<TransactionReceipt>) {
-        self.receipts.extend(receipts.into_iter());
-    }
-
-    pub fn add_pending(&mut self, tx_hash: TxHash) {
-        self.pending.push(tx_hash);
-    }
-
-    pub fn remove_pending(&mut self, tx_hash: TxHash) {
-        self.pending.retain(|element| element != &tx_hash);
-    }
-
-    /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
-    pub fn get_path(
-        out: &Path,
-        sig: &str,
-        target: &ArtifactId,
-        chain_id: u64,
-    ) -> eyre::Result<PathBuf> {
-        let mut out = out.to_path_buf();
-
-        let target_fname = target.source.file_name().expect("No file name");
-        out.push(target_fname);
-        out.push(format!("{chain_id}"));
-
-        std::fs::create_dir_all(out.clone())?;
-
-        let filename = sig.split_once('(').expect("Sig is invalid").0.to_owned();
-        out.push(format!("{filename}-latest.json"));
-        Ok(out)
-    }
+#[macro_export]
+macro_rules! update_progress {
+    ($pb:ident, $index:expr) => {
+        $pb.set_position(($index + 1) as u64);
+    };
 }
 
-impl Drop for ScriptSequence {
-    fn drop(&mut self) {
-        self.save().expect("not able to save deployment sequence");
+/// True if the network calculates gas costs differently.
+pub fn has_different_gas_calc(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
     }
+    false
+}
+
+/// True if it supports broadcasting in batches.
+pub fn has_batch_support(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return !matches!(
+            chain,
+            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        )
+    }
+    true
 }

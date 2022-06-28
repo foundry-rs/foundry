@@ -1,20 +1,17 @@
+use crate::cmd::Cmd;
+use clap::Parser;
+use console::{style, Style};
+use ethers::solc::ProjectPathsConfig;
+use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
+use foundry_common::fs;
+use rayon::prelude::*;
+use similar::{ChangeTag, TextDiff};
 use std::{
     fmt::{Display, Write},
     io,
     io::Read,
     path::{Path, PathBuf},
 };
-
-use clap::Parser;
-use console::{style, Style};
-use ethers::solc::ProjectPathsConfig;
-
-use rayon::prelude::*;
-use similar::{ChangeTag, TextDiff};
-
-use forge_fmt::{Formatter, FormatterConfig, Visitable};
-
-use crate::cmd::Cmd;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -74,7 +71,7 @@ impl Cmd for FmtArgs {
                 std::env::current_dir().expect("failed to get current directory")
             });
             if !root.is_dir() {
-                return Err(eyre::eyre!("Root path should be a directory"))
+                eyre::bail!("Root path should be a directory")
             }
 
             ProjectPathsConfig::find_source_dir(&root)
@@ -97,20 +94,21 @@ impl Cmd for FmtArgs {
             .enumerate()
             .map(|(i, input)| {
                 let source = match input {
-                    Input::Path(path) => std::fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(&path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let (mut source_unit, _comments) = solang_parser::parse(&source, i)
+                let (mut source_unit, comments) = solang_parser::parse(&source, i)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
+                let comments = Comments::new(comments, &source);
 
                 let mut output = String::new();
                 let mut formatter =
-                    Formatter::new(&mut output, &source, FormatterConfig::default());
+                    Formatter::new(&mut output, &source, comments, FormatterConfig::default());
 
                 source_unit.visit(&mut formatter).unwrap();
 
@@ -168,7 +166,7 @@ impl Cmd for FmtArgs {
                         return Ok(Some(diff_summary))
                     }
                 } else if let Input::Path(path) = input {
-                    std::fs::write(path, output)?;
+                    fs::write(path, output)?;
                 }
 
                 Ok(None)

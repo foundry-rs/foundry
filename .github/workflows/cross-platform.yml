@@ -4,10 +4,14 @@ on:
 
 name: cross-platform
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -22,8 +26,8 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-          #- os: windows-latest
-          #  target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout sources
@@ -75,18 +79,19 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --verbose --workspace
+          args: --verbose --locked --bins --tests
 
       - name: Run forge
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
-          args: -p foundry-cli --bin forge -- --help
+          args: --locked --bin forge -- --help
 
       - name: Run tests
         uses: actions-rs/cargo@v1
+        if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --workspace
+          args: --locked --workspace -- --skip fork

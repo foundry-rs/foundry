@@ -10,11 +10,14 @@ pub use tracer::Tracer;
 mod debugger;
 pub use debugger::Debugger;
 
+mod coverage;
+pub use coverage::CoverageCollector;
+
 mod stack;
 pub use stack::{InspectorData, InspectorStack};
 
 mod cheatcodes;
-pub use cheatcodes::{Cheatcodes, DEFAULT_CREATE2_DEPLOYER};
+pub use cheatcodes::{Cheatcodes, CheatsConfig, DEFAULT_CREATE2_DEPLOYER};
 
 use ethers::types::U256;
 use revm::BlockEnv;
@@ -43,6 +46,8 @@ pub struct InspectorStackConfig {
     pub debugger: bool,
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
+    /// Whether or not coverage info should be collected
+    pub coverage: bool,
 }
 
 impl InspectorStackConfig {
@@ -50,7 +55,7 @@ impl InspectorStackConfig {
         let mut stack =
             InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
 
-        stack.cheatcodes = self.cheatcodes.clone();
+        stack.cheatcodes = self.create_cheatcodes();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {
             cheatcodes.block = Some(self.block.clone());
             cheatcodes.gas_price = Some(self.gas_price);
@@ -64,6 +69,15 @@ impl InspectorStackConfig {
         }
         stack.fuzzer = self.fuzzer.clone();
 
+        if self.coverage {
+            stack.coverage = Some(CoverageCollector::default());
+        }
         stack
+    }
+
+    fn create_cheatcodes(&self) -> Option<Cheatcodes> {
+        let cheatcodes = self.cheatcodes.clone();
+
+        cheatcodes.map(|cheatcodes| Cheatcodes { context: Default::default(), ..cheatcodes })
     }
 }

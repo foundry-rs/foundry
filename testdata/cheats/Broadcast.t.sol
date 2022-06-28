@@ -19,6 +19,9 @@ contract Test is DSTest {
         changed += 1;
     }
 
+    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {
+    }
+
     function echoSender() public view returns (address) {
         return msg.sender;
     } 
@@ -157,6 +160,9 @@ contract BroadcastTestNoLinking is DSTest {
     }
 
     function deployMany() public {
+
+        assert(cheats.getNonce(msg.sender) == 0);
+
         cheats.startBroadcast();
 
         for(uint i; i< 100; i++) {
@@ -174,6 +180,25 @@ contract BroadcastTestNoLinking is DSTest {
         cheats.stopBroadcast();
     
     }
+    function errorStaticCall() public {
+        cheats.broadcast();
+        NoLink test11 = new NoLink();
+
+        cheats.broadcast();
+        test11.view_me();
+    }
+}
+
+contract BroadcastMix is DSTest {
+
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
     function more() internal {
         cheats.broadcast();
         NoLink test11 = new NoLink();
@@ -221,14 +246,6 @@ contract BroadcastTestNoLinking is DSTest {
 
         more();
     }
-
-    function errorStaticCall() public {
-        cheats.broadcast();
-        NoLink test11 = new NoLink();
-
-        cheats.broadcast();
-        test11.view_me();
-    }
 }
 
 
@@ -236,6 +253,10 @@ contract BroadcastTestSetup is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function setUp() public {
+
+        // It predeployed a library first
+        assert(cheats.getNonce(msg.sender) == 1);
+
         cheats.broadcast();
         Test t = new Test();
 
@@ -252,5 +273,28 @@ contract BroadcastTestSetup is DSTest {
         
         cheats.broadcast();
         t.t(3);
+    }
+}
+
+contract BroadcastTestLog is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function run() public {
+        uint256[] memory arr = new uint256[](2);
+        arr[0] = 3;
+        arr[1] = 4;
+
+        cheats.startBroadcast();
+        {
+            Test c1 = new Test();
+            Test c2 = new Test{salt: bytes32(uint256(1337))}();
+
+            c1.multiple_arguments(1, address(0x1337), arr);
+            c1.inc();
+            c2.t(1);
+            
+            payable(address(0x1337)).transfer(0.0001 ether);
+        }
+        cheats.stopBroadcast();
     }
 }

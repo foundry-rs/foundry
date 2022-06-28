@@ -98,11 +98,16 @@ impl fmt::Display for CallTraceArena {
             idx: usize,
             left: &str,
             child: &str,
+            verbose: bool,
         ) -> fmt::Result {
             let node = &arena.arena[idx];
 
             // Display trace header
-            writeln!(writer, "{}{}", left, node.trace)?;
+            if !verbose {
+                writeln!(writer, "{}{}", left, node.trace)?;
+            } else {
+                writeln!(writer, "{}{:#}", left, node.trace)?;
+            }
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -124,7 +129,14 @@ impl fmt::Display for CallTraceArena {
                         })?;
                     }
                     LogCallOrder::Call(index) => {
-                        inner(arena, writer, node.children[*index], &left_prefix, &right_prefix)?;
+                        inner(
+                            arena,
+                            writer,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                            verbose,
+                        )?;
                     }
                 }
             }
@@ -146,7 +158,7 @@ impl fmt::Display for CallTraceArena {
             Ok(())
         }
 
-        inner(self, f, 0, "  ", "  ")
+        inner(self, f, 0, "  ", "  ", f.alternate())
     }
 }
 
@@ -354,6 +366,8 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let address =
+            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
         if self.created() {
             write!(
                 f,
@@ -362,7 +376,7 @@ impl fmt::Display for CallTrace {
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                self.address
+                address
             )?;
         } else {
             let (func, inputs) = match &self.data {
@@ -389,7 +403,7 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
                 if !self.value.is_zero() {
                     format!("{{value: {}}}", self.value)

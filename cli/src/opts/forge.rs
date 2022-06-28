@@ -7,7 +7,7 @@ use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
     cache::CacheArgs,
-    config,
+    config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
     flatten,
@@ -23,6 +23,7 @@ use crate::cmd::forge::{
 };
 use serde::Serialize;
 
+use crate::cmd::forge::remove::RemoveArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -48,26 +49,25 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(visible_alias = "t")]
-    #[clap(about = "Run the project's tests.")]
+    #[clap(visible_alias = "t", about = "Run the project's tests.")]
     Test(test::TestArgs),
 
     #[clap(
+        visible_alias = "s",
         about = "Run a smart contract as a script, building transactions that can be sent onchain."
     )]
-    #[clap(visible_alias = "s")]
     Script(ScriptArgs),
 
-    #[clap(visible_alias = "bi")]
-    #[clap(about = "Generate Rust bindings for smart contracts.")]
+    #[clap(about = "Generate coverage reports.")]
+    Coverage(coverage::CoverageArgs),
+
+    #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(visible_alias = "b")]
-    #[clap(about = "Build the project's smart contracts.")]
+    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(visible_alias = "d")]
-    #[clap(about = "Debugs a single smart contract as a script.")]
+    #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
     Debug(DebugArgs),
 
     #[clap(
@@ -91,10 +91,7 @@ pub enum Subcommands {
     Install(InstallArgs),
 
     #[clap(visible_alias = "rm", about = "Remove one or multiple dependencies.")]
-    Remove {
-        #[clap(help = "The path to the dependency you want to remove.")]
-        dependencies: Vec<Dependency>,
-    },
+    Remove(RemoveArgs),
 
     #[clap(
         visible_alias = "re",
@@ -208,53 +205,6 @@ pub struct CompilerArgs {
     pub extra_output_files: Vec<ContractOutputSelection>,
 }
 
-/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
-/// optional.
-#[derive(Clone, Debug)]
-pub struct ContractInfo {
-    /// Location of the contract
-    pub path: Option<String>,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for ContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let err = "contract source info format must be `<path>:<contractname>` or `<contractname>`";
-        let mut iter = s.rsplit(':');
-        let name = iter.next().ok_or_else(|| eyre::eyre!(err))?.trim().to_string();
-        let path = iter.next().map(str::to_string);
-
-        if name.ends_with(".sol") || name.contains('/') {
-            eyre::bail!(err)
-        }
-
-        Ok(Self { path, name })
-    }
-}
-
-/// Represents the common dapp argument pattern `<path>:<contractname>`
-#[derive(Clone, Debug)]
-pub struct FullContractInfo {
-    /// Location of the contract
-    pub path: String,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for FullContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (path, name) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{s}`"))?;
-        Ok(Self { path: path.to_string(), name: name.trim().to_string() })
-    }
-}
-
 /// A git dependency which will be installed as a submodule
 ///
 /// A dependency can be provided as a raw URL, or as a path to a Github repository
@@ -338,6 +288,7 @@ impl FromStr for Dependency {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::solc::info::ContractInfo;
 
     #[test]
     fn parses_dependencies() {

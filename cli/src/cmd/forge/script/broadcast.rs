@@ -1,80 +1,159 @@
+use super::{
+    sequence::{ScriptSequence, TransactionWithMetadata},
+    *,
+};
 use crate::{
-    cmd::{
-        forge::script::receipts::{get_pending_txes, maybe_has_receipt, wait_for_receipts},
-        ScriptSequence,
-    },
+    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    init_progress,
     opts::WalletType,
-    utils::{get_http_provider, print_receipt},
+    update_progress,
+    utils::get_http_provider,
 };
 use ethers::{
-    prelude::{SignerMiddleware, TxHash},
+    prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
     providers::Middleware,
-    types::{transaction::eip2718::TypedTransaction, Chain, TransactionReceipt},
+    types::transaction::eip2718::TypedTransaction,
+    utils::format_units,
 };
-
-use super::*;
+use eyre::ContextCompat;
+use foundry_config::Chain;
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::{cmp::min, fmt, sync::Arc};
 
 impl ScriptArgs {
+    /// Sends the transactions which haven't been broadcasted yet.
     pub async fn send_transactions(
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
     ) -> eyre::Result<()> {
-        let provider = get_http_provider(fork_url);
+        let provider = get_http_provider(fork_url, true);
+        let already_broadcasted = deployment_sequence.receipts.len();
 
-        let required_addresses = deployment_sequence
-            .transactions
-            .iter()
-            .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
-            .collect();
+        if already_broadcasted < deployment_sequence.transactions.len() {
+            let required_addresses = deployment_sequence
+                .typed_transactions()
+                .into_iter()
+                .skip(already_broadcasted)
+                .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
+                .collect();
 
-        let local_wallets = self.wallets.find_all(&provider, required_addresses).await?;
-        if local_wallets.is_empty() {
-            eyre::bail!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
-        }
+            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
+            let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
 
-        let transactions = deployment_sequence.transactions.clone();
+            // We only wait for a transaction receipt before sending the next transaction, if there
+            // is more than one signer. There would be no way of assuring their order
+            // otherwise. Or if the chain does not support batched transactions (eg. Arbitrum).
+            let sequential_broadcast =
+                local_wallets.len() != 1 || self.slow || !has_batch_support(chain);
 
-        // Iterate through transactions, matching the `from` field with the associated
-        // wallet. Then send the transaction. Panics if we find a unknown `from`
-        let sequence =
-            transactions.into_iter().skip(deployment_sequence.receipts.len()).map(|tx| {
-                let from = *tx.from().expect("No sender for onchain transaction!");
-                let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
-                (tx, signer)
-            });
-
-        let pending_txes = get_pending_txes(&deployment_sequence.pending, fork_url).await;
-        let mut future_receipts = vec![];
-
-        // We only wait for a transaction receipt before sending the next transaction, if there is
-        // more than one signer. There would be no way of assuring their order otherwise.
-        let sequential_broadcast = local_wallets.len() != 1 || self.slow;
-        for payload in sequence {
-            let (tx, signer) = payload;
-
-            // pending transactions from a previous failed run can be retrieve when passing
-            // `--resume`
-            match maybe_has_receipt(&tx, &pending_txes, fork_url).await {
-                Some(receipt) => {
-                    print_receipt(&receipt, *tx.nonce().unwrap())?;
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
-                    deployment_sequence.add_receipt(receipt);
-                }
-                None => {
-                    let receipt = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
-
-                    if sequential_broadcast {
-                        wait_for_receipts(vec![receipt], deployment_sequence).await?;
-                    } else {
-                        future_receipts.push(receipt);
+            // Make a one-time gas price estimation
+            let (gas_price, eip1559_fees) = {
+                match deployment_sequence.transactions.front().unwrap().typed_tx() {
+                    TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+                        (provider.get_gas_price().await.ok(), None)
+                    }
+                    TypedTransaction::Eip1559(_) => {
+                        (None, provider.estimate_eip1559_fees(None).await.ok())
                     }
                 }
-            }
-        }
+            };
 
-        if !sequential_broadcast {
-            wait_for_receipts(future_receipts, deployment_sequence).await.unwrap();
+            // Iterate through transactions, matching the `from` field with the associated
+            // wallet. Then send the transaction. Panics if we find a unknown `from`
+            let sequence = deployment_sequence
+                .typed_transactions()
+                .into_iter()
+                .skip(already_broadcasted)
+                .map(|tx| {
+                    let from = *tx.from().expect("No sender for onchain transaction!");
+                    let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
+
+                    let mut tx = tx.clone();
+
+                    tx.set_chain_id(chain);
+
+                    if let Some(gas_price) = self.with_gas_price {
+                        tx.set_gas_price(gas_price);
+                    } else {
+                        // fill gas price
+                        match tx {
+                            TypedTransaction::Eip2930(_) | TypedTransaction::Legacy(_) => {
+                                tx.set_gas_price(gas_price.expect("Could not get gas_price."));
+                            }
+                            TypedTransaction::Eip1559(ref mut inner) => {
+                                let eip1559_fees =
+                                    eip1559_fees.expect("Could not get eip1559 fee estimation.");
+                                inner.max_fee_per_gas = Some(eip1559_fees.0);
+                                inner.max_priority_fee_per_gas = Some(eip1559_fees.1);
+                            }
+                        }
+                    }
+
+                    (tx, signer)
+                })
+                .collect::<Vec<_>>();
+
+            let pb = init_progress!(deployment_sequence.transactions, "txes");
+
+            // We send transactions and wait for receipts in batches of 100, since some networks
+            // cannot handle more than that.
+            let batch_size = 100;
+            let mut index = 0;
+
+            for (batch_number, batch) in sequence.chunks(batch_size).map(|f| f.to_vec()).enumerate()
+            {
+                let mut pending_transactions = vec![];
+
+                println!(
+                    "##\nSending transactions [{} - {}].",
+                    batch_number * batch_size,
+                    batch_number * batch_size + min(batch_size, batch.len()) - 1
+                );
+                for (tx, signer) in batch.into_iter() {
+                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+
+                    if sequential_broadcast {
+                        let tx_hash = tx_hash.await?;
+                        deployment_sequence.add_pending(index, tx_hash);
+
+                        update_progress!(pb, (index + already_broadcasted));
+                        index += 1;
+
+                        wait_for_receipts(vec![tx_hash], deployment_sequence, provider.clone())
+                            .await?;
+                    } else {
+                        pending_transactions.push(tx_hash);
+                    }
+                }
+
+                if !pending_transactions.is_empty() {
+                    let mut buffer = futures::stream::iter(pending_transactions).buffered(7);
+
+                    let mut tx_hashes = vec![];
+
+                    while let Some(tx_hash) = buffer.next().await {
+                        let tx_hash = tx_hash?;
+                        deployment_sequence.add_pending(index, tx_hash);
+                        tx_hashes.push(tx_hash);
+
+                        update_progress!(pb, (index + already_broadcasted));
+                        index += 1;
+                    }
+
+                    // Checkpoint save
+                    deployment_sequence.save()?;
+
+                    if !sequential_broadcast {
+                        println!("##\nWaiting for receipts.");
+                        wait_for_receipts(tx_hashes, deployment_sequence, provider.clone()).await?;
+                    }
+                }
+
+                // Checkpoint save
+                deployment_sequence.save()?;
+            }
         }
 
         println!("\n\n==========================");
@@ -91,7 +170,7 @@ impl ScriptArgs {
         signer: &WalletType,
         sequential_broadcast: bool,
         fork_url: &str,
-    ) -> Result<(TransactionReceipt, U256), BroadcastError> {
+    ) -> Result<TxHash, BroadcastError> {
         let from = tx.from().expect("no sender");
 
         if sequential_broadcast {
@@ -115,46 +194,52 @@ impl ScriptArgs {
         }
     }
 
-    /// Executes the passed transactions in sequence, and if no error has occurred, it broadcasts
+    /// Executes the passed transactions in sequence, and if no error has occurred, broadcasts
     /// them.
     pub async fn handle_broadcastable_transactions(
         &self,
         target: &ArtifactId,
-        transactions: Option<VecDeque<TypedTransaction>>,
+        result: ScriptResult,
+        libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         script_config: &ScriptConfig,
+        verify: VerifyBundle,
     ) -> eyre::Result<()> {
-        if let Some(txs) = transactions {
+        if let Some(txs) = result.transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let gas_filled_txs =
-                    self.execute_transactions(txs, script_config, decoder)
+                let gas_filled_txs = self
+                    .execute_transactions(txs, script_config, decoder, &verify.known_contracts)
                     .await
-                    .map_err(|_| eyre::eyre!("One or more transactions failed when simulating the on-chain version. Check the trace by re-running with `-vvv`"))?;
+                    .map_err(|_| {
+                        eyre::eyre!(
+                            "One or more transactions failed when simulating the
+                on-chain version. Check the trace by re-running with `-vvv`"
+                        )
+                    })?;
+
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
-                let provider = get_http_provider(&fork_url);
+                let provider = get_http_provider(&fork_url, false);
                 let chain = provider.get_chainid().await?.as_u64();
-                let is_legacy = self.legacy ||
-                    Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
 
-                let txes = gas_filled_txs
-                    .into_iter()
-                    .map(|tx| {
-                        let mut tx = if is_legacy {
-                            TypedTransaction::Legacy(tx.into())
-                        } else {
-                            TypedTransaction::Eip1559(tx.into())
-                        };
-                        tx.set_chain_id(chain);
-                        tx
-                    })
-                    .collect();
+                let returns = self.get_returns(script_config, &result.returned)?;
 
-                let mut deployment_sequence =
-                    ScriptSequence::new(txes, &self.sig, target, &script_config.config, chain)?;
+                let mut deployment_sequence = ScriptSequence::new(
+                    self.handle_chain_requirements(gas_filled_txs, provider, chain).await?,
+                    returns,
+                    &self.sig,
+                    target,
+                    &script_config.config,
+                    chain,
+                )?;
+
+                deployment_sequence.add_libraries(libraries);
 
                 if self.broadcast {
                     self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    if self.verify {
+                        deployment_sequence.verify_contracts(verify, chain).await?;
+                    }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
                 }
@@ -166,43 +251,121 @@ impl ScriptArgs {
         }
         Ok(())
     }
+
+    /// Modify each transaction according to the specific chain requirements (transaction type
+    /// and/or gas calculations).
+    async fn handle_chain_requirements(
+        &self,
+        txes: VecDeque<TransactionWithMetadata>,
+        provider: Arc<Provider<RetryClient<Http>>>,
+        chain: u64,
+    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
+        let mut is_legacy = self.legacy;
+        if let Chain::Named(chain) = Chain::from(chain) {
+            is_legacy |= chain.is_legacy();
+        };
+
+        let mut new_txes = VecDeque::new();
+        let mut total_gas = U256::zero();
+        for mut tx in txes.into_iter() {
+            tx.change_type(is_legacy);
+
+            let typed_tx = tx.typed_tx_mut();
+
+            if has_different_gas_calc(chain) {
+                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
+            }
+
+            total_gas += *typed_tx.gas().expect("gas is set");
+
+            new_txes.push_back(tx);
+        }
+
+        // We don't store it in the transactions, since we want the most updated value. Right before
+        // broadcasting.
+        let per_gas = if let Some(gas_price) = self.with_gas_price {
+            gas_price
+        } else {
+            match new_txes.front().unwrap().typed_tx() {
+                TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+                    provider.get_gas_price().await?
+                }
+                TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
+            }
+        };
+
+        println!("\n==========================");
+        println!("\nEstimated total gas used for script: {}", total_gas);
+        println!(
+            "\nEstimated amount required: {} ETH",
+            format_units(total_gas.saturating_mul(per_gas), 18)
+                .unwrap_or_else(|_| "[Could not calculate]".to_string())
+                .trim_end_matches('0')
+        );
+        println!("\n==========================");
+        Ok(new_txes)
+    }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum BroadcastError {
     Simple(String),
     ErrorWithTxHash(String, TxHash),
+}
+
+impl fmt::Display for BroadcastError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BroadcastError::Simple(err) => write!(f, "{err}"),
+            BroadcastError::ErrorWithTxHash(err, tx_hash) => {
+                write!(f, "\nFailed to wait for transaction {tx_hash:?}:\n{err}")
+            }
+        }
+    }
 }
 
 /// Uses the signer to submit a transaction to the network. If it fails, it tries to retrieve the
 /// transaction hash that can be used on a later run with `--resume`.
 async fn broadcast<T, U>(
     signer: &SignerMiddleware<T, U>,
-    legacy_or_1559: TypedTransaction,
-) -> Result<(TransactionReceipt, U256), BroadcastError>
+    mut legacy_or_1559: TypedTransaction,
+) -> Result<TxHash, BroadcastError>
 where
-    SignerMiddleware<T, U>: Middleware,
+    T: Middleware,
+    U: Signer,
 {
     tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-    let nonce = *legacy_or_1559.nonce().unwrap();
-    let pending = signer
-        .send_transaction(legacy_or_1559, None)
+
+    // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to be
+    // re-estimated right before broadcasting.
+    if has_different_gas_calc(signer.signer().chain_id()) {
+        // If we don't, some RPCs might just return our estimated gas anyway.
+        legacy_or_1559.set_gas(0);
+
+        legacy_or_1559.set_gas(
+            signer
+                .provider()
+                .estimate_gas(&legacy_or_1559)
+                .await
+                .map_err(|err| BroadcastError::Simple(err.to_string()))?,
+        );
+    }
+
+    // Signing manually so we skip `fill_transaction` and its `eth_createAccessList` request.
+    let signature = signer
+        .sign_transaction(
+            &legacy_or_1559,
+            *legacy_or_1559.from().expect("Tx should have a `from`."),
+        )
         .await
         .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
-    let tx_hash = pending.tx_hash();
+    // Submit the raw transaction
+    let pending = signer
+        .provider()
+        .send_raw_transaction(legacy_or_1559.rlp_signed(&signature))
+        .await
+        .map_err(|err| BroadcastError::Simple(err.to_string()))?;
 
-    let receipt = match pending.await {
-        Ok(receipt) => match receipt {
-            Some(receipt) => receipt,
-            None => {
-                return Err(BroadcastError::ErrorWithTxHash(
-                    format!("Didn't receive a receipt for {}", tx_hash),
-                    tx_hash,
-                ))
-            }
-        },
-        Err(err) => return Err(BroadcastError::ErrorWithTxHash(err.to_string(), tx_hash)),
-    };
-    Ok((receipt, nonce))
+    Ok(pending.tx_hash())
 }

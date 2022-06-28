@@ -1,23 +1,22 @@
 //! Create command
-use atty::{self, Stream};
-use std::{
-    io::{stdin, stdout, Write},
-    path::PathBuf,
-    str,
-};
-
 use crate::{
     cmd::Cmd,
     opts::forge::Dependency,
     utils::{p_println, CommandUtils},
 };
+use atty::{self, Stream};
 use clap::{Parser, ValueHint};
+use foundry_common::fs;
 use foundry_config::{find_project_root_path, Config};
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::{
+    io::{stdin, stdout, Write},
+    path::{Path, PathBuf},
+    process::Command,
+    str,
+};
 use yansi::Paint;
-
-use std::{path::Path, process::Command};
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
@@ -63,12 +62,6 @@ impl Cmd for InstallArgs {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
         install(&root, self.dependencies, self.opts)?;
-        let mut config = Config::load_with_root(root);
-        let lib = PathBuf::from("lib");
-        if !config.libs.contains(&lib) {
-            config.libs.push(lib);
-            config.update_libs()?;
-        }
         Ok(())
     }
 }
@@ -90,7 +83,10 @@ pub(crate) fn install(
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
     let root = root.as_ref();
-    let libs = root.join("lib");
+    let mut config = Config::load_with_root(root);
+
+    let install_lib_dir = config.install_lib_dir();
+    let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() {
         Command::new("git")
@@ -103,7 +99,7 @@ pub(crate) fn install(
             ])
             .exec()?;
     }
-    std::fs::create_dir_all(&libs)?;
+    fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
         if dep.url.is_none() {
@@ -123,6 +119,12 @@ pub(crate) fn install(
 
         p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
     }
+
+    // update `libs` in config if not included yet
+    if !config.libs.contains(&install_lib_dir) {
+        config.libs.push(install_lib_dir);
+        config.update_libs()?;
+    }
     Ok(())
 }
 
@@ -135,7 +137,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     git_checkout(dep, libs, target_dir, false)?;
 
     // remove git artifacts
-    std::fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
+    fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
 
     Ok(())
 }
@@ -258,7 +260,7 @@ fn git_checkout(
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !&output.status.success() {
         // remove dependency on failed checkout
-        std::fs::remove_dir_all(libs.join(&target_dir))?;
+        fs::remove_dir_all(libs.join(&target_dir))?;
 
         if stderr.contains(
             format!("error: pathspec '{tag}' did not match any file(s) known to git").as_str(),

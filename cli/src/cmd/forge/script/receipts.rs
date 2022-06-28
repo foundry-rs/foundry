@@ -1,94 +1,78 @@
-use std::collections::BTreeMap;
+use super::sequence::ScriptSequence;
+use crate::{init_progress, update_progress, utils::print_receipt};
+use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::Arc;
 
-use crate::{
-    cmd::ScriptSequence,
-    utils::{get_http_provider, print_receipt},
-};
-use ethers::{
-    abi::Address,
-    prelude::{Bytes, Middleware, TransactionReceipt, TxHash, U256},
-    types::transaction::eip2718::TypedTransaction,
-};
-use futures::future::join_all;
-
-use super::broadcast::BroadcastError;
-
-// Get all transactions in the `tx_hashes` list.
-pub async fn get_pending_txes(
-    tx_hashes: &Vec<TxHash>,
-    fork_url: &str,
-) -> BTreeMap<(Address, U256), (Bytes, TxHash)> {
-    let provider = get_http_provider(fork_url);
-    let mut pending_txes = BTreeMap::new();
-    for pending in tx_hashes {
-        if let Ok(Some(tx)) = provider.get_transaction(*pending).await {
-            pending_txes.insert((tx.from, tx.nonce), (tx.input, *pending));
-        }
+/// Gets the receipts of previously pending transactions.
+pub async fn wait_for_pending(
+    provider: Arc<Provider<RetryClient<Http>>>,
+    deployment_sequence: &mut ScriptSequence,
+) -> eyre::Result<()> {
+    if !deployment_sequence.pending.is_empty() {
+        println!("##\nChecking previously pending transactions.");
+        wait_for_receipts(deployment_sequence.pending.clone(), deployment_sequence, provider)
+            .await?;
     }
-    pending_txes
-}
-
-/// Given a tx, it checks if there is already a receipt for it. Compares `from`, `nonce` and `data`.
-pub async fn maybe_has_receipt(
-    tx: &TypedTransaction,
-    pending_txes: &BTreeMap<(Address, U256), (Bytes, TxHash)>,
-    fork_url: &str,
-) -> Option<TransactionReceipt> {
-    let mut receipt = None;
-    if let Some((data, tx_hash)) = pending_txes.get(&(*tx.from().unwrap(), *tx.nonce().unwrap())) {
-        if tx.data().unwrap().eq(data) {
-            let provider = get_http_provider(fork_url);
-            if let Ok(ret) = provider.get_transaction_receipt(*tx_hash).await {
-                receipt = ret
-            }
-        }
-    }
-    receipt
+    Ok(())
 }
 
 /// Waits for a list of receipts. If it fails, it tries to retrieve the transaction hash that can be
 /// used on a later run with `--resume`.
 pub async fn wait_for_receipts(
-    tasks: Vec<impl futures::Future<Output = Result<(TransactionReceipt, U256), BroadcastError>>>,
+    tx_hashes: Vec<TxHash>,
     deployment_sequence: &mut ScriptSequence,
+    provider: Arc<Provider<RetryClient<Http>>>,
 ) -> eyre::Result<()> {
-    let res = join_all(tasks).await;
+    let mut tasks = futures::stream::iter(
+        tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
+    )
+    .buffer_unordered(10);
 
     let mut receipts = vec![];
-    let mut errors = vec![];
+    let mut errors: Vec<String> = vec![];
+    let pb = init_progress!(tx_hashes, "receipts");
+    update_progress!(pb, -1);
 
-    for receipt in res {
-        match receipt {
-            Ok(ret) => {
-                if let Some(status) = ret.0.status {
-                    if status.is_zero() {
-                        errors.push(format!("Transaction Failure: {}", ret.0.transaction_hash));
+    for (index, tx_hash) in tx_hashes.into_iter().enumerate() {
+        if let Some(receipt) = tasks.next().await {
+            match receipt {
+                Ok(Some(receipt)) => {
+                    if let Some(status) = receipt.status {
+                        if status.is_zero() {
+                            errors
+                                .push(format!("Transaction Failure: {}", receipt.transaction_hash));
+                        }
                     }
+                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    receipts.push(receipt)
                 }
-                receipts.push(ret)
+                Ok(None) => {
+                    errors.push(format!("Received an empty receipt for {}", tx_hash));
+                }
+                Err(err) => {
+                    errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
+                }
             }
-            Err(e) => {
-                let err = match e {
-                    BroadcastError::Simple(err) => err,
-                    BroadcastError::ErrorWithTxHash(err, tx_hash) => {
-                        deployment_sequence.add_pending(tx_hash);
-                        format!("\nFailed to wait for transaction:{tx_hash}:\n{err}")
-                    }
-                };
-                errors.push(err)
-            }
-        };
+            update_progress!(pb, index);
+        } else {
+            break
+        }
     }
 
-    // Receipts may have arrived out of order
-    receipts.sort_by(|a, b| a.1.cmp(&b.1));
-    for (receipt, nonce) in receipts {
-        print_receipt(&receipt, nonce)?;
+    for receipt in receipts {
+        print_receipt(&receipt);
         deployment_sequence.add_receipt(receipt);
     }
 
     if !errors.is_empty() {
-        eyre::bail!(format!("{:?}", errors));
+        let mut error_msg = format!("{:?}", errors);
+        if !deployment_sequence.pending.is_empty() {
+            error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting
+    the transactions."
+        }
+        eyre::bail!(error_msg);
     }
 
     Ok(())
