@@ -925,7 +925,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = HumanReadableParser::parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig)?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
