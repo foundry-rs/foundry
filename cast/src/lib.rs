@@ -304,7 +304,7 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                get_pretty_block_attr(block, field.to_string())
+                get_pretty_block_attr(block, field)
                     .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -322,7 +322,7 @@ where
                 if field == "transactions" {
                     "use --full to view transactions".to_string()
                 } else {
-                    get_pretty_block_attr(block, field.to_string())
+                    get_pretty_block_attr(block, field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
@@ -383,8 +383,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Cast::block(self, 1920000, false, Some(String::from("hash")), false)
-                    .await?)[..]
+                match &(Cast::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -551,7 +550,7 @@ where
         };
 
         let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(transaction_result, field.to_string())
+            get_pretty_tx_attr(transaction_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
@@ -618,7 +617,7 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(receipt_result, field.to_string())
+            get_pretty_tx_receipt_attr(receipt_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
         } else if to_json {
             serde_json::to_string(&receipt)?
