@@ -3,14 +3,17 @@ use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::{AbiEncode, Address, Token},
-    prelude::{k256::ecdsa::SigningKey, Lazy, LocalWallet, Signer, H160},
+    core::k256::elliptic_curve::Curve,
+    prelude::{
+        k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
+        Lazy, LocalWallet, Signer, H160,
+    },
     types::{NameOrAddress, H256, U256},
     utils,
     utils::keccak256,
 };
 use foundry_common::fmt::*;
 use revm::{CreateInputs, Database, EVMData};
-use std::str::FromStr;
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
@@ -27,11 +30,8 @@ fn addr(private_key: U256) -> Result<Bytes, Bytes> {
         return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
-    let secp256k1_order =
-        U256::from_str("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141")
-            .unwrap();
-    if private_key > secp256k1_order {
-        return Err("Private key is greater than secp256k1 curve order.".to_string().encode().into())
+    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337.".to_string().encode().into())
     }
 
     let mut bytes: [u8; 32] = [0; 32];
@@ -45,6 +45,10 @@ fn addr(private_key: U256) -> Result<Bytes, Bytes> {
 fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
         return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337.".to_string().encode().into())
     }
 
     let mut bytes: [u8; 32] = [0; 32];
