@@ -14,9 +14,10 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
+use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr};
 use rustc_hex::{FromHexIter, ToHex};
 use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
