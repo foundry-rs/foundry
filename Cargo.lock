@@ -4106,7 +4106,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.6.0"
-source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#67e8ca98fe521442b454b1a49eb399a87b6fea20"
+source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#66d28a1e37efbff406a50a28c458e9aeef3b17e3"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4124,7 +4124,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.0.0"
-source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#67e8ca98fe521442b454b1a49eb399a87b6fea20"
+source = "git+https://github.com/meetmangukiya/revm?branch=call-statuses#66d28a1e37efbff406a50a28c458e9aeef3b17e3"
 dependencies = [
  "bytes",
  "k256",
