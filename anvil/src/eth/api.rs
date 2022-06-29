@@ -276,7 +276,7 @@ impl EthApi {
                 self.evm_remove_block_timestamp_interval().to_rpc_result()
             }
             EthRequest::EvmMine(mine) => {
-                self.evm_mine(mine.map(|p| p.params)).await.to_rpc_result()
+                self.evm_mine(mine.and_then(|p| p.params)).await.to_rpc_result()
             }
             EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
