@@ -230,9 +230,7 @@ impl CreateArgs {
 
         // fill tx first because if you target a lower gas than current base, eth_estimateGas
         // will fail and create will fail
-        let mut tx = deployer.tx;
-        provider.fill_transaction(&mut tx, None).await?;
-        deployer.tx = tx;
+        provider.fill_transaction(&mut deployer.tx, None).await?;
 
         // set gas price if specified
         if let Some(gas_price) = self.gas_price {
