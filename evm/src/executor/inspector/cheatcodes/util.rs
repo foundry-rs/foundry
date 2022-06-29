@@ -10,6 +10,7 @@ use ethers::{
 };
 use foundry_common::fmt::*;
 use revm::{CreateInputs, Database, EVMData};
+use std::str::FromStr;
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
@@ -24,6 +25,13 @@ pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
         return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    let secp256k1_order =
+        U256::from_str("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141")
+            .unwrap();
+    if private_key > secp256k1_order {
+        return Err("Private key is greater than secp256k1 curve order.".to_string().encode().into())
     }
 
     let mut bytes: [u8; 32] = [0; 32];
