@@ -75,6 +75,12 @@ ethers::contract::abigen!(
             writeLine(string,string)
             closeFile(string)
             removeFile(string)
+            toString(bytes)
+            toString(address)
+            toString(uint256)
+            toString(int256)
+            toString(bytes32)
+            toString(bool)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

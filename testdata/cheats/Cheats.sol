@@ -122,4 +122,11 @@ interface Cheats {
     // - The user lacks permissions to remove the file.
     // Path is relative to the project root. (path) => ()
     function removeFile(string calldata) external;
+
+    function toString(address)        external returns(string memory);
+    function toString(bytes calldata) external returns(string memory);
+    function toString(bytes32)        external returns(string memory);
+    function toString(bool)           external returns(string memory);
+    function toString(uint256)        external returns(string memory);
+    function toString(int256)         external returns(string memory);
 }

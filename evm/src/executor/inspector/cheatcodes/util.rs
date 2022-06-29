@@ -2,13 +2,13 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
-    abi::{AbiEncode, Address},
-    prelude::{k256::ecdsa::SigningKey, LocalWallet, Signer, H160},
+    abi::{AbiEncode, Address, Token},
+    prelude::{k256::ecdsa::SigningKey, Lazy, LocalWallet, Signer, H160},
     types::{NameOrAddress, H256, U256},
     utils,
     utils::keccak256,
 };
-use once_cell::sync::Lazy;
+use foundry_common::fmt::*;
 use revm::{CreateInputs, Database, EVMData};
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
@@ -70,6 +70,24 @@ pub fn apply<DB: Database>(
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
+        }
+        HEVMCalls::ToString0(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString1(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString2(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString3(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString4(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
+        }
+        HEVMCalls::ToString5(inner) => {
+            Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
         _ => return None,
     })

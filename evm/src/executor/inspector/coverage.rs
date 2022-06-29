@@ -1,10 +1,9 @@
-use crate::{coverage::HitMaps, executor::inspector::utils::get_create_address};
+use crate::{
+    coverage::HitMaps, executor::inspector::utils::get_create_address, utils::build_ic_map,
+};
 use bytes::Bytes;
 use ethers::types::Address;
-use revm::{
-    opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, Return, SpecId,
-};
+use revm::{CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return};
 use std::collections::BTreeMap;
 
 #[derive(Default, Debug)]
@@ -25,34 +24,6 @@ pub struct CoverageCollector {
 }
 
 impl CoverageCollector {
-    /// Builds the instruction counter map for the given bytecode.
-    // TODO: Some of the same logic is performed in REVM, but then later discarded. We should
-    // investigate if we can reuse it
-    // TODO: Duplicate code of the debugger inspector
-    pub fn build_ic_map(&mut self, spec: SpecId, code: &Bytes) {
-        if let Some(context) = self.context.last() {
-            let opcode_infos = spec_opcode_gas(spec);
-            let mut ic_map: BTreeMap<usize, usize> = BTreeMap::new();
-
-            let mut i = 0;
-            let mut cumulative_push_size = 0;
-            while i < code.len() {
-                let op = code[i];
-                ic_map.insert(i, i - cumulative_push_size);
-                if opcode_infos[op as usize].is_push {
-                    // Skip the push bytes.
-                    //
-                    // For more context on the math, see: https://github.com/bluealloy/revm/blob/007b8807b5ad7705d3cacce4d92b89d880a83301/crates/revm/src/interpreter/contract.rs#L114-L115
-                    i += (op - opcode::PUSH1 + 1) as usize;
-                    cumulative_push_size += (op - opcode::PUSH1 + 1) as usize;
-                }
-                i += 1;
-            }
-
-            self.ic_map.insert(*context, ic_map);
-        }
-    }
-
     pub fn enter(&mut self, address: Address) {
         self.context.push(address);
     }
@@ -87,7 +58,10 @@ where
         // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.build_ic_map(data.env.cfg.spec_id, &interp.contract().code);
+        if let Some(context) = self.context.last() {
+            self.ic_map
+                .insert(*context, build_ic_map(data.env.cfg.spec_id, &interp.contract().code));
+        }
         Return::Continue
     }
 

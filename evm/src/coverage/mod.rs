@@ -213,8 +213,6 @@ pub enum CoverageItem {
         ///
         /// The first path has ID 0, the next ID 1, and so on.
         path_id: usize,
-        /// The branch kind.
-        kind: BranchKind,
         /// The number of times this item was hit.
         hits: u64,
     },
@@ -279,11 +277,8 @@ impl Display for CoverageItem {
             CoverageItem::Statement { loc, anchor, hits } => {
                 write!(f, "Statement (location: {loc}, anchor: {anchor}, hits: {hits})")
             }
-            CoverageItem::Branch { loc, anchor, hits, branch_id, path_id, kind } => {
-                write!(f, "{} Branch (branch: {branch_id}, path: {path_id}) (location: {loc}, anchor: {anchor}, hits: {hits})", match kind {
-                    BranchKind::True => "True",
-                    BranchKind::False => "False",
-                })
+            CoverageItem::Branch { loc, anchor, hits, branch_id, path_id } => {
+                write!(f, "Branch (branch: {branch_id}, path: {path_id}) (location: {loc}, anchor: {anchor}, hits: {hits})")
             }
             CoverageItem::Function { loc, anchor, hits, name } => {
                 write!(f, r#"Function "{name}" (location: {loc}, anchor: {anchor}, hits: {hits})"#)
@@ -312,14 +307,6 @@ impl Display for SourceLocation {
             self.length.map_or(self.start, |length| self.start + length)
         )
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum BranchKind {
-    /// A false branch
-    True,
-    /// A true branch
-    False,
 }
 
 /// Coverage summary for a source file.
