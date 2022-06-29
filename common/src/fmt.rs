@@ -8,7 +8,7 @@ use std::str;
 /// It offers a `pretty()` function that returns a human readable String of the value
 /// # Example
 /// ```
-/// use foundry_common::fmt;
+/// use foundry_common::fmt::UIfmt;
 /// let boolean: bool = true;
 /// let string = boolean.pretty();
 /// ```
