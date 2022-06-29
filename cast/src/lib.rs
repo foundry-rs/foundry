@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, AbiParser, Token,
+        Abi, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units, rlp},
@@ -926,7 +926,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig)?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
@@ -1272,7 +1272,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
