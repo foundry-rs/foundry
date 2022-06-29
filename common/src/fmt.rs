@@ -3,6 +3,9 @@
 use ethers_core::types::*;
 use std::str;
 
+/// length of the name column for pretty formatting `{:>20}{value}`
+const NAME_COLUMN_LEN: usize = 20usize;
+
 ///
 /// Uifmt is a helper trait to format the usual ethers types
 /// It offers a `pretty()` function that returns a human readable String of the value
@@ -164,45 +167,9 @@ impl UIfmt for Block<Transaction> {
     fn pretty(&self) -> String {
         format!(
             "
-baseFeePerGas        {}
-difficulty           {}
-extraData            {}
-gasLimit             {}
-gasUsed              {}
-hash                 {}
-logsBloom            {}
-miner                {}
-mixHash              {}
-nonce                {}
-number               {}
-parentHash           {}
-receiptsRoot         {}
-sealFields           {}
-sha3Uncles           {}
-size                 {}
-stateRoot            {}
-timestamp            {}
-totalDifficulty      {}
+{}
 transactions         {}",
-            self.base_fee_per_gas.pretty(),
-            self.difficulty.pretty(),
-            self.extra_data.pretty(),
-            self.gas_limit.pretty(),
-            self.gas_used.pretty(),
-            self.hash.pretty(),
-            self.logs_bloom.pretty(),
-            self.author.pretty(),
-            self.mix_hash.pretty(),
-            self.nonce.pretty(),
-            self.number.pretty(),
-            self.parent_hash.pretty(),
-            self.receipts_root.pretty(),
-            self.seal_fields.pretty(),
-            self.uncles_hash.pretty(),
-            self.size.pretty(),
-            self.state_root.pretty(),
-            self.timestamp.pretty(),
-            self.total_difficulty.pretty(),
+            pretty_block_basics(self),
             self.transactions.pretty()
         )
     }
@@ -212,6 +179,17 @@ impl UIfmt for Block<TxHash> {
     fn pretty(&self) -> String {
         format!(
             "
+{}
+transactions:        {}",
+            pretty_block_basics(self),
+            self.transactions.pretty()
+        )
+    }
+}
+
+fn pretty_block_basics<T>(block: &Block<T>) -> String {
+    format!(
+        "
 baseFeePerGas        {}
 difficulty           {}
 extraData            {}
@@ -230,29 +208,45 @@ sha3Uncles           {}
 size                 {}
 stateRoot            {}
 timestamp            {}
-totalDifficulty      {}
-transactions:        {}",
-            self.base_fee_per_gas.pretty(),
-            self.difficulty.pretty(),
-            self.extra_data.pretty(),
-            self.gas_limit.pretty(),
-            self.gas_used.pretty(),
-            self.hash.pretty(),
-            self.logs_bloom.pretty(),
-            self.author.pretty(),
-            self.mix_hash.pretty(),
-            self.nonce.pretty(),
-            self.number.pretty(),
-            self.parent_hash.pretty(),
-            self.receipts_root.pretty(),
-            self.seal_fields.pretty(),
-            self.uncles_hash.pretty(),
-            self.size.pretty(),
-            self.state_root.pretty(),
-            self.timestamp.pretty(),
-            self.total_difficulty.pretty(),
-            self.transactions.pretty()
-        )
+totalDifficulty      {}{}",
+        block.base_fee_per_gas.pretty(),
+        block.difficulty.pretty(),
+        block.extra_data.pretty(),
+        block.gas_limit.pretty(),
+        block.gas_used.pretty(),
+        block.hash.pretty(),
+        block.logs_bloom.pretty(),
+        block.author.pretty(),
+        block.mix_hash.pretty(),
+        block.nonce.pretty(),
+        block.number.pretty(),
+        block.parent_hash.pretty(),
+        block.receipts_root.pretty(),
+        block.seal_fields.pretty(),
+        block.uncles_hash.pretty(),
+        block.size.pretty(),
+        block.state_root.pretty(),
+        block.timestamp.pretty(),
+        block.total_difficulty.pretty(),
+        block.other.pretty()
+    )
+}
+
+impl UIfmt for OtherFields {
+    fn pretty(&self) -> String {
+        let mut s = String::with_capacity(self.len() * 30);
+        if !self.is_empty() {
+            s.push('\n');
+        }
+        for (key, value) in self.iter() {
+            let val = value.to_string();
+            let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
+            s.push_str(key);
+            s.extend(std::iter::repeat(' ').take(offset + 1));
+            s.push_str(val.trim_matches('"'));
+            s.push('\n');
+        }
+        s
     }
 }
 
@@ -260,20 +254,20 @@ impl UIfmt for Transaction {
     fn pretty(&self) -> String {
         format!(
             "
-blockHash               {}
-blockNumber             {}
-from                    {}
-gas                     {}
-gasPrice                {}
-hash                    {}
-input                   {}
-nonce                   {}
-r                       {}
-s                       {}
-to                      {}
-transactionIndex        {}
-v                       {}
-value                   {}",
+blockHash            {}
+blockNumber          {}
+from                 {}
+gas                  {}
+gasPrice             {}
+hash                 {}
+input                {}
+nonce                {}
+r                    {}
+s                    {}
+to                   {}
+transactionIndex     {}
+v                    {}
+value                {}{}",
             self.block_hash.pretty(),
             self.block_number.pretty(),
             self.from.pretty(),
@@ -287,7 +281,8 @@ value                   {}",
             self.to.pretty(),
             self.transaction_index.pretty(),
             self.v.pretty(),
-            self.value.pretty()
+            self.value.pretty(),
+            self.other.pretty()
         )
     }
 }
@@ -301,4 +296,67 @@ pub fn to_bytes(uint: U256) -> Bytes {
     let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
     uint.to_big_endian(&mut buffer);
     Bytes::from(buffer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_pretty_print_optimism_tx() {
+        let s = r#"
+        {
+        "blockHash": "0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae",
+        "blockNumber": "0x1b4",
+        "from": "0x3b179dcfc5faa677044c27dce958e4bc0ad696a6",
+        "gas": "0x11cbbdc",
+        "gasPrice": "0x0",
+        "hash": "0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f",
+        "input": "0xd294f093",
+        "nonce": "0xa2",
+        "to": "0x4a16a42407aa491564643e1dfc1fd50af29794ef",
+        "transactionIndex": "0x0",
+        "value": "0x0",
+        "v": "0x38",
+        "r": "0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee",
+        "s": "0xe804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583",
+        "queueOrigin": "sequencer",
+        "txType": "",
+        "l1TxOrigin": null,
+        "l1BlockNumber": "0xc1a65c",
+        "l1Timestamp": "0x60d34b60",
+        "index": "0x1b3",
+        "queueIndex": null,
+        "rawTransaction": "0xf86681a28084011cbbdc944a16a42407aa491564643e1dfc1fd50af29794ef8084d294f09338a06fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2beea00e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583"
+    }
+        "#;
+
+        let tx: Transaction = serde_json::from_str(s).unwrap();
+        assert_eq!(tx.pretty().trim(),
+       r#"
+blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
+blockNumber          436
+from                 0x3b179dcfc5faa677044c27dce958e4bc0ad696a6
+gas                  18660316
+gasPrice             0
+hash                 0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f
+input                0xd294f093
+nonce                162
+r                    0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee
+s                    0x0e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
+to                   0x4a16a42407aa491564643e1dfc1fd50af29794ef
+transactionIndex     0
+v                    56
+value                0
+index                0x1b3
+l1BlockNumber        0xc1a65c
+l1Timestamp          0x60d34b60
+l1TxOrigin           null
+queueIndex           null
+queueOrigin          sequencer
+rawTransaction       0xf86681a28084011cbbdc944a16a42407aa491564643e1dfc1fd50af29794ef8084d294f09338a06fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2beea00e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
+txType
+"#.trim()
+       );
+    }
 }
