@@ -2,8 +2,15 @@
 
 use crate::term;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
-use ethers::solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput};
-use std::{collections::BTreeMap, fmt::Display, path::PathBuf};
+use ethers::{
+    prelude::Graph,
+    solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput},
+};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -127,16 +134,6 @@ impl ProjectCompiler {
         F: FnOnce(&Project) -> eyre::Result<ProjectCompileOutput>,
     {
         let ProjectCompiler { print_sizes, print_names } = self;
-        if !project.paths.sources.exists() {
-            eyre::bail!(
-                r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-                project.paths.sources.display(),
-                project.paths
-            );
-        }
 
         let now = std::time::Instant::now();
         tracing::trace!(target : "forge::compile", "start compiling project");
@@ -212,17 +209,6 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
     let output = ethers::solc::report::with_scoped(
         &ethers::solc::report::Report::new(NoReporter::default()),
         || project.compile(),
@@ -257,4 +243,32 @@ pub fn compile_files(
     }
     println!("{output}");
     Ok(output)
+}
+
+/// Compiles target file path.
+///
+/// If `silent` no solc related output will be emitted to stdout.
+///
+/// If `verify` and it's a standalone script, throw error. Only allowed for projects.
+pub fn compile_target(
+    target_path: &Path,
+    project: &Project,
+    silent: bool,
+    verify: bool,
+) -> eyre::Result<ProjectCompileOutput> {
+    let graph = Graph::resolve(&project.paths)?;
+
+    // Checking if it's a standalone script, or part of a project.
+    if graph.files().get(target_path).is_none() {
+        if verify {
+            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
+        }
+        return compile_files(project, vec![target_path.to_path_buf()], silent)
+    }
+
+    if silent {
+        suppress_compile(project)
+    } else {
+        compile(project, false, false)
+    }
 }

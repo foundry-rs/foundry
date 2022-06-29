@@ -86,11 +86,12 @@ impl ScriptArgs {
         let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
             .contracts
             .iter()
-            .filter_map(|(addr, contract_name)| {
+            .filter_map(|(addr, contract_id)| {
+                let contract_name = utils::get_contract_name(contract_id);
                 if let Some((_, (abi, _))) =
-                    contracts.iter().find(|(artifact, _)| artifact.name == *contract_name)
+                    contracts.iter().find(|(artifact, _)| artifact.name == contract_name)
                 {
-                    return Some((*addr, (contract_name.clone(), abi)))
+                    return Some((*addr, (contract_name.to_string(), abi)))
                 }
                 None
             })
@@ -159,20 +160,15 @@ impl ScriptArgs {
         )
         .await;
 
-        let mut builder = ExecutorBuilder::default()
+        let executor = ExecutorBuilder::default()
             .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
             .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
-            .with_gas_limit(script_config.evm_opts.gas_limit());
+            .with_gas_limit(script_config.evm_opts.gas_limit())
+            .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug)
+            .set_debugger(self.debug)
+            .build(db);
 
-        if script_config.evm_opts.verbosity >= 3 {
-            builder = builder.with_tracing();
-        }
-
-        if self.debug {
-            builder = builder.with_tracing().with_debugger();
-        }
-
-        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(executor, script_config.evm_opts.initial_balance, sender)
     }
 }

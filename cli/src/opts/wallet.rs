@@ -9,6 +9,7 @@ use ethers::{
     types::Address,
 };
 use eyre::{eyre, Result};
+use foundry_common::fs;
 use serde::Serialize;
 
 type SignerClient<T> = SignerMiddleware<Arc<Provider<RetryClient<Http>>>, T>;
@@ -186,13 +187,13 @@ pub trait WalletTrait {
     }
 
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
-        let privk = private_key.strip_prefix("0x").unwrap_or(private_key);
+        let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
         LocalWallet::from_str(privk)
             .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
     }
 
     fn get_from_mnemonic(&self, path: &str, index: u32) -> Result<LocalWallet> {
-        let mnemonic = std::fs::read_to_string(path)?.replace('\n', "");
+        let mnemonic = fs::read_to_string(path)?.replace('\n', "");
         Ok(MnemonicBuilder::<English>::default().phrase(mnemonic.as_str()).index(index)?.build()?)
     }
 

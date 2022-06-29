@@ -1,16 +1,10 @@
 Error: 
-   0: [91mCompiler run failed
-      error[6553]: SyntaxError: The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
-       --> src/Foo.sol:6:8:
-        |
-      6 |        assembly {
-        |        ^ (Relevant source part starts here and spans across multiple lines).
+[31mCompiler run failed
+error[6553]: SyntaxError: The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction.
+ --> src/Foo.sol:6:8:
+  |
+6 |        assembly {
+  |        ^ (Relevant source part starts here and spans across multiple lines).
 
 
-   0: [0m
-
-Location:
-   [35mcli/src/compile.rs[0m:[35m151[0m
-
-Backtrace omitted. Run with RUST_BACKTRACE=1 environment variable to display it.
-Run with RUST_BACKTRACE=full to include source snippets.
+[0m

@@ -12,7 +12,7 @@ use ethers::{
     prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, U256},
 };
-use forge::revm::Return;
+use forge::revm::{Env, Return};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -99,11 +99,14 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(base_fee: Option<U256>) -> Self {
+    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
             timestamp: duration_since_unix_epoch().as_secs(),
             base_fee,
+            gas_limit: env.block.gas_limit,
+            beneficiary: env.block.coinbase,
+            difficulty: env.block.difficulty,
             ..Default::default()
         };
         let block = Block::new(partial_header, vec![], vec![]);
@@ -170,8 +173,8 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(base_fee: Option<U256>) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(base_fee))) }
+    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee))) }
     }
 
     pub fn forked(block_number: u64, block_hash: H256) -> Self {

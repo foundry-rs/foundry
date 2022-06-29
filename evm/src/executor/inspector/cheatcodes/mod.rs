@@ -33,7 +33,13 @@ use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::Arc,
+};
 
 mod config;
 pub use config::CheatsConfig;
@@ -87,7 +93,23 @@ pub struct Cheatcodes {
     pub broadcastable_transactions: VecDeque<TypedTransaction>,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
-    pub config: CheatsConfig,
+    pub config: Arc<CheatsConfig>,
+
+    /// Test-scoped context holding data that needs to be reset every test run
+    pub context: Context,
+}
+
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
 }
 
 impl Cheatcodes {
@@ -96,7 +118,7 @@ impl Cheatcodes {
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
-            config,
+            config: Arc::new(config),
             ..Default::default()
         }
     }
@@ -115,7 +137,7 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self.config.ffi, &decoded))
+            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }

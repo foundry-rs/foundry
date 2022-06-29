@@ -1,4 +1,4 @@
-use crate::{opts::forge::ContractInfo, suggestions};
+use crate::suggestions;
 
 use clap::Parser;
 use ethers::{
@@ -17,6 +17,7 @@ use ethers::{
 use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
 
+use ethers::solc::info::ContractInfo;
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 

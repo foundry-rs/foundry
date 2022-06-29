@@ -46,5 +46,8 @@ proptest = "1.0.0"
 yansi = "0.5.1"
 url = "2.2.2"
 
+# Coverage
+semver = "1.0.5"
+
 [dev-dependencies]
 tempfile = "3.3.0"

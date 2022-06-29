@@ -1,4 +1,7 @@
-use crate::abi::HEVMCalls;
+use crate::{
+    abi::HEVMCalls,
+    executor::inspector::{cheatcodes::util, Cheatcodes},
+};
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
@@ -6,18 +9,26 @@ use ethers::{
     types::{Address, I256, U256},
     utils::hex::FromHex,
 };
+use foundry_common::fs;
 use serde::Deserialize;
-use std::{env, fs::File, io::Read, path::Path, process::Command, str::FromStr};
+use std::{
+    env,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+};
 
-fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
+fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
     let output = Command::new(&args[0])
+        .current_dir(&state.config.root)
         .args(&args[1..])
         .output()
-        .map_err(|err| err.to_string().encode())?
+        .map_err(util::encode_error)?
         .stdout;
     let output = unsafe { std::str::from_utf8_unchecked(&output) };
     let decoded = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(output))
-        .map_err(|err| err.to_string().encode())?;
+        .map_err(util::encode_error)?;
 
     Ok(abi::encode(&[Token::Bytes(decoded.to_vec())]).into())
 }
@@ -62,14 +73,8 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
         out_dir.join(format!("{file}/{contract_name}.json"))
     };
 
-    let mut buffer = String::new();
-    File::open(path)
-        .map_err(|err| err.to_string().encode())?
-        .read_to_string(&mut buffer)
-        .map_err(|err| err.to_string().encode())?;
-
-    let bytecode = serde_json::from_str::<ArtifactBytecode>(&buffer)
-        .map_err(|err| err.to_string().encode())?;
+    let data = fs::read_to_string(path).map_err(util::encode_error)?;
+    let bytecode = serde_json::from_str::<ArtifactBytecode>(&data).map_err(util::encode_error)?;
 
     if let Some(bin) = bytecode.into_inner() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
@@ -154,13 +159,98 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         .map_err(|e| e.into())
 }
 
-pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>> {
+fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
+    state.config.root.join(path)
+}
+
+fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    let data = fs::read_to_string(path).map_err(util::encode_error)?;
+
+    Ok(abi::encode(&[Token::String(data)]).into())
+}
+
+fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    // Get reader for previously opened file to continue reading OR initialize new reader
+    let reader = state
+        .context
+        .opened_read_files
+        .entry(path.clone())
+        .or_insert(BufReader::new(fs::open(path).map_err(util::encode_error)?));
+
+    let mut line: String = String::new();
+    reader.read_line(&mut line).map_err(util::encode_error)?;
+
+    // Remove trailing newline character, preserving others for cases where it may be important
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+
+    Ok(abi::encode(&[Token::String(line)]).into())
+}
+
+fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    fs::write(path, data).map_err(util::encode_error)?;
+
+    Ok(Bytes::new())
+}
+
+fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(util::encode_error)?;
+
+    writeln!(file, "{line}").map_err(util::encode_error)?;
+
+    Ok(Bytes::new())
+}
+
+fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    state.context.opened_read_files.remove(&path);
+
+    Ok(Bytes::new())
+}
+
+fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+
+    close_file(state, &path)?;
+    fs::remove_file(&path).map_err(util::encode_error)?;
+
+    Ok(Bytes::new())
+}
+
+pub fn apply(
+    state: &mut Cheatcodes,
+    ffi_enabled: bool,
+    call: &HEVMCalls,
+) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
         HEVMCalls::Ffi(inner) => {
             if !ffi_enabled {
                 Err("FFI disabled: run again with `--ffi` if you want to allow tests to call external scripts.".to_string().encode().into())
             } else {
-                ffi(&inner.0)
+                ffi(state, &inner.0)
             }
         }
         HEVMCalls::GetCode(inner) => get_code(&inner.0),
@@ -181,6 +271,12 @@ pub fn apply(ffi_enabled: bool, call: &HEVMCalls) -> Option<Result<Bytes, Bytes>
         }
         HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
+        HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
+        HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
+        HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
+        HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
+        HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         _ => return None,
     })
 }

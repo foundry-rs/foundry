@@ -64,6 +64,7 @@ serde_json = "1.0.67"
 regex = { version = "1.5.4", default-features = false }
 rpassword = "5.0.1"
 hex = "0.4.3"
+itertools = "0.10.3"
 serde = "1.0.133"
 proptest = "1.0.0"
 semver = "1.0.5"
