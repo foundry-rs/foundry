@@ -268,12 +268,7 @@ async fn main() -> eyre::Result<()> {
             sig,
             cast_async,
             args,
-            gas,
-            gas_price,
-            priority_gas_price,
-            value,
-            mut nonce,
-            legacy,
+            mut tx,
             confirmations,
             to_json,
             resend,
@@ -298,7 +293,7 @@ async fn main() -> eyre::Result<()> {
                 };
 
                 if resend {
-                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                    tx.nonce = Some(provider.get_transaction_count(from, None).await?);
                 }
 
                 match signer {
@@ -308,15 +303,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            priority_gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -328,15 +323,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            priority_gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -348,15 +343,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            priority_gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -368,7 +363,7 @@ async fn main() -> eyre::Result<()> {
                 Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
             {
                 if resend {
-                    nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                    tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
                 }
 
                 cast_send(
@@ -376,15 +371,15 @@ async fn main() -> eyre::Result<()> {
                     config.sender,
                     to,
                     (sig, args),
-                    gas,
-                    gas_price,
-                    priority_gas_price,
-                    value,
-                    nonce,
+                    tx.gas_limit,
+                    tx.gas_price,
+                    tx.priority_gas_price,
+                    tx.value,
+                    tx.nonce,
                     chain,
                     config.etherscan_api_key,
                     cast_async,
-                    legacy,
+                    tx.legacy,
                     confirmations,
                     to_json,
                 )

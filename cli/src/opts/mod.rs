@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub use multi_wallet::*;
 pub use wallet::*;
 
+use crate::utils::{parse_ether_value, parse_u256};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
@@ -170,6 +171,64 @@ impl figment::Provider for EthereumOpts {
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
+}
+
+#[derive(Parser, Debug, Clone, Serialize)]
+pub struct TransactionOpts {
+    #[clap(
+    long = "gas-limit",
+        help = "Gas limit for the transaction.",
+        env = "ETH_GAS_LIMIT",
+        parse(try_from_str = parse_u256),
+        value_name = "GAS_LIMIT"
+    )]
+    pub gas_limit: Option<U256>,
+
+    #[clap(
+        long = "gas-price",
+        help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
+        env = "ETH_GAS_PRICE",
+        parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
+    )]
+    pub gas_price: Option<U256>,
+
+    #[clap(
+        long = "priority-gas-price",
+        help = "Max priority fee per gas for EIP1559 transactions.",
+        env = "ETH_PRIORITY_GAS_PRICE",
+        parse(try_from_str = parse_ether_value),
+        value_name = "PRICE"
+    )]
+    pub priority_gas_price: Option<U256>,
+
+    #[clap(
+        long,
+        help = "Ether to send in the transaction.",
+        long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+
+Examples: 1ether, 10gwei, 0.01ether"#,
+        parse(try_from_str = parse_ether_value),
+        value_name = "VALUE"
+    )]
+    pub value: Option<U256>,
+
+    #[clap(
+        long,
+        help = "Nonce for the transaction.",
+        parse(try_from_str = parse_u256),
+        value_name = "NONCE"
+    )]
+    pub nonce: Option<U256>,
+
+    #[clap(
+        long,
+        help = "Send a legacy transaction instead of an EIP1559 transaction.",
+        long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
+
+This is automatically enabled for common networks without EIP1559."#
+    )]
+    pub legacy: bool,
 }
 
 #[cfg(test)]
