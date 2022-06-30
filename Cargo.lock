@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1485,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1496,7 +1496,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1514,7 +1514,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1536,7 +1536,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1550,7 +1550,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1580,7 +1580,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1596,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1620,7 +1620,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1656,7 +1656,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1679,7 +1679,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e85b331674b451e7861f21e04253398f32ec08a"
+source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
@@ -3499,9 +3499,9 @@ dependencies = [
 
 [[package]]
 name = "path-slash"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cacbb3c4ff353b534a67fb8d7524d00229da4cb1dc8c79f4db96e375ab5b619"
+checksum = "498a099351efa4becc6a19c72aa9270598e8fd274ca47052e37455241c88b696"
 
 [[package]]
 name = "pbkdf2"
@@ -4398,9 +4398,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.10"
+version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41d061efea015927ac527063765e73601444cdc344ba855bc7bd44578b25e1c"
+checksum = "3d92beeab217753479be2f74e54187a6aed4c125ff0703a866c3147a02f0c6dd"
 dependencies = [
  "serde",
 ]
@@ -4422,9 +4422,9 @@ dependencies = [
 
 [[package]]
 name = "serde-aux"
-version = "3.0.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93abf9799c576f004252b2a05168d58527fb7c54de12e94b4d12fe3475ffad24"
+checksum = "d0a77223b653fa95f3f9864f3eb25b93e4ed170687eb42d85b6b98af21d5e1de"
 dependencies = [
  "serde",
  "serde_json",

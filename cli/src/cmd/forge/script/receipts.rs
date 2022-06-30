@@ -30,7 +30,7 @@ pub async fn wait_for_receipts(
     )
     .buffer_unordered(10);
 
-    let mut receipts = vec![];
+    let mut receipts = Vec::with_capacity(tx_hashes.len());
     let mut errors: Vec<String> = vec![];
     let pb = init_progress!(tx_hashes, "receipts");
     update_progress!(pb, -1);
@@ -60,6 +60,9 @@ pub async fn wait_for_receipts(
             break
         }
     }
+
+    // sort receipts by blocks asc and index
+    receipts.sort_unstable();
 
     for receipt in receipts {
         print_receipt(&receipt);
