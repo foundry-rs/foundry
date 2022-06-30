@@ -1461,6 +1461,43 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },
+            Expression::BoolLiteral(loc, val) => {
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::NumberLiteral(loc, val, expr) => {
+                let val =
+                    if expr.is_empty() { val.to_owned() } else { format!("{}e{}", val, expr) };
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::HexNumberLiteral(loc, val) => {
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::RationalNumberLiteral(loc, val, fraction, expr) => {
+                let val = format!("{}.{}", val, fraction);
+                let val =
+                    if expr.is_empty() { val.to_owned() } else { format!("{}e{}", val, expr) };
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::StringLiteral(vals) => {
+                for StringLiteral { loc, string } in vals {
+                    if !string.contains('\n') {
+                        write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
+                    } else {
+                        write_chunk!(self, loc.start(), "\"")?;
+                        self.write_raw(string)?;
+                        write_chunk_spaced!(self, loc.end(), Some(false), "\"")?;
+                    }
+                }
+            }
+            Expression::HexLiteral(vals) => {
+                // TODO:
+                for HexLiteral { loc, hex } in vals {
+                    write_chunk!(self, loc.start(), loc.end(), "hex\"{hex}\"")?;
+                }
+            }
+            Expression::AddressLiteral(loc, val) => {
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
             Expression::Unit(_, expr, unit) => {
                 expr.visit(self)?;
                 let unit_loc = unit.loc();
@@ -2870,4 +2907,5 @@ mod tests {
     test_directory! { ArrayExpressions }
     test_directory! { UnitExpression }
     test_directory! { ThisExpression }
+    test_directory! { LiteralExpression }
 }
