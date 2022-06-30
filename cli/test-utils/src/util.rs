@@ -251,6 +251,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
@@ -264,6 +265,7 @@ impl TestProject {
             cmd,
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
@@ -334,7 +336,6 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 }
 
 /// A simple wrapper around a process::Command with some conveniences.
-#[derive(Debug)]
 pub struct TestCommand {
     saved_cwd: PathBuf,
     /// The project used to launch this command.
@@ -343,6 +344,7 @@ pub struct TestCommand {
     cmd: Command,
     // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    stdin_fun: Option<Box<dyn FnOnce(process::ChildStdin)>>,
 }
 
 impl TestCommand {
@@ -388,6 +390,11 @@ impl TestCommand {
         A: AsRef<OsStr>,
     {
         self.cmd.args(args);
+        self
+    }
+
+    pub fn stdin(&mut self, fun: impl FnOnce(process::ChildStdin) + 'static) -> &mut TestCommand {
+        self.stdin_fun = Some(Box::new(fun));
         self
     }
 
@@ -449,7 +456,7 @@ impl TestCommand {
 
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         String::from_utf8_lossy(&output.stderr).to_string()
     }
 
@@ -460,18 +467,33 @@ impl TestCommand {
 
     /// Returns the output but does not expect that the command was successful
     pub fn unchecked_output(&mut self) -> process::Output {
-        self.cmd.output().unwrap()
+        self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
     pub fn output(&mut self) -> process::Output {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         self.expect_success(output)
+    }
+
+    /// Executes command, applies stdin function and returns output
+    pub fn execute(&mut self) -> process::Output {
+        let mut child = self
+            .cmd
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .stdin(process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        if let Some(fun) = self.stdin_fun.take() {
+            fun(child.stdin.take().unwrap())
+        }
+        child.wait_with_output().unwrap()
     }
 
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
         println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
@@ -482,14 +504,14 @@ impl TestCommand {
         if let Some(parent) = name.parent() {
             fs::create_dir_all(parent).unwrap();
         }
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
         fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
     pub fn assert_err(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -509,7 +531,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stderr.
     pub fn assert_non_empty_stderr(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() || o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -529,7 +551,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stdout.
     pub fn assert_non_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -549,7 +571,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that nothing was printed to stdout.
     pub fn assert_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || !o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\

@@ -4,7 +4,7 @@ use crate::eth::{
     trie,
 };
 use ethers_core::{
-    types::{Address, Bloom, Bytes, H256, U256, U64},
+    types::{Address, Bloom, Bytes, H256, H64, U256},
     utils::{
         keccak256, rlp,
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
@@ -81,7 +81,7 @@ pub struct Header {
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: H256,
-    pub nonce: U64,
+    pub nonce: H64,
     /// BaseFee was added by EIP-1559 and is ignored in legacy headers.
     pub base_fee_per_gas: Option<U256>,
 }
@@ -182,7 +182,7 @@ pub struct PartialHeader {
     pub timestamp: u64,
     pub extra_data: Bytes,
     pub mix_hash: H256,
-    pub nonce: U64,
+    pub nonce: H64,
     pub base_fee: Option<U256>,
 }
 
@@ -228,7 +228,7 @@ mod tests {
             timestamp: 0,
             extra_data: Default::default(),
             mix_hash: Default::default(),
-            nonce: 99u64.into(),
+            nonce: 99u64.to_be_bytes().into(),
             base_fee_per_gas: None,
         };
 

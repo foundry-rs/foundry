@@ -1,6 +1,6 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, run::RunArgs, wallet::WalletSubcommands},
+    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -372,6 +372,14 @@ Examples:
         )]
         gas_price: Option<U256>,
         #[clap(
+            long = "priority-gas-price",
+            help = "Max priority fee per gas for EIP1559 transactions.",
+            env = "ETH_PRIORITY_GAS_PRICE",
+            parse(try_from_str = parse_ether_value),
+            value_name = "PRICE"
+        )]
+        priority_gas_price: Option<U256>,
+        #[clap(
             long,
             help = "Ether to send in the transaction.",
             long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
@@ -495,8 +503,6 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     Index {
         #[clap(help = "The mapping key type.", value_name = "KEY_TYPE")]
         key_type: String,
-        #[clap(help = "The mapping value type.", value_name = "VALUE_TYPE")]
-        value_type: String,
         #[clap(help = "The mapping key.", value_name = "KEY")]
         key: String,
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
@@ -516,7 +522,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
-        calldata: String,
+        calldata: Option<String>,
     },
     #[clap(name = "4byte-event")]
     #[clap(visible_aliases = &["4e", "4be"])]
@@ -818,6 +824,10 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
+    #[clap(name = "rpc")]
+    #[clap(visible_alias = "rp")]
+    #[clap(about = "Perform a raw JSON-RPC request")]
+    Rpc(RpcArgs),
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

@@ -1,12 +1,10 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::{
-    cmd::forge::{create::RETRY_VERIFY_ON_CREATE, verify},
-    opts::forge::ContractInfo,
-};
+use crate::cmd::forge::{create::RETRY_VERIFY_ON_CREATE, verify};
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
+    solc::info::ContractInfo,
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::ContextCompat;

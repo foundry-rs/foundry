@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, AbiParser, Token,
+        Abi, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units, rlp},
@@ -14,9 +14,10 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
+use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr};
 use rustc_hex::{FromHexIter, ToHex};
 use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
@@ -303,7 +304,7 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                get_pretty_block_attr(block, field.to_string())
+                get_pretty_block_attr(block, field)
                     .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -321,7 +322,7 @@ where
                 if field == "transactions" {
                     "use --full to view transactions".to_string()
                 } else {
-                    get_pretty_block_attr(block, field.to_string())
+                    get_pretty_block_attr(block, field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
@@ -382,8 +383,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Cast::block(self, 1920000, false, Some(String::from("hash")), false)
-                    .await?)[..]
+                match &(Cast::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -550,7 +550,7 @@ where
         };
 
         let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(transaction_result, field.to_string())
+            get_pretty_tx_attr(transaction_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
@@ -617,7 +617,7 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(receipt_result, field.to_string())
+            get_pretty_tx_receipt_attr(receipt_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
         } else if to_json {
             serde_json::to_string(&receipt)?
@@ -625,6 +625,30 @@ where
             receipt_result.pretty()
         };
         Ok(receipt)
+    }
+
+    /// Perform a raw JSON-RPC request
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let result = cast.rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
+    ///     .await?;
+    /// println!("{}", result);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn rpc<T>(&self, method: &str, params: T) -> Result<String>
+    where
+        T: std::fmt::Debug + serde::Serialize + Send + Sync,
+    {
+        let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
+        Ok(serde_json::to_string(&res)?)
     }
 }
 
@@ -901,7 +925,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig)?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
@@ -1247,7 +1271,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
@@ -1318,18 +1342,13 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///
-    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
-    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    ///    assert_eq!(Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256","42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn index(
-        from_type: &str,
-        to_type: &str,
-        from_value: &str,
-        slot_number: &str,
-    ) -> Result<String> {
-        let sig = format!("x({from_type},{to_type})");
+    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+        let sig = format!("x({from_type},uint256)");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)

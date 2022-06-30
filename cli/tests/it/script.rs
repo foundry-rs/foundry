@@ -287,7 +287,7 @@ forgetest_async!(
         tester
             .load_private_keys(vec![0])
             .await
-            .add_sig("BroadcastTestNoLinking", "deployMix()")
+            .add_sig("BroadcastMix", "deployMix()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
             .assert_nonce_increment(vec![(0, 15)])

@@ -138,17 +138,24 @@ impl ExecutorBuilder {
         self
     }
 
-    /// Enables tracing
+    /// Enables or disables tracing
     #[must_use]
-    pub fn with_tracing(mut self) -> Self {
-        self.inspector_config.tracing = true;
+    pub fn set_tracing(mut self, enable: bool) -> Self {
+        self.inspector_config.tracing = enable;
         self
     }
 
-    /// Enables the debugger
+    /// Enables or disables the debugger
     #[must_use]
-    pub fn with_debugger(mut self) -> Self {
-        self.inspector_config.debugger = true;
+    pub fn set_debugger(mut self, enable: bool) -> Self {
+        self.inspector_config.debugger = enable;
+        self
+    }
+
+    /// Enables or disables coverage collection
+    #[must_use]
+    pub fn set_coverage(mut self, enable: bool) -> Self {
+        self.inspector_config.coverage = enable;
         self
     }
 

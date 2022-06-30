@@ -3,14 +3,14 @@ use super::verify;
 use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
     compile,
-    opts::{forge::ContractInfo, EthereumOpts, WalletType},
+    opts::{EthereumOpts, WalletType},
     utils::{get_http_provider, parse_ether_value, parse_u256},
 };
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::utils::RuntimeOrHandle,
+    solc::{info::ContractInfo, utils::RuntimeOrHandle},
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 use eyre::{Context};
@@ -224,11 +224,14 @@ impl CreateArgs {
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
+        // set tx value if specified
+        if let Some(value) = self.value {
+            deployer.tx.set_value(value);
+        }
+
         // fill tx first because if you target a lower gas than current base, eth_estimateGas
         // will fail and create will fail
-        let mut tx = deployer.tx;
-        provider.fill_transaction(&mut tx, None).await?;
-        deployer.tx = tx;
+        provider.fill_transaction(&mut deployer.tx, None).await?;
 
         // set gas price if specified
         if let Some(gas_price) = self.gas_price {
@@ -256,11 +259,6 @@ impl CreateArgs {
                 ),
                 _ => deployer.tx,
             };
-        }
-
-        // set tx value if specified
-        if let Some(value) = self.value {
-            deployer.tx.set_value(value);
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;

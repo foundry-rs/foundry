@@ -28,7 +28,8 @@ pub use revm::Env;
 
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{
-    debug::DebugArena, executor::inspector::DEFAULT_CREATE2_DEPLOYER, trace::CallTraceArena, CALLER,
+    coverage::HitMaps, debug::DebugArena, executor::inspector::DEFAULT_CREATE2_DEPLOYER,
+    trace::CallTraceArena, CALLER,
 };
 use bytes::Bytes;
 use ethers::{
@@ -44,6 +45,7 @@ use revm::{
     return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::{BTreeMap, VecDeque};
+use tracing::trace;
 
 /// custom revm database implementations
 pub mod backend;
@@ -108,6 +110,8 @@ pub struct CallResult<D: Detokenize> {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -138,6 +142,8 @@ pub struct RawCallResult {
     pub labels: BTreeMap<Address, String>,
     /// The traces of the call
     pub traces: Option<CallTraceArena>,
+    /// The coverage info collected during the call
+    pub coverage: Option<HitMaps>,
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
@@ -160,6 +166,7 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: BTreeMap::new(),
             traces: None,
+            coverage: None,
             debug: None,
             transactions: None,
             state_changeset: None,
@@ -270,7 +277,8 @@ where
         from: Option<Address>,
         address: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
-        let from = from.unwrap_or(*CALLER);
+        trace!(contract=?address, "calling setUp()");
+        let from = from.unwrap_or(CALLER);
         self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
     }
 
@@ -297,6 +305,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -312,6 +321,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -361,7 +371,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -394,6 +404,7 @@ where
             stipend,
             logs,
             labels,
+            coverage,
             traces,
             debug,
             transactions,
@@ -424,6 +435,7 @@ where
             logs,
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset,
@@ -439,6 +451,7 @@ where
                     logs,
                     labels,
                     traces,
+                    coverage,
                     debug,
                     transactions,
                     state_changeset,
@@ -488,7 +501,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        let InspectorData { logs, labels, traces, debug, coverage, cheatcodes, .. } =
             inspector.collect_inspector_states();
 
         let transactions = if let Some(cheats) = cheatcodes {
@@ -510,6 +523,7 @@ where
             logs: logs.to_vec(),
             labels,
             traces,
+            coverage,
             debug,
             transactions,
             state_changeset: Some(state_changeset),
@@ -524,6 +538,7 @@ where
         value: U256,
         abi: Option<&Abi>,
     ) -> std::result::Result<DeployResult, EvmError> {
+        trace!(sender=?from, "deploying contract");
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
@@ -581,6 +596,8 @@ where
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
 
+        trace!(address=?address, "deployed contract");
+
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
 
@@ -610,7 +627,7 @@ where
         if success {
             // Check if a DSTest assertion failed
             let call =
-                executor.call::<bool, _, _>(*CALLER, address, "failed()(bool)", (), 0.into(), None);
+                executor.call::<bool, _, _>(CALLER, address, "failed()(bool)", (), 0.into(), None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;
