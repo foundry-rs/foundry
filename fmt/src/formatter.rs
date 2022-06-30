@@ -1490,7 +1490,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
             }
             Expression::HexLiteral(vals) => {
-                // TODO:
                 for HexLiteral { loc, hex } in vals {
                     write_chunk!(self, loc.start(), loc.end(), "hex\"{hex}\"")?;
                 }
