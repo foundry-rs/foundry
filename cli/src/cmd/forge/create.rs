@@ -1,7 +1,7 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
     compile,
     opts::{EthereumOpts, WalletType},
     utils::{get_http_provider, parse_ether_value, parse_u256},
@@ -10,10 +10,10 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{info::ContractInfo, utils::RuntimeOrHandle},
+    solc::info::ContractInfo,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
-use eyre::{Context, Result};
+use eyre::Context;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
@@ -90,7 +90,7 @@ This is automatically enabled for common networks without EIP1559."#
     gas_limit: Option<U256>,
 
     #[clap(
-        long = "priority-fee", 
+        long = "priority-fee",
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas priority fee for EIP1559 transactions.",
         env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value),
@@ -126,26 +126,25 @@ Examples: 1ether, 10gwei, 0.01ether"#,
     verify: bool,
 }
 
-impl Cmd for CreateArgs {
-    type Output = ();
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.run_create())
-    }
-}
-
 impl CreateArgs {
-    pub async fn run_create(self) -> Result<()> {
+    /// Executes the command to create a contract
+    pub async fn run(mut self) -> eyre::Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        if self.json || self.opts.silent {
+        let mut output = if self.json || self.opts.silent {
             // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project)?;
+            compile::suppress_compile(&project)
         } else {
-            compile::compile(&project, false, false)?;
+            compile::compile(&project, false, false)
+        }?
+        .output();
+
+        if let Some(ref mut path) = self.contract.path {
+            // paths are absolute in the project's output
+            *path = format!("{}", project.root().join(&path).display());
         }
 
-        // Get ABI and BIN
-        let (abi, bin, _) = crate::cmd::utils::read_artifact(&project, self.contract.clone())?;
+        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -205,7 +204,7 @@ impl CreateArgs {
         bin: BytecodeObject,
         args: Vec<Token>,
         provider: M,
-    ) -> Result<()> {
+    ) -> eyre::Result<()> {
         let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
@@ -326,7 +325,7 @@ impl CreateArgs {
         &self,
         constructor: &Constructor,
         constructor_args: &[String],
-    ) -> Result<Vec<Token>> {
+    ) -> eyre::Result<Vec<Token>> {
         let params = constructor
             .inputs
             .iter()
