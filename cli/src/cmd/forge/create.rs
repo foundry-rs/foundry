@@ -1,7 +1,7 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
     compile,
     opts::{EthereumOpts, WalletType},
     utils::{get_http_provider, parse_ether_value, parse_u256},
@@ -10,10 +10,10 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{info::ContractInfo, utils::RuntimeOrHandle},
+    solc::info::ContractInfo,
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
-use eyre::{Context};
+use eyre::Context;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
@@ -128,7 +128,7 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 
 impl CreateArgs {
     /// Executes the command to create a contract
-    pub async fn run(self) -> eyre::Result<()> {
+    pub async fn run(mut self) -> eyre::Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
         let mut output = if self.json || self.opts.silent {
@@ -136,12 +136,15 @@ impl CreateArgs {
             compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
-        }?.output();
+        }?
+        .output();
 
-        let artifact = output.remove()
+        if let Some(ref mut path) = self.contract.path {
+            // paths are absolute in the project's output
+            *path = format!("{}", project.root().join(&path).display());
+        }
 
-        // Get ABI and BIN
-        let (abi, bin, _) = crate::cmd::utils::read_artifact(&project, self.contract.clone())?;
+        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
