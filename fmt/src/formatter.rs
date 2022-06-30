@@ -1477,8 +1477,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::RationalNumberLiteral(loc, val, fraction, expr) => {
                 let val = format!("{}.{}", val, fraction);
-                let val =
-                    if expr.is_empty() { val.to_owned() } else { format!("{}e{}", val, expr) };
+                let val = if expr.is_empty() { val } else { format!("{}e{}", val, expr) };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
             Expression::StringLiteral(vals) => {
