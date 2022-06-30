@@ -1,3 +1,8 @@
+use crate::{
+    config::{Hardfork, DEFAULT_MNEMONIC},
+    eth::pool::transactions::TransactionOrder,
+    AccountGenerator, NodeConfig, CHAIN_ID,
+};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
@@ -10,18 +15,10 @@ use std::{
 };
 use tracing::log::trace;
 
-use crate::{
-    config::{Hardfork, DEFAULT_MNEMONIC},
-    eth::pool::transactions::TransactionOrder,
-    AccountGenerator, NodeConfig, CHAIN_ID,
-};
-use forge::executor::opts::EvmOpts;
-use foundry_common::evm::EvmArgs;
-
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
-    pub evm_opts: EvmArgs,
+    pub evm_opts: AnvilEvmArgs,
 
     #[clap(
         long,
@@ -103,58 +100,52 @@ pub struct NodeArgs {
     )]
     pub no_mining: bool,
 
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, help = "The host the server will listen on", value_name = "IP_ADDR")
+    #[clap(
+        long,
+        help = "The host the server will listen on",
+        value_name = "IP_ADDR",
+        help_heading = "SERVER OPTIONS"
     )]
     pub host: Option<IpAddr>,
 
-    #[cfg_attr(
-        feature = "clap",
-        clap(
-            long,
-            help = "How transactions are sorted in the mempool",
-            default_value = "fees",
-            value_name = "ORDER"
-        )
+    #[clap(
+        long,
+        help = "How transactions are sorted in the mempool",
+        default_value = "fees",
+        value_name = "ORDER"
     )]
     pub order: TransactionOrder,
 }
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
-        let figment = foundry_config::Config::figment_with_root(
-            foundry_config::find_project_root_path().unwrap(),
-        )
-        .merge(&self.evm_opts);
-        let evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
 
         NodeConfig::default()
-            .with_gas_limit(self.evm_opts.env.gas_limit)
-            .with_gas_price(self.evm_opts.env.gas_price)
+            .with_gas_limit(self.evm_opts.gas_limit)
+            .with_gas_price(self.evm_opts.gas_price)
             .with_hardfork(self.hardfork)
             .with_blocktime(self.block_time.map(std::time::Duration::from_secs))
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
-            .with_eth_rpc_url(evm_opts.fork_url)
-            .with_base_fee(self.evm_opts.env.block_base_fee_per_gas)
-            .with_fork_block_number(evm_opts.fork_block_number)
-            .with_storage_caching(evm_opts.no_storage_caching)
+            .with_eth_rpc_url(self.evm_opts.fork_url)
+            .with_base_fee(self.evm_opts.block_base_fee_per_gas)
+            .with_fork_block_number(self.evm_opts.fork_block_number)
+            .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(self.silent)
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
+            .with_chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID))
             .with_transaction_order(self.order)
     }
 
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID));
+            .chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }
@@ -190,4 +181,63 @@ impl NodeArgs {
 
         Ok(handle.await??)
     }
+}
+
+// Anvil's evm related arguments
+#[derive(Debug, Clone, Parser)]
+pub struct AnvilEvmArgs {
+    /// Fetch state over a remote endpoint instead of starting from an empty state.
+    ///
+    /// If you want to fetch state from a specific block number, see --fork-block-number.
+    #[clap(
+        long,
+        short,
+        visible_alias = "rpc-url",
+        value_name = "URL",
+        help_heading = "FORK CONFIG"
+    )]
+    pub fork_url: Option<String>,
+
+    /// Fetch state from a specific block number over a remote endpoint.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", value_name = "BLOCK", help_heading = "FORK CONFIG")]
+    pub fork_block_number: Option<u64>,
+
+    /// Initial retry backoff on encountering errors.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", value_name = "BACKOFF", help_heading = "FORK CONFIG")]
+    pub fork_retry_backoff: Option<u64>,
+
+    /// Explicitly disables the use of RPC caching.
+    ///
+    /// All storage slots are read entirely from the endpoint.
+    ///
+    /// This flag overrides the project's configuration file.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url", help_heading = "FORK CONFIG")]
+    pub no_storage_caching: bool,
+
+    /// The block gas limit.
+    #[clap(long, value_name = "GAS_LIMIT", help_heading = "ENVIRONMENT CONFIG")]
+    pub gas_limit: Option<u64>,
+
+    /// The gas price.
+    #[clap(long, value_name = "GAS_PRICE", help_heading = "ENVIRONMENT CONFIG")]
+    pub gas_price: Option<u64>,
+
+    /// The base fee in a block.
+    #[clap(
+        long,
+        visible_alias = "base-fee",
+        value_name = "FEE",
+        help_heading = "ENVIRONMENT CONFIG"
+    )]
+    pub block_base_fee_per_gas: Option<u64>,
+
+    /// The chain ID.
+    #[clap(long, value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
+    pub chain_id: Option<u64>,
 }
