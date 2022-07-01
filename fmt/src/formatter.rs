@@ -1148,6 +1148,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => false,
         })?;
 
+        // EOF newline
+        writeln!(self.buf())?;
+
         let comments = self.simulate_to_string(|fmt| {
             fmt.write_postfix_comments_before(fmt.source.len())?;
             fmt.write_prefix_comments_before(fmt.source.len())?;
