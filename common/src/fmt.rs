@@ -1,6 +1,6 @@
 //! Contains a helper pretty() function to print human redeable string versions of usual ethers
 //! types
-use ethers_core::types::*;
+use ethers_core::{types::*, utils::to_checksum};
 use std::str;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -37,9 +37,9 @@ impl UIfmt for I256 {
     }
 }
 
-impl UIfmt for H160 {
+impl UIfmt for Address {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        format!("{}", to_checksum(self, None))
     }
 }
 
