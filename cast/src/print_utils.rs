@@ -88,7 +88,7 @@ mod tests {
         let block: Block<Transaction> = serde_json::from_str(block).unwrap();
         let output ="\nblockHash            0xda53da08ef6a3cbde84c33e51c04f68c3853b6a3731f10baa2324968eee63972
 blockNumber          3
-from                 0xfdcedc3bfca10ecb0890337fbdd1977aba84807a
+from                 0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a
 gas                  90000
 gasPrice             20000000000
 hash                 0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067
@@ -96,7 +96,7 @@ input                0x
 nonce                2
 r                    0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88
 s                    0x73e5764b324a4f7679d890a198ba658ba1c8cd36983ff9797e10b1b89dbb448e
-to                   0xdca8ce283150ab773bcbeb8d38289bdb5661de1e
+to                   0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e
 transactionIndex     0
 v                    37
 value                0".to_string();
@@ -157,7 +157,7 @@ value                0".to_string();
             get_pretty_tx_attr(_block.transactions[0].clone(), "blockNumber")
         );
         assert_eq!(
-            Some("0xfdcedc3bfca10ecb0890337fbdd1977aba84807a".to_string()),
+            Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
             get_pretty_tx_attr(_block.transactions[0].clone(), "from")
         );
         assert_eq!(
@@ -189,7 +189,7 @@ value                0".to_string();
             get_pretty_tx_attr(_block.transactions[0].clone(), "s")
         );
         assert_eq!(
-            Some("0xdca8ce283150ab773bcbeb8d38289bdb5661de1e".to_string()),
+            Some("0xdca8ce283150AB773BCbeB8d38289bdB5661dE1e".into()),
             get_pretty_tx_attr(_block.transactions[0].clone(), "to")
         );
         assert_eq!(
