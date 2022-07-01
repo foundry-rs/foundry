@@ -46,7 +46,7 @@ pub struct MultiContractRunner {
     pub fork: Option<CreateFork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: CheatsConfig,
-    /// Whether or not to collect coverage info
+    /// Whether to collect coverage info
     pub coverage: bool,
 }
 

@@ -307,7 +307,7 @@ impl Executor {
         args: T,
         value: U256,
         abi: Option<&Abi>,
-    ) -> std::result::Result<CallResult<D>, EvmError> {
+    ) -> Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
 
@@ -335,7 +335,7 @@ impl Executor {
         args: T,
         value: U256,
         abi: Option<&Abi>,
-    ) -> std::result::Result<CallResult<D>, EvmError> {
+    ) -> Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
         let call_result = self.call_raw(from, to, calldata, value)?;
@@ -374,7 +374,7 @@ impl Executor {
         code: Bytes,
         value: U256,
         abi: Option<&Abi>,
-    ) -> std::result::Result<DeployResult, EvmError> {
+    ) -> Result<DeployResult, EvmError> {
         trace!(sender=?from, "deploying contract");
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
@@ -447,6 +447,7 @@ impl Executor {
     /// to test multiple assertions in 1 test function while also preserving logs.
     ///
     /// Instead, it sets `failed` to `true` which we must check.
+    // TODO(mattsse): check if safe to replace with `Backend::is_failed()`
     pub fn is_success(
         &self,
         address: Address,

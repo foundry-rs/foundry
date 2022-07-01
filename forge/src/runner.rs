@@ -251,10 +251,6 @@ impl<'a> ContractRunner<'a> {
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
 
-        // TODO(mattsse): while tests don't modify the state we have cheatcodes that affect the
-        // state (fork cheat codes, snapshots), so in order to execute all tests in parallel they
-        // need their own copy of the `Executor`,
-
         let test_results = tests
             .par_iter()
             .filter_map(|(func, should_fail)| {
@@ -262,7 +258,6 @@ impl<'a> ContractRunner<'a> {
                     Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 } else {
                     fuzzer.as_ref().map(|fuzzer| {
-                        // TODO(mattsse) use fuzz wrapper backend
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
                     })
                 };
@@ -341,7 +336,7 @@ impl<'a> ContractRunner<'a> {
                     (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
                 }
                 Err(err) => {
-                    tracing::error!(?err);
+                    error!(?err);
                     return Err(err.into())
                 }
             };

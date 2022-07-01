@@ -104,28 +104,11 @@ pub trait DatabaseExt: Database {
 pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
-    /// tracks all created forks
-    created_forks: HashMap<ForkId, SharedBackend>,
     /// The database that holds the entire state, uses an internal database depending on current
     /// state
     pub db: CacheDB<BackendDatabase>,
-    /// Contains snapshots made at a certain point
-    snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
-    /// Tracks whether there was a failure in a snapshot that was reverted
-    ///
-    /// The Test contract contains a bool variable that is set to true when an `assert` function
-    /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
-    /// to know if there was an `assert` that failed after the snapshot was taken so that we can
-    /// check if the test function passed all asserts even across snapshots. When a snapshot is
-    /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
-    /// if the `_failed` variable is set,
-    /// additionally
-    has_failure_snapshot: bool,
-    /// Tracks the address of a Test contract
-    ///
-    /// This address can be used to inspect the state of the contract when a test is being
-    /// executed. E.g. the `_failed` variable of `DSTest`
-    test_contract_context: Option<Address>,
+    /// holds additional Backend data
+    inner: BackendInner,
 }
 
 // === impl Backend ===
@@ -148,50 +131,45 @@ impl Backend {
             CacheDB::new(BackendDatabase::InMemory(EmptyDB()))
         };
 
-        Self {
-            forks,
-            db,
-            created_forks: Default::default(),
-            snapshots: Default::default(),
-            has_failure_snapshot: false,
-            // not yet known
-            test_contract_context: None,
-        }
+        Self { forks, db, inner: Default::default() }
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
         let mut db = self.db.clone();
         *db.db_mut() = BackendDatabase::InMemory(EmptyDB());
-        Self {
-            forks: self.forks.clone(),
-            created_forks: Default::default(),
-            db,
-            snapshots: Default::default(),
-            has_failure_snapshot: false,
-            test_contract_context: None,
-        }
+        Self { forks: self.forks.clone(), db, inner: Default::default() }
     }
 
     pub fn insert_cache(&mut self, address: H160, account: AccountInfo) {
         self.db.insert_cache(address, account)
     }
 
+    /// Returns all forks created by this backend
+    pub fn created_forks(&self) -> &HashMap<ForkId, SharedBackend> {
+        &self.inner.created_forks
+    }
+
+    /// Returns all snapshots created in this backend
+    pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>> {
+        &self.inner.snapshots
+    }
+
     /// Sets the address of the `DSTest` contract that is being executed
     pub fn set_test_contract(&mut self, addr: Address) -> &mut Self {
-        self.test_contract_context = Some(addr);
+        self.inner.test_contract_context = Some(addr);
         self
     }
 
     /// Returns the address of the set `DSTest` contract
     pub fn test_contract_address(&self) -> Option<Address> {
-        self.test_contract_context
+        self.inner.test_contract_context
     }
 
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.has_failure_snapshot ||
+        self.inner.has_failure_snapshot ||
             self.test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
@@ -234,7 +212,7 @@ impl Backend {
         INSP: Inspector<Self>,
     {
         if let TransactTo::Call(to) = env.tx.transact_to {
-            self.test_contract_context = Some(to);
+            self.inner.test_contract_context = Some(to);
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
@@ -244,17 +222,18 @@ impl Backend {
 
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, subroutine: &SubRoutine) -> U256 {
-        let id = self.snapshots.insert(BackendSnapshot::new(self.db.clone(), subroutine.clone()));
+        let id =
+            self.inner.snapshots.insert(BackendSnapshot::new(self.db.clone(), subroutine.clone()));
         trace!(target: "backend", "Created new snapshot {}", id);
         id
     }
 
     fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine> {
-        if let Some(mut snapshot) = self.snapshots.remove(id) {
+        if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
             if self.is_failed() {
-                self.has_failure_snapshot = true;
+                self.inner.has_failure_snapshot = true;
             }
 
             // merge additional logs
@@ -272,13 +251,14 @@ impl DatabaseExt for Backend {
 
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
         let (id, fork) = self.forks.create_fork(fork)?;
-        self.created_forks.insert(id.clone(), fork);
+        self.inner.created_forks.insert(id.clone(), fork);
         Ok(id)
     }
 
     fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()> {
         let id = id.into();
         let fork = self
+            .inner
             .created_forks
             .get(&id)
             .cloned()
@@ -293,7 +273,7 @@ impl DatabaseRef for Backend {
         self.db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytes {
         self.db.code_by_hash(code_hash)
     }
 
@@ -311,7 +291,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         DatabaseRef::basic(&self.db, address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytes {
         DatabaseRef::code_by_hash(&self.db, code_hash)
     }
 
@@ -366,7 +346,7 @@ impl DatabaseRef for BackendDatabase {
         }
     }
 
-    fn code_by_hash(&self, address: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, address: H256) -> Bytes {
         match self {
             BackendDatabase::InMemory(inner) => inner.code_by_hash(address),
             BackendDatabase::Forked(inner, _) => inner.code_by_hash(address),
@@ -384,6 +364,42 @@ impl DatabaseRef for BackendDatabase {
         match self {
             BackendDatabase::InMemory(inner) => inner.block_hash(number),
             BackendDatabase::Forked(inner, _) => inner.block_hash(number),
+        }
+    }
+}
+
+/// Container type for various Backend related data
+#[derive(Debug, Clone)]
+pub struct BackendInner {
+    /// tracks all created forks
+    pub created_forks: HashMap<ForkId, SharedBackend>,
+    /// Contains snapshots made at a certain point
+    pub snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
+    /// Tracks whether there was a failure in a snapshot that was reverted
+    ///
+    /// The Test contract contains a bool variable that is set to true when an `assert` function
+    /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
+    /// to know if there was an `assert` that failed after the snapshot was taken so that we can
+    /// check if the test function passed all asserts even across snapshots. When a snapshot is
+    /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
+    /// if the `_failed` variable is set,
+    /// additionally
+    pub has_failure_snapshot: bool,
+    /// Tracks the address of a Test contract
+    ///
+    /// This address can be used to inspect the state of the contract when a test is being
+    /// executed. E.g. the `_failed` variable of `DSTest`
+    pub test_contract_context: Option<Address>,
+}
+
+impl Default for BackendInner {
+    fn default() -> Self {
+        Self {
+            created_forks: Default::default(),
+            snapshots: Default::default(),
+            has_failure_snapshot: false,
+            // not yet known
+            test_contract_context: None,
         }
     }
 }
