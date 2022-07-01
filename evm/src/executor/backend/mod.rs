@@ -369,7 +369,7 @@ impl DatabaseRef for BackendDatabase {
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BackendInner {
     /// tracks all created forks
     pub created_forks: HashMap<ForkId, SharedBackend>,
@@ -390,16 +390,4 @@ pub struct BackendInner {
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
     pub test_contract_context: Option<Address>,
-}
-
-impl Default for BackendInner {
-    fn default() -> Self {
-        Self {
-            created_forks: Default::default(),
-            snapshots: Default::default(),
-            has_failure_snapshot: false,
-            // not yet known
-            test_contract_context: None,
-        }
-    }
 }
