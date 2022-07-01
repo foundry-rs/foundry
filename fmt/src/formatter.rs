@@ -1148,9 +1148,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => false,
         })?;
 
-        // EOF newline
-        writeln!(self.buf())?;
-
         let comments = self.simulate_to_string(|fmt| {
             fmt.write_postfix_comments_before(fmt.source.len())?;
             fmt.write_prefix_comments_before(fmt.source.len())?;
@@ -1158,6 +1155,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         })?;
         self.comments.remove_comments_before(self.source.len());
         write_chunk!(self, self.source.len(), "{}", comments.trim_end())?;
+
+        // EOF newline
+        writeln!(self.buf())?;
 
         Ok(())
     }
