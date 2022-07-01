@@ -166,12 +166,18 @@ pub struct MultiForkHandler {
 
     /// Initial backoff delay for requests
     backoff: u64,
+
+    /// Periodic interval to flush rpc cache
+    flush_cache_interval: tokio::time::Interval,
 }
 
 // === impl MultiForkHandler ===
 
 impl MultiForkHandler {
     fn new(incoming: Receiver<Request>) -> Self {
+        // flush cache every 60s, this ensures that long-running fork tests get their cache flushed
+        let flush_interval = std::time::Duration::from_secs(60);
+
         Self {
             incoming: incoming.fuse(),
             handlers: Default::default(),
@@ -180,6 +186,11 @@ impl MultiForkHandler {
             retries: 8,
             // 800ms
             backoff: 800,
+            // when to periodically flush caches
+            flush_cache_interval: tokio::time::interval_at(
+                tokio::time::Instant::now() + flush_interval,
+                flush_interval,
+            ),
         }
     }
 
@@ -274,6 +285,15 @@ impl Future for MultiForkHandler {
         if pin.handlers.is_empty() && pin.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
             return Poll::Ready(())
+        }
+
+        if pin.flush_cache_interval.poll_tick(cx).is_ready() && !pin.forks.is_empty() {
+            trace!(target: "fork::multi", "tick flushing caches");
+            let forks = pin.forks.values().cloned().collect::<Vec<_>>();
+            // flush this on new thread to not block here
+            std::thread::spawn(move || {
+                forks.into_iter().for_each(|fork| fork.flush_cache());
+            });
         }
 
         Poll::Pending

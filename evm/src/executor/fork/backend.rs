@@ -370,7 +370,7 @@ pub struct SharedBackend {
     ///
     /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
     /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
-    _cache: Arc<FlushJsonBlockCacheDB>,
+    cache: Arc<FlushJsonBlockCacheDB>,
 }
 
 impl SharedBackend {
@@ -432,9 +432,9 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
-        let _cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
+        let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend, _cache }, handler)
+        (Self { backend, cache }, handler)
     }
 
     /// Updates the pinned block to fetch data from
@@ -470,6 +470,11 @@ impl SharedBackend {
             self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
             Ok(rx.recv()?)
         })
+    }
+
+    /// Flushes the DB to disk if caching is enabled
+    pub(crate) fn flush_cache(&self) {
+        self.cache.0.flush();
     }
 }
 
