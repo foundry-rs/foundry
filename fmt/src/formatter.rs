@@ -2802,7 +2802,7 @@ mod tests {
         }
         let expected_comments = Comments::new(expected_comments, expected_source);
 
-        let expected = PrettyString(expected_source.trim().to_string());
+        let expected = PrettyString(expected_source.to_string());
 
         let mut source_formatted = String::new();
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());
