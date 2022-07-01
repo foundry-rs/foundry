@@ -1,5 +1,7 @@
 use crate::executor::opts::EvmOpts;
-use foundry_config::{cache::StorageCachingConfig, Config, RpcEndpoints};
+use bytes::Bytes;
+use ethers::abi::AbiEncode;
+use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
@@ -13,7 +15,7 @@ pub struct CheatsConfig {
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
-    pub rpc_endpoints: RpcEndpoints,
+    pub rpc_endpoints: ResolvedRpcEndpoints,
 
     /// Project root
     pub root: PathBuf,
@@ -34,7 +36,7 @@ impl CheatsConfig {
         Self {
             ffi: evm_opts.ffi,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
-            rpc_endpoints: config.rpc_endpoints.clone(),
+            rpc_endpoints: config.rpc_endpoints.clone().resolved(),
             root: config.__root.0.clone(),
             allowed_paths,
         }
@@ -50,5 +52,31 @@ impl CheatsConfig {
         }
 
         Ok(())
+    }
+
+    /// Returns the RPC to use
+    ///
+    /// If `url_or_alias` is a known alias in the `ResolvedRpcEndpoints` then it returns the
+    /// corresponding URL of that alias. otherwise this assumes `url_or_alias` is itself a URL
+    /// if it starts with a `http` or `ws` scheme
+    ///
+    /// # Errors
+    ///
+    ///  - Returns an error if `url_or_alias` is a known alias but references an unresolved env var.
+    ///  - Returns an error if `url_or_alias` is not an alias but does not start with a `http` or
+    ///    `scheme`
+    pub fn get_rpc_url(&self, url_or_alias: impl Into<String>) -> Result<String, Bytes> {
+        let url_or_alias = url_or_alias.into();
+        match self.rpc_endpoints.get(&url_or_alias) {
+            Some(Ok(url)) => Ok(url.clone()),
+            Some(Err(err)) => Err(err.to_string().encode().into()),
+            None => {
+                if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
+                    Err(format!("invalid rpc url {}", url_or_alias).encode().into())
+                } else {
+                    Ok(url_or_alias)
+                }
+            }
+        }
     }
 }

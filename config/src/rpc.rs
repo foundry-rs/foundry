@@ -1,7 +1,7 @@
 //! Support for multiple RPC-endpoints
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, env, env::VarError, fmt};
+use std::{collections::BTreeMap, env, env::VarError, fmt, ops::Deref};
 
 /// Container type for rpc endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -24,12 +24,18 @@ impl RpcEndpoints {
     }
 
     /// Returns all (alias -> url) pairs
-    ///
-    /// # Errors
-    ///
-    /// returns an error if it contains a reference to an env var that is not set
-    pub fn resolve_all(self) -> Result<BTreeMap<String, String>, VarError> {
-        self.endpoints.into_iter().map(|(name, e)| (e.resolve().map(|url| (name, url)))).collect()
+    pub fn resolved(self) -> ResolvedRpcEndpoints {
+        ResolvedRpcEndpoints {
+            endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
+        }
+    }
+}
+
+impl Deref for RpcEndpoints {
+    type Target = BTreeMap<String, RpcEndpoint>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.endpoints
     }
 }
 
@@ -43,7 +49,7 @@ impl RpcEndpoints {
 pub enum RpcEndpoint {
     /// A raw Url (ws, http)
     Url(String),
-    // Reference to an env var in the form of `${ENV_VAR}`
+    /// Reference to an env var in the form of `${ENV_VAR}`
     Env(String),
 }
 
@@ -71,10 +77,12 @@ impl RpcEndpoint {
     /// # Error
     ///
     /// Returns an error if the type holds a reference to an env var and the env var is not set
-    pub fn resolve(self) -> Result<String, VarError> {
+    pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
             RpcEndpoint::Url(url) => Ok(url),
-            RpcEndpoint::Env(v) => env::var(v),
+            RpcEndpoint::Env(var) => {
+                env::var(&var).map_err(|source| UnresolvedEnvVarError { var, source })
+            }
         }
     }
 }
@@ -91,7 +99,7 @@ impl fmt::Display for RpcEndpoint {
 }
 
 impl TryFrom<RpcEndpoint> for String {
-    type Error = VarError;
+    type Error = UnresolvedEnvVarError;
 
     fn try_from(value: RpcEndpoint) -> Result<Self, Self::Error> {
         value.resolve()
@@ -120,6 +128,43 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
         };
 
         Ok(endpoint)
+    }
+}
+
+/// Container type for _resolved_ RPC endpoints, see [RpcEndpoints::resolve_all()]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResolvedRpcEndpoints {
+    /// contains all named endpoints and their URL or an error if we failed to resolve the env var
+    /// alias
+    endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
+}
+
+impl Deref for ResolvedRpcEndpoints {
+    type Target = BTreeMap<String, Result<String, UnresolvedEnvVarError>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.endpoints
+    }
+}
+
+/// Error when we failed to resolve an env var
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnresolvedEnvVarError {
+    /// Var that couldn't be resolved
+    pub var: String,
+    /// the `env::var` error
+    pub source: VarError,
+}
+
+impl fmt::Display for UnresolvedEnvVarError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Failed to resolve env var `{}`: {}", self.var, self.source)
+    }
+}
+
+impl std::error::Error for UnresolvedEnvVarError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 

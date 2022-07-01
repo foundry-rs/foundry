@@ -41,7 +41,7 @@ pub mod utils;
 pub use crate::utils::*;
 
 mod rpc;
-pub use rpc::RpcEndpoints;
+pub use rpc::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
 
 pub mod cache;
 use cache::{Cache, ChainCache};

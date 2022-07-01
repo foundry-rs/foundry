@@ -32,9 +32,10 @@ pub fn apply<DB: DatabaseExt>(
 fn create_fork<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
-    url: String,
+    url_or_alias: String,
     block: BlockNumber,
 ) -> Result<Bytes, Bytes> {
+    let url = state.config.get_rpc_url(url_or_alias)?;
     let fork = CreateFork {
         enable_caching: state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
