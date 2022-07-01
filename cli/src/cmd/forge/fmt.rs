@@ -1,13 +1,12 @@
-use crate::cmd::Cmd;
-use clap::Parser;
+use crate::{cmd::Cmd, utils::FoundryPathExt};
+use clap::{Parser, ValueHint};
 use console::{style, Style};
-use ethers::solc::ProjectPathsConfig;
 use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
 use foundry_common::fs;
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
-    fmt::{Display, Write},
+    fmt::{self, Write},
     io,
     io::Read,
     path::{Path, PathBuf},
@@ -17,10 +16,18 @@ use std::{
 pub struct FmtArgs {
     #[clap(
         help = "path to the file, directory or '-' to read from stdin",
-        conflicts_with = "root"
+        conflicts_with = "root",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
     )]
     path: Option<PathBuf>,
-    #[clap(help = "project's root path, default being the current working directory", long)]
+    #[clap(
+        help = "The project's root path.",
+        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
+        long,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
+    )]
     root: Option<PathBuf>,
     #[clap(
         help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
@@ -35,27 +42,27 @@ pub struct FmtArgs {
     raw: bool,
 }
 
-struct Line(Option<usize>);
+// === impl FmtArgs ===
 
-enum Input<T: AsRef<Path>> {
-    Path(T),
-    Stdin(String),
-}
-
-impl<T: AsRef<Path>> Display for Input<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Input::Path(path) => write!(f, "{}", path.as_ref().to_string_lossy()),
-            Input::Stdin(_) => write!(f, "stdin"),
-        }
-    }
-}
-
-impl std::fmt::Display for Line {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.0 {
-            None => write!(f, "    "),
-            Some(idx) => write!(f, "{:<4}", idx + 1),
+impl FmtArgs {
+    /// Returns all inputs to format
+    fn inputs(&self) -> Vec<Input> {
+        if let Some(ref path) = self.path {
+            if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
+                let mut buf = String::new();
+                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                vec![Input::Stdin(buf)]
+            } else if path.is_dir() {
+                ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
+            } else if path.is_sol() {
+                vec![Input::Path(path.to_path_buf())]
+            } else {
+                vec![]
+            }
+        } else {
+            let config = foundry_config::load_config_with_root(self.root.clone());
+            let paths = config.project_paths();
+            paths.input_files().into_iter().map(Input::Path).collect()
         }
     }
 }
@@ -64,30 +71,7 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let root = if let Some(path) = self.path {
-            path
-        } else {
-            let root = self.root.unwrap_or_else(|| {
-                std::env::current_dir().expect("failed to get current directory")
-            });
-            if !root.is_dir() {
-                eyre::bail!("Root path should be a directory")
-            }
-
-            ProjectPathsConfig::find_source_dir(&root)
-        };
-
-        let inputs = if root == PathBuf::from("-") || !atty::is(atty::Stream::Stdin) {
-            let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf)?;
-            vec![Input::Stdin(buf)]
-        } else if root.is_dir() {
-            ethers::solc::utils::source_files(root).into_iter().map(Input::Path).collect()
-        } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
-            vec![Input::Path(root)]
-        } else {
-            vec![]
-        };
+        let inputs = self.inputs();
 
         let diffs = inputs
             .par_iter()
@@ -190,5 +174,30 @@ impl Cmd for FmtArgs {
         }
 
         Ok(())
+    }
+}
+
+struct Line(Option<usize>);
+
+enum Input {
+    Path(PathBuf),
+    Stdin(String),
+}
+
+impl fmt::Display for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Input::Path(path) => write!(f, "{}", path.display()),
+            Input::Stdin(_) => write!(f, "stdin"),
+        }
+    }
+}
+
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            None => write!(f, "    "),
+            Some(idx) => write!(f, "{:<4}", idx + 1),
+        }
     }
 }
