@@ -339,8 +339,9 @@ where
     // Chains which use `eth_estimateGas` are being sent sequentially and require their gas to be
     // re-estimated right before broadcasting.
     if has_different_gas_calc(signer.signer().chain_id()) {
-        // If we don't, some RPCs might just return our estimated gas anyway.
-        legacy_or_1559.set_gas(0);
+        // if already set, some RPC endpoints might simply return the gas value that is already set
+        // in the request and omit the estimate altogether, so we remove it here
+        let _ = legacy_or_1559.gas_mut().take();
 
         legacy_or_1559.set_gas(
             signer

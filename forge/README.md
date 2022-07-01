@@ -138,7 +138,8 @@ which implements the following methods:
 
 - `function addr(uint sk) public returns (address addr)` Derives an ethereum
   address from the private key `sk`. Note that `hevm.addr(0)` will fail with
-  `BadCheatCode` as `0` is an invalid ECDSA private key.
+  `BadCheatCode` as `0` is an invalid ECDSA private key. `sk` values above the 
+  secp256k1 curve order, near the max uint256 value will also fail.
 
 - `function ffi(string[] calldata) external returns (bytes memory)` Executes the
   arguments as a command in the system shell and returns stdout. Note that this

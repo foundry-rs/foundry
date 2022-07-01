@@ -134,16 +134,6 @@ impl ProjectCompiler {
         F: FnOnce(&Project) -> eyre::Result<ProjectCompileOutput>,
     {
         let ProjectCompiler { print_sizes, print_names } = self;
-        if !project.paths.sources.exists() {
-            eyre::bail!(
-                r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-                project.paths.sources.display(),
-                project.paths
-            );
-        }
 
         let now = std::time::Instant::now();
         tracing::trace!(target : "forge::compile", "start compiling project");
@@ -219,17 +209,6 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
     let output = ethers::solc::report::with_scoped(
         &ethers::solc::report::Report::new(NoReporter::default()),
         || project.compile(),

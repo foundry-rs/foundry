@@ -1,5 +1,9 @@
 //! script command
-use crate::{cmd::forge::build::BuildArgs, opts::MultiWallet, utils::parse_ether_value};
+use crate::{
+    cmd::forge::build::BuildArgs,
+    opts::MultiWallet,
+    utils::{get_contract_name, parse_ether_value},
+};
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Function},
@@ -356,8 +360,13 @@ impl ScriptArgs {
             filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
         let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
         let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-        let tui = Tui::new(flattened, 0, decoder.contracts.clone(), artifacts, sources)?;
+        let identified_contracts = decoder
+            .contracts
+            .iter()
+            .map(|(addr, identifier)| (*addr, get_contract_name(identifier).to_string()))
+            .collect();
 
+        let tui = Tui::new(flattened, 0, identified_contracts, artifacts, sources)?;
         match tui.start().expect("Failed to start tui") {
             TUIExitReason::CharExit => Ok(()),
         }

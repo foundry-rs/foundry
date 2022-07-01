@@ -113,6 +113,7 @@ impl From<TypedTransaction> for EthersTransaction {
                 s: t.signature.s,
                 access_list: None,
                 transaction_type: Some(0u64.into()),
+                other: Default::default(),
             },
             TypedTransaction::EIP2930(t) => EthersTransaction {
                 hash,
@@ -134,6 +135,7 @@ impl From<TypedTransaction> for EthersTransaction {
                 s: U256::from(t.s.as_bytes()),
                 access_list: Some(t.access_list),
                 transaction_type: Some(1u64.into()),
+                other: Default::default(),
             },
             TypedTransaction::EIP1559(t) => EthersTransaction {
                 hash,
@@ -155,6 +157,7 @@ impl From<TypedTransaction> for EthersTransaction {
                 s: U256::from(t.s.as_bytes()),
                 access_list: Some(t.access_list),
                 transaction_type: Some(2u64.into()),
+                other: Default::default(),
             },
         }
     }

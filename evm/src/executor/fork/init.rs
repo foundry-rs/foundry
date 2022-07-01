@@ -13,7 +13,10 @@ pub async fn environment<M: Middleware>(
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
-) -> Result<Env, M::Error> {
+) -> eyre::Result<Env>
+where
+    M::Error: 'static,
+{
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
     } else {
@@ -24,7 +27,18 @@ pub async fn environment<M: Middleware>(
         provider.get_chainid(),
         provider.get_block(block_number)
     )?;
-    let block = block.expect("block not found");
+    let block = if let Some(block) = block {
+        block
+    } else {
+        if let Ok(latest_block) = provider.get_block_number().await {
+            eyre::bail!(
+                "Failed to get block for block number: {}\nlatest block number: {}",
+                block_number,
+                latest_block
+            );
+        }
+        eyre::bail!("Failed to get block for block number: {}", block_number)
+    };
 
     Ok(Env {
         cfg: CfgEnv {

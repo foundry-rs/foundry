@@ -6,18 +6,15 @@ use ethers::{
     core::types::Chain,
     prelude::ArtifactId,
     solc::{
-        artifacts::{
-            CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
-        },
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
-        Project,
     },
 };
 
 use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
 
-use ethers::solc::info::ContractInfo;
+use ethers::solc::{info::ContractInfo, AggregatedCompilerOutput, Artifact};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
@@ -27,32 +24,49 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-/// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
+/// Given a `Project`'s output, removes the matching ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
 #[track_caller]
-pub fn read_artifact(
-    project: &Project,
-    contract: ContractInfo,
+pub fn remove_contract(
+    output: &mut AggregatedCompilerOutput,
+    info: &ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    let cache = SolFilesCache::read_joined(&project.paths)?;
-    let contract_path = match contract.path {
-        Some(path) => dunce::canonicalize(PathBuf::from(path))?,
-        None => get_cached_entry_by_name(&cache, &contract.name)?.0,
+    let contract = if let Some(contract) = output.remove_contract(info) {
+        contract
+    } else {
+        let mut err = format!("could not find artifact: `{}`", info.name);
+        if let Some(suggestion) = suggestions::did_you_mean(
+            &info.name,
+            output.contracts.contracts().map(|(name, _)| name),
+        )
+        .pop()
+        {
+            err = format!(
+                r#"{}
+
+        Did you mean `{}`?"#,
+                err, suggestion
+            );
+        }
+        eyre::bail!(err)
     };
 
-    let artifact: CompactContractBytecode = cache.read_artifact(contract_path, &contract.name)?;
+    let abi = contract
+        .get_abi()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain abi", info))?
+        .into_owned();
 
-    Ok((
-        artifact
-            .abi
-            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-        artifact
-            .bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract.name)))?,
-        artifact.deployed_bytecode.ok_or_else(|| {
-            eyre::Error::msg(format!("deployed bytecode not found for {}", contract.name))
-        })?,
-    ))
+    let bin = contract
+        .get_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain bytecode", info))?
+        .into_owned();
+
+    let runtime = contract
+        .get_deployed_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain deployed bytecode", info))?
+        .into_owned();
+
+    Ok((abi, bin, runtime))
 }
 
 /// Helper function for finding a contract by ContractName

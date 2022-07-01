@@ -83,6 +83,12 @@ pub enum EvmMineOptions {
     Timestamp(Option<u64>),
 }
 
+impl Default for EvmMineOptions {
+    fn default() -> Self {
+        EvmMineOptions::Options { timestamp: None, blocks: None }
+    }
+}
+
 /// Represents the result of `eth_getWork`
 /// This may or may not include the block number
 #[derive(Debug, PartialEq, Eq, Default)]
