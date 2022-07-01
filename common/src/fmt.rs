@@ -39,7 +39,7 @@ impl UIfmt for I256 {
 
 impl UIfmt for Address {
     fn pretty(&self) -> String {
-        format!("{}", to_checksum(self, None))
+        to_checksum(self, None)
     }
 }
 
