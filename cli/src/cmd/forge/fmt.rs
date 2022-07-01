@@ -161,6 +161,8 @@ impl Cmd for FmtArgs {
             .collect::<Vec<String>>();
 
         if !diffs.is_empty() {
+            // This branch is only reachable with stdin or --check
+
             if !self.raw {
                 for (i, diff) in diffs.iter().enumerate() {
                     if i > 0 {
@@ -170,7 +172,9 @@ impl Cmd for FmtArgs {
                 }
             }
 
-            std::process::exit(1);
+            if self.check {
+                std::process::exit(1);
+            }
         }
 
         Ok(())
