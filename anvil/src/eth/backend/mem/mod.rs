@@ -98,7 +98,7 @@ pub struct Backend {
 impl Backend {
     /// Create a new instance of in-mem backend.
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
-        let blockchain = Blockchain::new(&*env.read(), fees.is_eip1559().then(|| fees.base_fee()));
+        let blockchain = Blockchain::new(&env.read(), fees.is_eip1559().then(|| fees.base_fee()));
         Self {
             db,
             blockchain,
@@ -135,7 +135,7 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
-            Blockchain::new(&*env.read(), fees.is_eip1559().then(|| fees.base_fee()))
+            Blockchain::new(&env.read(), fees.is_eip1559().then(|| fees.base_fee()))
         };
 
         let backend = Self {
@@ -1365,7 +1365,7 @@ impl TransactionValidator for Backend {
         tx: &PendingTransaction,
     ) -> Result<(), InvalidTransactionError> {
         let account = self.db.read().basic(*tx.sender());
-        self.validate_pool_transaction_for(tx, &account, &*self.env().read())
+        self.validate_pool_transaction_for(tx, &account, &self.env().read())
     }
 
     fn validate_pool_transaction_for(
