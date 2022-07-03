@@ -90,18 +90,12 @@ impl ScriptTester {
 
     fn copy_testdata(current_dir: &Path) -> eyre::Result<()> {
         let testdata = format!("{}/../../testdata", env!("CARGO_MANIFEST_DIR"));
-        std::fs::copy(
-            testdata.clone() + "/cheats/Cheats.sol",
-            current_dir.join("src/Cheats.sol"),
-        )?;
+        std::fs::copy(testdata.clone() + "/cheats/Cheats.sol", current_dir.join("src/Cheats.sol"))?;
         std::fs::copy(
             testdata.clone() + "/cheats/Broadcast.t.sol",
             current_dir.join(BROADCAST_TEST_PATH),
         )?;
-        std::fs::copy(
-            testdata + "/lib/ds-test/src/test.sol",
-            current_dir.join("lib/test.sol"),
-        )?;
+        std::fs::copy(testdata + "/lib/ds-test/src/test.sol", current_dir.join("lib/test.sol"))?;
 
         Ok(())
     }
