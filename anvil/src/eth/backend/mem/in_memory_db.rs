@@ -39,7 +39,7 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<H256> {
-        Some(state_merkle_trie_root(self.inner.cache(), self.inner.storage()))
+        Some(state_merkle_trie_root(self.inner.accounts()))
     }
 
     fn current_state(&self) -> StateDb {
