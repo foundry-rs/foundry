@@ -9,7 +9,6 @@ use foundry_cli_test_utils::{
 
 use regex::Regex;
 use std::{env, path::PathBuf, str::FromStr};
-use yansi::Paint;
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
@@ -32,16 +31,15 @@ contract Demo {
 
     cmd.arg("script").arg(script);
     let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
+    assert!(output.ends_with(
         "Compiler run successful
-{}
+Script ran successfully.
 Gas used: 1751
 
 == Logs ==
   script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
+"
+    ));
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
@@ -63,18 +61,17 @@ contract Demo {
         )
         .unwrap();
 
-    cmd.arg("script").arg(format!("{}:Foo", script.display()));
+    cmd.arg("script").arg(format!("{}:Demo", script.display()));
     let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
+    assert!(output.ends_with(
         "Compiler run successful
-{}
+Script ran successfully.
 Gas used: 1751
 
 == Logs ==
   script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
+"
+    ));
 });
 
 // Tests that the run command can run arbitrary functions
@@ -98,16 +95,15 @@ contract Demo {
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
     let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
+    assert!(output.ends_with(
         "Compiler run successful
-{}
+Script ran successfully.
 Gas used: 1751
 
 == Logs ==
   script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
+"
+    ));
 });
 
 // Tests that the run command can run functions with arguments
@@ -134,18 +130,17 @@ contract Demo {
 
     cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
     let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
+    assert!(output.ends_with(
         "Compiler run successful
-{}
+Script ran successfully.
 Gas used: 3957
 
 == Logs ==
   script ran
   1
   2
-",
-        Paint::green("Script ran successfully.")
-    ),));
+"
+    ));
 });
 
 // Tests that the run command can run functions with return values
@@ -168,9 +163,9 @@ contract Demo {
         .unwrap();
     cmd.arg("script").arg(script);
     let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
+    assert!(output.ends_with(
         "Compiler run successful
-{}
+Script ran successfully.
 Gas used: 1836
 
 == Return ==
@@ -179,9 +174,8 @@ result: uint256 255
 
 == Logs ==
   script ran
-",
-        Paint::green("Script ran successfully.")
-    )));
+"
+    ));
 });
 
 forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {

@@ -2942,7 +2942,13 @@ mod tests {
             "#,
             )?;
             let loaded = Config::load().sanitized();
-            let dir = jail.directory();
+
+            // NOTE(onbjerg): We have to canonicalize the path here using dunce because figment will
+            // canonicalize the jail path using the standard library. The standard library *always*
+            // transforms Windows paths to some weird extended format, which none of our code base
+            // does.
+            let dir = ethers_solc::utils::canonicalize(jail.directory())
+                .expect("Could not canonicalize jail path");
             assert_eq!(
                 loaded.model_checker,
                 Some(ModelCheckerSettings {

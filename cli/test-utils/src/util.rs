@@ -642,9 +642,9 @@ impl OutputExt for process::Output {
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stdout = String::from_utf8_lossy(&self.stdout);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "");
+        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
 
@@ -654,9 +654,9 @@ impl OutputExt for process::Output {
     #[track_caller]
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stderr = String::from_utf8_lossy(&self.stderr);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "");
+        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
         self
@@ -673,7 +673,7 @@ pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
             path.with_extension(format!("tty.{}", ext))
         } else {
             path.with_extension("tty")
-        }
+        };
     }
     path.to_path_buf()
 }
@@ -687,6 +687,21 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+/// Creates a cross-platform remapping string for use in tests
+///
+/// NOTE: This probably should be unnecessary, and remappings should probably
+/// be canonicalized.
+pub fn remapping_str(src: &str, dest: &str) -> String {
+    // NOTE(onbjerg): The `trim_end_matches` is because the path itself on Windows is normalized
+    // except for the last character which is still a /...
+    format!(
+        "{}={}/",
+        src,
+        dest.trim_end_matches('/')
+            .replace('/', std::str::from_utf8(&[std::path::MAIN_SEPARATOR as u8]).unwrap())
+    )
 }
 
 #[cfg(test)]
