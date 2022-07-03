@@ -1,0 +1,20 @@
+---
+# runtime docker tests
+file:
+  /opt/foundry:
+    exists: false
+    filetype: directory
+    contains: []
+  /usr/local/bin/anvil:
+    exists: true
+    mode: "0755"
+    filetype: file
+    contains: []
+# TODO
+#   /opt/foundry:
+#    exists: true
+#    mode: "0755"
+#    owner: foundry
+#    group: foundry
+#    filetype: directory
+#    contains: []

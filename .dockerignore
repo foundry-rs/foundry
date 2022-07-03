@@ -1,2 +1,7 @@
 target
 .github
+.git/
+Dockerfile
+docker.hcl
+docker-compose.yml
+
