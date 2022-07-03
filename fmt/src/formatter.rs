@@ -624,7 +624,13 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write all prefix comments before a given location
     fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for prefix in self.comments.remove_prefixes_before(byte_end) {
+        let prefix_comments = self.comments.remove_prefixes_before(byte_end);
+        if let Some(CommentWithMetadata { has_newline_before, .. }) = prefix_comments.first() {
+            if *has_newline_before && !self.is_beginning_of_line() {
+                write!(self.buf(), "\n\n")?;
+            }
+        }
+        for prefix in prefix_comments {
             self.write_comment(&prefix)?;
         }
         Ok(())
@@ -2873,4 +2879,5 @@ mod tests {
     test_directory! { ArrayExpressions }
     test_directory! { UnitExpression }
     test_directory! { ThisExpression }
+    test_directory! { SimpleComments }
 }
