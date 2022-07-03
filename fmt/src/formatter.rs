@@ -1414,7 +1414,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
         let mut name = self.visit_to_chunk(
             enumeration.name.loc.start(),
-            Some(enumeration.loc.end()),
+            Some(enumeration.name.loc.end()),
             &mut enumeration.name,
         )?;
         name.content = format!("enum {}", name.content);
@@ -1497,7 +1497,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
             }
             Expression::AddressLiteral(loc, val) => {
-                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+                // support of solana/substrate address literals
+                write_chunk!(self, loc.start(), loc.end(), "address\"{val}\"")?;
             }
             Expression::Unit(_, expr, unit) => {
                 expr.visit(self)?;
