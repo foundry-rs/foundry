@@ -1,0 +1,6 @@
+[target.x86_64-pc-windows-msvc]
+# Increases the stack size to 10MB, which is
+# in line with Linux (whereas default for Windows is 1MB)
+rustflags = [
+  "-C", "link-arg=/STACK:10000000"
+]
