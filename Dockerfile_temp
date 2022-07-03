@@ -1,0 +1,7 @@
+FROM foundry:nightly
+
+ARG RPC_URL
+
+ENV rpc_url  $RPC_URL
+
+ENTRYPOINT cast block --rpc-url=${rpc_url} latest
