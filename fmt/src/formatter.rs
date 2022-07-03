@@ -624,13 +624,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write all prefix comments before a given location
     fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        let prefix_comments = self.comments.remove_prefixes_before(byte_end);
-        if let Some(CommentWithMetadata { has_newline_before, .. }) = prefix_comments.first() {
-            if *has_newline_before && !self.is_beginning_of_line() {
-                write!(self.buf(), "\n\n")?;
-            }
-        }
-        for prefix in prefix_comments {
+        for prefix in self.comments.remove_prefixes_before(byte_end) {
             self.write_comment(&prefix)?;
         }
         Ok(())
@@ -2068,8 +2062,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         self.indented(1, |fmt| {
             fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
-            fmt.write_postfix_comments_before(loc.end())?;
-            fmt.write_prefix_comments_before(loc.end())?;
+
+            let prefix_comments = fmt.comments.remove_prefixes_before(loc.end());
+            if prefix_comments.is_empty() {
+                fmt.write_postfix_comments_before(loc.end())?;
+            } else {
+                let first_prefix = prefix_comments.first().unwrap();
+                fmt.write_postfix_comments_before(first_prefix.loc.start())?;
+                if first_prefix.has_newline_before && !fmt.is_beginning_of_line() {
+                    write!(fmt.buf(), "\n\n")?;
+                }
+                for prefix in prefix_comments {
+                    fmt.write_comment(&prefix)?;
+                }
+            }
             Ok(())
         })?;
 
