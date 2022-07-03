@@ -274,13 +274,16 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         let mut cmd = process::Command::new(forge);
         cmd.current_dir(self.inner.root());
+        cmd.env("NO_COLOR", "1");
         cmd
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> process::Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        process::Command::new(cast)
+        let mut cmd = process::Command::new(cast);
+        cmd.env("NO_COLOR", "1");
+        cmd
     }
 
     /// Returns the `Config` as spit out by `forge config`

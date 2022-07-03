@@ -248,10 +248,9 @@ pub(crate) use p_println;
 /// - Colour has been disabled by some environment variable.
 /// - We are running inside a test
 pub fn enable_paint() {
-    let is_test = cfg!(test);
     let is_windows = cfg!(windows) && !Paint::enable_windows_ascii();
     let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
-    if is_test || is_windows || env_colour_disabled {
+    if is_windows || env_colour_disabled {
         Paint::disable();
     }
 }
