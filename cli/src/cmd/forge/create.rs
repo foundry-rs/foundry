@@ -10,7 +10,7 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::info::ContractInfo,
+    solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
@@ -80,12 +80,11 @@ impl CreateArgs {
             compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
-        }?
-        .output();
+        }?;
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = format!("{}", project.root().join(&path).display());
+            *path = format!("{}", canonicalized(project.root().join(&path)).display());
         }
 
         let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
