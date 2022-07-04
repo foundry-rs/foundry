@@ -2489,6 +2489,10 @@ mod tests {
                 chains = 'all'
                 endpoints = 'all'
 
+                [default.rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${RPC_MAINNET}"
+
             "#,
             )?;
 
@@ -2496,6 +2500,14 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
+            );
+
+            assert_eq!(
+                config.rpc_endpoints,
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                ]),
             );
 
             Ok(())

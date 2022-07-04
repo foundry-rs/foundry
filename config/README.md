@@ -143,6 +143,28 @@ stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
 
+##### RPC-Endpoints settings
+
+The `rpc_endpoints` value accepts a list of `alias = "<url|env var>"` pairs.
+
+The following example declares two pairs:
+The alias `optimism` references the endpoint URL directly.
+The alias `mainnet` references the environment variable `RPC_MAINNET` which holds the actual URL.
+
+Environment variables need to be wrapped in `${}`
+
+```toml
+rpc_endpoints = { optimism = "https://optimism.alchemyapi.io/v2/...", mainnet = "${RPC_MAINNET}" }
+```
+
+Alternatively the following form is accepted, note the `profile` prefix:
+
+```toml
+[default.rpc_endpoints]
+optimism = "https://optimism.alchemyapi.io/v2/..."
+mainnet = "${RPC_MAINNET}"
+```
+
 ##### Additional Model Checker settings
 
 [Solidity's built-in model checker](https://docs.soliditylang.org/en/latest/smtchecker.html#tutorial)
