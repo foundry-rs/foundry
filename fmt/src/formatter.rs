@@ -2790,8 +2790,14 @@ mod tests {
         source: &str,
         expected_source: &str,
     ) {
-        #[derive(PartialEq, Eq)]
+        #[derive(Eq)]
         struct PrettyString(String);
+
+        impl PartialEq for PrettyString {
+            fn eq(&self, other: &PrettyString) -> bool {
+                self.0.lines().eq(other.0.lines())
+            }
+        }
 
         impl std::fmt::Debug for PrettyString {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
