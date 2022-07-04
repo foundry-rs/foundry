@@ -34,6 +34,19 @@ pub fn apply<DB: DatabaseExt>(
                 Err(err) => Err(err.to_string().encode().into()),
             }
         }
+        HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
+        HEVMCalls::RpcUrls(_) => {
+            let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
+            for alias in state.config.rpc_endpoints.keys().cloned() {
+                match state.config.get_rpc_url(&alias) {
+                    Ok(url) => {
+                        urls.push([alias, url]);
+                    }
+                    Err(err) => return Some(Err(err)),
+                }
+            }
+            Ok(urls.encode().into())
+        }
         _ => return None,
     })
 }
