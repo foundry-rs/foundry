@@ -42,7 +42,7 @@ async fn test_geth_revert_transaction() {
 
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove("VendingMachine").unwrap();
+    let contract = compiled.remove_first("VendingMachine").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let client = Arc::new(Provider::try_from("http://127.0.0.1:8545").unwrap());
