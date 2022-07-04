@@ -52,6 +52,13 @@ pub trait DatabaseExt: Database {
     ///
     /// Returns an error if no fork with the given `id` exists
     fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()>;
+
+    /// Updates the fork to given block number.
+    ///
+    /// This will essentially create a new fork at the given block height.
+    ///
+    /// Returns false if no matching fork was found.
+    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool>;
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -265,6 +272,10 @@ impl DatabaseExt for Backend {
             .ok_or_else(|| eyre::eyre!("Fork Id {} does not exist", id))?;
         *self.db.db_mut() = BackendDatabase::Forked(fork, id);
         Ok(())
+    }
+
+    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool> {
+        todo!()
     }
 }
 

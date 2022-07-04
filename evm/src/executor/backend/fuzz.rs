@@ -181,6 +181,10 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         }
         Ok(())
     }
+
+    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool> {
+        todo!()
+    }
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {

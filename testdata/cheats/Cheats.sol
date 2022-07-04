@@ -144,4 +144,11 @@ interface Cheats {
     function selectFork(string calldata) external;
     // forks the `block` variable from the given endpoint
     function forkBlockVariable(string calldata, uint256) external;
+    // Updates the currently active fork to given block number
+    // This is similar to `roll` but for the fork
+    // Returns false if no fork is active
+    function rollFork(uint256) external returns(bool);
+    // Updates the given fork to given block number
+    // Returns false if no matching fork was found
+    function rollFork(string calldata, uint256) external returns(bool);
 }

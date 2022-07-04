@@ -87,6 +87,8 @@ ethers::contract::abigen!(
             createFork(string,uint256)(string)
             createFork(string)(string)
             selectFork(string)
+            rollFork(uint256)
+            rollFork(string,uint256)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
