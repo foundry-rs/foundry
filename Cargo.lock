@@ -816,9 +816,9 @@ dependencies = [
 
 [[package]]
 name = "coins-ledger"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "498841803f751d49bb08fe4a88b514087c52e5df885575ed4757f14ab151e239"
+checksum = "bbfa8a730d02735d8d53888a95d8f33aaa9dda9979862de113202421db939b2a"
 dependencies = [
  "async-trait",
  "blake2b_simd",
@@ -895,6 +895,18 @@ dependencies = [
  "crossterm 0.23.2",
  "strum 0.23.0",
  "strum_macros 0.23.1",
+ "unicode-width",
+]
+
+[[package]]
+name = "comfy-table"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "121d8a5b0346092c18a4b2fd6f620d7a06f0eb7ac0a45860939a0884bc579c56"
+dependencies = [
+ "crossterm 0.23.2",
+ "strum 0.24.0",
+ "strum_macros 0.24.0",
  "unicode-width",
 ]
 
@@ -1470,7 +1482,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1485,7 +1497,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1496,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1514,7 +1526,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1536,7 +1548,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1550,7 +1562,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1580,7 +1592,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1596,7 +1608,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1620,7 +1632,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1656,7 +1668,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1679,7 +1691,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#5d4addb7151b9b26f8ffe8610344bd45957b82f2"
+source = "git+https://github.com/gakonst/ethers-rs#fe267049c8deb218f8b9086eab29f55867e71dee"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
@@ -1866,7 +1878,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
- "comfy-table",
+ "comfy-table 6.0.0",
  "ethers",
  "eyre",
  "foundry-common",
@@ -1936,7 +1948,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "color-eyre",
- "comfy-table",
+ "comfy-table 5.0.1",
  "console 0.15.0",
  "dunce",
  "ethers",
@@ -4395,9 +4407,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.11"
+version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d92beeab217753479be2f74e54187a6aed4c125ff0703a866c3147a02f0c6dd"
+checksum = "a2333e6df6d6598f2b1974829f853c2b4c5f4a6e503c10af918081aa6f8564e1"
 dependencies = [
  "serde",
 ]
@@ -5201,9 +5213,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.27"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7709595b8878a4965ce5e87ebf880a7d39c9afc6837721b21a5a816a8117d921"
+checksum = "7b7358be39f2f274f322d2aaed611acc57f382e8eb1e5b48cb9ae30933495ce7"
 dependencies = [
  "once_cell",
  "valuable",
@@ -5242,13 +5254,13 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.3.11"
+version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bc28f93baff38037f64e6f43d34cfa1605f27a49c34e8a04c5e78b0babf2596"
+checksum = "3a713421342a5a666b7577783721d3117f1b69a393df803ee17bb73b1e122a59"
 dependencies = [
  "ansi_term",
- "lazy_static",
  "matchers",
+ "once_cell",
  "regex",
  "sharded-slab",
  "smallvec",

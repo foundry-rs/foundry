@@ -373,7 +373,7 @@ mod tests {
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
-    use foundry_config::Config;
+    use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
     use foundry_evm::trace::TraceKind;
     use foundry_utils::init_tracing_subscriber;
     use std::env;
@@ -385,8 +385,11 @@ mod tests {
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
+        let mut config = Config::with_root(PROJECT.root());
+        config.rpc_endpoints = rpc_endpoints();
+
         base_runner()
-            .with_cheats_config(CheatsConfig::new(&Config::with_root(PROJECT.root()), &*EVM_OPTS))
+            .with_cheats_config(CheatsConfig::new(&config, &*EVM_OPTS))
             .build(
                 &(*PROJECT).paths.root,
                 (*COMPILED).clone(),
@@ -419,6 +422,20 @@ mod tests {
             .with_fork(fork)
             .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
             .unwrap()
+    }
+
+    /// the RPC endpoints used during tests
+    fn rpc_endpoints() -> RpcEndpoints {
+        RpcEndpoints::new([
+            (
+                "rpcAlias",
+                RpcEndpoint::Url(
+                    "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf"
+                        .to_string(),
+                ),
+            ),
+            ("rpcEnvAlias", RpcEndpoint::Env("RPC_ENV_ALIAS".to_string())),
+        ])
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
@@ -1079,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cheats() {
+    fn test_env_vars() {
         let mut runner = runner();
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,
@@ -1127,7 +1144,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         // let suite_result =
         //     runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
         let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/Snapsh"), None, true).unwrap();
+            runner.test(&Filter::new(".*", ".*", ".*cheats/RpcUrl"), None, true).unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
