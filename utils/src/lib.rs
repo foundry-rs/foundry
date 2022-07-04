@@ -2,9 +2,9 @@
 use ethers_addressbook::contract;
 use ethers_core::{
     abi::{
-        self, parse_abi,
+        self,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, RawLog, Token,
+        Abi, Event, EventParam, Function, HumanReadableParser, Param, ParamType, RawLog, Token,
     },
     types::*,
 };
@@ -260,8 +260,7 @@ impl IntoFunction for String {
 
 impl<'a> IntoFunction for &'a str {
     fn into(self) -> Function {
-        AbiParser::default()
-            .parse_function(self)
+        HumanReadableParser::parse_function(self)
             .unwrap_or_else(|_| panic!("could not convert {self} to function"))
     }
 }
@@ -438,23 +437,12 @@ pub fn to_table(value: serde_json::Value) -> String {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    // TODO: Make human readable ABI better / more minimal
-    let abi = parse_abi(&[sig])?;
-    // get the function
-    let (_, func) =
-        abi.functions.iter().next().ok_or_else(|| eyre::eyre!("function name not found"))?;
-    let func = func.get(0).ok_or_else(|| eyre::eyre!("functions array empty"))?;
-    Ok(func.clone())
+    Ok(HumanReadableParser::parse_function(sig)?)
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
-    let sig = if !sig.starts_with("event ") { format!("event {}", sig) } else { sig.to_string() };
-    let abi = parse_abi(&[&sig])?;
-    // get the event
-    let (_, event) = abi.events.iter().next().ok_or_else(|| eyre::eyre!("event name not found"))?;
-    let event = event.get(0).ok_or_else(|| eyre::eyre!("events array empty"))?;
-    Ok(event.clone())
+    Ok(HumanReadableParser::parse_event(sig)?)
 }
 
 /// Given an event without indexed parameters and a rawlog, it tries to return the event with the

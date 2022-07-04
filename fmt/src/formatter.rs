@@ -1156,6 +1156,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.comments.remove_comments_before(self.source.len());
         write_chunk!(self, self.source.len(), "{}", comments.trim_end())?;
 
+        // EOF newline
+        writeln!(self.buf())?;
+
         Ok(())
     }
 
@@ -2799,7 +2802,7 @@ mod tests {
         }
         let expected_comments = Comments::new(expected_comments, expected_source);
 
-        let expected = PrettyString(expected_source.trim().to_string());
+        let expected = PrettyString(expected_source.to_string());
 
         let mut source_formatted = String::new();
         let mut f = Formatter::new(&mut source_formatted, source, source_comments, config.clone());

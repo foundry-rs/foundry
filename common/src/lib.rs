@@ -4,6 +4,7 @@
 
 pub mod errors;
 pub mod evm;
+pub mod fmt;
 pub mod fs;
 
 /// The dev chain-id, inherited from hardhat

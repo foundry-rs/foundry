@@ -1,4 +1,4 @@
-use super::{ClapChain, EthereumOpts};
+use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
     cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
     utils::{parse_ether_value, parse_u256},
@@ -361,48 +361,12 @@ Examples:
         sig: Option<String>,
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
-        #[clap(long, help = "Gas limit for the transaction.", parse(try_from_str = parse_u256), value_name = "GAS")]
-        gas: Option<U256>,
-        #[clap(
-            long = "gas-price",
-            help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
-            env = "ETH_GAS_PRICE",
-            parse(try_from_str = parse_ether_value),
-            value_name = "PRICE"
-        )]
-        gas_price: Option<U256>,
-        #[clap(
-            long = "priority-gas-price",
-            help = "Max priority fee per gas for EIP1559 transactions.",
-            env = "ETH_PRIORITY_GAS_PRICE",
-            parse(try_from_str = parse_ether_value),
-            value_name = "PRICE"
-        )]
-        priority_gas_price: Option<U256>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
-            value_name = "VALUE"
-        )]
-        value: Option<U256>,
-        #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256), value_name = "NONCE")]
-        nonce: Option<U256>,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
-        #[clap(flatten)]
+        #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+        tx: TransactionOpts,
+        #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
         eth: EthereumOpts,
-        #[clap(
-            long,
-            help = "Send a legacy transaction instead of an EIP1559 transaction.",
-            long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
-
-This is automatically enabled for common networks without EIP1559."#
-        )]
-        legacy: bool,
         #[clap(
             short,
             long,

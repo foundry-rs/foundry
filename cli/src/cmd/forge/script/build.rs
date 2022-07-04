@@ -278,10 +278,9 @@ pub fn filter_sources_and_artifacts(
             } else {
                 Some((
                     id,
-                    fs::read_to_string(&resolved).expect(&*format!(
-                        "Something went wrong reading the source file: {:?}",
-                        path
-                    )),
+                    fs::read_to_string(&resolved).unwrap_or_else(|_| {
+                        panic!("Something went wrong reading the source file: {:?}", path)
+                    }),
                 ))
             }
         })

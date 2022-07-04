@@ -355,7 +355,7 @@ pub enum EthRequest {
 
     /// Mine a single block
     #[serde(rename = "evm_mine")]
-    EvmMine(#[serde(default)] Option<Params<EvmMineOptions>>),
+    EvmMine(#[serde(default)] Option<Params<Option<EvmMineOptions>>>),
 
     /// Execute a transaction regardless of signature status
     #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
@@ -796,7 +796,7 @@ mod tests {
         match req {
             EthRequest::EvmMine(params) => {
                 assert_eq!(
-                    params.unwrap().params,
+                    params.unwrap().params.unwrap_or_default(),
                     EvmMineOptions::Options { timestamp: Some(100), blocks: Some(100) }
                 )
             }
@@ -813,6 +813,10 @@ mod tests {
             }
             _ => unreachable!(),
         }
+
+        let s = r#"{"method": "evm_mine", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

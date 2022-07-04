@@ -962,7 +962,7 @@ mod tests {
             TypedTransaction::Legacy(tx) => tx,
             _ => panic!("Invalid typed transaction"),
         };
-        assert_eq!(tx.input, b"".into());
+        assert_eq!(tx.input, Bytes::from(b""));
         assert_eq!(tx.gas_price, U256::from(0x01u64));
         assert_eq!(tx.gas_limit, U256::from(0x5208u64));
         assert_eq!(tx.nonce, U256::from(0x00u64));
