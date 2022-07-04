@@ -256,6 +256,7 @@ impl Operator for &mut Expression {
             UnaryPlus(_, expr) |
             UnaryMinus(_, expr) |
             PreDecrement(_, expr) |
+            Parenthesis(_, expr) |
             PreIncrement(_, expr) => (None, Some(expr.as_mut())),
             Power(_, left, right) |
             Multiply(_, left, right) |
@@ -306,8 +307,7 @@ impl Operator for &mut Expression {
             List(..) |
             ArrayLiteral(..) |
             Unit(..) |
-            This(..) |
-            Parenthesis(..) => (None, None),
+            This(..) => (None, None),
         }
     }
 }
