@@ -1,6 +1,6 @@
 //! Contains a helper pretty() function to print human redeable string versions of usual ethers
 //! types
-use ethers_core::types::*;
+use ethers_core::{types::*, utils::to_checksum};
 use std::str;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -37,9 +37,9 @@ impl UIfmt for I256 {
     }
 }
 
-impl UIfmt for H160 {
+impl UIfmt for Address {
     fn pretty(&self) -> String {
-        format!("{:#x}", self)
+        to_checksum(self, None)
     }
 }
 
@@ -308,13 +308,13 @@ mod tests {
         {
         "blockHash": "0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae",
         "blockNumber": "0x1b4",
-        "from": "0x3b179dcfc5faa677044c27dce958e4bc0ad696a6",
+        "from": "0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6",
         "gas": "0x11cbbdc",
         "gasPrice": "0x0",
         "hash": "0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f",
         "input": "0xd294f093",
         "nonce": "0xa2",
-        "to": "0x4a16a42407aa491564643e1dfc1fd50af29794ef",
+        "to": "0x4a16A42407AA491564643E1dfc1fd50af29794eF",
         "transactionIndex": "0x0",
         "value": "0x0",
         "v": "0x38",
@@ -336,7 +336,7 @@ mod tests {
        r#"
 blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
 blockNumber          436
-from                 0x3b179dcfc5faa677044c27dce958e4bc0ad696a6
+from                 0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6
 gas                  18660316
 gasPrice             0
 hash                 0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f
@@ -344,7 +344,7 @@ input                0xd294f093
 nonce                162
 r                    0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee
 s                    0x0e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
-to                   0x4a16a42407aa491564643e1dfc1fd50af29794ef
+to                   0x4a16A42407AA491564643E1dfc1fd50af29794eF
 transactionIndex     0
 v                    56
 value                0

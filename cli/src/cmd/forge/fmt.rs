@@ -48,14 +48,14 @@ impl FmtArgs {
     /// Returns all inputs to format
     fn inputs(&self) -> Vec<Input> {
         if let Some(ref path) = self.path {
-            if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
-                let mut buf = String::new();
-                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
-                vec![Input::Stdin(buf)]
-            } else if path.is_dir() {
+            if path.is_dir() {
                 ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
             } else if path.is_sol() {
                 vec![Input::Path(path.to_path_buf())]
+            } else if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
+                let mut buf = String::new();
+                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                vec![Input::Stdin(buf)]
             } else {
                 vec![]
             }
@@ -161,6 +161,8 @@ impl Cmd for FmtArgs {
             .collect::<Vec<String>>();
 
         if !diffs.is_empty() {
+            // This branch is only reachable with stdin or --check
+
             if !self.raw {
                 for (i, diff) in diffs.iter().enumerate() {
                     if i > 0 {
@@ -170,7 +172,9 @@ impl Cmd for FmtArgs {
                 }
             }
 
-            std::process::exit(1);
+            if self.check {
+                std::process::exit(1);
+            }
         }
 
         Ok(())

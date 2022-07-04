@@ -104,6 +104,7 @@ pub struct NodeArgs {
         long,
         help = "The host the server will listen on",
         value_name = "IP_ADDR",
+        env = "ANVIL_IP_ADDR",
         help_heading = "SERVER OPTIONS"
     )]
     pub host: Option<IpAddr>,
