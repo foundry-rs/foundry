@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1485,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1496,7 +1496,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1514,7 +1514,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1536,7 +1536,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1550,7 +1550,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1581,7 +1581,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1597,7 +1597,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1621,7 +1621,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1657,7 +1657,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1680,7 +1680,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.13.0"
-source = "git+https://github.com/gakonst/ethers-rs#b287fcca4dd392824f7f0643a51f759b0f5e5fd7"
+source = "git+https://github.com/gakonst/ethers-rs#2d8020eb3c0f34d998551362d796c2087a9439b7"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
@@ -4701,9 +4701,9 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.1.14"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a62cd1bd34217d4ac27aa4fad0e868983583a0c54cacc3a8590ea7029b50c2b"
+checksum = "a1f68b8280e3f354d5646218319bcee4febe42833cef5ebf653cfc49d0a94409"
 dependencies = [
  "itertools",
  "lalrpop",

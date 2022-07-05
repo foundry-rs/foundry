@@ -1472,6 +1472,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
             }
+            Expression::Parenthesis(loc, expr) => {
+                self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _| expr.visit(fmt))?;
+            }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;

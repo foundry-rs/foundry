@@ -375,6 +375,7 @@ impl LineOfCode for Expression {
             ArrayLiteral(loc, _) => *loc,
             Unit(loc, _, _) => *loc,
             This(loc) => *loc,
+            Parenthesis(loc, _) => *loc,
         }
     }
 }
