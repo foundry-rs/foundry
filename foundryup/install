@@ -12,7 +12,15 @@ BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p $FOUNDRY_BIN_DIR
-curl -# -L $BIN_URL -o $BIN_PATH
+readonly CURL_FLAGS="${CURL_FLAGS:- -vvv --max-time 120 --retry 3 --fail}"
+
+# we deliberately don't quote CURL_FLAGS
+# shellcheck disable=SC2086 
+curl ${CURL_FLAGS}  "${BIN_UR}" -o "${BIN_PATH}"
+if ! $? -ne 0; then
+	>&2 echo "Error: failed to download! code $?"
+	exit 2
+fi
 chmod +x $BIN_PATH
 
 # Create the man directory for future man files if it doesn't exist.
