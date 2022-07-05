@@ -219,4 +219,39 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[2].topics[3], bytes32(uint256(6)));
         assertEq(abi.decode(entries[2].data, (string)), string(testData2));
     }
+
+    function testRecordsConsumednAsRead() public {
+        Cheats.Log[] memory entries;
+
+        emitter.emitEvent(1, generateTestData(16));
+
+        // hit record now
+        cheats.recordLogs();
+
+        entries = cheats.getRecordedLogs();
+        assertEq(entries.length, 0);
+
+        // emit after calling .getRecordedLogs()
+        emitter.emitEvent(2, 3, generateTestData(24));
+
+        entries = cheats.getRecordedLogs();
+        assertEq(entries.length, 1);
+        assertEq(entries[0].topics.length, 3);
+
+        // let's emit two more!
+        emitter.emitEvent(4, 5, 6, generateTestData(20));
+        emitter.emitEvent(generateTestData(32));
+
+        entries = cheats.getRecordedLogs();
+        assertEq(entries.length, 2);
+        assertEq(entries[0].topics.length, 4);
+        assertEq(entries[1].topics.length, 1);
+
+        // the last one
+        emitter.emitEvent(7, 8, 9, generateTestData(24));
+
+        entries = cheats.getRecordedLogs();
+        assertEq(entries.length, 1);
+        assertEq(entries[0].topics.length, 4);
+    }
 }

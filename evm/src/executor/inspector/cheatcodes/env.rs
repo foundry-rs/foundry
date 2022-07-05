@@ -114,7 +114,10 @@ fn start_record_logs(state: &mut Cheatcodes) {
 }
 
 fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
-    if let Some(recorded_logs) = &mut state.recorded_logs {
+    if let Some(recorded_logs) = state.recorded_logs.clone() {
+        // reset the records
+        start_record_logs(state);
+
         ethers::abi::encode(
             &recorded_logs
                 .entries
