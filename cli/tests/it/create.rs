@@ -2,7 +2,10 @@
 
 use crate::utils::{self, EnvExternalities};
 use anvil::{spawn, NodeConfig};
-use ethers::{solc::remappings::Remapping, types::Address};
+use ethers::{
+    solc::{artifacts::BytecodeHash, remappings::Remapping},
+    types::Address,
+};
 use foundry_cli_test_utils::{
     forgetest, forgetest_async,
     util::{OutputExt, TestCommand, TestProject},
@@ -137,13 +140,17 @@ forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
 // tests that we can deploy the template contract
 forgetest_async!(
     can_create_template_contract,
-    |_prj: TestProject, mut cmd: TestCommand| async move {
+    |prj: TestProject, mut cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let rpc = handle.http_endpoint();
         let wallet = handle.dev_wallets().next().unwrap();
         let pk = hex::encode(&wallet.signer().to_bytes());
         cmd.args(["init", "--force"]);
         cmd.assert_non_empty_stdout();
+
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
 
         cmd.forge_fuse().args([
             "create",
@@ -155,7 +162,6 @@ forgetest_async!(
             "--private-key",
             pk.as_str(),
         ]);
-        cmd.set_env("FOUNDRY_BYTECODE_HASH", "none");
 
         cmd.unchecked_output().stdout_matches_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
