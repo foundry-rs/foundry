@@ -155,6 +155,7 @@ forgetest_async!(
             "--private-key",
             pk.as_str(),
         ]);
+        cmd.set_env("FOUNDRY_BYTECODE_HASH", "none");
 
         cmd.unchecked_output().stdout_matches_path(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
