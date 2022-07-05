@@ -148,6 +148,8 @@ forgetest_async!(
         cmd.forge_fuse().args([
             "create",
             "./src/Contract.sol:Contract",
+            "--use",
+            "solc:0.8.15",
             "--rpc-url",
             rpc.as_str(),
             "--private-key",
