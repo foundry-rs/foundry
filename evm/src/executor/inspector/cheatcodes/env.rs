@@ -4,7 +4,7 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, RawLog, Token, Tokenize},
+    abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     types::{Address, H256, U256},
     utils::keccak256,
 };
@@ -115,26 +115,20 @@ fn start_record_logs(state: &mut Cheatcodes) {
 
 fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_logs) = &mut state.recorded_logs {
-        let tuples = recorded_logs
-            .entries
-            .iter()
-            .map(|entry| {
-                Token::Tuple(
-                    [
-                        Token::Array(
-                            entry
-                                .topics
-                                .iter()
-                                .map(|topic| Token::FixedBytes(topic.clone().as_bytes().to_vec()))
-                                .collect(),
-                        ),
+        ethers::abi::encode(
+            &recorded_logs
+                .entries
+                .iter()
+                .map(|entry| {
+                    Token::Tuple(vec![
+                        entry.topics.clone().into_token(),
                         Token::Bytes(entry.data.clone()),
-                    ]
-                    .to_vec(),
-                )
-            })
-            .collect::<Vec<Token>>();
-        ethers::abi::encode(&[Token::Array(tuples)]).into()
+                    ])
+                })
+                .collect::<Vec<Token>>()
+                .into_tokens(),
+        )
+        .into()
     } else {
         ethers::abi::encode(&[Token::Array(vec![])]).into()
     }
