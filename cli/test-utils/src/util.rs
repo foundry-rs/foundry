@@ -102,10 +102,8 @@ fn install_commonly_used_solc() {
     if !*is_preinstalled {
         let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
         let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
-        let v0_8_15 = std::thread::spawn(|| Solc::blocking_install(&"0.8.15".parse().unwrap()));
         v0_8_10.join().unwrap().unwrap();
         v0_8_13.join().unwrap().unwrap();
-        v0_8_15.join().unwrap().unwrap();
 
         *is_preinstalled = true;
     }
