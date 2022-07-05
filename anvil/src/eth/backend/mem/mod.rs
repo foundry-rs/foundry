@@ -408,8 +408,10 @@ impl Backend {
 
     
     /// Write all chain data to serialized bytes buffer
-    pub fn dump_state(&self) -> Bytes {
-        bytes::Bytes::from(serde_json::to_string(&self.db.read().dump_state()).unwrap_or_default()).into()
+    pub fn dump_state(&self) -> Result<Bytes, BlockchainError> {
+        self.db.read().dump_state()
+            .map(|s| bytes::Bytes::from(serde_json::to_string(&s).unwrap_or_default()).into())
+            .ok_or(RpcError::invalid_params("Dumping state not supported with the current configuration").into())
     }
 
     /// Deserialize and add all chain data to the backend storage
@@ -418,7 +420,11 @@ impl Backend {
             str::from_utf8(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?
         ).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
-        Ok(self.db.write().load_state(state))
+        if !self.db.write().load_state(state) {
+            Err(RpcError::invalid_params("Loading state not supported with the current configuration").into())
+        } else {
+            Ok(true)
+        }
     }
 
     /// Returns the environment for the next block

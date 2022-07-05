@@ -1,7 +1,7 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::{Db, StateDb, AccountRecord, SerializableState},
+    eth::backend::db::{Db, StateDb, SerializableAccountRecord, SerializableState},
     mem::state::state_merkle_trie_root,
     revm::AccountInfo,
     Address, U256,
@@ -23,26 +23,30 @@ impl Db for MemDb {
         self.inner.insert_cache_storage(address, slot, val)
     }
 
-    fn dump_state(&self) -> SerializableState {
-        SerializableState {
+    fn dump_state(&self) -> Option<SerializableState> {
+        Some(SerializableState {
             accounts: self.inner.cache().clone().into_iter().map(|(k,v)| {
                 (
                     k,
-                    AccountRecord {
+                    SerializableAccountRecord {
                         nonce: v.nonce,
                         balance: v.balance,
                         code: self.inner.code_by_hash(v.code_hash).into(),
-                        //code: v.code.unwrap_or_default().into(),
                         storage: self.inner.storage().get(&k).unwrap_or(&Map::new()).clone()
                     }
                 )
             }).collect()
-        }
+        })
     }
 
     fn load_state(&mut self, state: SerializableState) -> bool {
         for (addr, account) in state.accounts.into_iter() {
-            self.insert_account(addr.clone(), account.clone().into());
+            self.insert_account(addr.clone(), AccountInfo {
+                balance: account.balance,
+                code_hash: KECCAK_EMPTY, // will be set automatically
+                code: if account.code.0.is_empty() { None } else { Some(account.code.0) },
+                nonce: account.nonce,
+            });
 
             for (k,v) in account.storage.into_iter() {
                 self.set_storage_at(addr, k, v);
@@ -76,16 +80,5 @@ impl Db for MemDb {
 
     fn current_state(&self) -> StateDb {
         StateDb::new(self.inner.clone())
-    }
-}
-
-impl From<AccountRecord> for AccountInfo {
-    fn from(record: AccountRecord) -> Self {
-        Self {
-            balance: record.balance,
-            code_hash: KECCAK_EMPTY, // will be set automatically
-            code: if record.code.0.is_empty() { None } else { Some(record.code.0) },
-            nonce: record.nonce,
-        }
     }
 }

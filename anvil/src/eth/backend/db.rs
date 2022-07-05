@@ -17,11 +17,11 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SerializableState {
-    pub accounts: HashMap<Address, AccountRecord>
+    pub accounts: HashMap<Address, SerializableAccountRecord>
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct AccountRecord {
+pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
@@ -64,7 +64,7 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
 
     /// Write all chain data to serialized bytes buffer
-    fn dump_state(&self) -> SerializableState;
+    fn dump_state(&self) -> Option<SerializableState>;
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, buf: SerializableState) -> bool;
@@ -99,11 +99,11 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
         self.insert_cache_storage(address, slot, val)
     }
 
-    fn dump_state(&self) -> SerializableState {
-        SerializableState::new()
+    fn dump_state(&self) -> Option<SerializableState> {
+        None
     }
 
-    fn load_state(&mut self, buf: SerializableState) -> bool {
+    fn load_state(&mut self, _buf: SerializableState) -> bool {
         false
     }
 

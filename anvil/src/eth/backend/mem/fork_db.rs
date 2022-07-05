@@ -15,11 +15,11 @@ impl Db for ForkedDatabase {
         self.database_mut().set_storage_at(address, slot, val)
     }
 
-    fn dump_state(&self) -> SerializableState {
-        SerializableState::new()
+    fn dump_state(&self) -> Option<SerializableState> {
+        None
     }
 
-    fn load_state(&mut self, buf: SerializableState) -> bool {
+    fn load_state(&mut self, _buf: SerializableState) -> bool {
         false
     }
 

@@ -1257,7 +1257,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_dumpState`
     pub async fn anvil_dump_state(&self) -> Result<Bytes> {
         node_info!("anvil_dumpState");
-        Ok(self.backend.dump_state())
+        self.backend.dump_state()
     }
 
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or storage.
