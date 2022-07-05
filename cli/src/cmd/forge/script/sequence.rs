@@ -73,14 +73,15 @@ impl ScriptSequence {
         serde_json::from_str(&file).map_err(|e| e.into())
     }
 
+    /// Saves the transactions as files
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             let path = self.path.to_string_lossy();
             //../run-latest.json
-            serde_json::to_writer(BufWriter::new(fs::create_file(&self.path)?), &self)?;
+            serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
             //../run-[timestamp].json
-            serde_json::to_writer(
+            serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
                     path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
