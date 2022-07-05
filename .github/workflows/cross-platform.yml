@@ -1,4 +1,4 @@
-on: 
+on:
   workflow_dispatch:
   workflow_call:
 
@@ -33,6 +33,24 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
 
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.job.target }}
+          override: true
+          profile: minimal
+
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      # Required for forge commands that use git
+      - name: Setup git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
+
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
         run: |
@@ -46,33 +64,12 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      # required for forge commands that use git
-      - name: setup git config
+      # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
+      - name: Windows setup
+        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "<>"
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.job.target }}
-          override: true
-          profile: minimal
-
-      - name: Environment information
-        shell: bash
-        run: |
-          gcc --version || true
-          rustup -V
-          rustup toolchain list
-          rustup default
-          cargo -V
-          rustc -V
-
-      - uses: Swatinem/rust-cache@v1
-        with:
-          cache-on-failure: true
+          wsl --install --distribution Ubuntu
+        shell: pwsh
 
       - name: Build
         uses: actions-rs/cargo@v1

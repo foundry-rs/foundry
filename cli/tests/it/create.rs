@@ -1,13 +1,14 @@
 //! Contains various tests for checking the `forge create` subcommand
 
 use crate::utils::{self, EnvExternalities};
+use anvil::{spawn, NodeConfig};
 use ethers::{solc::remappings::Remapping, types::Address};
 use foundry_cli_test_utils::{
-    forgetest,
-    util::{TestCommand, TestProject},
+    forgetest, forgetest_async,
+    util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -132,3 +133,35 @@ forgetest!(can_create_simple_on_goerli, |prj: TestProject, cmd: TestCommand| {
 forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
     create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
 });
+
+// tests that we can deploy the template contract
+forgetest_async!(
+    can_create_template_contract,
+    |_prj: TestProject, mut cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let wallet = handle.dev_wallets().next().unwrap();
+        let pk = hex::encode(&wallet.signer().to_bytes());
+        cmd.args(["init", "--force"]);
+        cmd.assert_non_empty_stdout();
+
+        cmd.forge_fuse().args([
+            "create",
+            "./src/Contract.sol:Contract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+        ]);
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_template_contract.stdout"),
+        );
+
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_template_contract-2nd.stdout"),
+        );
+    }
+);

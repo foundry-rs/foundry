@@ -99,7 +99,7 @@ impl ScriptArgs {
 
         let mut extra_info = ExtraLinkingInfo {
             no_target_name,
-            target_fname,
+            target_fname: target_fname.clone(),
             contract: &mut contract,
             dependencies: &mut run_dependencies,
             matched: false,
@@ -135,10 +135,7 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source ==
-                        dunce::canonicalize(&extra.target_fname)
-                            .expect("Could not canonicalize target path")
-                    {
+                    if id.source == std::path::PathBuf::from(&extra.target_fname) {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
@@ -148,9 +145,11 @@ impl ScriptArgs {
                         extra.target_id = Some(id.clone());
                     }
                 } else {
-                    let split: Vec<&str> = extra.target_fname.split(':').collect();
-                    let path = std::path::Path::new(split[0]);
-                    let name = split[1];
+                    let (path, name) = extra
+                        .target_fname
+                        .rsplit_once(':')
+                        .expect("The target specifier is malformed.");
+                    let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
                         *extra.dependencies = dependencies;
                         *extra.contract = contract.clone();
@@ -165,7 +164,9 @@ impl ScriptArgs {
             },
         )?;
 
-        let target = extra_info.target_id.expect("Target not found?");
+        let target = extra_info
+            .target_id
+            .ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))?;
 
         let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
             run_dependencies.into_iter().unzip();
@@ -210,22 +211,25 @@ impl ScriptArgs {
 
         // We received `contract_path:contract_name`
         if let Some(path) = contract.path {
-            let path = dunce::canonicalize(&path)?;
+            let path =
+                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
             let output =
                 compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
             self.path = path.to_string_lossy().to_string();
             return Ok((project, output))
         }
 
-        // We received `contract_name`, and need to find out its file path.
+        // We received `contract_name`, and need to find its file path.
         let output = if self.opts.args.silent {
             compile::suppress_compile(&project)
         } else {
             compile::compile(&project, false, false)
         }?;
-        let cache = SolFilesCache::read_joined(&project.paths)?;
+        let cache =
+            SolFilesCache::read_joined(&project.paths).wrap_err("Could not open compiler cache")?;
 
-        let (path, _) = get_cached_entry_by_name(&cache, &contract.name)?;
+        let (path, _) = get_cached_entry_by_name(&cache, &contract.name)
+            .wrap_err("Could not find target contract in cache")?;
         self.path = path.to_string_lossy().to_string();
 
         Ok((project, output))

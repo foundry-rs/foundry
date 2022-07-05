@@ -6,7 +6,7 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, remapping_str, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf};
@@ -288,7 +288,14 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
+    assert_eq!(
+        content,
+        format!(
+            "{}\n{}",
+            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src"),
+            remapping_str("forge-std/", "lib/forge-std/src")
+        )
+    );
 });
 
 // checks that forge can init with template
@@ -426,8 +433,24 @@ warning[5667]: Warning: Unused function parameter. Remove or comment out the var
     ));
 });
 
-// tests that direct import paths are handled correctly
-forgetest!(canhandle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+// Tests that direct import paths are handled correctly
+//
+// NOTE(onbjerg): Disabled for Windows -- for some reason solc fails with a bogus error message
+// here: error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit
+// conversion from struct Bar memory to struct Bar memory requested.   --> src\Foo.sol:12:22:
+//    |
+// 12 |         FooLib.check(b);
+//    |                      ^
+//
+//
+//
+// error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit conversion
+// from contract Foo to contract Foo requested.   --> src\Foo.sol:15:23:
+//    |
+// 15 |         FooLib.check2(this);
+//    |                       ^^^^
+#[cfg(not(target_os = "windows"))]
+forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",

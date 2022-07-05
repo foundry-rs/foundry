@@ -421,6 +421,12 @@ mod tests {
             "We did not run as many contracts as we expected"
         );
         for (contract_name, tests) in &expecteds {
+            assert!(
+                actuals.contains_key(*contract_name),
+                "We did not run the contract {}",
+                contract_name
+            );
+
             assert_eq!(
                 actuals[*contract_name].len(),
                 expecteds[contract_name].len(),
@@ -485,7 +491,8 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    "core/FailingSetup.t.sol:FailingSetupTest",
+                    format!("core{}FailingSetup.t.sol:FailingSetupTest", std::path::MAIN_SEPARATOR)
+                        .as_str(),
                     vec![(
                         "setUp()",
                         false,
@@ -495,7 +502,8 @@ mod tests {
                     )],
                 ),
                 (
-                    "core/MultipleSetup.t.sol:MultipleSetup",
+                    format!("core{}MultipleSetup.t.sol:MultipleSetup", std::path::MAIN_SEPARATOR)
+                        .as_str(),
                     vec![(
                         "setUp()",
                         false,
@@ -505,40 +513,58 @@ mod tests {
                     )],
                 ),
                 (
-                    "core/Reverting.t.sol:RevertingTest",
+                    format!("core{}Reverting.t.sol:RevertingTest", std::path::MAIN_SEPARATOR)
+                        .as_str(),
                     vec![("testFailRevert()", true, None, None, None)],
                 ),
                 (
-                    "core/SetupConsistency.t.sol:SetupConsistencyCheck",
+                    format!(
+                        "core{}SetupConsistency.t.sol:SetupConsistencyCheck",
+                        std::path::MAIN_SEPARATOR
+                    )
+                    .as_str(),
                     vec![
                         ("testAdd()", true, None, None, None),
                         ("testMultiply()", true, None, None, None),
                     ],
                 ),
                 (
-                    "core/DSStyle.t.sol:DSStyleTest",
+                    format!("core{}DSStyle.t.sol:DSStyleTest", std::path::MAIN_SEPARATOR).as_str(),
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
-                    "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
+                    format!(
+                        "core{}ContractEnvironment.t.sol:ContractEnvironmentTest",
+                        std::path::MAIN_SEPARATOR
+                    )
+                    .as_str(),
                     vec![
                         ("testAddresses()", true, None, None, None),
                         ("testEnvironment()", true, None, None, None),
                     ],
                 ),
                 (
-                    "core/PaymentFailure.t.sol:PaymentFailureTest",
+                    format!(
+                        "core{}PaymentFailure.t.sol:PaymentFailureTest",
+                        std::path::MAIN_SEPARATOR
+                    )
+                    .as_str(),
                     vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
                 ),
                 (
-                    "core/LibraryLinking.t.sol:LibraryLinkingTest",
+                    format!(
+                        "core{}LibraryLinking.t.sol:LibraryLinkingTest",
+                        std::path::MAIN_SEPARATOR
+                    )
+                    .as_str(),
                     vec![
                         ("testDirect()", true, None, None, None),
                         ("testNested()", true, None, None, None),
                     ],
                 ),
                 (
-                    "core/Abstract.t.sol:AbstractTest",
+                    format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR)
+                        .as_str(),
                     vec![("testSomething()", true, None, None, None)],
                 ),
             ]),
@@ -554,7 +580,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    "logs/DebugLogs.t.sol:DebugLogsTest",
+                    format!("logs{}DebugLogs.t.sol:DebugLogsTest", std::path::MAIN_SEPARATOR).as_str(),
                     vec![
                         (
                             "test1()",
@@ -723,7 +749,7 @@ mod tests {
                     ],
                 ),
                 (
-                    "logs/HardhatLogs.t.sol:HardhatLogsTest",
+                    format!("logs{}HardhatLogs.t.sol:HardhatLogsTest", std::path::MAIN_SEPARATOR).as_str(),
                     vec![
                         (
                             "testInts()",
@@ -1187,9 +1213,18 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
-        let results =
-            runner.test(&Filter::new(".*", ".*", ".*core/Abstract.t.sol"), None, true).unwrap();
-        assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
-        assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
+        let results = runner
+            .test(&Filter::new(".*", ".*", format!(".*Abstract.t.sol").as_str()), None, true)
+            .unwrap();
+        println!("{:?}", results.keys());
+        assert!(results
+            .get(
+                format!("core{}Abstract.t.sol:AbstractTestBase", std::path::MAIN_SEPARATOR)
+                    .as_str()
+            )
+            .is_none());
+        assert!(results
+            .get(format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR).as_str())
+            .is_some());
     }
 }

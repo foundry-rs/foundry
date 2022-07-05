@@ -159,7 +159,7 @@ impl Cmd for InspectArgs {
         let outcome = compile::suppress_compile(&project)?;
 
         // Find the artifact
-        let found_artifact = outcome.find(&contract);
+        let found_artifact = outcome.find_first(&contract);
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
