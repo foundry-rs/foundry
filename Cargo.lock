@@ -1991,7 +1991,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "similar",
- "solang-parser",
  "strsim",
  "strum 0.24.0",
  "thiserror",
