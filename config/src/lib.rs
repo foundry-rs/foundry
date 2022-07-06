@@ -482,7 +482,7 @@ impl Config {
             // force `/` in remappings on windows
             use path_slash::PathBufExt;
             self.remappings.iter_mut().for_each(|r| {
-                r.path.path = r.path.path.to_slash_lossy().into();
+                r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
         }
         // remove any potential duplicates
