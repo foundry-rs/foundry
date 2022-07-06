@@ -274,13 +274,16 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         let mut cmd = process::Command::new(forge);
         cmd.current_dir(self.inner.root());
+        cmd.env("NO_COLOR", "1");
         cmd
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> process::Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        process::Command::new(cast)
+        let mut cmd = process::Command::new(cast);
+        cmd.env("NO_COLOR", "1");
+        cmd
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -446,8 +449,8 @@ impl TestCommand {
     pub fn stdout(&mut self) -> String {
         let o = self.output();
         let stdout = String::from_utf8_lossy(&o.stdout);
-        match stdout.parse() {
-            Ok(t) => t,
+        match stdout.parse::<String>() {
+            Ok(t) => t.replace("\r\n", "\n"),
             Err(err) => {
                 panic!("could not convert from string: {:?}\n\n{}", err, stdout);
             }
@@ -457,12 +460,12 @@ impl TestCommand {
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
         let output = self.execute();
-        String::from_utf8_lossy(&output.stderr).to_string()
+        String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n")
     }
 
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).to_string()
+        String::from_utf8_lossy(&self.output().stdout).to_string().replace("\r\n", "\n")
     }
 
     /// Returns the output but does not expect that the command was successful
@@ -635,16 +638,16 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n)").unwrap()
 });
 
 impl OutputExt for process::Output {
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stdout = String::from_utf8_lossy(&self.stdout);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "");
+        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
 
@@ -654,9 +657,9 @@ impl OutputExt for process::Output {
     #[track_caller]
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stderr = String::from_utf8_lossy(&self.stderr);
-        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "");
+        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);
         self
@@ -687,6 +690,21 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+/// Creates a cross-platform remapping string for use in tests
+///
+/// NOTE: This probably should be unnecessary, and remappings should probably
+/// be canonicalized.
+pub fn remapping_str(src: &str, dest: &str) -> String {
+    // NOTE(onbjerg): The `trim_end_matches` is because the path itself on Windows is normalized
+    // except for the last character which is still a /...
+    format!(
+        "{}={}/",
+        src,
+        dest.trim_end_matches('/')
+            .replace('/', std::str::from_utf8(&[std::path::MAIN_SEPARATOR as u8]).unwrap())
+    )
 }
 
 #[cfg(test)]

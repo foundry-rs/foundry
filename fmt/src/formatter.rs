@@ -1472,6 +1472,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
             }
+            Expression::Parenthesis(loc, expr) => {
+                self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _| expr.visit(fmt))?;
+            }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
@@ -2790,8 +2793,14 @@ mod tests {
         source: &str,
         expected_source: &str,
     ) {
-        #[derive(PartialEq, Eq)]
+        #[derive(Eq)]
         struct PrettyString(String);
+
+        impl PartialEq for PrettyString {
+            fn eq(&self, other: &PrettyString) -> bool {
+                self.0.lines().eq(other.0.lines())
+            }
+        }
 
         impl std::fmt::Debug for PrettyString {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
