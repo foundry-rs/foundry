@@ -11,14 +11,16 @@ use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
     solc::{info::ContractInfo, utils::canonicalized},
+    solc::utils::read_json_file,
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
 
@@ -114,17 +116,15 @@ impl CreateArgs {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        let path = std::path::Path::new(&constructor_args_path);
-                        if !path.exists() {
-                            eyre::bail!("constructor args path not found");
+                        if !constructor_args_path.exists() {
+                            eyre::bail!("constructor args path \"{}\" not found", constructor_args_path.display());
                         }
-                        if path.extension() == Some(std::ffi::OsStr::new("json")) {
-                            let file = fs::File::open(constructor_args_path)?;
-                            serde_json::from_reader(file)
+                        if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
+                            read_json_file(constructor_args_path)
                                 .expect("constructor args file content should be JSON array")
                         } else {
                             let file = fs::read_to_string(constructor_args_path)?;
-                            file.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
+                            file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
                         }
                     } else {
                         self.constructor_args.clone()
