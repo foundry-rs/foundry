@@ -1,6 +1,7 @@
 //! Contains a helper pretty() function to print human redeable string versions of usual ethers
 //! types
 use ethers_core::{types::*, utils::to_checksum};
+use serde::Deserialize;
 use std::str;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -239,14 +240,40 @@ impl UIfmt for OtherFields {
             s.push('\n');
         }
         for (key, value) in self.iter() {
-            let val = value.to_string();
+            let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
             s.extend(std::iter::repeat(' ').take(offset + 1));
-            s.push_str(val.trim_matches('"'));
+            s.push_str(&val);
             s.push('\n');
         }
         s
+    }
+}
+
+/// Various numerical ethereum types used for pretty printing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+#[allow(missing_docs)]
+pub enum EthValue {
+    U64(U64),
+    U256(U256),
+    Other(serde_json::Value),
+}
+
+impl From<serde_json::Value> for EthValue {
+    fn from(val: serde_json::Value) -> Self {
+        serde_json::from_value(val).expect("infallible")
+    }
+}
+
+impl UIfmt for EthValue {
+    fn pretty(&self) -> String {
+        match self {
+            EthValue::U64(num) => num.pretty(),
+            EthValue::U256(num) => num.pretty(),
+            EthValue::Other(val) => val.to_string().trim_matches('"').to_string(),
+        }
     }
 }
 
@@ -348,9 +375,9 @@ to                   0x4a16A42407AA491564643E1dfc1fd50af29794eF
 transactionIndex     0
 v                    56
 value                0
-index                0x1b3
-l1BlockNumber        0xc1a65c
-l1Timestamp          0x60d34b60
+index                435
+l1BlockNumber        12691036
+l1Timestamp          1624460128
 l1TxOrigin           null
 queueIndex           null
 queueOrigin          sequencer
