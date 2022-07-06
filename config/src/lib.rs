@@ -281,6 +281,8 @@ pub struct Config {
     /// If set to `true`, `ethers-solc` will generate additional build info json files for every
     /// new build, containing the `CompilerInput` and `CompilerOutput`
     pub build_info: bool,
+    /// The path to the `build-info` directory that contains the build info json files.
+    pub build_info_path: Option<PathBuf>,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -435,6 +437,10 @@ impl Config {
         self.test = p(&root, &self.test);
         self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
+
+        if let Some(build_info_path) = self.build_info_path {
+            self.build_info_path = Some(p(&root, &build_info_path));
+        }
 
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
@@ -609,15 +615,20 @@ impl Config {
     /// let paths = config.project_paths();
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
-        ProjectPathsConfig::builder()
+        let mut builder = ProjectPathsConfig::builder()
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .tests(&self.test)
             .scripts(&self.script)
             .artifacts(&self.out)
             .libs(self.libs.clone())
-            .remappings(self.get_all_remappings())
-            .build_with_root(&self.__root.0)
+            .remappings(self.get_all_remappings());
+
+        if let Some(build_info_path) = &self.build_info_path {
+            builder = builder.build_infos(&build_info_path);
+        }
+
+        builder.build_with_root(&self.__root.0)
     }
 
     /// Returns all configured [`Remappings`]
@@ -1417,6 +1428,7 @@ impl Default for Config {
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
+            build_info_path: None,
             __non_exhaustive: (),
         }
     }
@@ -2379,6 +2391,7 @@ mod tests {
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
+                build_info_path = "build-info"
             "#,
             )?;
 
@@ -2408,6 +2421,7 @@ mod tests {
                         ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
                         ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
                     ]),
+                    build_info_path: Some("build-info".into()),
                     ..Config::default()
                 }
             );

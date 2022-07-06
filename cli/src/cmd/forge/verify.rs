@@ -199,6 +199,7 @@ impl VerifyArgs {
             revert_strings: None,
             silent: false,
             build_info: false,
+            build_info_path: None,
         };
 
         let project = build_args.project()?;
@@ -261,7 +262,7 @@ impl VerifyArgs {
     /// Parse the compiler version.
     /// The priority desc:
     ///     1. Through CLI arg `--compiler-version`
-    ///     2. `solc` defined in foundry.toml  
+    ///     2. `solc` defined in foundry.toml
     fn compiler_version(
         &self,
         config: &Config,
