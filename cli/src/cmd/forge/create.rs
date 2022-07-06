@@ -10,8 +10,10 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{info::ContractInfo, utils::canonicalized},
-    solc::utils::read_json_file,
+    solc::{
+        info::ContractInfo,
+        utils::{canonicalized, read_json_file},
+    },
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
@@ -117,11 +119,13 @@ impl CreateArgs {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
                         if !constructor_args_path.exists() {
-                            eyre::bail!("constructor args path \"{}\" not found", constructor_args_path.display());
+                            eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
                         }
                         if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
-                            read_json_file(constructor_args_path)
-                                .expect("constructor args file content should be JSON array")
+                            match read_json_file(constructor_args_path) {
+                                Ok(args) => args,
+                                Err(err) => eyre::bail!("Constructor args file \"{}\" must encode a json array: \"{}\"", constructor_args_path.display(), err)
+                            }
                         } else {
                             let file = fs::read_to_string(constructor_args_path)?;
                             file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
