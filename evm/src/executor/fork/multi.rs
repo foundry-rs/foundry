@@ -132,7 +132,7 @@ impl MultiFork {
 
 type Handler = BackendHandler<Arc<Provider<RetryClient<Http>>>>;
 
-type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(SharedBackend, Handler)>> + Send>>;
+type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
 
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend)>>;
 
@@ -143,6 +143,8 @@ enum Request {
     CreateFork(Box<CreateFork>, CreateSender),
     /// Returns the Fork backend for the `ForkId` if it exists
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
+    /// Adjusts the block that's being forked
+    RollFork(ForkId, U256, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
 }
@@ -167,7 +169,7 @@ pub struct MultiForkHandler {
     pending_tasks: Vec<ForkTask>,
 
     /// All created Forks in order to reuse them
-    forks: HashMap<ForkId, SharedBackend>,
+    forks: HashMap<ForkId, CreatedFork>,
 
     /// The retries to allow for new providers
     retries: u32,
@@ -202,23 +204,28 @@ impl MultiForkHandler {
         self
     }
 
+    fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
+        let fork_id = create_fork_id(&fork.url, fork.block);
+        if let Some(fork) = self.forks.get(&fork_id) {
+            let _ = sender.send(Ok((fork_id, fork.backend.clone())));
+        } else {
+            let retries = self.retries;
+            let backoff = self.backoff;
+            // need to create a new fork
+            let task = Box::pin(async move { create_fork(fork, retries, backoff).await });
+            self.pending_tasks.push(ForkTask::Create(task, fork_id, sender));
+        }
+    }
+
     fn on_request(&mut self, req: Request) {
         match req {
-            Request::CreateFork(fork, sender) => {
-                let fork_id = create_fork_id(&fork.url, fork.block);
-                if let Some(fork) = self.forks.get(&fork_id).cloned() {
-                    let _ = sender.send(Ok((fork_id, fork)));
-                } else {
-                    let retries = self.retries;
-                    let backoff = self.backoff;
-                    // need to create a new fork
-                    let task = Box::pin(async move { create_fork(*fork, retries, backoff).await });
-                    self.pending_tasks.push(ForkTask::Create(task, fork_id, sender));
-                }
-            }
+            Request::CreateFork(fork, sender) => self.create_fork(*fork, sender),
             Request::GetFork(fork_id, sender) => {
-                let fork = self.forks.get(&fork_id).cloned();
+                let fork = self.forks.get(&fork_id).map(|f| f.backend.clone());
                 let _ = sender.send(fork);
+            }
+            Request::RollFork(fork_id, block, sender) => {
+                trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
             }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");
@@ -263,8 +270,9 @@ impl Future for MultiForkHandler {
                         match resp {
                             Ok((fork, handler)) => {
                                 pin.handlers.push((id.clone(), handler));
-                                pin.forks.insert(id.clone(), fork.clone());
-                                let _ = sender.send(Ok((id, fork)));
+                                let backend = fork.backend.clone();
+                                pin.forks.insert(id.clone(), fork);
+                                let _ = sender.send(Ok((id, backend)));
                             }
                             Err(err) => {
                                 let _ = sender.send(Err(err));
@@ -304,7 +312,7 @@ impl Future for MultiForkHandler {
             !pin.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
-            let forks = pin.forks.values().cloned().collect::<Vec<_>>();
+            let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
             // flush this on new thread to not block here
             std::thread::spawn(move || {
                 forks.into_iter().for_each(|fork| fork.flush_cache());
@@ -312,6 +320,25 @@ impl Future for MultiForkHandler {
         }
 
         Poll::Pending
+    }
+}
+
+/// Tracks the created Fork
+struct CreatedFork {
+    /// How the fork was initially created
+    opts: CreateFork,
+    /// Copy of the sender
+    backend: SharedBackend,
+    /// How many different consumers there are, since a `SharedBacked` can be used by multiple
+    /// consumers
+    num_senders: usize,
+}
+
+// === impl CreatedFork ===
+
+impl CreatedFork {
+    pub fn new(opts: CreateFork, backend: SharedBackend) -> Self {
+        Self { opts, backend, num_senders: 1 }
     }
 }
 
@@ -352,8 +379,8 @@ async fn create_fork(
     fork: CreateFork,
     retries: u32,
     backoff: u64,
-) -> eyre::Result<(SharedBackend, Handler)> {
-    let CreateFork { enable_caching, url, block: block_number, env, chain_id } = fork;
+) -> eyre::Result<(CreatedFork, Handler)> {
+    let CreateFork { enable_caching, url, block: block_number, env, chain_id } = fork.clone();
     let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
         url.clone().as_str(),
         retries,
@@ -384,5 +411,8 @@ async fn create_fork(
     };
 
     let db = BlockchainDb::new(meta, cache_path);
-    Ok(SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into())))))
+    let (backend, handler) =
+        SharedBackend::new(provider, db, Some(BlockId::Number(BlockNumber::Number(number.into()))));
+    let fork = CreatedFork::new(fork, backend);
+    Ok((fork, handler))
 }

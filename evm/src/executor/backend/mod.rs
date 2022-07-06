@@ -131,14 +131,14 @@ impl Backend {
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
     /// database
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
-        let db = if let Some(f) = fork {
+        let (db, launched_with) = if let Some(f) = fork {
             let (id, fork) = forks.create_fork(f).expect("Unable to fork");
-            CacheDB::new(BackendDatabase::Forked(fork, id))
+            (CacheDB::new(BackendDatabase::Forked(fork.clone(), id.clone())), Some((id, fork)))
         } else {
-            CacheDB::new(BackendDatabase::InMemory(EmptyDB()))
+            (CacheDB::new(BackendDatabase::InMemory(EmptyDB())), None)
         };
 
-        Self { forks, db, inner: Default::default() }
+        Self { forks, db, inner: BackendInner::new(launched_with) }
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
@@ -209,6 +209,35 @@ impl Backend {
         value == U256::one()
     }
 
+    /// Returns the `ForkId` that's currently used in the database, if fork mode is on
+    pub fn active_fork(&self) -> Option<&ForkId> {
+        self.db.db().as_fork()
+    }
+
+    /// Ensures that an appropriate fork exits
+    ///
+    /// If `id` contains a requested `Fork` this will ensure it exits.
+    /// Otherwise this returns the currently active fork.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the given `id` does not match any forks
+    ///
+    /// Returns an error if no fork exits
+    pub fn ensure_fork(&self, id: Option<ForkId>) -> eyre::Result<ForkId> {
+        if let Some(id) = id {
+            if self.inner.created_forks.contains_key(&id) {
+                return Ok(id)
+            }
+            eyre::bail!("Requested fork `{}` does not exit", id)
+        }
+        if let Some(id) = self.active_fork().cloned() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active")
+        }
+    }
+
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
@@ -275,6 +304,8 @@ impl DatabaseExt for Backend {
     }
 
     fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool> {
+        let id = self.ensure_fork(id)?;
+
         todo!()
     }
 }
@@ -349,6 +380,18 @@ pub enum BackendDatabase {
     Forked(SharedBackend, ForkId),
 }
 
+// === impl BackendDatabase ===
+
+impl BackendDatabase {
+    /// Returns the `ForkId` if in fork mode
+    pub fn as_fork(&self) -> Option<&ForkId> {
+        match self {
+            BackendDatabase::InMemory(_) => None,
+            BackendDatabase::Forked(_, id) => Some(id),
+        }
+    }
+}
+
 impl DatabaseRef for BackendDatabase {
     fn basic(&self, address: H160) -> AccountInfo {
         match self {
@@ -382,6 +425,11 @@ impl DatabaseRef for BackendDatabase {
 /// Container type for various Backend related data
 #[derive(Debug, Clone, Default)]
 pub struct BackendInner {
+    /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
+    ///
+    /// In other words if [`Backend::spawn()`] was called with a `CreateFork` command, to launch
+    /// directly in fork mode, this holds the corresponding `ForkId` of this fork.
+    pub launched_with_fork: Option<ForkId>,
     /// tracks all created forks
     pub created_forks: HashMap<ForkId, SharedBackend>,
     /// Contains snapshots made at a certain point
@@ -401,4 +449,18 @@ pub struct BackendInner {
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
     pub test_contract_context: Option<Address>,
+}
+
+// === impl BackendInner ===
+
+impl BackendInner {
+    /// Creates a new instance that tracks the fork used at launch
+    pub fn new(launched_with: Option<(ForkId, SharedBackend)>) -> Self {
+        let (launched_with_fork, created_forks) = if let Some((id, fork)) = launched_with {
+            (Some(id.clone()), HashMap::from([(id, fork)]))
+        } else {
+            (None, Default::default())
+        };
+        Self { launched_with_fork, created_forks, ..Default::default() }
+    }
 }
