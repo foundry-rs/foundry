@@ -10,15 +10,19 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{info::ContractInfo, utils::canonicalized},
+    solc::{
+        info::ContractInfo,
+        utils::{canonicalized, read_json_file},
+    },
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
 
@@ -114,11 +118,25 @@ impl CreateArgs {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        if !std::path::Path::new(&constructor_args_path).exists() {
-                            eyre::bail!("constructor args path not found");
+                        if !constructor_args_path.exists() {
+                            eyre::bail!(
+                                "Constructor args file \"{}\" not found",
+                                constructor_args_path.display()
+                            );
                         }
-                        let file = fs::read_to_string(constructor_args_path)?;
-                        file.split(' ').map(|s| s.to_string()).collect::<Vec<String>>()
+                        if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
+                            match read_json_file(constructor_args_path) {
+                                Ok(args) => args,
+                                Err(err) => eyre::bail!(
+                                    "Constructor args file \"{}\" must encode a json array: \"{}\"",
+                                    constructor_args_path.display(),
+                                    err
+                                ),
+                            }
+                        } else {
+                            let file = fs::read_to_string(constructor_args_path)?;
+                            file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
+                        }
                     } else {
                         self.constructor_args.clone()
                     };
