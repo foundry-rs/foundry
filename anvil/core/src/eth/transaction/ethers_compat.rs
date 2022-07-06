@@ -1,5 +1,6 @@
 //! ethers compatibility, this is mainly necessary so we can use all of `ethers` signers
 
+use super::EthTransactionRequest;
 use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
     TypedTransaction, TypedTransactionRequest,
@@ -7,8 +8,9 @@ use crate::eth::transaction::{
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
     Eip1559TransactionRequest as EthersEip1559TransactionRequest,
-    Eip2930TransactionRequest as EthersEip2930TransactionRequest, Transaction as EthersTransaction,
-    TransactionRequest as EthersLegacyTransactionRequest, U256, U64,
+    Eip2930TransactionRequest as EthersEip2930TransactionRequest, NameOrAddress,
+    Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
+    TransactionRequest, U256, U64,
 };
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
@@ -159,6 +161,44 @@ impl From<TypedTransaction> for EthersTransaction {
                 transaction_type: Some(2u64.into()),
                 other: Default::default(),
             },
+        }
+    }
+}
+
+impl From<TransactionRequest> for EthTransactionRequest {
+    fn from(req: TransactionRequest) -> Self {
+        let TransactionRequest { from, to, gas, gas_price, value, data, nonce, .. } = req;
+        EthTransactionRequest {
+            from,
+            to: to.and_then(|to| match to {
+                NameOrAddress::Name(_) => None,
+                NameOrAddress::Address(to) => Some(to),
+            }),
+            gas_price,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            gas,
+            value,
+            data,
+            nonce,
+            access_list: None,
+            transaction_type: None,
+        }
+    }
+}
+
+impl From<EthTransactionRequest> for TransactionRequest {
+    fn from(req: EthTransactionRequest) -> Self {
+        let EthTransactionRequest { from, to, gas_price, gas, value, data, nonce, .. } = req;
+        TransactionRequest {
+            from,
+            to: to.map(NameOrAddress::Address),
+            gas,
+            gas_price,
+            value,
+            data,
+            nonce,
+            chain_id: None,
         }
     }
 }

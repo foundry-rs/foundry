@@ -19,7 +19,6 @@ use foundry_evm::{
     trace::node::CallTraceNode,
 };
 use serde::{Deserialize, Serialize};
-
 mod ethers_compat;
 
 /// Container type for various Ethereum transaction requests

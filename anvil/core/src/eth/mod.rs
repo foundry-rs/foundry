@@ -1,6 +1,5 @@
 use crate::{
     eth::{
-        call::CallRequest,
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
@@ -14,7 +13,6 @@ use serde::Deserialize;
 use serde_helpers::Params;
 
 pub mod block;
-pub mod call;
 pub mod receipt;
 mod serde_helpers;
 pub mod subscription;
@@ -98,13 +96,13 @@ pub enum EthRequest {
     EthSendRawTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
-    EthCall(CallRequest, #[serde(default)] Option<BlockId>),
+    EthCall(EthTransactionRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_createAccessList")]
-    EthCreateAccessList(CallRequest, #[serde(default)] Option<BlockId>),
+    EthCreateAccessList(EthTransactionRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_estimateGas")]
-    EthEstimateGas(CallRequest, #[serde(default)] Option<BlockId>),
+    EthEstimateGas(EthTransactionRequest, #[serde(default)] Option<BlockId>),
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
@@ -868,7 +866,7 @@ mod tests {
     #[test]
     fn test_eth_call() {
         let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
-        let _req = serde_json::from_str::<CallRequest>(req).unwrap();
+        let _req = serde_json::from_str::<EthTransactionRequest>(req).unwrap();
 
         let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;
         let _req = serde_json::from_str::<EthRequest>(s).unwrap();
