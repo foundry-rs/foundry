@@ -42,7 +42,7 @@ pub trait DatabaseExt: Database {
     fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine>;
 
     /// Creates a new fork but does _not_ select it
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId>;
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256>;
 
     /// Selects the fork's state
     ///
@@ -51,14 +51,16 @@ pub trait DatabaseExt: Database {
     /// # Errors
     ///
     /// Returns an error if no fork with the given `id` exists
-    fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()>;
+    fn select_fork(&mut self, id: U256) -> eyre::Result<()>;
 
     /// Updates the fork to given block number.
     ///
     /// This will essentially create a new fork at the given block height.
     ///
-    /// Returns false if no matching fork was found.
-    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool>;
+    /// # Errors
+    ///
+    /// Returns an error if not matching fork was found.
+    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()>;
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -133,7 +135,7 @@ impl Backend {
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
         let (db, launched_with) = if let Some(f) = fork {
             let (id, fork) = forks.create_fork(f).expect("Unable to fork");
-            (CacheDB::new(BackendDatabase::Forked(fork.clone(), id.clone())), Some((id, fork)))
+            (CacheDB::new(BackendDatabase::Forked(fork.clone(), U256::zero())), Some((id, fork)))
         } else {
             (CacheDB::new(BackendDatabase::InMemory(EmptyDB())), None)
         };
@@ -210,7 +212,7 @@ impl Backend {
     }
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
-    pub fn active_fork(&self) -> Option<&ForkId> {
+    pub fn active_fork(&self) -> Option<U256> {
         self.db.db().as_fork()
     }
 
@@ -224,14 +226,14 @@ impl Backend {
     /// Returns an error if the given `id` does not match any forks
     ///
     /// Returns an error if no fork exits
-    pub fn ensure_fork(&self, id: Option<ForkId>) -> eyre::Result<ForkId> {
+    pub fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {
         if let Some(id) = id {
-            if self.inner.created_forks.contains_key(&id) {
+            if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id)
             }
             eyre::bail!("Requested fork `{}` does not exit", id)
         }
-        if let Some(id) = self.active_fork().cloned() {
+        if let Some(id) = self.active_fork() {
             Ok(id)
         } else {
             eyre::bail!("No fork active")
@@ -285,28 +287,24 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256> {
         let (id, fork) = self.forks.create_fork(fork)?;
-        self.inner.created_forks.insert(id.clone(), fork);
+        let id = self.inner.insert_new_fork(id, fork);
         Ok(id)
     }
 
-    fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()> {
-        let id = id.into();
-        let fork = self
-            .inner
-            .created_forks
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| eyre::eyre!("Fork Id {} does not exist", id))?;
+    fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
+        let fork = self.inner.ensure_backend(id).cloned()?;
         *self.db.db_mut() = BackendDatabase::Forked(fork, id);
         Ok(())
     }
 
-    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool> {
+    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()> {
         let id = self.ensure_fork(id)?;
-
-        todo!()
+        let (id, fork) =
+            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
+        self.inner.created_forks.insert(id.clone(), fork);
+        Ok(())
     }
 }
 
@@ -377,17 +375,17 @@ pub enum BackendDatabase {
     InMemory(EmptyDB),
     /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
     /// same data
-    Forked(SharedBackend, ForkId),
+    Forked(SharedBackend, U256),
 }
 
 // === impl BackendDatabase ===
 
 impl BackendDatabase {
     /// Returns the `ForkId` if in fork mode
-    pub fn as_fork(&self) -> Option<&ForkId> {
+    pub fn as_fork(&self) -> Option<U256> {
         match self {
             BackendDatabase::InMemory(_) => None,
-            BackendDatabase::Forked(_, id) => Some(id),
+            BackendDatabase::Forked(_, id) => Some(*id),
         }
     }
 }
@@ -430,6 +428,18 @@ pub struct BackendInner {
     /// In other words if [`Backend::spawn()`] was called with a `CreateFork` command, to launch
     /// directly in fork mode, this holds the corresponding `ForkId` of this fork.
     pub launched_with_fork: Option<ForkId>,
+    /// This tracks numeric fork ids and the `ForkId` used by the handler.
+    ///
+    /// This is neceessary, because there can be multiple `Backends` associated with a single
+    /// `ForkId` which is only a pair of endpoint + block. Since an existing fork can be
+    /// modified (e.g. `roll_fork`), but this should only affect the fork that's unique for the
+    /// test and not the `ForkId`
+    ///
+    /// This ensures we can treat forks as unique from the context of a test, so rolling to another
+    /// is basically creating(or reusing) another `ForkId` that's then mapped to the previous
+    /// issued _local_ numeric identifier, that remains constant, even if the underlying fork
+    /// backend changes.
+    pub issued_local_fork_ids: HashMap<U256, ForkId>,
     /// tracks all created forks
     pub created_forks: HashMap<ForkId, SharedBackend>,
     /// Contains snapshots made at a certain point
@@ -449,6 +459,8 @@ pub struct BackendInner {
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
     pub test_contract_context: Option<Address>,
+    /// Tracks numeric identifiers for forks
+    pub next_fork_id: U256,
 }
 
 // === impl BackendInner ===
@@ -456,11 +468,43 @@ pub struct BackendInner {
 impl BackendInner {
     /// Creates a new instance that tracks the fork used at launch
     pub fn new(launched_with: Option<(ForkId, SharedBackend)>) -> Self {
-        let (launched_with_fork, created_forks) = if let Some((id, fork)) = launched_with {
-            (Some(id.clone()), HashMap::from([(id, fork)]))
-        } else {
-            (None, Default::default())
-        };
-        Self { launched_with_fork, created_forks, ..Default::default() }
+        launched_with.map(|(id, backend)| Self::forked(id, backend)).unwrap_or_default()
+    }
+
+    pub fn forked(id: ForkId, fork: SharedBackend) -> Self {
+        let launched_with_fork = Some(id.clone());
+        let mut backend = Self { launched_with_fork, ..Default::default() };
+        backend.insert_new_fork(id, fork);
+        backend
+    }
+
+    pub fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
+        self.issued_local_fork_ids
+            .get(&id)
+            .ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
+    }
+
+    /// Ensures that the `SharedBackend` for the given `id` exits
+    pub fn ensure_backend(&self, id: U256) -> eyre::Result<&SharedBackend> {
+        self.get_backend(id).ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
+    }
+
+    /// Returns the matching `SharedBackend` for the givne id
+    fn get_backend(&self, id: U256) -> Option<&SharedBackend> {
+        self.issued_local_fork_ids.get(&id).and_then(|id| self.created_forks.get(id))
+    }
+
+    /// Issues a new local fork identifier
+    pub fn insert_new_fork(&mut self, fork: ForkId, backend: SharedBackend) -> U256 {
+        self.created_forks.insert(fork.clone(), backend);
+        let id = self.next_id();
+        self.issued_local_fork_ids.insert(id, fork);
+        id
+    }
+
+    fn next_id(&mut self) -> U256 {
+        let id = self.next_fork_id;
+        self.next_fork_id += U256::one();
+        id
     }
 }

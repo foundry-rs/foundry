@@ -25,12 +25,12 @@ pub fn apply<DB: DatabaseExt>(
             Err(err) => Err(err.to_string().encode().into()),
         },
         HEVMCalls::RollFork0(fork) => match data.db.roll_fork(fork.0, None) {
-            Ok(b) => Ok(b.encode().into()),
+            Ok(_) => Ok(Default::default()),
             Err(err) => Err(err.to_string().encode().into()),
         },
         HEVMCalls::RollFork1(fork) => {
             match data.db.roll_fork(fork.1, Some(fork.0.clone().into())) {
-                Ok(b) => Ok(b.encode().into()),
+                Ok(_) => Ok(Default::default()),
                 Err(err) => Err(err.to_string().encode().into()),
             }
         }

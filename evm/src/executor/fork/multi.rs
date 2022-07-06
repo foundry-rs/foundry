@@ -119,6 +119,16 @@ impl MultiFork {
         rx.recv()?
     }
 
+    /// Rolls the block of the fork
+    ///
+    /// If no matching fork backend exists it will be created
+    pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<(ForkId, SharedBackend)> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::RollFork(fork, block, sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        rx.recv()?
+    }
+
     /// Returns the corresponding fork if it exist
     ///
     /// Returns `None` if no matching fork backend is available.
@@ -144,7 +154,7 @@ enum Request {
     /// Returns the Fork backend for the `ForkId` if it exists
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
     /// Adjusts the block that's being forked
-    RollFork(ForkId, U256, CreateSender),
+    RollFork(ForkId, u64, CreateSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
 }
@@ -206,7 +216,8 @@ impl MultiForkHandler {
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
         let fork_id = create_fork_id(&fork.url, fork.block);
-        if let Some(fork) = self.forks.get(&fork_id) {
+        if let Some(fork) = self.forks.get_mut(&fork_id) {
+            fork.num_senders += 1;
             let _ = sender.send(Ok((fork_id, fork.backend.clone())));
         } else {
             let retries = self.retries;
@@ -225,7 +236,14 @@ impl MultiForkHandler {
                 let _ = sender.send(fork);
             }
             Request::RollFork(fork_id, block, sender) => {
-                trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
+                if let Some(fork) = self.forks.get(&fork_id) {
+                    trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
+                    let mut opts = fork.opts.clone();
+                    opts.block = block.into();
+                    self.create_fork(opts, sender)
+                } else {
+                    let _ = sender.send(Err(eyre::eyre!("No matching fork exits for {}", fork_id)));
+                }
             }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");

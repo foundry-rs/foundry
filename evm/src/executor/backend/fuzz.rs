@@ -157,21 +157,14 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         }
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<ForkId> {
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256> {
         let (id, fork) = self.backend.forks.create_fork(fork)?;
-        self.inner.created_forks.insert(id.clone(), fork);
+        let id = self.inner.insert_new_fork(id, fork);
         Ok(id)
     }
 
-    fn select_fork(&mut self, id: impl Into<ForkId>) -> eyre::Result<()> {
-        let id = id.into();
-        let fork = self
-            .inner
-            .created_forks
-            .get(&id)
-            .or_else(|| self.backend.created_forks().get(&id))
-            .cloned()
-            .ok_or_else(|| eyre::eyre!("Fork Id {} does not exist", id))?;
+    fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
+        let fork = self.inner.ensure_backend(id).cloned()?;
         if let Some(ref mut db) = self.db_override {
             *db.db_mut() = BackendDatabase::Forked(fork, id);
         } else {
@@ -182,7 +175,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         Ok(())
     }
 
-    fn roll_fork(&mut self, block_number: U256, id: Option<ForkId>) -> eyre::Result<bool> {
+    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()> {
         todo!()
     }
 }
