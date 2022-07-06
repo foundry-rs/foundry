@@ -1918,7 +1918,6 @@ dependencies = [
 name = "forge-fmt"
 version = "0.2.0"
 dependencies = [
- "indent_write",
  "itertools",
  "pretty_assertions",
  "semver",
@@ -2705,12 +2704,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "indent_write"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cfe9645a18782869361d9c8732246be7b410ad4e919d3609ebabdac00ba12c3"
 
 [[package]]
 name = "indenter"
