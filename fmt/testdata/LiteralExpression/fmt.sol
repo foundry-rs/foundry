@@ -36,6 +36,7 @@ contract LiteralExpressions {
         // comment9
         "\
 some words"; /* comment10 */
+        unicode"Hello 😃";
 
         // hex literals
         hex"001122FF";

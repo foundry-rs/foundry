@@ -1606,8 +1606,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
             Expression::StringLiteral(vals) => {
-                for StringLiteral { loc, string } in vals {
-                    write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
+                for StringLiteral { loc, string, unicode } in vals {
+                    if *unicode {
+                        write_chunk!(self, loc.start(), loc.end(), "unicode\"{string}\"")?;
+                    } else {
+                        write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
+                    }
                 }
             }
             Expression::HexLiteral(vals) => {
