@@ -119,12 +119,19 @@ impl CreateArgs {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
                         if !constructor_args_path.exists() {
-                            eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
+                            eyre::bail!(
+                                "Constructor args file \"{}\" not found",
+                                constructor_args_path.display()
+                            );
                         }
                         if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
                             match read_json_file(constructor_args_path) {
                                 Ok(args) => args,
-                                Err(err) => eyre::bail!("Constructor args file \"{}\" must encode a json array: \"{}\"", constructor_args_path.display(), err)
+                                Err(err) => eyre::bail!(
+                                    "Constructor args file \"{}\" must encode a json array: \"{}\"",
+                                    constructor_args_path.display(),
+                                    err
+                                ),
                             }
                         } else {
                             let file = fs::read_to_string(constructor_args_path)?;
