@@ -188,7 +188,7 @@ pub struct CommentStateCharIndices<'a> {
 }
 
 impl<'a> CommentStateCharIndices<'a> {
-    fn from_str(string: &'a str) -> Self {
+    fn new(string: &'a str) -> Self {
         Self { iter: string.char_indices().peekable(), state: CommentState::None }
     }
     pub fn with_state(mut self, state: CommentState) -> Self {
@@ -281,12 +281,12 @@ where
     T: AsRef<str>,
 {
     fn comment_state_char_indices(&self) -> CommentStateCharIndices {
-        CommentStateCharIndices::from_str(self.as_ref())
+        CommentStateCharIndices::new(self.as_ref())
     }
 }
 
 impl CommentStringExt for str {
     fn comment_state_char_indices(&self) -> CommentStateCharIndices {
-        CommentStateCharIndices::from_str(self)
+        CommentStateCharIndices::new(self)
     }
 }

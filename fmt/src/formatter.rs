@@ -103,7 +103,7 @@ impl WriteState {
 
 impl Default for WriteState {
     fn default() -> Self {
-        WriteState::LineStart(CommentState::None)
+        WriteState::LineStart(CommentState::default())
     }
 }
 
