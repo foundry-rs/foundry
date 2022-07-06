@@ -1472,6 +1472,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::This(loc) => {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
             }
+            Expression::Parenthesis(loc, expr) => {
+                self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _| expr.visit(fmt))?;
+            }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
                 write!(self.buf(), "[")?;
@@ -2062,8 +2065,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         self.indented(1, |fmt| {
             fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
-            fmt.write_postfix_comments_before(loc.end())?;
-            fmt.write_prefix_comments_before(loc.end())?;
+
+            let prefix_comments = fmt.comments.remove_prefixes_before(loc.end());
+            if prefix_comments.is_empty() {
+                fmt.write_postfix_comments_before(loc.end())?;
+            } else {
+                let first_prefix = prefix_comments.first().unwrap();
+                fmt.write_postfix_comments_before(first_prefix.loc.start())?;
+                if first_prefix.has_newline_before && !fmt.is_beginning_of_line() {
+                    write!(fmt.buf(), "\n\n")?;
+                }
+                for prefix in prefix_comments {
+                    fmt.write_comment(&prefix)?;
+                }
+            }
             Ok(())
         })?;
 
@@ -2778,8 +2793,14 @@ mod tests {
         source: &str,
         expected_source: &str,
     ) {
-        #[derive(PartialEq, Eq)]
+        #[derive(Eq)]
         struct PrettyString(String);
+
+        impl PartialEq for PrettyString {
+            fn eq(&self, other: &PrettyString) -> bool {
+                self.0.lines().eq(other.0.lines())
+            }
+        }
 
         impl std::fmt::Debug for PrettyString {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -2873,4 +2894,5 @@ mod tests {
     test_directory! { ArrayExpressions }
     test_directory! { UnitExpression }
     test_directory! { ThisExpression }
+    test_directory! { SimpleComments }
 }

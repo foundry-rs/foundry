@@ -206,4 +206,3 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [ integration, lint, doc, unit ]
     uses: ./.github/workflows/cross-platform.yml
-

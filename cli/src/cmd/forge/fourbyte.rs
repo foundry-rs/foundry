@@ -32,7 +32,7 @@ impl UploadSelectorsArgs {
 
         let project = build_args.project()?;
         let outcome = compile::suppress_compile(&project)?;
-        let found_artifact = outcome.find(&contract);
+        let found_artifact = outcome.find_first(&contract);
         let artifact = found_artifact.ok_or_else(|| {
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
