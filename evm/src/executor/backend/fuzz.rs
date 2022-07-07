@@ -170,10 +170,10 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
             .or_else(|_| self.backend.inner.ensure_backend(id))
             .cloned()?;
         if let Some(ref mut db) = self.db_override {
-            *db.db_mut() = BackendDatabase::Forked(fork, id);
+            db.db = BackendDatabase::Forked(fork, id);
         } else {
             let mut db = self.backend.db.clone();
-            *db.db_mut() = BackendDatabase::Forked(fork, id);
+            db.db = BackendDatabase::Forked(fork, id);
             self.set_active(db);
         }
         Ok(())
@@ -191,7 +191,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     }
 
     fn active_fork(&self) -> Option<U256> {
-        self.active_db().db().as_fork()
+        self.active_db().db.as_fork()
     }
 
     fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {

@@ -64,4 +64,4 @@ debug = 0
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = { path = "../revm/crates/revm" , default-features = false, features = ["std", "k256", "with-serde", "memory_limit"] }
+revm = { git = "https://github.com/bluealloy/revm", package = "revm"  }

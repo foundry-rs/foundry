@@ -164,12 +164,12 @@ impl Backend {
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
         let mut db = self.db.clone();
-        *db.db_mut() = BackendDatabase::InMemory(EmptyDB());
+        db.db = BackendDatabase::InMemory(EmptyDB());
         Self { forks: self.forks.clone(), db, inner: Default::default() }
     }
 
     pub fn insert_cache(&mut self, address: H160, account: AccountInfo) {
-        self.db.insert_cache(address, account)
+        self.db.insert_account_info(address, account)
     }
 
     /// Returns all forks created by this backend
@@ -284,7 +284,7 @@ impl DatabaseExt for Backend {
 
     fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
         let fork = self.inner.ensure_backend(id).cloned()?;
-        *self.db.db_mut() = BackendDatabase::Forked(fork, id);
+        self.db.db = BackendDatabase::Forked(fork, id);
         Ok(())
     }
 
@@ -298,7 +298,7 @@ impl DatabaseExt for Backend {
     }
 
     fn active_fork(&self) -> Option<U256> {
-        self.db.db().as_fork()
+        self.db.db.as_fork()
     }
 
     fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {

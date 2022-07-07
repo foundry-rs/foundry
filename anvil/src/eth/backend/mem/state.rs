@@ -1,14 +1,14 @@
 //! Support for generating the state root for memdb storage
+use std::collections::BTreeMap;
+
 use anvil_core::eth::trie::{sec_trie_root, trie_root};
 use bytes::Bytes;
 use ethers::{
     types::{Address, H256, U256},
     utils::{rlp, rlp::RlpStream},
 };
-use foundry_evm::{
-    revm::{AccountInfo, Log},
-    HashMap as Map,
-};
+use forge::revm::db::DbAccount;
+use foundry_evm::revm::{AccountInfo, Log};
 
 /// Returns the log hash for all `logs`
 ///
@@ -29,15 +29,11 @@ pub fn log_rlp_hash(logs: Vec<Log>) -> H256 {
     H256::from_slice(out.as_slice())
 }
 
-pub fn state_merkle_trie_root(
-    accounts: &Map<Address, AccountInfo>,
-    storage: &Map<Address, Map<U256, U256>>,
-) -> H256 {
+pub fn state_merkle_trie_root(accounts: &BTreeMap<Address, DbAccount>) -> H256 {
     let vec = accounts
         .iter()
-        .map(|(address, info)| {
-            let storage = storage.get(address).cloned().unwrap_or_default();
-            let storage_root = trie_account_rlp(info, storage);
+        .map(|(address, account)| {
+            let storage_root = trie_account_rlp(&account.info, &account.storage);
             (*address, storage_root)
         })
         .collect::<Vec<_>>();
@@ -46,15 +42,15 @@ pub fn state_merkle_trie_root(
 }
 
 /// Returns the RLP for this account.
-pub fn trie_account_rlp(info: &AccountInfo, storage: Map<U256, U256>) -> Bytes {
+pub fn trie_account_rlp(info: &AccountInfo, storage: &BTreeMap<U256, U256>) -> Bytes {
     let mut stream = RlpStream::new_list(4);
     stream.append(&info.nonce);
     stream.append(&info.balance);
     stream.append(&{
-        sec_trie_root(storage.into_iter().filter(|(_k, v)| v != &U256::zero()).map(|(k, v)| {
+        sec_trie_root(storage.iter().filter(|(_k, v)| *v != &U256::zero()).map(|(k, v)| {
             let mut temp: [u8; 32] = [0; 32];
             k.to_big_endian(&mut temp);
-            (H256::from(temp), rlp::encode(&v))
+            (H256::from(temp), rlp::encode(v))
         }))
     });
     stream.append(&info.code_hash.as_bytes());
