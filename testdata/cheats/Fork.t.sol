@@ -17,8 +17,8 @@ contract ForkTest is DSTest {
     IWETH WETH = IWETH(WETH_TOKEN_ADDR);
 
 
-    string forkA;
-    string forkB;
+    uint256 forkA;
+    uint256 forkB;
 
     // this will create two _different_ forks during setup
     function setUp() public {
@@ -28,7 +28,7 @@ contract ForkTest is DSTest {
 
     // ensures forks use different ids
     function testForkIdDiffer() public {
-        assert(keccak256(bytes(forkA)) != keccak256(bytes(forkB)));
+        assert(forkA != forkB);
     }
 
     // ensures forks use different ids
