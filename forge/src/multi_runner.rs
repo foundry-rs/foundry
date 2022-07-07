@@ -375,7 +375,6 @@ mod tests {
     };
     use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
     use foundry_evm::trace::TraceKind;
-    use foundry_utils::init_tracing_subscriber;
     use std::env;
 
     /// Builds a base runner
@@ -604,7 +603,6 @@ mod tests {
 
     #[test]
     fn test_logs() {
-        init_tracing_subscriber();
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, true).unwrap();
 
@@ -1166,10 +1164,8 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_cheats_local() {
         let mut runner = runner();
-        // let suite_result =
-        //     runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
         let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/RpcUrl"), None, true).unwrap();
+            runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
