@@ -591,13 +591,19 @@ mod tests {
         let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
 
         let block_num = provider.get_block_number().await.unwrap().as_u64();
-        let env = revm::Env::default();
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
         evm_opts.fork_block_number = Some(block_num);
 
-        let fork = CreateFork { enable_caching: true, url: ENDPOINT.to_string(), env, evm_opts };
+        let env = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
+
+        let fork = CreateFork {
+            enable_caching: true,
+            url: ENDPOINT.to_string(),
+            env: env.clone(),
+            evm_opts,
+        };
 
         let backend = Backend::spawn(Some(fork));
 
@@ -615,11 +621,8 @@ mod tests {
         }
         drop(backend);
 
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
-            hosts: Default::default(),
-        };
+        let meta =
+            BlockchainDbMeta { cfg_env: env.cfg, block_env: env.block, hosts: Default::default() };
 
         let db = BlockchainDb::new(
             meta,
