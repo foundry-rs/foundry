@@ -206,7 +206,7 @@ where
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        db.insert_cache(
+        db.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
@@ -238,7 +238,7 @@ where
         let mut account = self.db.basic(address);
         account.balance = amount;
 
-        self.db.insert_cache(address, account);
+        self.db.insert_account_info(address, account);
         self
     }
 
@@ -252,7 +252,7 @@ where
         let mut account = self.db.basic(address);
         account.nonce = nonce;
 
-        self.db.insert_cache(address, account);
+        self.db.insert_account_info(address, account);
         self
     }
 
@@ -618,7 +618,7 @@ where
     ) -> bool {
         // Construct a new VM with the state changeset
         let mut db = CacheDB::new(EmptyDB());
-        db.insert_cache(address, self.db.basic(address));
+        db.insert_account_info(address, self.db.basic(address));
         db.commit(state_changeset);
         let executor =
             Executor::new(db, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
