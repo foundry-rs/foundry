@@ -1,8 +1,9 @@
 use crate::executor::opts::EvmOpts;
 use bytes::Bytes;
-use ethers::abi::AbiEncode;
 use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
+
+use super::util;
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
@@ -69,10 +70,10 @@ impl CheatsConfig {
         let url_or_alias = url_or_alias.into();
         match self.rpc_endpoints.get(&url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
-            Some(Err(err)) => Err(err.to_string().encode().into()),
+            Some(Err(err)) => Err(util::encode_error(err)),
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
-                    Err(format!("invalid rpc url {}", url_or_alias).encode().into())
+                    Err(util::encode_error(format!("invalid rpc url {}", url_or_alias)))
                 } else {
                     Ok(url_or_alias)
                 }

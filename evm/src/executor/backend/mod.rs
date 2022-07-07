@@ -293,7 +293,7 @@ impl DatabaseExt for Backend {
         let (id, fork) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
-        self.inner.created_forks.insert(id.clone(), fork);
+        self.inner.created_forks.insert(id, fork);
         Ok(())
     }
 

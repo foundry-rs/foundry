@@ -1,4 +1,4 @@
-use super::Cheatcodes;
+use super::{util, Cheatcodes};
 use crate::{
     abi::HEVMCalls,
     executor::{backend::DatabaseExt, fork::CreateFork},
@@ -20,20 +20,19 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::CreateFork1(fork) => {
             create_fork(state, data, fork.0.clone(), fork.1.as_u64().into())
         }
-        HEVMCalls::SelectFork(fork_id) => match data.db.select_fork(fork_id.0.clone()) {
-            Ok(_) => Ok(Bytes::new()),
-            Err(err) => Err(err.to_string().encode().into()),
-        },
-        HEVMCalls::RollFork0(fork) => match data.db.roll_fork(fork.0, None) {
-            Ok(_) => Ok(Default::default()),
-            Err(err) => Err(err.to_string().encode().into()),
-        },
-        HEVMCalls::RollFork1(fork) => {
-            match data.db.roll_fork(fork.1, Some(fork.0.clone().into())) {
-                Ok(_) => Ok(Default::default()),
-                Err(err) => Err(err.to_string().encode().into()),
-            }
+        HEVMCalls::SelectFork(fork_id) => data
+            .db
+            .select_fork(fork_id.0)
+            .map(|_| Default::default())
+            .map_err(util::encode_error),
+        HEVMCalls::RollFork0(fork) => {
+            data.db.roll_fork(fork.0, None).map(|_| Default::default()).map_err(util::encode_error)
         }
+        HEVMCalls::RollFork1(fork) => data
+            .db
+            .roll_fork(fork.1, Some(fork.0))
+            .map(|_| Default::default())
+            .map_err(util::encode_error),
         HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
         HEVMCalls::RpcUrls(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
@@ -66,8 +65,5 @@ fn create_fork<DB: DatabaseExt>(
         chain_id: None,
         env: data.env.clone(),
     };
-    match data.db.create_fork(fork) {
-        Ok(id) => Ok(id.encode().into()),
-        Err(err) => Err(err.to_string().encode().into()),
-    }
+    data.db.create_fork(fork).map_err(util::encode_error).map(|id| id.encode().into())
 }

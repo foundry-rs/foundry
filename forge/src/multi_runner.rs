@@ -389,9 +389,9 @@ mod tests {
         config.rpc_endpoints = rpc_endpoints();
 
         base_runner()
-            .with_cheats_config(CheatsConfig::new(&config, &*EVM_OPTS))
+            .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
             .build(
-                &(*PROJECT).paths.root,
+                &PROJECT.paths.root,
                 (*COMPILED).clone(),
                 EVM_OPTS.evm_env_blocking(),
                 EVM_OPTS.clone(),
@@ -404,7 +404,7 @@ mod tests {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
         base_runner()
-            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+            .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
             .unwrap()
     }
 
@@ -420,7 +420,7 @@ mod tests {
 
         base_runner()
             .with_fork(fork)
-            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
+            .build(&LIBS_PROJECT.paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
             .unwrap()
     }
 
@@ -1150,7 +1150,6 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                dbg!(test_name.clone());
                 let logs = decode_console_logs(&result.logs);
                 assert!(
                     result.success,
@@ -1278,7 +1277,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner
-            .test(&Filter::new(".*", ".*", format!(".*Abstract.t.sol").as_str()), None, true)
+            .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None, true)
             .unwrap();
         println!("{:?}", results.keys());
         assert!(results
