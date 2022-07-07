@@ -164,7 +164,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     }
 
     fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
-        let fork = self.inner.ensure_backend(id).cloned()?;
+        let fork = self
+            .inner
+            .ensure_backend(id)
+            .or_else(|_| self.backend.inner.ensure_backend(id))
+            .cloned()?;
         if let Some(ref mut db) = self.db_override {
             *db.db_mut() = BackendDatabase::Forked(fork, id);
         } else {
@@ -176,7 +180,38 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     }
 
     fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()> {
-        todo!()
+        let id = self.ensure_fork(id)?;
+        let (id, fork) = self
+            .backend
+            .forks
+            .roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
+        // this will update the local mapping
+        self.inner.created_forks.insert(id.clone(), fork);
+        Ok(())
+    }
+
+    fn active_fork(&self) -> Option<U256> {
+        self.active_db().db().as_fork()
+    }
+
+    fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {
+        if let Some(id) = id {
+            if self.inner.issued_local_fork_ids.contains_key(&id) ||
+                self.backend.inner.issued_local_fork_ids.contains_key(&id)
+            {
+                return Ok(id)
+            }
+            eyre::bail!("Requested fork `{}` does not exit", id)
+        }
+        if let Some(id) = self.active_fork() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active")
+        }
+    }
+
+    fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
+        self.inner.ensure_fork_id(id).or_else(|_| self.backend.ensure_fork_id(id))
     }
 }
 

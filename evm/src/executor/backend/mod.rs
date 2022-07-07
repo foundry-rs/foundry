@@ -61,6 +61,24 @@ pub trait DatabaseExt: Database {
     ///
     /// Returns an error if not matching fork was found.
     fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()>;
+
+    /// Returns the `ForkId` that's currently used in the database, if fork mode is on
+    fn active_fork(&self) -> Option<U256>;
+
+    /// Ensures that an appropriate fork exits
+    ///
+    /// If `id` contains a requested `Fork` this will ensure it exits.
+    /// Otherwise this returns the currently active fork.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the given `id` does not match any forks
+    ///
+    /// Returns an error if no fork exits
+    fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256>;
+
+    /// Ensures that a corresponding `ForkId` exists for the given local `id`
+    fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId>;
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -211,35 +229,6 @@ impl Backend {
         value == U256::one()
     }
 
-    /// Returns the `ForkId` that's currently used in the database, if fork mode is on
-    pub fn active_fork(&self) -> Option<U256> {
-        self.db.db().as_fork()
-    }
-
-    /// Ensures that an appropriate fork exits
-    ///
-    /// If `id` contains a requested `Fork` this will ensure it exits.
-    /// Otherwise this returns the currently active fork.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the given `id` does not match any forks
-    ///
-    /// Returns an error if no fork exits
-    pub fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {
-        if let Some(id) = id {
-            if self.inner.issued_local_fork_ids.contains_key(&id) {
-                return Ok(id)
-            }
-            eyre::bail!("Requested fork `{}` does not exit", id)
-        }
-        if let Some(id) = self.active_fork() {
-            Ok(id)
-        } else {
-            eyre::bail!("No fork active")
-        }
-    }
-
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
@@ -303,8 +292,31 @@ impl DatabaseExt for Backend {
         let id = self.ensure_fork(id)?;
         let (id, fork) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
+        // this will update the local mapping
         self.inner.created_forks.insert(id.clone(), fork);
         Ok(())
+    }
+
+    fn active_fork(&self) -> Option<U256> {
+        self.db.db().as_fork()
+    }
+
+    fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {
+        if let Some(id) = id {
+            if self.inner.issued_local_fork_ids.contains_key(&id) {
+                return Ok(id)
+            }
+            eyre::bail!("Requested fork `{}` does not exit", id)
+        }
+        if let Some(id) = self.active_fork() {
+            Ok(id)
+        } else {
+            eyre::bail!("No fork active")
+        }
+    }
+
+    fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
+        self.inner.ensure_fork_id(id)
     }
 }
 
