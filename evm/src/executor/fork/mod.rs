@@ -1,5 +1,6 @@
 mod backend;
 
+use super::opts::EvmOpts;
 pub use backend::{BackendHandler, SharedBackend};
 use ethers::types::BlockNumber;
 use revm::Env;
@@ -28,4 +29,6 @@ pub struct CreateFork {
     pub chain_id: Option<u64>,
     /// The env to create this fork, main purpose is to provide some metadata for the fork
     pub env: Env,
+    /// All env settings as configured by the user
+    pub evm_opts: EvmOpts,
 }

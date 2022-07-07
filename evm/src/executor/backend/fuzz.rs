@@ -16,6 +16,8 @@ use revm::{
 };
 use tracing::{trace, warn};
 
+use super::update_current_env_with_fork_env;
+
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
 /// Any changes made during its existence that affect the caching layer of the underlying Database
@@ -163,12 +165,15 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         Ok(id)
     }
 
-    fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
+    fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()> {
+        let fork_id = self.ensure_fork_id(id).cloned()?;
+        let fork_env = self.backend.forks.get_env(fork_id)?.ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
         let fork = self
             .inner
             .ensure_backend(id)
             .or_else(|_| self.backend.inner.ensure_backend(id))
             .cloned()?;
+
         if let Some(ref mut db) = self.db_override {
             db.db = BackendDatabase::Forked(fork, id);
         } else {
@@ -176,6 +181,8 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
             db.db = BackendDatabase::Forked(fork, id);
             self.set_active(db);
         }
+        
+        update_current_env_with_fork_env(env, fork_env);
         Ok(())
     }
 

@@ -46,12 +46,14 @@ pub trait DatabaseExt: Database {
 
     /// Selects the fork's state
     ///
+    /// This will also modify the current `Env`.
+    ///
     /// **Note**: this does not change the local state, but swaps the remote state
     ///
     /// # Errors
     ///
     /// Returns an error if no fork with the given `id` exists
-    fn select_fork(&mut self, id: U256) -> eyre::Result<()>;
+    fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()>;
 
     /// Updates the fork to given block number.
     ///
@@ -282,9 +284,12 @@ impl DatabaseExt for Backend {
         Ok(id)
     }
 
-    fn select_fork(&mut self, id: U256) -> eyre::Result<()> {
+    fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()> {
+        let fork_id = self.ensure_fork_id(id).cloned()?;
+        let fork_env = self.forks.get_env(fork_id)?.ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
         let fork = self.inner.ensure_backend(id).cloned()?;
         self.db.db = BackendDatabase::Forked(fork, id);
+        update_current_env_with_fork_env(env, fork_env);
         Ok(())
     }
 
@@ -519,4 +524,11 @@ impl BackendInner {
         self.next_fork_id += U256::one();
         id
     }
+}
+
+
+/// This updates the currently used env with the fork's environment
+pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env)  {
+    current.block = fork.block;
+    current.cfg = fork.cfg;
 }

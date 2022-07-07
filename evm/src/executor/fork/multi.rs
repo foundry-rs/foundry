@@ -8,9 +8,8 @@ use crate::executor::fork::{
 };
 use ethers::{
     abi::{AbiDecode, AbiEncode, AbiError},
-    prelude::Middleware,
     providers::{Http, Provider, RetryClient},
-    types::{BlockId, BlockNumber, U256},
+    types::{BlockId, BlockNumber},
 };
 use foundry_config::Config;
 use futures::{
@@ -19,6 +18,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt, StreamExt,
 };
+use revm::Env;
 use std::{
     collections::HashMap,
     fmt,
@@ -129,6 +129,14 @@ impl MultiFork {
         rx.recv()?
     }
 
+    /// Returns the `Env` of the given fork, if any
+    pub fn get_env(&self, fork: ForkId) -> eyre::Result<Option<Env>> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetEnv(fork, sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
+    }
+
     /// Returns the corresponding fork if it exist
     ///
     /// Returns `None` if no matching fork backend is available.
@@ -143,8 +151,8 @@ impl MultiFork {
 type Handler = BackendHandler<Arc<Provider<RetryClient<Http>>>>;
 
 type CreateFuture = Pin<Box<dyn Future<Output = eyre::Result<(CreatedFork, Handler)>> + Send>>;
-
 type CreateSender = OneshotSender<eyre::Result<(ForkId, SharedBackend)>>;
+type GetEnvSender = OneshotSender<Option<Env>>;
 
 /// Request that's send to the handler
 #[derive(Debug)]
@@ -155,6 +163,8 @@ enum Request {
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
     /// Adjusts the block that's being forked
     RollFork(ForkId, u64, CreateSender),
+    /// Returns the environment of the fork
+    GetEnv(ForkId, GetEnvSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
 }
@@ -244,6 +254,9 @@ impl MultiForkHandler {
                 } else {
                     let _ = sender.send(Err(eyre::eyre!("No matching fork exits for {}", fork_id)));
                 }
+            }
+            Request::GetEnv(fork_id, sender) => {
+                let _ = sender.send(self.forks.get(&fork_id).map(|fork| fork.opts.env.clone()));
             }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");
@@ -394,35 +407,23 @@ fn create_fork_id(url: &str, num: BlockNumber) -> ForkId {
 ///
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend
 async fn create_fork(
-    fork: CreateFork,
+    mut fork: CreateFork,
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(CreatedFork, Handler)> {
-    let CreateFork { enable_caching, url, block: block_number, env, chain_id } = fork.clone();
     let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
-        url.clone().as_str(),
+        fork.url.clone().as_str(),
         retries,
         backoff,
     )?);
-    let mut meta = BlockchainDbMeta::new(env, url);
 
-    // update the meta to match the forked config
-    let chain_id = if let Some(chain_id) = chain_id {
-        U256::from(chain_id)
-    } else {
-        provider.get_chainid().await?
-    };
-    meta.cfg_env.chain_id = chain_id;
-
-    let number = match block_number {
-        BlockNumber::Pending | BlockNumber::Latest => provider.get_block_number().await?.as_u64(),
-        BlockNumber::Earliest => 0,
-        BlockNumber::Number(num) => num.as_u64(),
-    };
-    meta.block_env.number = number.into();
+    // initialise the fork environment
+    fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;
+    let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
+    let number = meta.block_env.number.as_u64();
 
     // determine the cache path if caching is enabled
-    let cache_path = if enable_caching {
+    let cache_path = if fork.enable_caching {
         Config::foundry_block_cache_dir(meta.cfg_env.chain_id.as_u64(), number)
     } else {
         None

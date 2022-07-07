@@ -517,6 +517,7 @@ impl DatabaseRef for SharedBackend {
 mod tests {
     use crate::executor::{
         fork::{BlockchainDbMeta, JsonBlockCacheDB},
+        opts::EvmOpts,
         Backend,
     };
     use ethers::{
@@ -592,12 +593,16 @@ mod tests {
         let block_num = provider.get_block_number().await.unwrap().as_u64();
         let env = revm::Env::default();
 
+        let config = Config::figment();
+        let evm_opts = config.extract::<EvmOpts>().unwrap();
+
         let fork = CreateFork {
             enable_caching: true,
             url: ENDPOINT.to_string(),
             block: BlockNumber::Number(block_num.into()),
             chain_id: Some(1),
             env,
+            evm_opts,
         };
 
         let backend = Backend::spawn(Some(fork));

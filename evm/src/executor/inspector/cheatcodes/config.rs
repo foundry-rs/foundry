@@ -23,6 +23,9 @@ pub struct CheatsConfig {
 
     /// Paths (directories) where file reading/writing is allowed
     pub allowed_paths: Vec<PathBuf>,
+
+    /// How the evm was configured by the user
+    pub evm_opts: EvmOpts,
 }
 
 // === impl CheatsConfig ===
@@ -40,6 +43,7 @@ impl CheatsConfig {
             rpc_endpoints: config.rpc_endpoints.clone().resolved(),
             root: config.__root.0.clone(),
             allowed_paths,
+            evm_opts: evm_opts.clone(),
         }
     }
 

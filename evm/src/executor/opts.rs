@@ -53,7 +53,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await
+            self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
         } else {
             self.local_evm_env()
         }
@@ -64,16 +64,17 @@ impl EvmOpts {
     /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
     pub fn evm_env_blocking(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
+            RuntimeOrHandle::new().block_on(async {
+                self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
+            })
         } else {
             self.local_evm_env()
         }
     }
 
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
-    async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> revm::Env {
-        let provider =
-            Provider::try_from(fork_url.as_ref()).expect("could not instantiated provider");
+    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
+        let provider = Provider::try_from(fork_url.as_ref())?;
         environment(
             &provider,
             self.memory_limit,
@@ -83,7 +84,6 @@ impl EvmOpts {
             self.sender,
         )
         .await
-        .expect("could not instantiate forked environment")
     }
 
     /// Returns the `revm::Env` configured with only local settings
@@ -135,6 +135,7 @@ impl EvmOpts {
                 .unwrap_or(BlockNumber::Latest),
             chain_id: self.env.chain_id,
             env,
+            evm_opts: self.clone(),
         })
     }
 
