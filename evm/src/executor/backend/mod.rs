@@ -168,7 +168,7 @@ impl Backend {
         Self { forks: self.forks.clone(), db, inner: Default::default() }
     }
 
-    pub fn insert_cache(&mut self, address: H160, account: AccountInfo) {
+    pub fn insert_account_info(&mut self, address: H160, account: AccountInfo) {
         self.db.insert_account_info(address, account)
     }
 

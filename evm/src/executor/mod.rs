@@ -123,7 +123,7 @@ impl Executor {
         let mut account = self.backend_mut().basic(address);
         account.balance = amount;
 
-        self.backend_mut().insert_cache(address, account);
+        self.backend_mut().insert_account_info(address, account);
         self
     }
 
@@ -137,7 +137,7 @@ impl Executor {
         let mut account = self.backend_mut().basic(address);
         account.nonce = nonce;
 
-        self.backend_mut().insert_cache(address, account);
+        self.backend_mut().insert_account_info(address, account);
         self
     }
 
@@ -457,7 +457,7 @@ impl Executor {
     ) -> bool {
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_cache(address, self.backend().basic(address));
+        backend.insert_account_info(address, self.backend().basic(address));
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
