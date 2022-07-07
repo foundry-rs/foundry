@@ -1,6 +1,3 @@
-/// ABIs used internally in the executor
-pub mod abi;
-
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 pub use abi::{
@@ -25,6 +22,8 @@ pub use revm::{db::DatabaseRef, Env, SpecId};
 use std::collections::{BTreeMap, VecDeque};
 use tracing::trace;
 
+/// ABIs used internally in the executor
+pub mod abi;
 /// custom revm database implementations
 pub mod backend;
 pub use backend::Backend;
