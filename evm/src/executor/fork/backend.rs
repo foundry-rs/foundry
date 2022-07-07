@@ -527,7 +527,7 @@ mod tests {
     };
 
     use crate::executor::fork::CreateFork;
-    use ethers::types::{BlockNumber, Chain};
+    use ethers::types::Chain;
     use foundry_config::Config;
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
@@ -594,16 +594,10 @@ mod tests {
         let env = revm::Env::default();
 
         let config = Config::figment();
-        let evm_opts = config.extract::<EvmOpts>().unwrap();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_block_number = Some(block_num);
 
-        let fork = CreateFork {
-            enable_caching: true,
-            url: ENDPOINT.to_string(),
-            block: BlockNumber::Number(block_num.into()),
-            chain_id: Some(1),
-            env,
-            evm_opts,
-        };
+        let fork = CreateFork { enable_caching: true, url: ENDPOINT.to_string(), env, evm_opts };
 
         let backend = Backend::spawn(Some(fork));
 

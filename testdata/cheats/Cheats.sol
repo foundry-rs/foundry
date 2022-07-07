@@ -155,7 +155,7 @@ interface Cheats {
     function rollFork(uint256) external;
     // Updates the given fork to given block number
     // Returns false if no matching fork was found
-    function rollFork(uint256, uint256) external returns(bool);
+    function rollFork(uint256, uint256) external;
     /// Returns the RPC url for the given alias
     function rpcUrl(string calldata) external returns(string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`

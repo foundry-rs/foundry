@@ -225,7 +225,7 @@ impl MultiForkHandler {
     }
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
-        let fork_id = create_fork_id(&fork.url, fork.block);
+        let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
         if let Some(fork) = self.forks.get_mut(&fork_id) {
             fork.num_senders += 1;
             let _ = sender.send(Ok((fork_id, fork.backend.clone())));
@@ -249,7 +249,7 @@ impl MultiForkHandler {
                 if let Some(fork) = self.forks.get(&fork_id) {
                     trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
                     let mut opts = fork.opts.clone();
-                    opts.block = block.into();
+                    opts.evm_opts.fork_block_number = Some(block);
                     self.create_fork(opts, sender)
                 } else {
                     let _ = sender.send(Err(eyre::eyre!("No matching fork exits for {}", fork_id)));
@@ -399,7 +399,8 @@ impl Drop for ShutDownMultiFork {
 }
 
 /// Returns  the identifier for a Fork which consists of the url and the block number
-fn create_fork_id(url: &str, num: BlockNumber) -> ForkId {
+fn create_fork_id(url: &str, num: Option<u64>) -> ForkId {
+    let num = num.map(|num| BlockNumber::Number(num.into())).unwrap_or(BlockNumber::Latest);
     ForkId(format!("{url}@{num}"))
 }
 
@@ -419,6 +420,7 @@ async fn create_fork(
 
     // initialise the fork environment
     fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;
+
     let meta = BlockchainDbMeta::new(fork.env.clone(), fork.url.clone());
     let number = meta.block_env.number.as_u64();
 

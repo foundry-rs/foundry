@@ -2,7 +2,7 @@ mod backend;
 
 use super::opts::EvmOpts;
 pub use backend::{BackendHandler, SharedBackend};
-use ethers::types::BlockNumber;
+
 use revm::Env;
 
 mod init;
@@ -23,10 +23,6 @@ pub struct CreateFork {
     pub enable_caching: bool,
     /// The URL to a node for fetching remote state
     pub url: String,
-    /// The block to fork against
-    pub block: BlockNumber,
-    /// chain id to use, if `None` then the chain_id will be fetched from the endpoint
-    pub chain_id: Option<u64>,
     /// The env to create this fork, main purpose is to provide some metadata for the fork
     pub env: Env,
     /// All env settings as configured by the user

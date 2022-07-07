@@ -19,11 +19,6 @@ contract SnapshotTest is DSTest {
         store.slot1 = 20;
     }
 
-//    function testStore() public {
-//        assertEq(store.slot0, 10, "initial value for slot 0 is incorrect");
-//        assertEq(store.slot1, 20, "initial value for slot 1 is incorrect");
-//    }
-
     function testSnapshot() public {
         uint256 snapshot = cheats.snapshot();
         store.slot0 = 300;

@@ -62,7 +62,12 @@ pub trait DatabaseExt: Database {
     /// # Errors
     ///
     /// Returns an error if not matching fork was found.
-    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()>;
+    fn roll_fork(
+        &mut self,
+        env: &mut Env,
+        block_number: U256,
+        id: Option<U256>,
+    ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork(&self) -> Option<U256>;
@@ -286,19 +291,31 @@ impl DatabaseExt for Backend {
 
     fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()> {
         let fork_id = self.ensure_fork_id(id).cloned()?;
-        let fork_env = self.forks.get_env(fork_id)?.ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+        let fork_env = self
+            .forks
+            .get_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
         let fork = self.inner.ensure_backend(id).cloned()?;
         self.db.db = BackendDatabase::Forked(fork, id);
         update_current_env_with_fork_env(env, fork_env);
         Ok(())
     }
 
-    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()> {
+    fn roll_fork(
+        &mut self,
+        env: &mut Env,
+        block_number: U256,
+        id: Option<U256>,
+    ) -> eyre::Result<()> {
         let id = self.ensure_fork(id)?;
-        let (id, fork) =
+        let (fork_id, fork) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
-        self.inner.created_forks.insert(id, fork);
+        self.inner.update_fork_mapping(id, fork_id, fork);
+        if self.active_fork() == Some(id) {
+            // need to update the block number right away
+            env.block.number = block_number;
+        }
         Ok(())
     }
 
@@ -511,6 +528,12 @@ impl BackendInner {
         self.issued_local_fork_ids.get(&id).and_then(|id| self.created_forks.get(id))
     }
 
+    /// Updates the fork and the local mapping
+    pub fn update_fork_mapping(&mut self, id: U256, fork: ForkId, backend: SharedBackend) {
+        self.created_forks.insert(fork.clone(), backend);
+        self.issued_local_fork_ids.insert(id, fork);
+    }
+
     /// Issues a new local fork identifier
     pub fn insert_new_fork(&mut self, fork: ForkId, backend: SharedBackend) -> U256 {
         self.created_forks.insert(fork.clone(), backend);
@@ -526,9 +549,8 @@ impl BackendInner {
     }
 }
 
-
 /// This updates the currently used env with the fork's environment
-pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env)  {
+pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
     current.block = fork.block;
     current.cfg = fork.cfg;
 }

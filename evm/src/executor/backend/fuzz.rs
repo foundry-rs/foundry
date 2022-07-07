@@ -167,7 +167,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 
     fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()> {
         let fork_id = self.ensure_fork_id(id).cloned()?;
-        let fork_env = self.backend.forks.get_env(fork_id)?.ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
+        let fork_env = self
+            .backend
+            .forks
+            .get_env(fork_id)?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
         let fork = self
             .inner
             .ensure_backend(id)
@@ -181,19 +185,28 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
             db.db = BackendDatabase::Forked(fork, id);
             self.set_active(db);
         }
-        
+
         update_current_env_with_fork_env(env, fork_env);
         Ok(())
     }
 
-    fn roll_fork(&mut self, block_number: U256, id: Option<U256>) -> eyre::Result<()> {
+    fn roll_fork(
+        &mut self,
+        env: &mut Env,
+        block_number: U256,
+        id: Option<U256>,
+    ) -> eyre::Result<()> {
         let id = self.ensure_fork(id)?;
-        let (id, fork) = self
+        let (fork_id, fork) = self
             .backend
             .forks
             .roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
-        self.inner.created_forks.insert(id, fork);
+        self.inner.update_fork_mapping(id, fork_id, fork);
+        if self.active_fork() == Some(id) {
+            // need to update the block number right away
+            env.block.number = block_number;
+        }
         Ok(())
     }
 

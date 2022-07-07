@@ -1,5 +1,4 @@
 use ethers::{
-    prelude::BlockNumber,
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
     types::{Address, Chain, U256},
@@ -129,11 +128,6 @@ impl EvmOpts {
         Some(CreateFork {
             url: self.fork_url.clone()?,
             enable_caching: self.no_storage_caching,
-            block: self
-                .fork_block_number
-                .map(|num| BlockNumber::Number(num.into()))
-                .unwrap_or(BlockNumber::Latest),
-            chain_id: self.env.chain_id,
             env,
             evm_opts: self.clone(),
         })

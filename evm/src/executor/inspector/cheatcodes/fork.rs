@@ -4,7 +4,7 @@ use crate::{
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, types::BlockNumber};
+use ethers::abi::AbiEncode;
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -14,11 +14,9 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     let resp = match call {
-        HEVMCalls::CreateFork0(fork) => {
-            create_fork(state, data, fork.0.clone(), BlockNumber::Latest)
-        }
+        HEVMCalls::CreateFork0(fork) => create_fork(state, data, fork.0.clone(), None),
         HEVMCalls::CreateFork1(fork) => {
-            create_fork(state, data, fork.0.clone(), fork.1.as_u64().into())
+            create_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
         }
         HEVMCalls::SelectFork(fork_id) => data
             .db
@@ -27,23 +25,18 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(util::encode_error),
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
-            let resp = data.db.roll_fork(block_number, None).map(|_| Default::default()).map_err(util::encode_error);
-            if resp.is_ok() {
-                data.env.block.number = block_number;
-            }
-            resp
+            data.db
+                .roll_fork(data.env, block_number, None)
+                .map(|_| Default::default())
+                .map_err(util::encode_error)
         }
         HEVMCalls::RollFork1(fork) => {
             let block_number = fork.1;
-            let resp = data.db
-            .roll_fork(block_number, Some(fork.0))
-            .map(|_| Default::default())
-            .map_err(util::encode_error);
-            if resp.is_ok() {
-                data.env.block.number = block_number;
-            }
-            resp
-        },
+            data.db
+                .roll_fork(data.env, block_number, Some(fork.0))
+                .map(|_| Default::default())
+                .map_err(util::encode_error)
+        }
         HEVMCalls::RpcUrl(rpc) => state.config.get_rpc_url(&rpc.0).map(|url| url.encode().into()),
         HEVMCalls::RpcUrls(_) => {
             let mut urls = Vec::with_capacity(state.config.rpc_endpoints.len());
@@ -68,16 +61,16 @@ fn create_fork<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
-    block: BlockNumber,
+    block: Option<u64>,
 ) -> Result<Bytes, Bytes> {
     let url = state.config.get_rpc_url(url_or_alias)?;
+    let mut evm_opts = state.config.evm_opts.clone();
+    evm_opts.fork_block_number = block;
     let fork = CreateFork {
         enable_caching: state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
-        block,
-        chain_id: None,
         env: data.env.clone(),
-        evm_opts: state.config.evm_opts.clone(),
+        evm_opts,
     };
     data.db.create_fork(fork).map_err(util::encode_error).map(|id| id.encode().into())
 }
