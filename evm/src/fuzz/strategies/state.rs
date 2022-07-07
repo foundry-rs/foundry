@@ -49,7 +49,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
     let mut state: HashSet<[u8; 32]> = HashSet::new();
-    for (address, account) in db.accounts() {
+    for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
 
         // Insert basic account information

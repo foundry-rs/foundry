@@ -195,7 +195,7 @@ pub struct ForkDbSnapshot {
 
 impl ForkDbSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local.accounts().get(&address).and_then(|account| account.storage.get(&index)).copied()
+        self.local.accounts.get(&address).and_then(|account| account.storage.get(&index)).copied()
     }
 }
 
@@ -204,7 +204,7 @@ impl ForkDbSnapshot {
 // We prioritize stored changed accounts/storage
 impl DatabaseRef for ForkDbSnapshot {
     fn basic(&self, address: Address) -> AccountInfo {
-        match self.local.accounts().get(&address) {
+        match self.local.accounts.get(&address) {
             Some(account) => account.info.clone(),
             None => {
                 self.accounts.get(&address).cloned().unwrap_or_else(|| self.local.basic(address))
@@ -217,7 +217,7 @@ impl DatabaseRef for ForkDbSnapshot {
     }
 
     fn storage(&self, address: Address, index: U256) -> U256 {
-        match self.local.accounts().get(&address) {
+        match self.local.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => *entry,
                 None => self
