@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
-use anvil_core::eth::call::CallRequest;
+use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
     prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError, RetryClient},
@@ -137,7 +137,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn call(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, ProviderError> {
         let tx = ethers::utils::serialize(request);
@@ -148,7 +148,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn estimate_gas(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<U256, ProviderError> {
         let tx = ethers::utils::serialize(request);
@@ -159,7 +159,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn create_access_list(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, ProviderError> {
         let tx = ethers::utils::serialize(request);

@@ -27,9 +27,10 @@ use crate::{
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header},
-        call::CallRequest,
         receipt::{EIP658Receipt, TypedReceipt},
-        transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
+        transaction::{
+            EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
+        },
         utils::to_access_list,
     },
     types::{Forking, Index},
@@ -570,14 +571,14 @@ impl Backend {
         outcome
     }
 
-    /// Executes the `CallRequest` without writing to the DB
+    /// Executes the `EthTransactionRequest` without writing to the DB
     ///
     /// # Errors
     ///
     /// Returns an error if the `block_number` is greater than the current height
     pub async fn call(
         &self,
-        request: CallRequest,
+        request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
@@ -585,7 +586,7 @@ impl Backend {
 
         let _lock = self.executor_lock.read().await;
 
-        let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
+        let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
@@ -612,7 +613,7 @@ impl Backend {
             data: data.unwrap_or_else(|| vec![].into()).to_vec().into(),
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
-            access_list: to_access_list(access_list.unwrap_or_default().0),
+            access_list: to_access_list(access_list.unwrap_or_default()),
         };
 
         trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);

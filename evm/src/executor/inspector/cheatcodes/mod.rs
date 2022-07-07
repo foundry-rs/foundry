@@ -1,6 +1,6 @@
 /// Cheatcodes related to the execution environment.
 mod env;
-pub use env::{Prank, RecordAccess};
+pub use env::{Prank, RecordAccess, RecordedLogs};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
 pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
@@ -73,6 +73,9 @@ pub struct Cheatcodes {
 
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
+
+    /// Recorded logs
+    pub recorded_logs: Option<RecordedLogs>,
 
     /// Mocked calls
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
@@ -318,6 +321,13 @@ where
                 RawLog { topics: topics.to_vec(), data: data.to_vec() },
                 address,
             );
+        }
+
+        // Stores this log if `recordLogs` has been called
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs
+                .entries
+                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
         }
     }
 

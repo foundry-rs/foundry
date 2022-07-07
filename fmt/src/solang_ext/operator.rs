@@ -148,7 +148,8 @@ impl Operator for &mut Expression {
             PreIncrement(..) |
             PostIncrement(..) |
             New(..) |
-            MemberAccess(..) => P01,
+            MemberAccess(..) |
+            Parenthesis(..) => P01,
             Not(..) | Complement(..) | Delete(..) | UnaryPlus(..) | UnaryMinus(..) |
             PreDecrement(..) | PostDecrement(..) => P02,
             Power(..) => P03,
@@ -226,7 +227,8 @@ impl Operator for &mut Expression {
             List(..) |
             ArrayLiteral(..) |
             Unit(..) |
-            This(..) => return None,
+            This(..) |
+            Parenthesis(..) => return None,
         })
     }
     fn has_space_around(&self) -> bool {
@@ -254,6 +256,7 @@ impl Operator for &mut Expression {
             UnaryPlus(_, expr) |
             UnaryMinus(_, expr) |
             PreDecrement(_, expr) |
+            Parenthesis(_, expr) |
             PreIncrement(_, expr) => (None, Some(expr.as_mut())),
             Power(_, left, right) |
             Multiply(_, left, right) |

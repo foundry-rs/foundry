@@ -2,6 +2,8 @@
 pragma solidity >=0.8.0;
 
 interface Cheats {
+    // This allows us to getRecordedLogs()
+    struct Log {bytes32[] topics; bytes data;}
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
     // Set block.height (newHeight)
@@ -60,6 +62,10 @@ interface Cheats {
     function record() external;
     // Gets all accessed reads and write slot from a recording session, for a given address
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+    // Record all the transaction logs
+    function recordLogs() external;
+    // Gets all the recorded logs
+    function getRecordedLogs() external returns (Log[] memory);
     // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
     // logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
