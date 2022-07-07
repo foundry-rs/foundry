@@ -91,9 +91,9 @@ ethers::contract::abigen!(
             createFork(string)(uint256)
             selectFork(uint256)
             rollFork(uint256)(bool)
-            rollFork(uint256,uint256)(bool)
+            rollFork(uint256,uint256)
             rpcUrl(string)(string)
-            rpcUrls(string)(string[2][])
+            rpcUrls()(string[2][])
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
