@@ -2,13 +2,12 @@
 
 use std::fmt::Write;
 
-use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::*;
 use thiserror::Error;
 
 use crate::{
-    comments::{CommentStringExt, CommentWithMetadata, Comments},
+    comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
     visit::{Visitable, Visitor},
@@ -80,24 +79,48 @@ impl Default for FormatterConfig {
 }
 
 /// An indent group. The group may optionally skip the first line
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 struct IndentGroup {
     skip_line: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WriteState {
+    LineStart(CommentState),
+    WriteTokens(CommentState),
+    WriteString(char),
+}
+
+impl WriteState {
+    fn comment_state(&self) -> CommentState {
+        match self {
+            WriteState::LineStart(state) => *state,
+            WriteState::WriteTokens(state) => *state,
+            WriteState::WriteString(_) => CommentState::None,
+        }
+    }
+}
+
+impl Default for WriteState {
+    fn default() -> Self {
+        WriteState::LineStart(CommentState::default())
+    }
 }
 
 /// A wrapper around a `std::fmt::Write` interface. The wrapper keeps track of indentation as well
 /// as information about the last `write_str` command if available. The formatter may also be
 /// restricted to a single line, in which case it will throw an error on a newline
+#[derive(Clone, Debug)]
 struct FormatBuffer<W: Sized> {
     indents: Vec<IndentGroup>,
     base_indent_len: usize,
     tab_width: usize,
-    is_beginning_of_line: bool,
     last_indent: String,
     last_char: Option<char>,
     current_line_len: usize,
     w: W,
     restrict_to_single_line: bool,
+    state: WriteState,
 }
 
 impl<W: Sized> FormatBuffer<W> {
@@ -108,10 +131,10 @@ impl<W: Sized> FormatBuffer<W> {
             base_indent_len: 0,
             indents: vec![],
             current_line_len: 0,
-            is_beginning_of_line: true,
             last_indent: String::new(),
             last_char: None,
             restrict_to_single_line: false,
+            state: WriteState::default(),
         }
     }
 
@@ -124,6 +147,12 @@ impl<W: Sized> FormatBuffer<W> {
         new.current_line_len = self.current_line_len();
         new.last_char = self.last_char;
         new.restrict_to_single_line = self.restrict_to_single_line;
+        new.state = match self.state {
+            WriteState::WriteTokens(state) | WriteState::LineStart(state) => {
+                WriteState::LineStart(state)
+            }
+            WriteState::WriteString(ch) => WriteState::WriteString(ch),
+        };
         new
     }
 
@@ -182,7 +211,7 @@ impl<W: Sized> FormatBuffer<W> {
 
     /// Check if the buffer is at the beggining of a new line
     fn is_beginning_of_line(&self) -> bool {
-        self.is_beginning_of_line
+        matches!(self.state, WriteState::LineStart(_))
     }
 
     /// Start a new indent group (skips first indent)
@@ -206,28 +235,34 @@ impl<W: Write> FormatBuffer<W> {
     /// written string to match the current base indent of this buffer if it is a temp buffer
     fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result {
         let mut lines = s.as_ref().lines().peekable();
+        let mut comment_state = self.state.comment_state();
         while let Some(line) = lines.next() {
             // remove the whitespace that covered by the base indent length (this is normally the
             // case with temporary buffers as this will be readded by the underlying IndentWriter
             // later on
-            let line_start = line
-                .char_indices()
+            let (new_comment_state, line_start) = line
+                .comment_state_char_indices()
+                .with_state(comment_state)
                 .take(self.base_indent_len)
-                .take_while(|(_, ch)| ch.is_whitespace())
+                .take_while(|(_, _, ch)| ch.is_whitespace())
                 .last()
-                .map(|(idx, _)| idx + 1)
-                .unwrap_or(0);
+                .map(|(state, idx, _)| (state, idx + 1))
+                .unwrap_or((comment_state, 0));
+            comment_state = new_comment_state;
             let trimmed_line = &line[line_start..];
             if !trimmed_line.is_empty() {
                 self.w.write_str(trimmed_line)?;
-                self.is_beginning_of_line = false;
+                self.state = WriteState::WriteTokens(comment_state);
             }
             if lines.peek().is_some() {
                 if self.restrict_to_single_line {
                     return Err(std::fmt::Error)
                 }
                 self.w.write_char('\n')?;
-                self.is_beginning_of_line = true;
+                if comment_state == CommentState::Line {
+                    comment_state = CommentState::None;
+                }
+                self.state = WriteState::LineStart(comment_state);
             }
         }
         Ok(())
@@ -235,45 +270,135 @@ impl<W: Write> FormatBuffer<W> {
 }
 
 impl<W: Write> Write for FormatBuffer<W> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+    fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
         if s.is_empty() {
             return Ok(())
         }
-        let is_multiline = s.contains('\n');
-        if is_multiline && self.restrict_to_single_line {
-            return Err(std::fmt::Error)
-        }
 
-        let mut level = self.level();
+        let level = self.level();
+        let mut indent = " ".repeat(self.tab_width * level);
 
-        if self.is_beginning_of_line && !s.trim_start().is_empty() {
-            let indent = " ".repeat(self.tab_width * level);
-            self.w.write_str(&indent)?;
-            self.last_indent = indent;
-        }
+        loop {
+            match self.state {
+                WriteState::LineStart(mut comment_state) => {
+                    match s.find(|b| b != '\n') {
+                        // No non-empty lines in input, write the entire string (only newlines)
+                        None => {
+                            if !s.is_empty() {
+                                self.w.write_str(s)?;
+                                self.current_line_len = 0;
+                                self.last_char = s.chars().next_back();
+                                self.set_last_indent_group_skipped(false);
+                                if comment_state == CommentState::Line {
+                                    self.state = WriteState::LineStart(CommentState::None);
+                                }
+                            }
+                            break
+                        }
 
-        if self.last_indent_group_skipped() {
-            level += 1;
-        }
-        let indent = " ".repeat(self.tab_width * level);
-        IndentWriter::new_skip_initial(&indent, &mut self.w).write_str(s)?;
+                        // We can see the next non-empty line. Write up to the
+                        // beginning of that line, then insert an indent, then
+                        // continue.
+                        Some(len) => {
+                            let (head, tail) = s.split_at(len);
+                            self.w.write_str(head)?;
+                            self.w.write_str(&indent)?;
+                            self.last_indent = indent.clone();
+                            self.current_line_len = 0;
+                            self.last_char = Some(' ');
+                            // a newline has been inserted
+                            if len > 0 {
+                                if self.last_indent_group_skipped() {
+                                    indent = " ".repeat(self.tab_width * (level + 1));
+                                    self.set_last_indent_group_skipped(false);
+                                }
+                                if comment_state == CommentState::Line {
+                                    comment_state = CommentState::None;
+                                }
+                            }
+                            s = tail;
+                            self.state = WriteState::WriteTokens(comment_state);
+                        }
+                    }
+                }
+                WriteState::WriteTokens(comment_state) => {
+                    if s.is_empty() {
+                        break
+                    }
 
-        if let Some(last_char) = s.chars().next_back() {
-            self.last_char = Some(last_char);
-        }
+                    // find the next newline or non-comment string separator (e.g. ' or ")
+                    let mut len = 0;
+                    let mut new_state = WriteState::WriteTokens(comment_state);
+                    for (state, idx, ch) in s.comment_state_char_indices().with_state(comment_state)
+                    {
+                        len = idx;
+                        if ch == '\n' {
+                            if self.restrict_to_single_line {
+                                return Err(std::fmt::Error)
+                            }
+                            new_state = WriteState::LineStart(state);
+                            break
+                        } else if state == CommentState::None && (ch == '\'' || ch == '"') {
+                            new_state = WriteState::WriteString(ch);
+                            break
+                        } else {
+                            new_state = WriteState::WriteTokens(state);
+                        }
+                    }
 
-        if is_multiline {
-            self.set_last_indent_group_skipped(false);
-            self.last_indent = indent;
-            self.is_beginning_of_line = s.ends_with('\n');
-            if self.is_beginning_of_line {
-                self.current_line_len = 0;
-            } else {
-                self.current_line_len = s.lines().last().unwrap().len();
+                    if matches!(new_state, WriteState::WriteTokens(_)) {
+                        // No newlines or strings found, write the entire string
+                        self.w.write_str(s)?;
+                        self.current_line_len += s.len();
+                        self.last_char = s.chars().next_back();
+                        self.state = new_state;
+                        break
+                    } else {
+                        // A newline or string has been found. Write up to that character and
+                        // continue on the tail
+                        let (head, tail) = s.split_at(len);
+                        self.w.write_str(head)?;
+                        self.current_line_len += head.len();
+                        self.last_char = head.chars().next_back();
+                        s = tail;
+                        self.state = new_state;
+                    }
+                }
+                WriteState::WriteString(quote) => {
+                    // find the end of the string
+                    let mut str_end = None;
+                    let mut chars = s.char_indices().skip(1).peekable();
+                    while let Some((idx, ch)) = chars.next() {
+                        if ch == '\\' {
+                            chars.next();
+                            continue
+                        }
+                        if ch == quote {
+                            str_end = Some(idx);
+                            break
+                        }
+                    }
+
+                    match str_end {
+                        // No end found, write the rest of the string
+                        None => {
+                            self.w.write_str(s)?;
+                            self.current_line_len += s.len();
+                            self.last_char = s.chars().next_back();
+                            break
+                        }
+                        // String end found, write the string and continue to add tokens after
+                        Some(len) => {
+                            let (head, tail) = s.split_at(len + 1);
+                            self.w.write_str(head)?;
+                            self.current_line_len += head.len();
+                            self.last_char = Some(quote);
+                            s = tail;
+                            self.state = WriteState::WriteTokens(CommentState::None);
+                        }
+                    }
+                }
             }
-        } else {
-            self.is_beginning_of_line = false;
-            self.current_line_len += s.len();
         }
 
         Ok(())
@@ -1414,7 +1539,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> Result<()> {
         let mut name = self.visit_to_chunk(
             enumeration.name.loc.start(),
-            Some(enumeration.loc.end()),
+            Some(enumeration.name.loc.end()),
             &mut enumeration.name,
         )?;
         name.content = format!("enum {}", name.content);
@@ -1464,6 +1589,40 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 }
                 Type::Function { .. } => self.visit_source(*loc)?,
             },
+            Expression::BoolLiteral(loc, val) => {
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::NumberLiteral(loc, val, expr) => {
+                let val =
+                    if expr.is_empty() { val.to_owned() } else { format!("{}e{}", val, expr) };
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::HexNumberLiteral(loc, val) => {
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::RationalNumberLiteral(loc, val, fraction, expr) => {
+                let val = format!("{}.{}", val, fraction);
+                let val = if expr.is_empty() { val } else { format!("{}e{}", val, expr) };
+                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            }
+            Expression::StringLiteral(vals) => {
+                for StringLiteral { loc, string, unicode } in vals {
+                    if *unicode {
+                        write_chunk!(self, loc.start(), loc.end(), "unicode\"{string}\"")?;
+                    } else {
+                        write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
+                    }
+                }
+            }
+            Expression::HexLiteral(vals) => {
+                for HexLiteral { loc, hex } in vals {
+                    write_chunk!(self, loc.start(), loc.end(), "hex\"{hex}\"")?;
+                }
+            }
+            Expression::AddressLiteral(loc, val) => {
+                // support of solana/substrate address literals
+                write_chunk!(self, loc.start(), loc.end(), "address\"{val}\"")?;
+            }
             Expression::Unit(_, expr, unit) => {
                 expr.visit(self)?;
                 let unit_loc = unit.loc();
@@ -2895,4 +3054,5 @@ mod tests {
     test_directory! { UnitExpression }
     test_directory! { ThisExpression }
     test_directory! { SimpleComments }
+    test_directory! { LiteralExpression }
 }

@@ -108,6 +108,17 @@ pub struct CoreBuildArgs {
     #[clap(help_heading = "PROJECT OPTIONS", help = "Generate build info files.", long)]
     #[serde(skip)]
     pub build_info: bool,
+
+    #[clap(
+        help_heading = "PROJECT OPTIONS",
+        help = "Output path to directory that build info files will be written to.",
+        long,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH",
+        requires = "build-info"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_info_path: Option<PathBuf>,
 }
 
 impl CoreBuildArgs {

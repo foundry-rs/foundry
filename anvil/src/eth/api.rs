@@ -26,7 +26,6 @@ use crate::{
 use anvil_core::{
     eth::{
         block::BlockInfo,
-        call::CallRequest,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -640,7 +639,11 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub async fn call(&self, request: CallRequest, block_number: Option<BlockId>) -> Result<Bytes> {
+    pub async fn call(
+        &self,
+        request: EthTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> Result<Bytes> {
         node_info!("eth_call");
         let number = self.backend.ensure_block_number(block_number)?;
         let block_number = Some(number.into());
@@ -680,7 +683,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub async fn create_access_list(
         &self,
-        mut request: CallRequest,
+        mut request: EthTransactionRequest,
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
@@ -716,16 +719,14 @@ impl EthApi {
                 let storage_keys = acc.storage.into_keys().map(u256_to_h256_be).collect();
                 AccessListItem { address, storage_keys }
             })
-            .collect();
-
-        let access_list = AccessList(items);
+            .collect::<Vec<_>>();
 
         // execute again but with access list set
-        request.access_list = Some(access_list.clone());
+        request.access_list = Some(items.clone());
 
         let gas_used = self.do_estimate_gas(request, Some(number.into())).await?;
 
-        Ok(AccessListWithGasUsed { access_list, gas_used })
+        Ok(AccessListWithGasUsed { access_list: AccessList(items), gas_used })
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -733,7 +734,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
-        request: CallRequest,
+        request: EthTransactionRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
@@ -1502,7 +1503,7 @@ impl EthApi {
 impl EthApi {
     async fn do_estimate_gas(
         &self,
-        mut request: CallRequest,
+        mut request: EthTransactionRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         let number = self.backend.ensure_block_number(block_number)?;

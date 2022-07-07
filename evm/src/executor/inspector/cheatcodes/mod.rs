@@ -5,7 +5,10 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
-    executor::{backend::DatabaseExt, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    executor::{
+        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
+        HARDHAT_CONSOLE_ADDRESS,
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -77,6 +80,9 @@ pub struct Cheatcodes {
 
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
+
+    /// Recorded logs
+    pub recorded_logs: Option<RecordedLogs>,
 
     /// Mocked calls
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
@@ -170,40 +176,6 @@ where
         Return::Continue
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
-        // Record writes and reads if `record` has been called
-        if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.code[interpreter.program_counter()] {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-
-                    // An SSTORE does an SLOAD internally
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                    storage_accesses
-                        .writes
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                _ => (),
-            }
-        }
-
-        Return::Continue
-    }
-
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
@@ -212,6 +184,13 @@ where
                 RawLog { topics: topics.to_vec(), data: data.to_vec() },
                 address,
             );
+        }
+
+        // Stores this log if `recordLogs` has been called
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs
+                .entries
+                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
         }
     }
 
@@ -325,6 +304,40 @@ where
         } else {
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
+    }
+
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // Record writes and reads if `record` has been called
+        if let Some(storage_accesses) = &mut self.accesses {
+            match interpreter.contract.code[interpreter.program_counter()] {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    // An SSTORE does an SLOAD internally
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                    storage_accesses
+                        .writes
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                _ => (),
+            }
+        }
+
+        Return::Continue
     }
 
     fn call_end(
