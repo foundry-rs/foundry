@@ -204,7 +204,7 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
     let url = dep.url.as_ref().unwrap();
 
     let output = Command::new("git")
-        .args(&["submodule", "add", url, target_dir])
+        .args(&["submodule", "add", "--force", url, target_dir])
         .current_dir(&libs)
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
