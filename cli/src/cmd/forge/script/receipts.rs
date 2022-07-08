@@ -1,5 +1,7 @@
-use super::sequence::ScriptSequence;
-use crate::{init_progress, update_progress, utils::print_receipt};
+use crate::{
+    cmd::forge::script::sequence::ScriptSequence, init_progress, update_progress,
+    utils::print_receipt,
+};
 use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};

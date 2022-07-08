@@ -1,3 +1,4 @@
+use super::*;
 use crate::{
     cmd::{get_cached_entry_by_name, unwrap_contracts},
     compile,
@@ -17,8 +18,6 @@ use eyre::{Context, ContextCompat};
 use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;
-
-use super::*;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
