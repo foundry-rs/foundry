@@ -28,7 +28,7 @@ hex = "0.4.3"
 
 [dev-dependencies]
 async-trait = "0.1.53"
-tokio = "1.17.0"
+tokio = "1"
 thiserror = "1.0.30"
 
 [features]

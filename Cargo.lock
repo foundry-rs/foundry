@@ -890,6 +890,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "comfy-table"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "121d8a5b0346092c18a4b2fd6f620d7a06f0eb7ac0a45860939a0884bc579c56"
+dependencies = [
+ "crossterm 0.23.2",
+ "strum 0.24.0",
+ "strum_macros 0.24.0",
+ "unicode-width",
+]
+
+[[package]]
 name = "command-group"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1866,7 +1878,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.2.0"
 dependencies = [
- "comfy-table",
+ "comfy-table 6.0.0",
  "ethers",
  "eyre",
  "foundry-common",
@@ -1935,7 +1947,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "color-eyre",
- "comfy-table",
+ "comfy-table 5.0.1",
  "console 0.15.0",
  "dunce",
  "ethers",
@@ -2039,6 +2051,7 @@ dependencies = [
 name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
+ "auto_impl 1.0.1",
  "bytes",
  "ethers",
  "eyre",
