@@ -775,3 +775,31 @@ forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     install(&mut cmd);
     remove(&mut cmd, "lib/forge-std");
 });
+
+// test to check that package can be reinstalled after manually removing the directory
+forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
+
+    // install again
+    install(&mut cmd);
+});
