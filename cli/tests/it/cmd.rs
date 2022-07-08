@@ -797,7 +797,6 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
         assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
     };
 
-
     install(&mut cmd);
     fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
 
