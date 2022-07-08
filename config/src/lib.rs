@@ -41,7 +41,7 @@ pub mod utils;
 pub use crate::utils::*;
 
 mod rpc;
-pub use rpc::RpcEndpoints;
+pub use rpc::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -2503,6 +2503,10 @@ mod tests {
                 chains = 'all'
                 endpoints = 'all'
 
+                [default.rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${RPC_MAINNET}"
+
             "#,
             )?;
 
@@ -2510,6 +2514,14 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
+            );
+
+            assert_eq!(
+                config.rpc_endpoints,
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                ]),
             );
 
             Ok(())
