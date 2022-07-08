@@ -4,13 +4,15 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, ParamType, Token},
+    abi::{self, AbiEncode, Error, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, I256, U256},
     utils::hex::FromHex,
 };
 use foundry_common::fs;
+use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     env,
     io::{BufRead, BufReader, Write},
@@ -128,14 +130,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
     }
 }
 
-fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
-    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    let val = if let Some(d) = delim {
-        val.split(d).map(|v| v.trim()).collect()
-    } else {
-        vec![val.as_str()]
-    };
-
+fn value_to_abi(val: Vec<&str>, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -179,6 +174,16 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
             }
         })
         .map_err(|e| e.into())
+}
+
+fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
+    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    let val = if let Some(d) = delim {
+        val.split(d).map(|v| v.trim()).collect()
+    } else {
+        vec![val.as_str()]
+    };
+    value_to_abi(val, r#type, delim)
 }
 
 fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
