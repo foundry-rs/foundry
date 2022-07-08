@@ -148,8 +148,6 @@ interface Cheats {
     function createFork(string calldata) external returns(uint256);
     // takes a fork identifier created by `createFork` and changes the state
     function selectFork(uint256) external;
-    // forks the `block` variable from the given endpoint
-    function forkBlockVariable(string calldata, uint256) external;
     // Updates the currently active fork to given block number
     // This is similar to `roll` but for the fork
     function rollFork(uint256) external;
