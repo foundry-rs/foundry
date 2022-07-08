@@ -505,7 +505,7 @@ forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand|
     let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
     prj.write_config(config);
     let contract_name = "Foo";
-    let _ = prj
+    let path = prj
         .inner()
         .add_source(
             contract_name,
@@ -527,12 +527,18 @@ contract Foo {
     let ipfs_start = dynamic_bytecode.len() - (24 + 64);
     let ipfs_end = ipfs_start + 65;
     dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    let mut output = cmd.stdout_lossy();
-    output.replace_range(ipfs_start..ipfs_end, "");
 
-    // Compare the static bytecode
-    assert_eq!(dynamic_bytecode, output);
+    let check_output = |mut output: String| {
+        output.replace_range(ipfs_start..ipfs_end, "");
+        assert_eq!(dynamic_bytecode, output);
+    };
+
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
+    check_output(cmd.stdout_lossy());
+
+    let info = format!("{}:{}", path.display(), contract_name);
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
+    check_output(cmd.stdout_lossy());
 });
 
 // test that `forge snapshot` commands work
