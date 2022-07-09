@@ -1197,7 +1197,10 @@ impl From<Config> for Figment {
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
             figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                Toml::file(global_toml).nested(),
+                OptionalStrictProfileProvider::new(
+                    Toml::file(global_toml).nested(),
+                    profile.clone(),
+                ),
             )))
         }
 
@@ -1205,10 +1208,12 @@ impl From<Config> for Figment {
             // a different profile was set: inherit from the `default` profile by merging the
             // default profile of the toml file
             let inherit = InheritProvider {
-                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
-                    "FOUNDRY_CONFIG",
-                    c.__root.0.join(Config::FILE_NAME),
-                ))),
+                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(
+                    OptionalStrictProfileProvider::new(
+                        TomlFileProvider::new("FOUNDRY_CONFIG", c.__root.0.join(Config::FILE_NAME)),
+                        Config::DEFAULT_PROFILE,
+                    ),
+                )),
                 parent: Config::DEFAULT_PROFILE,
                 profile: profile.clone(),
             };
@@ -1216,10 +1221,12 @@ impl From<Config> for Figment {
         }
 
         figment = figment
-            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
-                "FOUNDRY_CONFIG",
-                c.__root.0.join(Config::FILE_NAME),
-            ))))
+            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
+                OptionalStrictProfileProvider::new(
+                    TomlFileProvider::new("FOUNDRY_CONFIG", c.__root.0.join(Config::FILE_NAME)),
+                    profile.clone(),
+                ),
+            )))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -1938,6 +1945,86 @@ impl<'a> Provider for RemappingsProvider<'a> {
 
     fn profile(&self) -> Option<Profile> {
         Some(Config::selected_profile())
+    }
+}
+
+struct StrictProfileProvider<P> {
+    provider: P,
+    profile: Profile,
+}
+
+impl<P> StrictProfileProvider<P> {
+    pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
+
+    pub fn new(provider: P, profile: Profile) -> Self {
+        Self { provider, profile }
+    }
+}
+
+impl<P> Provider for StrictProfileProvider<P>
+where
+    P: Provider,
+{
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        self.provider.data().and_then(|mut data| {
+            if let Some(profiles) = data.remove(&Self::PROFILE_PROFILE) {
+                for (profile_str, profile_val) in profiles {
+                    let profile = Profile::new(&profile_str);
+                    if profile != self.profile {
+                        continue
+                    }
+                    match profile_val {
+                        Value::Dict(_, dict) => return Ok(profile.collect(dict)),
+                        bad_val => {
+                            let mut err = Error::from(figment::error::Kind::InvalidType(
+                                bad_val.to_actual(),
+                                "dict".into(),
+                            ));
+                            err.metadata = Some(self.provider.metadata());
+                            err.profile = Some(self.profile.clone());
+                            return Err(err)
+                        }
+                    }
+                }
+            }
+            Ok(Map::new())
+        })
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
+struct OptionalStrictProfileProvider<P> {
+    provider: P,
+    profile: Profile,
+}
+
+impl<P> OptionalStrictProfileProvider<P> {
+    pub fn new(provider: P, profile: Profile) -> Self {
+        Self { provider, profile }
+    }
+}
+
+impl<P> Provider for OptionalStrictProfileProvider<P>
+where
+    P: Provider,
+{
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let figment = Figment::from(&self.provider);
+        if figment.profiles().any(|p| p == self.profile) {
+            eprintln!("TODO emit warning");
+        }
+        figment.merge(StrictProfileProvider::new(&self.provider, self.profile.clone())).data()
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
     }
 }
 
