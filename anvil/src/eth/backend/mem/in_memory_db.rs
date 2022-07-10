@@ -30,7 +30,7 @@ impl Db for MemDb {
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
-                        code: self.inner.code_by_hash(v.info.code_hash).into(),
+                        code: v.info.code.unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash)).into(),
                         storage: v.storage.into_iter().collect()
                     }
                 )
