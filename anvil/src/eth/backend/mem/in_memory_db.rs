@@ -6,7 +6,6 @@ use crate::{
     revm::AccountInfo,
     Address, U256,
 };
-use foundry_evm::HashMap as Map;
 use ethers::prelude::H256;
 use tracing::{trace, warn};
 // reexport for convenience
@@ -25,14 +24,14 @@ impl Db for MemDb {
 
     fn dump_state(&self) -> Option<SerializableState> {
         Some(SerializableState {
-            accounts: self.inner.cache().clone().into_iter().map(|(k,v)| {
+            accounts: self.inner.accounts.clone().into_iter().map(|(k,v)| {
                 (
                     k,
                     SerializableAccountRecord {
-                        nonce: v.nonce,
-                        balance: v.balance,
-                        code: self.inner.code_by_hash(v.code_hash).into(),
-                        storage: self.inner.storage().get(&k).unwrap_or(&Map::new()).clone()
+                        nonce: v.info.nonce,
+                        balance: v.info.balance,
+                        code: self.inner.code_by_hash(v.info.code_hash).into(),
+                        storage: v.storage.into_iter().collect()
                     }
                 )
             }).collect()
