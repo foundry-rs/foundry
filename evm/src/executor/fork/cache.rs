@@ -378,7 +378,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
 
 /// A type that flushes a `JsonBlockCacheDB` on drop
 ///
-/// This type intentionally does not implement `Clone` since it's intendent that there's only once
+/// This type intentionally does not implement `Clone` since it's intended that there's only once
 /// instance that will flush the cache.
 #[derive(Debug)]
 pub struct FlushJsonBlockCacheDB(pub Arc<JsonBlockCacheDB>);

@@ -14,6 +14,7 @@ pub static CHEATCODE_ADDRESS: Address = H160([
 ethers::contract::abigen!(
     HEVM,
     r#"[
+            struct Log {bytes32[] topics; bytes data;}
             roll(uint256)
             warp(uint256)
             fee(uint256)
@@ -50,6 +51,8 @@ ethers::contract::abigen!(
             expectRevert(bytes4)
             record()
             accesses(address)(bytes32[],bytes32[])
+            recordLogs()
+            getRecordedLogs()(Log[])
             expectEmit(bool,bool,bool,bool)
             expectEmit(bool,bool,bool,bool,address)
             mockCall(address,bytes,bytes)

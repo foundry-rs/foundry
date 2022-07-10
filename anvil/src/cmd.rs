@@ -5,9 +5,11 @@ use crate::{
 };
 use anvil_server::ServerConfig;
 use clap::Parser;
+use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
 use std::{
     net::IpAddr,
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -131,9 +133,13 @@ impl NodeArgs {
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
             .with_port(self.port)
-            .with_eth_rpc_url(self.evm_opts.fork_url)
+            .with_fork_block_number(
+                self.evm_opts
+                    .fork_block_number
+                    .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
+            )
+            .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
-            .with_fork_block_number(self.evm_opts.fork_block_number)
             .with_storage_caching(self.evm_opts.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
@@ -189,7 +195,7 @@ impl NodeArgs {
 pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
-    /// If you want to fetch state from a specific block number, see --fork-block-number.
+    /// If you want to fetch state from a specific block number, add a block number like `http://localhost:8545@1400000` or use the `--fork-block-number` argument.
     #[clap(
         long,
         short,
@@ -197,7 +203,7 @@ pub struct AnvilEvmArgs {
         value_name = "URL",
         help_heading = "FORK CONFIG"
     )]
-    pub fork_url: Option<String>,
+    pub fork_url: Option<ForkUrl>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
@@ -241,4 +247,79 @@ pub struct AnvilEvmArgs {
     /// The chain ID.
     #[clap(long, value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
     pub chain_id: Option<u64>,
+}
+
+/// Represents the input URL for a fork with an optional trailing block number:
+/// `http://localhost:8545@1000000`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkUrl {
+    /// The endpoint url
+    pub url: String,
+    /// Optional trailing block
+    pub block: Option<u64>,
+}
+
+impl fmt::Display for ForkUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.url.fmt(f)?;
+        if let Some(block) = self.block {
+            write!(f, "@{block}")?;
+        }
+        Ok(())
+    }
+}
+
+impl FromStr for ForkUrl {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((url, block)) = s.rsplit_once('@') {
+            if block == "latest" {
+                return Ok(ForkUrl { url: url.to_string(), block: None })
+            }
+            // this will prevent false positives for auths `user:password@example.com`
+            if !block.is_empty() && !block.contains(':') && !block.contains('.') {
+                let block: u64 = block
+                    .parse()
+                    .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
+                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
+            }
+        }
+        Ok(ForkUrl { url: s.to_string(), block: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_fork_url() {
+        let fork: ForkUrl = "http://localhost:8545@1000000".parse().unwrap();
+        assert_eq!(
+            fork,
+            ForkUrl { url: "http://localhost:8545".to_string(), block: Some(1000000) }
+        );
+
+        let fork: ForkUrl = "http://localhost:8545".parse().unwrap();
+        assert_eq!(fork, ForkUrl { url: "http://localhost:8545".to_string(), block: None });
+
+        let fork: ForkUrl = "wss://user:password@example.com/".parse().unwrap();
+        assert_eq!(
+            fork,
+            ForkUrl { url: "wss://user:password@example.com/".to_string(), block: None }
+        );
+
+        let fork: ForkUrl = "wss://user:password@example.com/@latest".parse().unwrap();
+        assert_eq!(
+            fork,
+            ForkUrl { url: "wss://user:password@example.com/".to_string(), block: None }
+        );
+
+        let fork: ForkUrl = "wss://user:password@example.com/@100000".parse().unwrap();
+        assert_eq!(
+            fork,
+            ForkUrl { url: "wss://user:password@example.com/".to_string(), block: Some(100000) }
+        );
+    }
 }

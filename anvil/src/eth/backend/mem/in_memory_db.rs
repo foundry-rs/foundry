@@ -16,11 +16,11 @@ use forge::revm::KECCAK_EMPTY;
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.inner.insert_cache(address, account)
+        self.inner.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
-        self.inner.insert_cache_storage(address, slot, val)
+        self.inner.insert_account_storage(address, slot, val)
     }
 
     fn dump_state(&self) -> Option<SerializableState> {
@@ -75,7 +75,7 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<H256> {
-        Some(state_merkle_trie_root(self.inner.cache(), self.inner.storage()))
+        Some(state_merkle_trie_root(&self.inner.accounts))
     }
 
     fn current_state(&self) -> StateDb {

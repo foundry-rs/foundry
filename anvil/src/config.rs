@@ -677,7 +677,7 @@ impl FromStr for Hardfork {
             "homestead" | "2" => Hardfork::Homestead,
             "tangerine" | "3" => Hardfork::Tangerine,
             "spuriousdragon" | "4" => Hardfork::SpuriousDragon,
-            "byzantine" | "5" => Hardfork::Byzantine,
+            "byzantium" | "byzantine" | "5" => Hardfork::Byzantine,
             "constantinople" | "6" => Hardfork::Constantinople,
             "petersburg" | "7" => Hardfork::Petersburg,
             "istanbul" | "8" => Hardfork::Istanbul,
