@@ -1200,39 +1200,33 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
 
+        let toml_provider =
+            |env_var: Option<&'static str>, default_path: PathBuf, profile: Profile| {
+                BackwardsCompatTomlProvider(ForcedSnakeCaseData(
+                    TomlFileProvider::new(env_var, default_path).strict_select(profile),
+                ))
+            };
+        let merge_toml = |mut figment: Figment, env_var, default_path: PathBuf| {
+            if profile != Config::DEFAULT_PROFILE {
+                // a different profile was set: inherit from the `default` profile by merging
+                // the default profile of the toml file
+                figment = figment.merge(
+                    toml_provider(env_var, default_path.clone(), Config::DEFAULT_PROFILE)
+                        .rename(Config::DEFAULT_PROFILE, profile.clone()),
+                );
+            }
+            figment.merge(toml_provider(env_var, default_path, profile.clone()))
+        };
+
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                OptionalStrictProfileProvider::new(
-                    Toml::file(global_toml).nested(),
-                    profile.clone(),
-                ),
-            )))
+            figment = merge_toml(figment, None, global_toml);
         }
+        // merge local foundry.toml file
+        figment = merge_toml(figment, Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME));
 
-        if profile != Config::DEFAULT_PROFILE {
-            // a different profile was set: inherit from the `default` profile by merging the
-            // default profile of the toml file
-            let inherit = InheritProvider {
-                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                    OptionalStrictProfileProvider::new(
-                        TomlFileProvider::new("FOUNDRY_CONFIG", c.__root.0.join(Config::FILE_NAME)),
-                        Config::DEFAULT_PROFILE,
-                    ),
-                )),
-                parent: Config::DEFAULT_PROFILE,
-                profile: profile.clone(),
-            };
-            figment = figment.merge(inherit);
-        }
-
+        // merge environment variables
         figment = figment
-            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                OptionalStrictProfileProvider::new(
-                    TomlFileProvider::new("FOUNDRY_CONFIG", c.__root.0.join(Config::FILE_NAME)),
-                    profile.clone(),
-                ),
-            )))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -1542,21 +1536,25 @@ impl<T: AsRef<str>> From<T> for SolcReq {
 /// A convenience provider to retrieve a toml file.
 /// This will return an error if the env var is set but the file does not exist
 struct TomlFileProvider {
-    pub env_var: &'static str,
+    pub env_var: Option<&'static str>,
     pub default: PathBuf,
 }
 
 impl TomlFileProvider {
-    fn new(env_var: &'static str, default: impl Into<PathBuf>) -> Self {
+    fn new(env_var: Option<&'static str>, default: impl Into<PathBuf>) -> Self {
         Self { env_var, default: default.into() }
     }
 
+    fn env_val(&self) -> Option<String> {
+        self.env_var.and_then(Env::var)
+    }
+
     fn file(&self) -> PathBuf {
-        Env::var(self.env_var).map(PathBuf::from).unwrap_or_else(|| self.default.clone())
+        self.env_val().map(PathBuf::from).unwrap_or_else(|| self.default.clone())
     }
 
     fn is_missing(&self) -> bool {
-        if let Some(file) = Env::var(self.env_var) {
+        if let Some(file) = self.env_val() {
             let path = Path::new(&file);
             if !path.exists() {
                 return true
@@ -1578,12 +1576,13 @@ impl Provider for TomlFileProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
 
-        if let Some(file) = Env::var(self.env_var) {
+        if let Some(file) = self.env_val() {
             let path = Path::new(&file);
             if !path.exists() {
                 return Err(Error::custom(format!(
                     "Config file `{}` set in env var `{}` does not exist",
-                    file, self.env_var
+                    file,
+                    self.env_var.unwrap()
                 )))
             }
             Toml::file(file)
@@ -1609,27 +1608,6 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
-    }
-}
-
-/// A Provider that extracts the data for a `parent` profile and emits that as `profile`.
-struct InheritProvider<P> {
-    provider: P,
-    parent: Profile,
-    profile: Profile,
-}
-
-impl<P: Provider> Provider for InheritProvider<P> {
-    fn metadata(&self) -> Metadata {
-        self.provider.metadata()
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut data = self.provider.data()?;
-        if let Some(data) = data.remove(&self.parent) {
-            return Ok(Map::from([(self.profile.clone(), data)]))
-        }
-        Ok(Default::default())
     }
 }
 
@@ -1954,29 +1932,83 @@ impl<'a> Provider for RemappingsProvider<'a> {
     }
 }
 
-struct StrictProfileProvider<P> {
+/// Renames a profile from `from` to `to
+///
+/// For example given:
+///
+/// ```toml
+/// [from]
+/// key = "value"
+/// ```
+///
+/// RenameProfileProvider will output
+///
+/// ```toml
+/// [to]
+/// key = "value"
+/// ```
+struct RenameProfileProvider<P> {
     provider: P,
-    profile: Profile,
+    from: Profile,
+    to: Profile,
 }
 
-impl<P> StrictProfileProvider<P> {
-    pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
-
-    pub fn new(provider: P, profile: Profile) -> Self {
-        Self { provider, profile }
+impl<P> RenameProfileProvider<P> {
+    pub fn new(provider: P, from: Profile, to: Profile) -> Self {
+        Self { provider, from, to }
     }
 }
 
-impl<P> Provider for StrictProfileProvider<P>
-where
-    P: Provider,
-{
+impl<P: Provider> Provider for RenameProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        if let Some(data) = data.remove(&self.from) {
+            return Ok(Map::from([(self.to.clone(), data)]))
+        }
+        Ok(Default::default())
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.to.clone())
+    }
+}
+
+/// Unwraps a profile reducing the key depth
+///
+/// For example given:
+///
+/// ```toml
+/// [wrapping_key.profile]
+/// key = "value"
+/// ```
+///
+/// UnwrapProfileProvider will output:
+///
+/// ```toml
+/// [profile]
+/// key = "value"
+/// ```
+struct UnwrapProfileProvider<P> {
+    provider: P,
+    wrapping_key: Profile,
+    profile: Profile,
+}
+
+impl<P> UnwrapProfileProvider<P> {
+    pub fn new(provider: P, wrapping_key: Profile, profile: Profile) -> Self {
+        Self { provider, wrapping_key, profile }
+    }
+}
+
+impl<P: Provider> Provider for UnwrapProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         self.provider.data().and_then(|mut data| {
-            if let Some(profiles) = data.remove(&Self::PROFILE_PROFILE) {
+            if let Some(profiles) = data.remove(&self.wrapping_key) {
                 for (profile_str, profile_val) in profiles {
                     let profile = Profile::new(&profile_str);
                     if profile != self.profile {
@@ -1996,7 +2028,7 @@ where
                     }
                 }
             }
-            Ok(Map::new())
+            Ok(Default::default())
         })
     }
     fn profile(&self) -> Option<Profile> {
@@ -2004,21 +2036,42 @@ where
     }
 }
 
+/// Extracts the profile from the `profile` key and using the original key as backup, merging
+/// values where necessary
+///
+/// For example given:
+///
+/// ```toml
+/// [profile.cool]
+/// key = "value"
+///
+/// [cool]
+/// key2 = "value2"
+/// ```
+///
+/// OptionalStrictProfileProvider will output:
+///
+/// ```toml
+/// [cool]
+/// key = "value"
+/// key2 = "value2"
+/// ```
+///
+/// And emit a deprecation warning
 struct OptionalStrictProfileProvider<P> {
     provider: P,
     profile: Profile,
 }
 
 impl<P> OptionalStrictProfileProvider<P> {
+    pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
+
     pub fn new(provider: P, profile: Profile) -> Self {
         Self { provider, profile }
     }
 }
 
-impl<P> Provider for OptionalStrictProfileProvider<P>
-where
-    P: Provider,
-{
+impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     fn metadata(&self) -> Metadata {
         self.provider.metadata()
     }
@@ -2028,14 +2081,29 @@ where
         if figment.profiles().any(|p| p == profile) {
             let src =
                 self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            macros::config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and will result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
+            macros::config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
         }
-        figment.merge(StrictProfileProvider::new(&self.provider, profile)).data()
+        figment
+            .merge(UnwrapProfileProvider::new(&self.provider, Self::PROFILE_PROFILE, profile))
+            .data()
     }
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
     }
 }
+
+trait ProviderExt: Provider + Sized {
+    fn rename(self, from: Profile, to: Profile) -> RenameProfileProvider<Self> {
+        RenameProfileProvider::new(self, from, to)
+    }
+    fn unwrap_select(self, wrapping_key: Profile, profile: Profile) -> UnwrapProfileProvider<Self> {
+        UnwrapProfileProvider::new(self, wrapping_key, profile)
+    }
+    fn strict_select(self, profile: Profile) -> OptionalStrictProfileProvider<Self> {
+        OptionalStrictProfileProvider::new(self, profile)
+    }
+}
+impl<P: Provider + Sized> ProviderExt for P {}
 
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
