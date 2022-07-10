@@ -40,11 +40,14 @@ impl Db for MemDb {
 
     fn load_state(&mut self, state: SerializableState) -> bool {
         for (addr, account) in state.accounts.into_iter() {
+            let old_account = self.inner.accounts.get(&addr);
+
             self.insert_account(addr.clone(), AccountInfo {
                 balance: account.balance,
                 code_hash: KECCAK_EMPTY, // will be set automatically
                 code: if account.code.0.is_empty() { None } else { Some(account.code.0) },
-                nonce: account.nonce,
+                // use max nonce in case account is imported multiple times with difference nonces to prevent collisions
+                nonce: std::cmp::max(old_account.map(|a| a.info.nonce).unwrap_or_default(), account.nonce),
             });
 
             for (k,v) in account.storage.into_iter() {
