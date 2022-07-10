@@ -411,7 +411,7 @@ impl Config {
     /// Joins all relative paths with the given root so that paths that are defined as:
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "src"
     /// out = "./out"
     /// libs = ["lib", "/var/lib"]
@@ -420,7 +420,7 @@ impl Config {
     /// Will be made canonic with the given root:
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "<root>/src"
     /// out = "<root>/out"
     /// libs = ["<root>/lib", "/var/lib"]
@@ -894,7 +894,7 @@ impl Config {
             let libs: toml_edit::Value =
                 self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
             let libs = toml_edit::value(libs);
-            doc[profile]["libs"] = libs;
+            doc["profile"][profile]["libs"] = libs;
             true
         })
     }
@@ -904,7 +904,7 @@ impl Config {
     /// This serializes to a table with the name of the profile
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "src"
     /// out = "out"
     /// libs = ["lib"]
@@ -918,10 +918,13 @@ impl Config {
         if self.optimizer_details.is_some() {
             // this is a hack to make nested tables work because this requires the config's profile
             s = s
-                .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
+                .replace(
+                    "[optimizer_details]",
+                    &format!("[profile.{}.optimizer_details]", self.profile),
+                )
                 .replace(
                     "[optimizer_details.yulDetails]",
-                    &format!("[{}.optimizer_details.yulDetails]", self.profile),
+                    &format!("[profile.{}.optimizer_details.yulDetails]", self.profile),
                 );
         }
         if self.model_checker.is_some() {
@@ -932,19 +935,22 @@ impl Config {
                 .fold(s, |acc, op| {
                     acc.replace(
                         &format!("[model_checker.{}]", op),
-                        &format!("[{}.model_checker.{}]", self.profile, op),
+                        &format!("[profile.{}.model_checker.{}]", self.profile, op),
                     )
                 })
-                .replace("[model_checker]", &format!("[{}.model_checker]", self.profile));
+                .replace("[model_checker]", &format!("[profile.{}.model_checker]", self.profile));
         }
-        s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
+        s = s.replace(
+            "[rpc_storage_caching]",
+            &format!("[profile.{}.rpc_storage_caching]", self.profile),
+        );
 
         if !self.rpc_endpoints.is_empty() {
-            s = s.replace("[rpc_endpoints]", &format!("[{}.rpc_endpoints]", self.profile));
+            s = s.replace("[rpc_endpoints]", &format!("[profile.{}.rpc_endpoints]", self.profile));
         }
 
         Ok(format!(
-            r#"[{}]
+            r#"[profile.{}]
 {}"#,
             self.profile, s
         ))
@@ -1336,10 +1342,10 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
 /// returns a toml table like
 ///
 /// ```toml
-/// #[default]
+/// #[profile.default]
 /// src = "..."
 /// ```
-/// This ignores the `#[default]` part in the toml
+/// This ignores the `#[profile.default]` part in the toml
 pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
     s: &str,
 ) -> Result<Option<(Profile, T)>, toml::de::Error> {
@@ -2017,11 +2023,14 @@ where
         self.provider.metadata()
     }
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let profile = self.profile.clone();
         let figment = Figment::from(&self.provider);
-        if figment.profiles().any(|p| p == self.profile) {
-            eprintln!("TODO emit warning");
+        if figment.profiles().any(|p| p == profile) {
+            let src =
+                self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
+            macros::config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and will result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
         }
-        figment.merge(StrictProfileProvider::new(&self.provider, self.profile.clone())).data()
+        figment.merge(StrictProfileProvider::new(&self.provider, profile)).data()
     }
     fn profile(&self) -> Option<Profile> {
         Some(self.profile.clone())
@@ -2041,7 +2050,7 @@ where
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BasicConfig {
-    /// the profile tag: `[default]`
+    /// the profile tag: `[profile.default]`
     #[serde(skip)]
     pub profile: Profile,
     /// path of the source contracts dir, like `src` or `contracts`
@@ -2062,7 +2071,7 @@ impl BasicConfig {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
-            r#"[{}]
+            r#"[profile.{}]
 {}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
             self.profile, s
@@ -2122,7 +2131,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['node_modules', 'lib']
             "#,
             )?;
@@ -2132,7 +2141,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['custom', 'node_modules', 'lib']
             "#,
             )?;
@@ -2180,9 +2189,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['lib']
-                [local]
+                [profile.local]
                 libs = ['modules']
             "#,
             )?;
@@ -2228,12 +2237,12 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 test = "defaulttest"
                 src  = "defaultsrc"
                 libs = ['lib', 'node_modules']
                 
-                [custom]
+                [profile.custom]
                 src = "customsrc"
             "#,
             )?;
@@ -2259,7 +2268,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 test = "mytest"
             "#,
             )?;
@@ -2277,7 +2286,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2329,7 +2338,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2392,7 +2401,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ["node_modules"]
             "#,
             )?;
@@ -2415,7 +2424,7 @@ mod tests {
                 "foundry.toml",
                 &format!(
                     r#"
-                [default]
+                [profile.default]
                 gas_limit = "{}"
             "#,
                     gas
@@ -2436,7 +2445,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 eth_rpc_url = "https://example.com/
             "#,
             )?;
@@ -2465,7 +2474,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2523,7 +2532,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 remappings = ['nested/=lib/nested/']
             "#,
             )?;
@@ -2544,7 +2553,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 auto_detect_solc = true
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
@@ -2586,11 +2595,11 @@ mod tests {
                 verbosity = 0
                 via_ir = false
                 
-                [default.rpc_storage_caching]
+                [profile.default.rpc_storage_caching]
                 chains = 'all'
                 endpoints = 'all'
 
-                [default.rpc_endpoints]
+                [profile.default.rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
 
@@ -2621,7 +2630,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc_version = "0.8.12"
             "#,
             )?;
@@ -2632,7 +2641,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc = "0.8.12"
             "#,
             )?;
@@ -2643,7 +2652,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc = "path/to/local/solc"
             "#,
             )?;
@@ -2664,7 +2673,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2698,7 +2707,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 extra_output = ["metadata", "ir-optimized"]
                 extra_output_files = ["metadata"]
             "#,
@@ -2722,7 +2731,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "mysrc"
                 out = "myout"
                 verbosity = 3
@@ -2766,13 +2775,13 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "mysrc"
                 out = "myout"
                 verbosity = 3
                 evm_version = 'berlin'
 
-                [other]
+                [profile.other]
                 src = "other-src"
             "#,
             )?;
@@ -2880,7 +2889,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                libraries= [
                         './src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuction.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
@@ -2964,13 +2973,13 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 optimizer = true
 
-                [default.optimizer_details]
+                [profile.default.optimizer_details]
                 yul = false
 
-                [default.optimizer_details.yulDetails]
+                [profile.default.optimizer_details.yulDetails]
                 stackAllocation = true
             "#,
             )?;
@@ -3003,9 +3012,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
 
-                [default.model_checker]
+                [profile.default.model_checker]
                 contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
@@ -3045,9 +3054,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
 
-                [default.model_checker]
+                [profile.default.model_checker]
                 contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
