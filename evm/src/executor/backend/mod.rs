@@ -127,6 +127,8 @@ pub trait DatabaseExt: Database {
 /// Multiple "forks" can be created `Backend::create_fork()`, however only 1 can be used by the
 /// `db`. However, their state can be hot-swapped by swapping the read half of `db` from one fork to
 /// another.
+/// When swapping forks (`Backend::select_fork()`) we also update the current `Env` of the `EVM`
+/// accordingly, so that all `block.*` config values match
 ///
 /// **Note:** this only affects the readonly half of the `db`, local changes are persistent across
 /// fork-state swaps.
@@ -173,7 +175,7 @@ impl Backend {
         } else {
             (CacheDB::new(BackendDatabase::InMemory(EmptyDB())), None)
         };
-
+        // Note: this will take of registering the `fork`
         Self { forks, db, inner: BackendInner::new(launched_with) }
     }
 
