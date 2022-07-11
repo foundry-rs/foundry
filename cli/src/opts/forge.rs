@@ -10,7 +10,7 @@ use crate::cmd::forge::{
     config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
-    flatten,
+    fix, flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
     init::InitArgs,
@@ -144,6 +144,9 @@ pub enum Subcommands {
 
     #[clap(visible_alias = "co", about = "Display the current config.")]
     Config(config::ConfigArgs),
+
+    #[clap(about = "Automatically fix things.")]
+    Fix(fix::FixArgs),
 
     #[clap(
         visible_alias = "f",
