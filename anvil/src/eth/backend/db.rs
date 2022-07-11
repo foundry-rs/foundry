@@ -15,19 +15,6 @@ use foundry_evm::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SerializableState {
-    pub accounts: HashMap<Address, SerializableAccountRecord>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SerializableAccountRecord {
-    pub nonce: u64,
-    pub balance: U256,
-    pub code: Bytes,
-    pub storage: HashMap<U256, U256>,
-}
-
 /// This bundles all required revm traits
 pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Inserts an account
@@ -149,14 +136,15 @@ impl DatabaseRef for StateDb {
     }
 }
 
-impl SerializableState {
-    pub fn new() -> SerializableState {
-        SerializableState { accounts: HashMap::new() }
-    }
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SerializableState {
+    pub accounts: HashMap<Address, SerializableAccountRecord>,
 }
 
-impl Default for SerializableState {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SerializableAccountRecord {
+    pub nonce: u64,
+    pub balance: U256,
+    pub code: Bytes,
+    pub storage: HashMap<U256, U256>,
 }

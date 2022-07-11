@@ -23,29 +23,29 @@ impl Db for MemDb {
     }
 
     fn dump_state(&self) -> Option<SerializableState> {
-        Some(SerializableState {
-            accounts: self
-                .inner
-                .accounts
-                .clone()
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        SerializableAccountRecord {
-                            nonce: v.info.nonce,
-                            balance: v.info.balance,
-                            code: v
-                                .info
-                                .code
-                                .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
-                                .into(),
-                            storage: v.storage.into_iter().collect(),
-                        },
-                    )
-                })
-                .collect(),
-        })
+        let accounts = self
+            .inner
+            .accounts
+            .clone()
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    SerializableAccountRecord {
+                        nonce: v.info.nonce,
+                        balance: v.info.balance,
+                        code: v
+                            .info
+                            .code
+                            .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
+                            .into(),
+                        storage: v.storage.into_iter().collect(),
+                    },
+                )
+            })
+            .collect();
+
+        Some(SerializableState { accounts })
     }
 
     fn load_state(&mut self, state: SerializableState) -> bool {
