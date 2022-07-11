@@ -154,3 +154,9 @@ impl SerializableState {
         SerializableState { accounts: HashMap::new() }
     }
 }
+
+impl Default for SerializableState {
+    fn default() -> Self {
+        Self::new()
+    }
+}

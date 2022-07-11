@@ -413,12 +413,12 @@ impl Backend {
             .read()
             .dump_state()
             .map(|s| bytes::Bytes::from(serde_json::to_string(&s).unwrap_or_default()).into())
-            .ok_or(
+            .ok_or_else(|| {
                 RpcError::invalid_params(
                     "Dumping state not supported with the current configuration",
                 )
-                .into(),
-            )
+                .into()
+            })
     }
 
     /// Deserialize and add all chain data to the backend storage

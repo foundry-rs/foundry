@@ -53,7 +53,7 @@ impl Db for MemDb {
             let old_account = self.inner.accounts.get(&addr);
 
             self.insert_account(
-                addr.clone(),
+                addr,
                 AccountInfo {
                     balance: account.balance,
                     code_hash: KECCAK_EMPTY, // will be set automatically
