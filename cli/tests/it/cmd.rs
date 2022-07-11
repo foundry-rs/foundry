@@ -6,7 +6,7 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{pretty_err, read_string, remapping_str, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf};
@@ -288,14 +288,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(
-        content,
-        format!(
-            "{}\n{}",
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src"),
-            remapping_str("forge-std/", "lib/forge-std/src")
-        )
-    );
+    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template

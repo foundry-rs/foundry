@@ -9,7 +9,7 @@ use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, EvmVersion},
     forgetest, forgetest_init, pretty_eq,
-    util::{pretty_err, remapping_str, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -128,13 +128,10 @@ forgetest_init!(
 
         // ensure remappings contain test
         assert_eq!(profile.remappings.len(), 2);
-        assert_eq!(
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").to_string(),
-            profile.remappings[0].to_string()
-        );
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
         // the loaded config has resolved, absolute paths
         assert_eq!(
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/"),
+            "ds-test/=lib/forge-std/lib/ds-test/src/",
             Remapping::from(profile.remappings[0].clone()).to_string()
         );
 
@@ -383,8 +380,8 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").parse().unwrap(),
-            remapping_str("forge-std/", "lib/forge-std/src/").parse().unwrap()
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
         ]
     );
     // create a new lib directly in the `lib` folder
@@ -400,12 +397,10 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").parse().unwrap(),
-            remapping_str("forge-std/", "lib/forge-std/src/").parse().unwrap(),
-            remapping_str("nested-lib/", "lib/nested-lib/src/").parse().unwrap(),
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!("{}nested/", remapping_str("nested/", "lib/nested-lib/lib")).parse().unwrap(),
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -423,25 +418,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!("{}another-lib/src/", remapping_str("another-lib/", "lib/nested-lib/lib/"))
-                .parse()
-                .unwrap(),
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").parse().unwrap(),
-            remapping_str("forge-std/", "lib/forge-std/src/").parse().unwrap(),
-            remapping_str("nested-lib/", "lib/nested-lib/src/").parse().unwrap(),
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!(
-                "{}another-lib/lib/nested-twice/",
-                remapping_str("nested-twice/", "lib/nested-lib/lib/")
-            )
-            .parse()
-            .unwrap(),
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!("{}nested/", remapping_str("nested/", "lib/nested-lib/lib")).parse().unwrap(),
+            "another-lib/=lib/nested-lib/lib/another-lib/src/".parse().unwrap(),
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 
@@ -452,28 +434,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_assertions::assert_eq!(
         remappings,
         vec![
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!(
-                "{}another-lib/custom-source-dir/",
-                remapping_str("another-lib/", "lib/nested-lib/lib/")
-            )
-            .parse()
-            .unwrap(),
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").parse().unwrap(),
-            remapping_str("forge-std/", "lib/forge-std/src/").parse().unwrap(),
-            remapping_str("nested-lib/", "lib/nested-lib/src/").parse().unwrap(),
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!(
-                "{}another-lib/lib/nested-twice/",
-                remapping_str("nested-twice/", "lib/nested-lib/lib/")
-            )
-            .parse()
-            .unwrap(),
-            // NOTE(onbjerg): For some reason a part of this remapping was not normalized on
-            // Windows
-            format!("{}nested/", remapping_str("nested/", "lib/nested-lib/lib")).parse().unwrap(),
+            "another-lib/=lib/nested-lib/lib/another-lib/custom-source-dir/".parse().unwrap(),
+            "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
+            "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
+            "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
+            "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
 });
@@ -500,10 +466,10 @@ forgetest_init!(
         pretty_assertions::assert_eq!(
             remappings,
             vec![
-                remapping_str("dep1/", "lib/dep1/src/").parse().unwrap(),
-                remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src/").parse().unwrap(),
-                remapping_str("forge-std/", "lib/forge-std/src/").parse().unwrap(),
-                remapping_str("src/", "src/").parse().unwrap()
+                "dep1/=lib/dep1/src/".parse().unwrap(),
+                "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
+                "forge-std/=lib/forge-std/src/".parse().unwrap(),
+                "src/=src/".parse().unwrap()
             ]
         );
     }
