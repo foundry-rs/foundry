@@ -74,7 +74,7 @@ main() {
     # Normalize versions (handle channels, versions without v prefix
     if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
       # Locate real nightly tag
-      SHA=$(curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
+      SHA=$(ensure curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
         | grep -Eo '"sha"[^,]*' \
         | grep -Eo '[^:]*$' \
         | tr -d '"' \
