@@ -101,7 +101,6 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 | Project                         | Forge | DappTools | Speedup |
 | ------------------------------- | ----- | --------- | ------- |
-| [maple-labs/loan][loan]         | 800ms | 4m28s     | 335x    |
 | [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
 | [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
 | [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
@@ -203,7 +202,6 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
-[loan]: https://github.com/maple-labs/loan
 [solmate]: https://github.com/Rari-Capital/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [vaults]: https://github.com/rari-capital/vaults
