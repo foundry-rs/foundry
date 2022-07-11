@@ -49,6 +49,9 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
+mod fmt;
+pub use fmt::FormatterConfig;
+
 mod error;
 pub use error::SolidityErrorCode;
 
@@ -283,6 +286,8 @@ pub struct Config {
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
+    /// Configuration for `forge fmt`
+    pub fmt: FormatterConfig,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -945,10 +950,6 @@ impl Config {
             &format!("[profile.{}.rpc_storage_caching]", self.profile),
         );
 
-        if !self.rpc_endpoints.is_empty() {
-            s = s.replace("[rpc_endpoints]", &format!("[profile.{}.rpc_endpoints]", self.profile));
-        }
-
         Ok(format!(
             r#"[profile.{}]
 {}"#,
@@ -1200,25 +1201,35 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
 
-        let toml_provider =
-            |env_var: Option<&'static str>, default_path: PathBuf, profile: Profile| {
-                BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                    TomlFileProvider::new(env_var, default_path).strict_select(profile),
-                ))
-            };
-        let merge_toml = |mut figment: Figment, env_var, default_path: PathBuf| {
+        let merge_toml = |mut figment: Figment, env_var, default_path| {
+            // get TOML from environment variable or default path
+            let toml_provider = TomlFileProvider::new(env_var, default_path);
+
+            // use [profile.<profile>] as [<profile>]
+            let mut profiles = vec![Config::DEFAULT_PROFILE];
             if profile != Config::DEFAULT_PROFILE {
-                // a different profile was set: inherit from the `default` profile by merging
-                // the default profile of the toml file
-                figment = figment.merge(
-                    toml_provider(env_var, default_path.clone(), Config::DEFAULT_PROFILE)
-                        .rename(Config::DEFAULT_PROFILE, profile.clone()),
-                );
+                profiles.push(profile.clone());
             }
-            figment.merge(toml_provider(env_var, default_path, profile.clone()))
+            let provider = toml_provider.strict_select(profiles);
+
+            // apply any key fixes
+            let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+
+            // merge the default profile as a base
+            if profile != Config::DEFAULT_PROFILE {
+                figment = figment.merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
+            }
+            // merge special keys into config
+            for standalone_key in ["fmt", "rpc_endpoints"] {
+                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            }
+            // TODO merge the special keys
+            // merge the profile
+            figment = figment.merge(provider);
+            figment
         };
 
-        // check global foundry.toml file
+        // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
             figment = merge_toml(figment, None, global_toml);
         }
@@ -1436,6 +1447,7 @@ impl Default for Config {
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
+            fmt: Default::default(),
             __non_exhaustive: (),
         }
     }
@@ -1954,8 +1966,8 @@ struct RenameProfileProvider<P> {
 }
 
 impl<P> RenameProfileProvider<P> {
-    pub fn new(provider: P, from: Profile, to: Profile) -> Self {
-        Self { provider, from, to }
+    pub fn new(provider: P, from: impl Into<Profile>, to: impl Into<Profile>) -> Self {
+        Self { provider, from: from.into(), to: to.into() }
     }
 }
 
@@ -1997,8 +2009,8 @@ struct UnwrapProfileProvider<P> {
 }
 
 impl<P> UnwrapProfileProvider<P> {
-    pub fn new(provider: P, wrapping_key: Profile, profile: Profile) -> Self {
-        Self { provider, wrapping_key, profile }
+    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+        Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
     }
 }
 
@@ -2036,6 +2048,51 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
     }
 }
 
+/// Wraps a profile in another profile
+///
+/// For example given:
+///
+/// ```toml
+/// [profile]
+/// key = "value"
+/// ```
+///
+/// WrapProfileProvider will output:
+///
+/// ```toml
+/// [wrapping_key.profile]
+/// key = "value"
+/// ```
+struct WrapProfileProvider<P> {
+    provider: P,
+    wrapping_key: Profile,
+    profile: Profile,
+}
+
+impl<P> WrapProfileProvider<P> {
+    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+        Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
+    }
+}
+
+impl<P: Provider> Provider for WrapProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        if let Some(inner) = self.provider.data()?.remove(&self.profile) {
+            let value = Value::from(inner);
+            let dict = [(self.profile.to_string().to_snake_case(), value)].into_iter().collect();
+            Ok(self.wrapping_key.collect(dict))
+        } else {
+            Ok(Default::default())
+        }
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
 /// Extracts the profile from the `profile` key and using the original key as backup, merging
 /// values where necessary
 ///
@@ -2060,14 +2117,14 @@ impl<P: Provider> Provider for UnwrapProfileProvider<P> {
 /// And emit a deprecation warning
 struct OptionalStrictProfileProvider<P> {
     provider: P,
-    profile: Profile,
+    profiles: Vec<Profile>,
 }
 
 impl<P> OptionalStrictProfileProvider<P> {
     pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
 
-    pub fn new(provider: P, profile: Profile) -> Self {
-        Self { provider, profile }
+    pub fn new(provider: P, profiles: impl IntoIterator<Item = impl Into<Profile>>) -> Self {
+        Self { provider, profiles: profiles.into_iter().map(|profile| profile.into()).collect() }
     }
 }
 
@@ -2076,34 +2133,49 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
         self.provider.metadata()
     }
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let profile = self.profile.clone();
-        let figment = Figment::from(&self.provider);
-        if figment.profiles().any(|p| p == profile) {
+        let mut figment = Figment::from(&self.provider);
+        if let Some(profile) = figment.profiles().find(|p| self.profiles.contains(p)) {
             let src =
                 self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
             macros::config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
         }
-        figment
-            .merge(UnwrapProfileProvider::new(&self.provider, Self::PROFILE_PROFILE, profile))
-            .data()
+        for profile in &self.profiles {
+            figment = figment.merge(UnwrapProfileProvider::new(
+                &self.provider,
+                Self::PROFILE_PROFILE,
+                profile.clone(),
+            ));
+        }
+        figment.data()
     }
     fn profile(&self) -> Option<Profile> {
-        Some(self.profile.clone())
+        self.profiles.last().cloned()
     }
 }
 
-trait ProviderExt: Provider + Sized {
-    fn rename(self, from: Profile, to: Profile) -> RenameProfileProvider<Self> {
+trait ProviderExt: Provider {
+    fn rename(
+        &self,
+        from: impl Into<Profile>,
+        to: impl Into<Profile>,
+    ) -> RenameProfileProvider<&Self> {
         RenameProfileProvider::new(self, from, to)
     }
-    fn unwrap_select(self, wrapping_key: Profile, profile: Profile) -> UnwrapProfileProvider<Self> {
-        UnwrapProfileProvider::new(self, wrapping_key, profile)
+    fn wrap(
+        &self,
+        wrapping_key: impl Into<Profile>,
+        profile: impl Into<Profile>,
+    ) -> WrapProfileProvider<&Self> {
+        WrapProfileProvider::new(self, wrapping_key, profile)
     }
-    fn strict_select(self, profile: Profile) -> OptionalStrictProfileProvider<Self> {
-        OptionalStrictProfileProvider::new(self, profile)
+    fn strict_select(
+        &self,
+        profiles: impl IntoIterator<Item = impl Into<Profile>>,
+    ) -> OptionalStrictProfileProvider<&Self> {
+        OptionalStrictProfileProvider::new(self, profiles)
     }
 }
-impl<P: Provider + Sized> ProviderExt for P {}
+impl<P: Provider> ProviderExt for P {}
 
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
@@ -2551,11 +2623,14 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
-                rpc_endpoints = { optimism = "https://example.com/", mainnet = "${RPC_MAINNET}" }
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
+
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${RPC_MAINNET}"
             "#,
             )?;
 
@@ -2667,7 +2742,7 @@ mod tests {
                 chains = 'all'
                 endpoints = 'all'
 
-                [profile.default.rpc_endpoints]
+                [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
 
@@ -3159,6 +3234,27 @@ mod tests {
                     ]),
                     timeout: Some(10000)
                 })
+            );
+
+            Ok(())
+        });
+    }
+    #[test]
+    fn test_fmt_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fmt]
+                line_length = 100
+                tab_width = 2
+                bracket_spacing = true
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            assert_eq!(
+                loaded.fmt,
+                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
             );
 
             Ok(())
