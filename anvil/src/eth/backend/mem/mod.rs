@@ -1366,7 +1366,8 @@ impl TransactionValidator for Backend {
         tx: &PendingTransaction,
     ) -> Result<(), InvalidTransactionError> {
         let account = self.db.read().basic(*tx.sender());
-        self.validate_pool_transaction_for(tx, &account, &self.env().read())
+        let env = self.next_env();
+        self.validate_pool_transaction_for(tx, &account, &env)
     }
 
     fn validate_pool_transaction_for(

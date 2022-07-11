@@ -460,3 +460,21 @@ async fn test_fork_can_send_opensea_tx() {
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_base_fee() {
+    let (api, handle) = spawn(fork_config()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::zero()).await.unwrap();
+
+    let addr = Address::random();
+    let val = 1337u64;
+    let tx = TransactionRequest::new().from(from).to(addr).value(val).gas(0u64);
+
+    let _res = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+}
