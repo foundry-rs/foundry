@@ -180,10 +180,12 @@ fn install_as_submodule(
 
     // commit the added submodule
     if !no_commit {
-        let message = match &tag {
-            Some(i) => format!("forge install: {target_dir}\n\n{i}"),
-            None => format!("forge install: {target_dir}"),
+        let message = if let Some(tag) = &tag {
+            format!("forge install: {target_dir}\n\n{tag}")
+        } else {
+            format!("forge install: {target_dir}")
         };
+
         Command::new("git").args(&["commit", "-m", &message]).current_dir(&libs).exec()?;
     }
 
@@ -260,7 +262,7 @@ fn git_checkout(
 ) -> eyre::Result<String> {
     // no need to checkout if there is no tag
     if dep.tag.is_none() {
-        return Ok(String::new());
+        return Ok(String::new())
     }
 
     let mut tag = dep.tag.as_ref().unwrap().clone();
@@ -308,7 +310,7 @@ fn git_checkout(
 fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String> {
     // only try to match if it looks like a version tag
     if !DEPENDENCY_VERSION_TAG_REGEX.is_match(tag) {
-        return Ok(tag.into());
+        return Ok(tag.into())
     }
 
     // generate candidate list by filtering `git tag` output, valid ones are those "starting with"
@@ -329,13 +331,13 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
 
     // no match found, fall back to the user-provided tag
     if candidates.is_empty() {
-        return Ok(tag.into());
+        return Ok(tag.into())
     }
 
     // have exact match
     for candidate in candidates.iter() {
         if candidate == tag {
-            return Ok(tag.into());
+            return Ok(tag.into())
         }
     }
 
@@ -355,7 +357,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         } else {
             // user rejects, fall back to the user-provided tag
             Ok(tag.into())
-        };
+        }
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -374,14 +376,14 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         // default selection, return first candidate
         if input.trim().is_empty() {
             println!("[1] {} selected", candidates[1]);
-            return Ok(candidates[1].clone());
+            return Ok(candidates[1].clone())
         }
         // match user input, 0 indicates skipping and use original tag
         match input.trim().parse::<usize>() {
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 println!("[{}] {} selected", i, candidates[i]);
-                return Ok(candidates[i].clone());
+                return Ok(candidates[i].clone())
             }
             _ => continue,
         }
@@ -395,22 +397,22 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
         .current_dir(&libs.join(&target_dir))
         .get_stdout_lossy()?;
     let mut candidates: Vec<String> = output
-        .split('\n')
+        .lines()
         .map(|x| x.trim().trim_start_matches("origin/"))
         .filter(|x| x.starts_with(&tag.to_string()))
-        .map(|x| x.to_string())
+        .map(str::to_string)
         .rev()
         .collect();
 
     // no match found, fall back to the user-provided tag
     if candidates.is_empty() {
-        return Ok(String::new());
+        return Ok(String::new())
     }
 
     // have exact match
     for candidate in candidates.iter() {
         if candidate == tag {
-            return Ok(tag.into());
+            return Ok(tag.into())
         }
     }
 
@@ -426,7 +428,7 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
             Ok(matched_tag)
         } else {
             Ok(String::new())
-        };
+        }
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -446,7 +448,7 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
     // default selection, return first candidate
     if input.is_empty() {
         println!("cancel branch matching");
-        return Ok(String::new());
+        return Ok(String::new())
     }
 
     // match user input, 0 indicates skipping and use original tag
