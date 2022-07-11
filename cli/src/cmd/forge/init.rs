@@ -129,8 +129,7 @@ impl Cmd for InitArgs {
             }
 
             if !offline {
-                let branch = false; // default branch to false
-                let opts = DependencyInstallOpts { no_git, no_commit, quiet, branch };
+                let opts = DependencyInstallOpts { no_git, no_commit, quiet };
 
                 if root.join("lib/forge-std").exists() {
                     println!("\"lib/forge-std\" already exists, skipping install....");

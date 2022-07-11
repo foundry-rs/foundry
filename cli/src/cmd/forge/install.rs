@@ -74,8 +74,6 @@ pub struct DependencyInstallOpts {
     pub no_commit: bool,
     #[clap(help = "Do not print any messages.", short, long)]
     pub quiet: bool,
-    #[clap(help = "Pin branch for dependency", short, long)]
-    pub branch: bool,
 }
 
 /// Installs all dependencies
@@ -108,7 +106,7 @@ pub(crate) fn install(
             eyre::bail!("Could not determine URL for dependency \"{}\"!", dep.name);
         }
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
-        let DependencyInstallOpts { no_git, no_commit, quiet, branch } = opts;
+        let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
         p_println!(!quiet => "Installing {} in {:?} (url: {:?}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
         if no_git {
             install_as_folder(&dep, &libs, target_dir)?;
@@ -116,18 +114,21 @@ pub(crate) fn install(
             if !no_commit && !git_status_clean(root)? {
                 eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
             }
-            let tag = install_as_submodule(&dep, &libs, target_dir, no_commit, branch)?;
+            let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
 
-            if branch && tag.is_some() {
-                Command::new("git")
-                    .args(&[
-                        "submodule",
-                        "set-branch",
-                        "-b",
-                        &tag.unwrap(),
-                        install_lib_dir.join(&target_dir).to_str().unwrap(),
-                    ])
-                    .exec()?;
+            // Pin branch to submodule if branch is used
+            if let Some(branch) = tag {
+                if !(branch.is_empty()) {
+                    Command::new("git")
+                        .args(&[
+                            "submodule",
+                            "set-branch",
+                            "-b",
+                            &branch,
+                            install_lib_dir.join(&target_dir).to_str().unwrap(),
+                        ])
+                        .exec()?;
+                }
             }
         }
 
@@ -148,7 +149,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     git_clone(dep, libs, target_dir)?;
 
     // checkout the tag if necessary
-    git_checkout(dep, libs, target_dir, false, false)?;
+    git_checkout(dep, libs, target_dir, false)?;
 
     // remove git artifacts
     fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
@@ -162,7 +163,6 @@ fn install_as_submodule(
     libs: &Path,
     target_dir: &str,
     no_commit: bool,
-    branch: bool,
 ) -> eyre::Result<Option<String>> {
     // install the dep
     git_submodule(dep, libs, target_dir)?;
@@ -171,7 +171,7 @@ fn install_as_submodule(
     let tag = if dep.tag.is_none() {
         None
     } else {
-        let tag = git_checkout(dep, libs, target_dir, true, branch)?;
+        let tag = git_checkout(dep, libs, target_dir, true)?;
         if !no_commit {
             Command::new("git").args(&["add", &libs.display().to_string()]).exec()?;
         }
@@ -257,20 +257,22 @@ fn git_checkout(
     libs: &Path,
     target_dir: &str,
     recurse: bool,
-    branch: bool,
 ) -> eyre::Result<String> {
     // no need to checkout if there is no tag
     if dep.tag.is_none() {
-        return Ok(String::new())
+        return Ok(String::new());
     }
 
     let mut tag = dep.tag.as_ref().unwrap().clone();
+    let mut is_branch = false;
     // only try to match tag if current terminal is a tty
     if atty::is(Stream::Stdout) {
-        if branch {
-            tag = match_branch(&tag, libs, target_dir)?;
+        let branch = match_branch(&tag, libs, target_dir)?;
+        if tag.is_empty() {
+            tag = match_tag(&tag, libs, target_dir)?;
         } else {
-            tag = match_tag(&tag, libs, target_dir)?
+            tag = branch;
+            is_branch = true;
         }
     }
     let url = dep.url.as_ref().unwrap();
@@ -295,14 +297,18 @@ fn git_checkout(
         }
     }
 
-    Ok(tag)
+    if is_branch {
+        Ok(tag)
+    } else {
+        Ok(String::new())
+    }
 }
 
 /// disambiguate tag if it is a version tag
 fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String> {
     // only try to match if it looks like a version tag
     if !DEPENDENCY_VERSION_TAG_REGEX.is_match(tag) {
-        return Ok(tag.into())
+        return Ok(tag.into());
     }
 
     // generate candidate list by filtering `git tag` output, valid ones are those "starting with"
@@ -323,13 +329,13 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
 
     // no match found, fall back to the user-provided tag
     if candidates.is_empty() {
-        return Ok(tag.into())
+        return Ok(tag.into());
     }
 
     // have exact match
     for candidate in candidates.iter() {
         if candidate == tag {
-            return Ok(tag.into())
+            return Ok(tag.into());
         }
     }
 
@@ -349,7 +355,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         } else {
             // user rejects, fall back to the user-provided tag
             Ok(tag.into())
-        }
+        };
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -368,14 +374,14 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         // default selection, return first candidate
         if input.trim().is_empty() {
             println!("[1] {} selected", candidates[1]);
-            return Ok(candidates[1].clone())
+            return Ok(candidates[1].clone());
         }
         // match user input, 0 indicates skipping and use original tag
         match input.trim().parse::<usize>() {
             Ok(i) if i == 0 => return Ok(tag.into()),
             Ok(i) if (1..=n_candidates).contains(&i) => {
                 println!("[{}] {} selected", i, candidates[i]);
-                return Ok(candidates[i].clone())
+                return Ok(candidates[i].clone());
             }
             _ => continue,
         }
@@ -398,13 +404,13 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
 
     // no match found, fall back to the user-provided tag
     if candidates.is_empty() {
-        return Ok(tag.into())
+        return Ok(String::new());
     }
 
     // have exact match
     for candidate in candidates.iter() {
         if candidate == tag {
-            return Ok(tag.into())
+            return Ok(tag.into());
         }
     }
 
@@ -419,8 +425,8 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
         return if input.is_empty() || input == "y" || input == "yes" {
             Ok(matched_tag)
         } else {
-            Ok(tag.into())
-        }
+            Ok(String::new())
+        };
     }
 
     // multiple candidates, ask the user to choose one or skip
@@ -431,27 +437,25 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
     }
 
     let n_candidates = candidates.len();
-    loop {
-        print!("Please select a tag (0-{}, default: 1): ", n_candidates - 1);
-        stdout().flush()?;
-        let mut input = String::new();
-        stdin().read_line(&mut input)?;
-        let input = input.trim();
+    print!("Please select a tag (0-{}, default: 1, Press <enter> to cancel): ", n_candidates - 1);
+    stdout().flush()?;
+    let mut input = String::new();
+    stdin().read_line(&mut input)?;
+    let input = input.trim();
 
-        // default selection, return first candidate
-        if input.is_empty() {
-            println!("[1] {} selected", candidates[1]);
-            return Ok(candidates[1].clone())
-        }
+    // default selection, return first candidate
+    if input.is_empty() {
+        println!("cancel branch matching");
+        return Ok(String::new());
+    }
 
-        // match user input, 0 indicates skipping and use original tag
-        match input.parse::<usize>() {
-            Ok(i) if i == 0 => return Ok(tag.into()),
-            Ok(i) if (1..=n_candidates).contains(&i) => {
-                println!("[{}] {} selected", i, candidates[i]);
-                return Ok(candidates[i].clone())
-            }
-            _ => continue,
+    // match user input, 0 indicates skipping and use original tag
+    match input.parse::<usize>() {
+        Ok(i) if i == 0 => Ok(tag.into()),
+        Ok(i) if (1..=n_candidates).contains(&i) => {
+            println!("[{}] {} selected", i, candidates[i]);
+            Ok(candidates[i].clone())
         }
+        _ => Ok(String::new()),
     }
 }
