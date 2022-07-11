@@ -53,7 +53,6 @@ pub enum Subcommands {
     Test(test::TestArgs),
 
     #[clap(
-        visible_alias = "s",
         about = "Run a smart contract as a script, building transactions that can be sent onchain."
     )]
     Script(ScriptArgs),
@@ -119,7 +118,7 @@ pub enum Subcommands {
     #[clap(about = "Create a new Forge project.")]
     Init(InitArgs),
 
-    #[clap(visible_alias = "com", about = "Generate shell completions script")]
+    #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
@@ -151,15 +150,15 @@ pub enum Subcommands {
     )]
     Flatten(flatten::FlattenArgs),
 
-    #[clap(about = "Formats Solidity source files")]
+    #[clap(about = "Formats Solidity source files.")]
     Fmt(FmtArgs),
 
-    #[clap(visible_alias = "in", about = "Get specialized information about a smart contract")]
+    #[clap(visible_alias = "in", about = "Get specialized information about a smart contract.")]
     Inspect(inspect::InspectArgs),
 
     #[clap(
         visible_alias = "up",
-        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database"
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database."
     )]
     UploadSelectors(UploadSelectorsArgs),
 
