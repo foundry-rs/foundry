@@ -51,9 +51,18 @@ contract ForkTest is DSTest {
     // ensures forks use different ids
     function testCanSwitchForks() public {
         cheats.selectFork(mainnetFork);
+        assertEq(mainnetFork, cheats.activeFork());
         cheats.selectFork(optimismFork);
+        assertEq(optimismFork, cheats.activeFork());
         cheats.selectFork(optimismFork);
+        assertEq(optimismFork, cheats.activeFork());
         cheats.selectFork(mainnetFork);
+        assertEq(mainnetFork, cheats.activeFork());
+    }
+
+    function testCanCreateSelect() public {
+        uint256 anotherFork = cheats.createSelectFork("rpcAlias");
+        assertEq(anotherFork, cheats.activeFork());
     }
 
     // ensures forks have different block hashes
