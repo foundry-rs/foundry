@@ -60,7 +60,7 @@ impl Cmd for InspectArgs {
             compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
             ..build
         };
-        
+
         // Build the project
         let project = modified_build_args.project()?;
         let outcome = if let Some(ref mut contract_path) = contract.path {
