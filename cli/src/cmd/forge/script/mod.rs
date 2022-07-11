@@ -1,6 +1,6 @@
 //! script command
 use crate::{
-    cmd::forge::build::BuildArgs,
+    cmd::{forge::build::{BuildArgs, ProjectPathsArgs}, RetryArgs},
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
@@ -46,8 +46,6 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
-
-use crate::cmd::forge::build::ProjectPathsArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -130,6 +128,9 @@ pub struct ScriptArgs {
         value_name = "PRICE"
     )]
     pub with_gas_price: Option<U256>,
+
+    #[clap(flatten, next_help_heading = "RETRIES")]
+    pub retry: RetryArgs,
 }
 
 // === impl ScriptArgs ===
@@ -434,6 +435,7 @@ pub struct VerifyBundle {
     pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     pub etherscan_key: Option<String>,
     pub project_paths: ProjectPathsArgs,
+    pub retry: RetryArgs,
 }
 
 impl VerifyBundle {
@@ -444,6 +446,13 @@ impl VerifyBundle {
     ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
+
+        /*let retry =
+            if*/ // TODO: handle default value logic
+        let retry = RetryArgs {
+            retries: 1,
+            delay: None
+        };
 
         let config_path = config.get_config_path();
 
@@ -458,11 +467,13 @@ impl VerifyBundle {
             config_path: if config_path.exists() { Some(config_path) } else { None },
         };
 
+
         VerifyBundle {
             num_of_optimizations,
             known_contracts,
             etherscan_key: config.etherscan_api_key.clone(),
             project_paths,
+            retry,
         }
     }
 }

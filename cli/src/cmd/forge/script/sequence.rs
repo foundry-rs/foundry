@@ -212,7 +212,7 @@ impl ScriptSequence {
                                 flatten: false,
                                 force: false,
                                 watch: true,
-                                retry: RETRY_VERIFY_ON_CREATE,
+                                retry: verify.retry.clone(),
                                 libraries: self.libraries.clone(),
                             };
 
