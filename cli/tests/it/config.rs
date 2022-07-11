@@ -15,6 +15,7 @@ use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, OptimizerDetails, SolcReq,
 };
+use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
 
 // tests all config values that are in use
@@ -146,7 +147,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-file").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-file").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -157,7 +158,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-env").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -167,7 +168,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-cli").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-cli").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -175,7 +176,7 @@ forgetest_init!(
         let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
         assert_eq!(config.remappings.len(), 3);
         assert_eq!(
-            format!("other-key/={}/", prj.root().join("lib/other").display()),
+            format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
             Remapping::from(config.remappings[2].clone()).to_string()
         );
 
