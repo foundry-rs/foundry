@@ -1965,6 +1965,7 @@ dependencies = [
  "indicatif 0.17.0-rc.11",
  "itertools",
  "once_cell",
+ "path-slash",
  "pretty_assertions",
  "proptest",
  "rayon",

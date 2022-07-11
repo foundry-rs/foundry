@@ -40,7 +40,7 @@ pub struct InspectArgs {
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { contract, field, build, pretty } = self;
+        let InspectArgs { mut contract, field, build, pretty } = self;
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -63,8 +63,9 @@ impl Cmd for InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let outcome = if let Some(ref contract_path) = contract.path {
-            let target_path = dunce::canonicalize(contract_path)?;
+        let outcome = if let Some(ref mut contract_path) = contract.path {
+            let target_path = dunce::canonicalize(&*contract_path)?;
+            *contract_path = target_path.to_string_lossy().into_owned();
             compile::compile_files(&project, vec![target_path], true)
         } else {
             compile::suppress_compile(&project)

@@ -692,21 +692,6 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .collect()
 }
 
-/// Creates a cross-platform remapping string for use in tests
-///
-/// NOTE: This probably should be unnecessary, and remappings should probably
-/// be canonicalized.
-pub fn remapping_str(src: &str, dest: &str) -> String {
-    // NOTE(onbjerg): The `trim_end_matches` is because the path itself on Windows is normalized
-    // except for the last character which is still a /...
-    format!(
-        "{}={}/",
-        src,
-        dest.trim_end_matches('/')
-            .replace('/', std::str::from_utf8(&[std::path::MAIN_SEPARATOR as u8]).unwrap())
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
