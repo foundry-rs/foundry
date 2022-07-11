@@ -202,7 +202,7 @@ derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
-derive_ast_eq! { struct StringLiteral { loc, string } }
+derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
 derive_ast_eq! { struct Parameter { loc, ty, storage, name } }
 derive_ast_eq! { struct NamedArgument { loc, name, expr } }
 derive_ast_eq! { struct YulBlock { loc, statements } }
@@ -396,7 +396,8 @@ derive_ast_eq! { enum Expression {
     List(loc, params1),
     ArrayLiteral(loc, exprs1),
     Unit(loc, expr1, unit1),
-    This(loc)
+    This(loc),
+    Parenthesis(loc, expr)
     _
 }}
 derive_ast_eq! { enum CatchClause {

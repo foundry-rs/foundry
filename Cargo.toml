@@ -64,4 +64,4 @@ debug = 0
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
 
 [patch.crates-io]
-revm = {git = "https://github.com/meetmangukiya/revm", branch = "call-statuses"}
+revm = { git = "https://github.com/bluealloy/revm", package = "revm"  }

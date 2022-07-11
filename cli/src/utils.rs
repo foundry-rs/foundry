@@ -246,6 +246,7 @@ pub(crate) use p_println;
 /// Disables terminal colours if either:
 /// - Running windows and the terminal does not support colour codes.
 /// - Colour has been disabled by some environment variable.
+/// - We are running inside a test
 pub fn enable_paint() {
     let is_windows = cfg!(windows) && !Paint::enable_windows_ascii();
     let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
@@ -269,11 +270,12 @@ pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClien
     })
 }
 
+/// Prints parts of the receipt to stdout
 pub fn print_receipt(receipt: &TransactionReceipt) {
-    let mut contract_address = "".to_string();
-    if let Some(addr) = receipt.contract_address {
-        contract_address = format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes()));
-    }
+    let contract_address = receipt
+        .contract_address
+        .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
+        .unwrap_or_default();
 
     let gas_used = receipt.gas_used.unwrap_or_default();
     let gas_price = receipt.effective_gas_price.unwrap_or_default();

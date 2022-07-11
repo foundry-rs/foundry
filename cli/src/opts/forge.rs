@@ -151,7 +151,7 @@ pub enum Subcommands {
     )]
     Flatten(flatten::FlattenArgs),
 
-    #[clap(about = "formats Solidity source files")]
+    #[clap(about = "Formats Solidity source files")]
     Fmt(FmtArgs),
 
     #[clap(visible_alias = "in", about = "Get specialized information about a smart contract")]

@@ -4,7 +4,7 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, Token, Tokenize},
+    abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     types::{Address, H256, U256},
     utils::keccak256,
 };
@@ -104,6 +104,36 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RecordedLogs {
+    pub entries: Vec<RawLog>,
+}
+
+fn start_record_logs(state: &mut Cheatcodes) {
+    state.recorded_logs = Some(Default::default());
+}
+
+fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_logs) = state.recorded_logs.replace(Default::default()) {
+        ethers::abi::encode(
+            &recorded_logs
+                .entries
+                .iter()
+                .map(|entry| {
+                    Token::Tuple(vec![
+                        entry.topics.clone().into_token(),
+                        Token::Bytes(entry.data.clone()),
+                    ])
+                })
+                .collect::<Vec<Token>>()
+                .into_tokens(),
+        )
+        .into()
+    } else {
+        ethers::abi::encode(&[Token::Array(vec![])]).into()
+    }
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -197,6 +227,11 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::RecordLogs(_) => {
+            start_record_logs(state);
+            Ok(Bytes::new())
+        }
+        HEVMCalls::GetRecordedLogs(_) => Ok(get_recorded_logs(state)),
         HEVMCalls::SetNonce(inner) => {
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
@@ -213,6 +248,8 @@ pub fn apply<DB: Database>(
             }
         }
         HEVMCalls::GetNonce(inner) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
             data.subroutine.load_account(inner.0, data.db);
@@ -250,7 +287,7 @@ pub fn apply<DB: Database>(
 }
 
 /// When using `forge script`, the script method is called using the address from `--sender`.
-/// That leads to the its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
+/// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 fn correct_sender_nonce(
     sender: &Address,

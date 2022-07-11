@@ -147,13 +147,13 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
 #[cfg(test)]
 mod tests {
     use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
-    use ethers::abi::AbiParser;
+    use ethers::abi::HumanReadableParser;
     use revm::db::{CacheDB, EmptyDB};
 
     #[test]
     fn can_fuzz_array() {
         let f = "function testArray(uint64[2] calldata values)";
-        let func = AbiParser::default().parse_function(f).unwrap();
+        let func = HumanReadableParser::parse_function(f).unwrap();
 
         let db = CacheDB::new(EmptyDB());
         let state = build_initial_state(&db);

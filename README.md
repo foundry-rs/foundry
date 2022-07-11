@@ -46,12 +46,12 @@ For people that want to install from source, you can do so like below:
 git clone https://github.com/foundry-rs/foundry
 cd foundry
 # install cast + forge
-cargo install --path ./cli --bins --locked --force
+cargo install --path ./cli --profile local --bins --locked --force
 # install anvil
-cargo install --path ./anvil --locked --force
+cargo install --path ./anvil --profile local --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`.
+Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil`.
 
 ### Installing for CI in Github Action
 
@@ -110,7 +110,7 @@ _Note: In the above benchmarks, compilation was always skipped_
 
 **Compilation Benchmarks**
 
-<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" height="420px" />
+<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" width="693px" />
 
 **Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 

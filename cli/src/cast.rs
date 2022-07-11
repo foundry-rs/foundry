@@ -15,10 +15,8 @@ use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
-    core::{
-        abi::AbiParser,
-        types::{BlockId, BlockNumber::Latest, H256},
-    },
+    abi::HumanReadableParser,
+    core::types::{BlockId, BlockNumber::Latest, H256},
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
 };
@@ -270,11 +268,7 @@ async fn main() -> eyre::Result<()> {
             sig,
             cast_async,
             args,
-            gas,
-            gas_price,
-            value,
-            mut nonce,
-            legacy,
+            mut tx,
             confirmations,
             to_json,
             resend,
@@ -299,7 +293,7 @@ async fn main() -> eyre::Result<()> {
                 };
 
                 if resend {
-                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                    tx.nonce = Some(provider.get_transaction_count(from, None).await?);
                 }
 
                 match signer {
@@ -309,14 +303,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -328,14 +323,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -347,14 +343,15 @@ async fn main() -> eyre::Result<()> {
                             from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
                             chain,
                             config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -366,7 +363,7 @@ async fn main() -> eyre::Result<()> {
                 Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
             {
                 if resend {
-                    nonce = Some(provider.get_transaction_count(config.sender, None).await?);
+                    tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
                 }
 
                 cast_send(
@@ -374,14 +371,15 @@ async fn main() -> eyre::Result<()> {
                     config.sender,
                     to,
                     (sig, args),
-                    gas,
-                    gas_price,
-                    value,
-                    nonce,
+                    tx.gas_limit,
+                    tx.gas_price,
+                    tx.priority_gas_price,
+                    tx.value,
+                    tx.nonce,
                     chain,
                     config.etherscan_api_key,
                     cast_async,
-                    legacy,
+                    tx.legacy,
                     confirmations,
                     to_json,
                 )
@@ -446,8 +444,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
-        Subcommands::Index { key_type, value_type, key, slot_number } => {
-            let encoded = SimpleCast::index(&key_type, &value_type, &key, &slot_number)?;
+        Subcommands::Index { key_type, key, slot_number } => {
+            let encoded = SimpleCast::index(&key_type, &key, &slot_number)?;
             println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
@@ -674,7 +672,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Sig { sig } => {
-            let selector = AbiParser::default().parse_function(&sig).unwrap().short_signature();
+            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
@@ -712,6 +710,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     args: (String, Vec<String>),
     gas: Option<U256>,
     gas_price: Option<U256>,
+    priority_gas_price: Option<U256>,
     value: Option<U256>,
     nonce: Option<U256>,
     chain: Chain,
@@ -734,6 +733,7 @@ where
         .await?
         .gas(gas)
         .gas_price(gas_price)
+        .priority_gas_price(priority_gas_price)
         .value(value)
         .nonce(nonce);
     let builder_output = builder.build();

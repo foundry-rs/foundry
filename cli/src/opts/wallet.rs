@@ -213,3 +213,35 @@ pub trait WalletTrait {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn illformed_private_key_generates_user_friendly_error() {
+        let wallet = Wallet {
+            from: None,
+            interactive: false,
+            private_key: Some("123".to_string()),
+            keystore_path: None,
+            keystore_password: None,
+            mnemonic_path: None,
+            ledger: false,
+            trezor: false,
+            hd_path: None,
+            mnemonic_index: 0,
+        };
+        match wallet.private_key() {
+            Ok(_) => {
+                panic!("illformed private key shouldn't decode")
+            }
+            Err(x) => {
+                assert!(
+                    x.to_string().contains("Failed to create wallet"),
+                    "Error message is not user-friendly"
+                );
+            }
+        }
+    }
+}

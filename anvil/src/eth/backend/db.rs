@@ -70,11 +70,11 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.insert_cache(address, account)
+        self.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
-        self.insert_cache_storage(address, slot, val)
+        self.insert_account_storage(address, slot, val)
     }
 
     fn snapshot(&mut self) -> U256 {

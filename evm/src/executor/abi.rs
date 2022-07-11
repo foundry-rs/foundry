@@ -14,6 +14,7 @@ pub static CHEATCODE_ADDRESS: Address = H160([
 ethers::contract::abigen!(
     HEVM,
     r#"[
+            struct Log {bytes32[] topics; bytes data;}
             roll(uint256)
             warp(uint256)
             fee(uint256)
@@ -50,6 +51,8 @@ ethers::contract::abigen!(
             expectRevert(bytes4)
             record()
             accesses(address)(bytes32[],bytes32[])
+            recordLogs()
+            getRecordedLogs()(Log[])
             expectEmit(bool,bool,bool,bool)
             expectEmit(bool,bool,bool,bool,address)
             mockCall(address,bytes,bytes)
@@ -75,6 +78,12 @@ ethers::contract::abigen!(
             writeLine(string,string)
             closeFile(string)
             removeFile(string)
+            toString(bytes)
+            toString(address)
+            toString(uint256)
+            toString(int256)
+            toString(bytes32)
+            toString(bool)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
@@ -102,6 +111,7 @@ ethers::contract::abigen!(
             event log_string             (string)
             event log_array              (uint256[] val)
             event log_array              (int256[] val)
+            event log_array              (address[] val)
             event log_named_address      (string key, address val)
             event log_named_bytes32      (string key, bytes32 val)
             event log_named_decimal_int  (string key, int val, uint decimals)
@@ -112,6 +122,7 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             event log_named_array        (string key, uint256[] val)
             event log_named_array        (string key, int256[] val)
+            event log_named_array        (string key, address[] val)
     ]"#
 );
 pub use console_mod::{ConsoleEvents, CONSOLE_ABI};

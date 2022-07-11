@@ -6,7 +6,7 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, remapping_str, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf};
@@ -288,7 +288,14 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
+    assert_eq!(
+        content,
+        format!(
+            "{}\n{}",
+            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src"),
+            remapping_str("forge-std/", "lib/forge-std/src")
+        )
+    );
 });
 
 // checks that forge can init with template
@@ -426,8 +433,24 @@ warning[5667]: Warning: Unused function parameter. Remove or comment out the var
     ));
 });
 
-// tests that direct import paths are handled correctly
-forgetest!(canhandle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+// Tests that direct import paths are handled correctly
+//
+// NOTE(onbjerg): Disabled for Windows -- for some reason solc fails with a bogus error message
+// here: error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit
+// conversion from struct Bar memory to struct Bar memory requested.   --> src\Foo.sol:12:22:
+//    |
+// 12 |         FooLib.check(b);
+//    |                      ^
+//
+//
+//
+// error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit conversion
+// from contract Foo to contract Foo requested.   --> src\Foo.sol:15:23:
+//    |
+// 15 |         FooLib.check2(this);
+//    |                       ^^^^
+#[cfg(not(target_os = "windows"))]
+forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
             "Foo",
@@ -482,7 +505,7 @@ forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand|
     let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
     prj.write_config(config);
     let contract_name = "Foo";
-    let _ = prj
+    let path = prj
         .inner()
         .add_source(
             contract_name,
@@ -504,12 +527,18 @@ contract Foo {
     let ipfs_start = dynamic_bytecode.len() - (24 + 64);
     let ipfs_end = ipfs_start + 65;
     dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    let mut output = cmd.stdout_lossy();
-    output.replace_range(ipfs_start..ipfs_end, "");
 
-    // Compare the static bytecode
-    assert_eq!(dynamic_bytecode, output);
+    let check_output = |mut output: String| {
+        output.replace_range(ipfs_start..ipfs_end, "");
+        assert_eq!(dynamic_bytecode, output);
+    };
+
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
+    check_output(cmd.stdout_lossy());
+
+    let info = format!("{}:{}", path.display(), contract_name);
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
+    check_output(cmd.stdout_lossy());
 });
 
 // test that `forge snapshot` commands work
@@ -751,4 +780,32 @@ forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     // install again and remove via relative path
     install(&mut cmd);
     remove(&mut cmd, "lib/forge-std");
+});
+
+// test to check that package can be reinstalled after manually removing the directory
+forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
+
+    // install again
+    install(&mut cmd);
 });

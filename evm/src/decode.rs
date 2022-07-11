@@ -46,6 +46,7 @@ pub fn decode_console_log(log: &Log) -> Option<String> {
         LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
         LogNamedArray1Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
         LogNamedArray2Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedArray3Filter(inner) => format!("{}: {:?}", inner.key, inner.val),
 
         e => e.to_string(),
     };
