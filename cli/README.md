@@ -12,36 +12,42 @@ e.g.:`RUST_LOG=forge=trace,evm_adapters=trace forge test`
 ## Forge
 
 ```
-foundry-cli 0.1.0
-Build, test, fuzz, formally verify, debug & deploy solidity contracts.
+forge 0.2.0
+Build, test, fuzz, debug and deploy Solidity contracts.
 
 USAGE:
     forge <SUBCOMMAND>
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+OPTIONS:
+    -h, --help       Print help information
+    -V, --version    Print version information
 
 SUBCOMMANDS:
-    bind               Generate rust bindings for your smart contracts
-    build              Build your smart contracts
-    cache              Manage the foundry cache
-    clean              Removes the build artifacts and cache directories
-    completions        Generate shell completions script
-    config             Shows the currently set config values
-    create             Deploy a compiled contract
-    flatten            Concats a file with all of its imports
-    help               Print this message or the help of the given subcommand(s)
-    init               Initializes a new forge sample project
-    install            Installs one or more dependencies as git submodules
-    remappings         Prints the automatically inferred remappings for this repository
-    remove             Removes one or more dependencies from git submodules
-    run                Run a single smart contract as a script
-    snapshot           Creates a snapshot of each test's gas usage
-    test               Test your smart contracts
-    update             Fetches all upstream lib changes
-    verify-check       Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
-    verify-contract    Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
+    bind                Generate Rust bindings for smart contracts.
+    build               Build the project's smart contracts. [aliases: b]
+    cache               Manage the Foundry cache.
+    clean               Remove the build artifacts and cache directories. [aliases: cl]
+    completions         Generate shell completions script. [aliases: com]
+    config              Display the current config. [aliases: co]
+    coverage            Generate coverage reports.
+    create              Deploy a smart contract. [aliases: c]
+    debug               Debugs a single smart contract as a script. [aliases: d]
+    flatten             Flatten a source file and all of its imports into one file. [aliases: f]
+    fmt                 Formats Solidity source files.
+    help                Print this message or the help of the given subcommand(s)
+    init                Create a new Forge project.
+    inspect             Get specialized information about a smart contract. [aliases: in]
+    install             Install one or multiple dependencies. [aliases: i]
+    remappings          Get the automatically inferred remappings for the project. [aliases: re]
+    remove              Remove one or multiple dependencies. [aliases: rm]
+    script              Run a smart contract as a script, building transactions that can be sent onchain.
+    snapshot            Create a snapshot of each test's gas usage. [aliases: s]
+    test                Run the project's tests. [aliases: t]
+    tree                Display a tree visualization of the project's dependency graph. [aliases: tr]
+    update              Update one or multiple dependencies. [aliases: u]
+    upload-selectors    Uploads abi of given contract to https://sig.eth.samczsun.com function selector database. [aliases: up]
+    verify-check        Check verification status on Etherscan. [aliases: vc]
+    verify-contract     Verify smart contracts on Etherscan. [aliases: v]
 ```
 
 The subcommands are also aliased to their first letter, e.g. you can do
