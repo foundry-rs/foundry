@@ -1194,6 +1194,31 @@ impl Config {
 
         dir_size_recursive(fs::read_dir(chain_path)?)
     }
+
+    fn merge_toml_provider(figment: &mut Figment, toml_provider: impl Provider, profile: Profile) {
+        // use [profile.<profile>] as [<profile>]
+        let mut profiles = vec![Config::DEFAULT_PROFILE];
+        if profile != Config::DEFAULT_PROFILE {
+            profiles.push(profile.clone());
+        }
+        let provider = toml_provider.strict_select(profiles);
+
+        // apply any key fixes
+        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+
+        // merge the default profile as a base
+        if profile != Config::DEFAULT_PROFILE {
+            *figment = std::mem::take(figment)
+                .merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
+        }
+        // merge special keys into config
+        for standalone_key in ["fmt", "rpc_endpoints"] {
+            *figment =
+                std::mem::take(figment).merge(provider.wrap(profile.clone(), standalone_key));
+        }
+        // merge the profile
+        *figment = std::mem::take(figment).merge(provider);
+    }
 }
 
 impl From<Config> for Figment {
@@ -1201,40 +1226,21 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
 
-        let merge_toml = |mut figment: Figment, env_var, default_path| {
-            // get TOML from environment variable or default path
-            let toml_provider = TomlFileProvider::new(env_var, default_path);
-
-            // use [profile.<profile>] as [<profile>]
-            let mut profiles = vec![Config::DEFAULT_PROFILE];
-            if profile != Config::DEFAULT_PROFILE {
-                profiles.push(profile.clone());
-            }
-            let provider = toml_provider.strict_select(profiles);
-
-            // apply any key fixes
-            let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
-
-            // merge the default profile as a base
-            if profile != Config::DEFAULT_PROFILE {
-                figment = figment.merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
-            }
-            // merge special keys into config
-            for standalone_key in ["fmt", "rpc_endpoints"] {
-                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
-            }
-            // TODO merge the special keys
-            // merge the profile
-            figment = figment.merge(provider);
-            figment
-        };
-
         // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = merge_toml(figment, None, global_toml);
+            Config::merge_toml_provider(
+                &mut figment,
+                TomlFileProvider::new(None, global_toml).cached(),
+                profile.clone(),
+            );
         }
         // merge local foundry.toml file
-        figment = merge_toml(figment, Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME));
+        Config::merge_toml_provider(
+            &mut figment,
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                .cached(),
+            profile.clone(),
+        );
 
         // merge environment variables
         figment = figment
@@ -1353,9 +1359,14 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
 /// This ignores the `#[profile.default]` part in the toml
 pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
     s: &str,
-) -> Result<Option<(Profile, T)>, toml::de::Error> {
-    let val: Map<Profile, T> = toml::from_str(s)?;
-    Ok(val.into_iter().next())
+) -> Result<Option<(Profile, T)>, Error> {
+    let mut figment = Figment::new();
+    Config::merge_toml_provider(&mut figment, Toml::string(s), Config::DEFAULT_PROFILE);
+    if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
+        Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
+    } else {
+        Ok(None)
+    }
 }
 
 impl Provider for Config {
@@ -1550,11 +1561,12 @@ impl<T: AsRef<str>> From<T> for SolcReq {
 struct TomlFileProvider {
     pub env_var: Option<&'static str>,
     pub default: PathBuf,
+    pub cache: Option<Result<Map<Profile, Dict>, Error>>,
 }
 
 impl TomlFileProvider {
     fn new(env_var: Option<&'static str>, default: impl Into<PathBuf>) -> Self {
-        Self { env_var, default: default.into() }
+        Self { env_var, default: default.into(), cache: None }
     }
 
     fn env_val(&self) -> Option<String> {
@@ -1574,20 +1586,14 @@ impl TomlFileProvider {
         }
         false
     }
-}
 
-impl Provider for TomlFileProvider {
-    fn metadata(&self) -> Metadata {
-        if self.is_missing() {
-            Metadata::named("TOML file provider")
-        } else {
-            Toml::file(self.file()).nested().metadata()
-        }
+    pub fn cached(mut self) -> Self {
+        self.cache = Some(self.read());
+        self
     }
 
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+    fn read(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
-
         if let Some(file) = self.env_val() {
             let path = Path::new(&file);
             if !path.exists() {
@@ -1603,6 +1609,24 @@ impl Provider for TomlFileProvider {
         }
         .nested()
         .data()
+    }
+}
+
+impl Provider for TomlFileProvider {
+    fn metadata(&self) -> Metadata {
+        if self.is_missing() {
+            Metadata::named("TOML file provider")
+        } else {
+            Toml::file(self.file()).nested().metadata()
+        }
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        if let Some(cache) = self.cache.as_ref() {
+            cache.clone()
+        } else {
+            self.read()
+        }
     }
 }
 
