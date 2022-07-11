@@ -41,6 +41,15 @@ pub trait DatabaseExt: Database {
     /// snapshot and its revert.
     fn revert(&mut self, id: U256, subroutine: &SubRoutine) -> Option<SubRoutine>;
 
+    /// Creates and also selects a new fork
+    ///
+    /// This is basically `create_fork` + `select_fork`
+    fn create_select_fork(&mut self, fork: CreateFork, env: &mut Env) -> eyre::Result<U256> {
+        let id = self.create_fork(fork)?;
+        self.select_fork(id, env)?;
+        Ok(id)
+    }
+
     /// Creates a new fork but does _not_ select it
     fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256>;
 

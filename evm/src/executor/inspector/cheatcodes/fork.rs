@@ -79,9 +79,8 @@ fn create_select_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
-    let fork_id = create_fork(state, data, url_or_alias, block)?;
-    select_fork(data, fork_id)?;
-    Ok(fork_id)
+    let fork = create_fork_request(state, url_or_alias, block, data)?;
+    data.db.create_select_fork(fork, data.env).map_err(util::encode_error)
 }
 
 /// Creates a new fork
@@ -91,6 +90,17 @@ fn create_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
+    let fork = create_fork_request(state, url_or_alias, block, data)?;
+    data.db.create_fork(fork).map_err(util::encode_error)
+}
+
+/// Creates the request object for a new fork request
+fn create_fork_request<DB: DatabaseExt>(
+    state: &Cheatcodes,
+    url_or_alias: String,
+    block: Option<u64>,
+    data: &EVMData<DB>,
+) -> Result<CreateFork, Bytes> {
     let url = state.config.get_rpc_url(url_or_alias)?;
     let mut evm_opts = state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
@@ -100,5 +110,5 @@ fn create_fork<DB: DatabaseExt>(
         env: data.env.clone(),
         evm_opts,
     };
-    data.db.create_fork(fork).map_err(util::encode_error)
+    Ok(fork)
 }
