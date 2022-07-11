@@ -146,8 +146,15 @@ interface Cheats {
     function createFork(string calldata,uint256) external returns(uint256);
     // Creates a new fork with the given endpoint and the latest block and returns the identifier of the fork
     function createFork(string calldata) external returns(uint256);
+    // Creates _and_ selects a new fork with the given endpoint and block and returns the identifier of the fork
+    function createSelectFork(string calldata,uint256) external returns(uint256);
+    // Creates _and_ also selects a new fork with the given endpoint and the latest block and returns the identifier of the fork
+    function createSelectFork(string calldata) external returns(uint256);
     // takes a fork identifier created by `createFork` and changes the state
     function selectFork(uint256) external;
+    /// Returns the currently active fork
+    /// Reverts if no fork is currently active
+    function activeFork() external returns(uint256);
     // Updates the currently active fork to given block number
     // This is similar to `roll` but for the fork
     function rollFork(uint256) external;

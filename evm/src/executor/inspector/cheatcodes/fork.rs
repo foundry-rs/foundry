@@ -4,7 +4,7 @@ use crate::{
     executor::{backend::DatabaseExt, fork::CreateFork},
 };
 use bytes::Bytes;
-use ethers::abi::AbiEncode;
+use ethers::{abi::AbiEncode, prelude::U256};
 use revm::EVMData;
 
 /// Handles fork related cheatcodes
@@ -14,15 +14,26 @@ pub fn apply<DB: DatabaseExt>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     let resp = match call {
-        HEVMCalls::CreateFork0(fork) => create_fork(state, data, fork.0.clone(), None),
+        HEVMCalls::CreateFork0(fork) => {
+            create_fork(state, data, fork.0.clone(), None).map(|id| id.encode().into())
+        }
         HEVMCalls::CreateFork1(fork) => {
             create_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
+                .map(|id| id.encode().into())
         }
-        HEVMCalls::SelectFork(fork_id) => data
+        HEVMCalls::CreateSelectFork0(fork) => {
+            create_select_fork(state, data, fork.0.clone(), None).map(|id| id.encode().into())
+        }
+        HEVMCalls::CreateSelectFork1(fork) => {
+            create_select_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
+                .map(|id| id.encode().into())
+        }
+        HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::ActiveFork(_) => data
             .db
-            .select_fork(fork_id.0, data.env)
-            .map(|_| Default::default())
-            .map_err(util::encode_error),
+            .active_fork()
+            .map(|id| id.encode().into())
+            .ok_or_else(|| util::encode_error("No active fork")),
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
             data.db
@@ -56,13 +67,30 @@ pub fn apply<DB: DatabaseExt>(
     Some(resp)
 }
 
+/// Selects the given fork id
+fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
+    data.db.select_fork(fork_id, data.env).map(|_| Default::default()).map_err(util::encode_error)
+}
+
+/// Creates and then also selects the new fork
+fn create_select_fork<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<'_, DB>,
+    url_or_alias: String,
+    block: Option<u64>,
+) -> Result<U256, Bytes> {
+    let fork_id = create_fork(state, data, url_or_alias, block)?;
+    select_fork(data, fork_id)?;
+    Ok(fork_id)
+}
+
 /// Creates a new fork
 fn create_fork<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     url_or_alias: String,
     block: Option<u64>,
-) -> Result<Bytes, Bytes> {
+) -> Result<U256, Bytes> {
     let url = state.config.get_rpc_url(url_or_alias)?;
     let mut evm_opts = state.config.evm_opts.clone();
     evm_opts.fork_block_number = block;
@@ -72,5 +100,5 @@ fn create_fork<DB: DatabaseExt>(
         env: data.env.clone(),
         evm_opts,
     };
-    data.db.create_fork(fork).map_err(util::encode_error).map(|id| id.encode().into())
+    data.db.create_fork(fork).map_err(util::encode_error)
 }

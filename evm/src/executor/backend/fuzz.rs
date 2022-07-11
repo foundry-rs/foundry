@@ -1,3 +1,4 @@
+use super::update_current_env_with_fork_env;
 use crate::{
     abi::CHEATCODE_ADDRESS,
     executor::{
@@ -15,8 +16,6 @@ use revm::{
     TransactTo,
 };
 use tracing::{trace, warn};
-
-use super::update_current_env_with_fork_env;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
