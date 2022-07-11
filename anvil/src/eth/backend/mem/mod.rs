@@ -54,7 +54,7 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
-use std::{str, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
 
@@ -407,22 +407,32 @@ impl Backend {
         self.db.write().revert(id)
     }
 
-    
     /// Write all chain data to serialized bytes buffer
     pub fn dump_state(&self) -> Result<Bytes, BlockchainError> {
-        self.db.read().dump_state()
+        self.db
+            .read()
+            .dump_state()
             .map(|s| bytes::Bytes::from(serde_json::to_string(&s).unwrap_or_default()).into())
-            .ok_or(RpcError::invalid_params("Dumping state not supported with the current configuration").into())
+            .ok_or(
+                RpcError::invalid_params(
+                    "Dumping state not supported with the current configuration",
+                )
+                .into(),
+            )
     }
 
     /// Deserialize and add all chain data to the backend storage
     pub fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
         let state: SerializableState = serde_json::from_str(
-            str::from_utf8(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?
-        ).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+            str::from_utf8(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?,
+        )
+        .map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
         if !self.db.write().load_state(state) {
-            Err(RpcError::invalid_params("Loading state not supported with the current configuration").into())
+            Err(RpcError::invalid_params(
+                "Loading state not supported with the current configuration",
+            )
+            .into())
         } else {
             Ok(true)
         }

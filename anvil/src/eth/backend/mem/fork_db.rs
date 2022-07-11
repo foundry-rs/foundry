@@ -1,5 +1,5 @@
 use crate::{
-    eth::backend::db::{Db, StateDb, SerializableState},
+    eth::backend::db::{Db, SerializableState, StateDb},
     revm::AccountInfo,
     Address, U256,
 };

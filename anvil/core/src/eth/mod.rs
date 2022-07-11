@@ -295,20 +295,13 @@ pub enum EthRequest {
     )]
     SetNextBlockBaseFeePerGas(U256),
 
-    /// Serializes the current state (including contracts code, contract's storage, accounts properties, etc.) into a savable data blob
-    #[serde(
-        rename = "anvil_dumpState",
-        alias = "hardhat_dumpState",
-        with = "empty_params"
-    )]
+    /// Serializes the current state (including contracts code, contract's storage, accounts
+    /// properties, etc.) into a savable data blob
+    #[serde(rename = "anvil_dumpState", alias = "hardhat_dumpState", with = "empty_params")]
     DumpState(()),
 
     /// Adds state previously dumped with `DumpState` to the current chain
-    #[serde(
-        rename = "anvil_loadState",
-        alias = "hardhat_loadState",
-        with = "sequence"
-    )]
+    #[serde(rename = "anvil_loadState", alias = "hardhat_loadState", with = "sequence")]
     LoadState(Bytes),
 
     // Ganache compatible calls

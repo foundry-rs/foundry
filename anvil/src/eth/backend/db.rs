@@ -10,14 +10,14 @@ use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
-    HashMap
+    HashMap,
 };
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SerializableState {
-    pub accounts: HashMap<Address, SerializableAccountRecord>
+    pub accounts: HashMap<Address, SerializableAccountRecord>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -25,7 +25,7 @@ pub struct SerializableAccountRecord {
     pub nonce: u64,
     pub balance: U256,
     pub code: Bytes,
-    pub storage: HashMap<U256, U256>
+    pub storage: HashMap<U256, U256>,
 }
 
 /// This bundles all required revm traits
@@ -151,8 +151,6 @@ impl DatabaseRef for StateDb {
 
 impl SerializableState {
     pub fn new() -> SerializableState {
-        SerializableState {
-            accounts: HashMap::new()
-        }
+        SerializableState { accounts: HashMap::new() }
     }
 }

@@ -1253,15 +1253,17 @@ impl EthApi {
         Ok(())
     }
 
-    /// Create a bufer that represents all state on the chain, which can be loaded to separate process by calling `anvil_laodState`
-    /// 
+    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// process by calling `anvil_laodState`
+    ///
     /// Handler for RPC call: `anvil_dumpState`
     pub async fn anvil_dump_state(&self) -> Result<Bytes> {
         node_info!("anvil_dumpState");
         self.backend.dump_state()
     }
 
-    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or storage.
+    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
+    /// storage.
     ///
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
