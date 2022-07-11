@@ -6,7 +6,6 @@ forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 // forgetest_external!(vaults, "Rari-Capital/vaults");
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
-forgetest_external!(maple_loan, "maple-labs/loan");
 
 /// Forking tests
 mod fork_integration {
