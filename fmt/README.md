@@ -49,12 +49,12 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
 - [x] ShiftLeft, ShiftRight, BitwiseAnd, BitwiseXor, BitwiseOr
 - [x] Assign, AssignOr, AssignAnd, AssignXor, AssignShiftLeft, AssignShiftRight, AssignAdd, AssignSubtract, AssignMultiply, AssignDivide, AssignModulo
 - [x] Less, More, LessEqual, MoreEqual, Equal, NotEqual, And, Or
-- [ ] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral , AddressLiteral
-- [ ] ArraySubscript, ArraySlice
+- [x] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral, AddressLiteral
+- [x] ArraySubscript, ArraySlice
 - [x] MemberAccess
 - [x] FunctionCall
 - [x] FunctionCallBlock
-- [ ] NamedFunctionCall
+- [x] NamedFunctionCall
 - [x] New
 - [x] Delete
 - [x] Ternary
@@ -73,9 +73,9 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
     - [x] Function
 - [x] Variable
 - [x] List
-- [ ] ArrayLiteral
-- [ ] Unit
-- [ ] This
+- [x] ArrayLiteral
+- [x] Unit
+- [x] This
 
 ### Yul Statements
 
