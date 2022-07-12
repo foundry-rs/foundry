@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
 contract Foo {
@@ -10,7 +10,7 @@ contract Foo {
     }
 }
 
-contract SetNonceTest is DSTest {
+contract SetNonceTest is Test {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     Foo public foo;
 

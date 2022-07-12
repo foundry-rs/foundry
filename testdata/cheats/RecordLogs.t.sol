@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
 contract Emitter {
@@ -81,7 +81,7 @@ contract Emitterv2 {
     }
 }
 
-contract RecordLogsTest is DSTest {
+contract RecordLogsTest is Test {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     Emitter emitter;
     bytes32 internal seedTestData = keccak256(abi.encodePacked("Some data"));

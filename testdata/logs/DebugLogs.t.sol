@@ -1,8 +1,8 @@
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
-contract DebugLogsTest is DSTest {
+contract DebugLogsTest is Test {
     constructor() {
         emit log_uint(0);
     }
@@ -92,7 +92,7 @@ contract DebugLogsTest is DSTest {
 
 }
 
-contract Fails is DSTest {
+contract Fails is Test {
     function failure() public {
         emit log_uint(100);
         revert();

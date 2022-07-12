@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
-contract ContractEnvironmentTest is DSTest {
+contract ContractEnvironmentTest is Test {
     function chainId() internal view returns (uint256 id) {
         assembly {
             id := chainid()

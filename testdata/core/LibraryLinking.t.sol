@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
 library Lib {
     function plus100(uint256 a) public pure returns (uint256) {
@@ -25,7 +25,7 @@ contract LibraryConsumer {
     }
 }
 
-contract LibraryLinkingTest is DSTest {
+contract LibraryLinkingTest is Test {
     LibraryConsumer consumer;
 
     function setUp() public {

@@ -1,6 +1,6 @@
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "../cheats/Cheats.sol";
 
 contract ReturnsNothing {
@@ -19,7 +19,7 @@ contract ReturnsUint {
     }
 }
 
-contract ConflictingSignaturesTest is DSTest {
+contract ConflictingSignaturesTest is Test {
     ReturnsNothing retsNothing;
     ReturnsString retsString;
     ReturnsUint retsUint;

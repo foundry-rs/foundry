@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
 interface IWETH {
@@ -9,7 +9,7 @@ interface IWETH {
     function balanceOf(address) external view returns (uint);
 }
 
-contract ForkTest is DSTest {
+contract ForkTest is Test {
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     uint256 constant mainblock = 14_608_400;
 

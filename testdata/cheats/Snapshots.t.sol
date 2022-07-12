@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
 struct Storage {
@@ -9,7 +9,7 @@ struct Storage {
     uint slot1;
 }
 
-contract SnapshotTest is DSTest {
+contract SnapshotTest is Test {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     Storage store;

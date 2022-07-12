@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
 // See https://github.com/foundry-rs/foundry/pull/735 for context
-contract FuzzNumbersTest is DSTest {
+contract FuzzNumbersTest is Test {
     function testPositive(uint256) public {
         assertTrue(true);
     }

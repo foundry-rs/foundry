@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
-contract FailingSetupTest is DSTest {
+contract FailingSetupTest is Test {
     event Test(uint256 n);
 
     function setUp() public {

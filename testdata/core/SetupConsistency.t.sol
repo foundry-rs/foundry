@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
-contract SetupConsistencyCheck is DSTest {
+contract SetupConsistencyCheck is Test {
     uint256 two;
     uint256 four;
     uint256 result;

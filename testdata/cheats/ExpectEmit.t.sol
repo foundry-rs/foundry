@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
 contract Emitter {
@@ -69,7 +69,7 @@ contract LowLevelCaller {
     function g() public {}
 }
 
-contract ExpectEmitTest is DSTest {
+contract ExpectEmitTest is Test {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     Emitter emitter;
 

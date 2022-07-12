@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
+import "forge-std/Test.sol";
 
-contract DSStyleTest is DSTest {
+contract DSStyleTest is Test {
     function testFailingAssertions() public {
         emit log_string("assertionOne");
         assertEq(uint(1), uint(2));
