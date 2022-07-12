@@ -807,3 +807,52 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
     // install again
     install(&mut cmd);
 });
+
+// Tests that forge update doesn't break a working depencency by recursively updating nested
+// dependencies
+forgetest!(can_update_library_with_outdated_nested_dependency, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let package = libs.join("outdated-foundry-package");
+    let package_mod = git_mod.join("outdated-foundry-package");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "ckoopmann/outdated-foundry-package", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(package.exists());
+        assert!(package_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/ckoopmann/outdated-foundry-package"));
+    };
+
+
+    install(&mut cmd);
+    cmd.forge_fuse().args(["update", "lib/outdated-foundry-package"]);
+    cmd.stdout_lossy();
+
+    prj.inner()
+        .add_source(
+            "MyTokenCopy",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.6.0;
+import "outdated-foundry-package/MyToken.sol";
+contract MyTokenCopy is MyToken {
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.forge_fuse().args(["build"]);
+    let output = cmd.stdout_lossy();
+
+    assert!(output.contains(
+        "Compiler run successful",
+    ));
+
+});
