@@ -39,7 +39,8 @@ pub trait DatabaseExt: Database {
     /// **N.B.** While this reverts the state of the evm to the snapshot, it keeps new logs made
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
-    /// This will also revert any changes in the `Env` and replace it with the caputured `Env` of `Self::snapshot`
+    /// This will also revert any changes in the `Env` and replace it with the caputured `Env` of
+    /// `Self::snapshot`
     fn revert(&mut self, id: U256, subroutine: &SubRoutine, env: &mut Env) -> Option<SubRoutine>;
 
     /// Creates and also selects a new fork
@@ -268,13 +269,21 @@ impl Backend {
 
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
-        let id =
-            self.inner.snapshots.insert(BackendSnapshot::new(self.db.clone(), subroutine.clone(), env.clone()));
+        let id = self.inner.snapshots.insert(BackendSnapshot::new(
+            self.db.clone(),
+            subroutine.clone(),
+            env.clone(),
+        ));
         trace!(target: "backend", "Created new snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256, subroutine: &SubRoutine, current: &mut Env) -> Option<SubRoutine> {
+    fn revert(
+        &mut self,
+        id: U256,
+        subroutine: &SubRoutine,
+        current: &mut Env,
+    ) -> Option<SubRoutine> {
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
@@ -284,7 +293,7 @@ impl DatabaseExt for Backend {
 
             // merge additional logs
             snapshot.merge(subroutine);
-            let BackendSnapshot { db, subroutine,env } = snapshot;
+            let BackendSnapshot { db, subroutine, env } = snapshot;
             self.db = db;
             update_current_env_with_fork_env(current, env);
 

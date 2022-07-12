@@ -9,7 +9,7 @@ contract RpcUrlTest is DSTest {
 
     // returns the correct url
     function testCanGetRpcUrl() public {
-        string memory url = cheats.rpcUrl("rpcAlias");
+        string memory url = cheats.rpcUrl("rpcAlias"); // note: this alias is pre-configured in the test runner
         assertEq(url, "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
     }
 
@@ -22,7 +22,7 @@ contract RpcUrlTest is DSTest {
     // can set env and return correct url
     function testCanSetAndGetURLAndAllUrls() public {
         // this will fail because alias is not set
-         cheats.expectRevert("Failed to resolve env var `RPC_ENV_ALIAS`: environment variable not found");
+        cheats.expectRevert("Failed to resolve env var `RPC_ENV_ALIAS`: environment variable not found");
         string[2][] memory _urls = cheats.rpcUrls();
 
         string memory url = cheats.rpcUrl("rpcAlias");

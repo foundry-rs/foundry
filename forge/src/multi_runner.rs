@@ -77,6 +77,7 @@ impl MultiContractRunner {
             .collect()
     }
 
+    /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(
         &self,
         filter: &impl TestFilter,

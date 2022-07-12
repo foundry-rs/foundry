@@ -128,15 +128,21 @@ impl<'a> FuzzBackendWrapper<'a> {
 
 impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
-        let id = self
-            .inner
-            .snapshots
-            .insert(BackendSnapshot::new(self.active_db().clone(), subroutine.clone(), env.clone()));
+        let id = self.inner.snapshots.insert(BackendSnapshot::new(
+            self.active_db().clone(),
+            subroutine.clone(),
+            env.clone(),
+        ));
         trace!(target: "backend::fuzz", "Created new snapshot {}", id);
         id
     }
 
-    fn revert(&mut self, id: U256, subroutine: &SubRoutine, current: &mut Env) -> Option<SubRoutine> {
+    fn revert(
+        &mut self,
+        id: U256,
+        subroutine: &SubRoutine,
+        current: &mut Env,
+    ) -> Option<SubRoutine> {
         if let Some(mut snapshot) =
             self.inner.snapshots.remove(id).or_else(|| self.backend.snapshots().get(id).cloned())
         {
