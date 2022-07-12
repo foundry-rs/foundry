@@ -292,6 +292,12 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(trezor) => trezor.address(),
                 };
 
+                // prevent misconfigured hwlib from sending a transaction that defies
+                // user-specified --from
+                if let Some(specified_from) = eth.wallet.from {
+                    assert_eq!(specified_from, from);
+                }
+
                 if resend {
                     tx.nonce = Some(provider.get_transaction_count(from, None).await?);
                 }
