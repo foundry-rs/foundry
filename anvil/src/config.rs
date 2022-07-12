@@ -282,7 +282,7 @@ impl Default for NodeConfig {
         // generate some random wallets
         let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
-            chain_id: Some(CHAIN_ID),
+            chain_id: None,
             gas_limit: U256::from(30_000_000),
             gas_price: None,
             hardfork: None,
