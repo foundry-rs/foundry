@@ -819,21 +819,21 @@ forgetest!(
         let git_mod = prj.root().join(".git/modules/lib");
         let git_mod_file = prj.root().join(".gitmodules");
 
-        let package = libs.join("outdated-foundry-package");
-        let package_mod = git_mod.join("outdated-foundry-package");
+        let package = libs.join("issue-2264-repro");
+        let package_mod = git_mod.join("issue-2264-repro");
 
         let install = |cmd: &mut TestCommand| {
-            cmd.forge_fuse().args(["install", "ckoopmann/outdated-foundry-package", "--no-commit"]);
+            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
             cmd.assert_non_empty_stdout();
             assert!(package.exists());
             assert!(package_mod.exists());
 
             let submods = read_string(&git_mod_file);
-            assert!(submods.contains("https://github.com/ckoopmann/outdated-foundry-package"));
+            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
         };
 
         install(&mut cmd);
-        cmd.forge_fuse().args(["update", "lib/outdated-foundry-package"]);
+        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
         cmd.stdout_lossy();
 
         prj.inner()
@@ -842,7 +842,7 @@ forgetest!(
                 r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.6.0;
-import "outdated-foundry-package/MyToken.sol";
+import "issue-2264-repro/MyToken.sol";
 contract MyTokenCopy is MyToken {
 }
    "#,
