@@ -145,7 +145,7 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(self.silent)
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID))
+            .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
     }
 

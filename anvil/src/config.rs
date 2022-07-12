@@ -69,7 +69,7 @@ const BANNER: &str = r#"
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
-    pub chain_id: u64,
+    pub chain_id: Option<u64>,
     /// Default gas limit for all txs
     pub gas_limit: U256,
     /// Default gas price for all txs
@@ -282,7 +282,7 @@ impl Default for NodeConfig {
         // generate some random wallets
         let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
-            chain_id: CHAIN_ID,
+            chain_id: Some(CHAIN_ID),
             gas_limit: U256::from(30_000_000),
             gas_price: None,
             hardfork: Hardfork::default(),
@@ -323,19 +323,25 @@ impl NodeConfig {
 
     /// Sets the chain ID
     #[must_use]
-    pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
-        self.set_chain_id(chain_id.into());
+    pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: Option<U>) -> Self {
+        self.set_chain_id(chain_id);
         self
     }
 
+    /// Returns the chain ID to use
+    pub fn get_chain_id(&self) -> u64 {
+        self.chain_id.unwrap_or(CHAIN_ID)
+    }
+
     /// Sets the chain id and updates all wallets
-    pub fn set_chain_id(&mut self, chain_id: impl Into<u64>) {
-        self.chain_id = chain_id.into();
+    pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
+        self.chain_id = chain_id.map(Into::into);
+        let chain_id = self.get_chain_id();
         self.genesis_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(self.chain_id);
+            *wallet = wallet.clone().with_chain_id(chain_id);
         });
         self.signer_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(self.chain_id);
+            *wallet = wallet.clone().with_chain_id(chain_id);
         })
     }
 
@@ -517,7 +523,7 @@ impl NodeConfig {
         }
         // cache only if block explicitly set
         let block = self.fork_block_number?;
-        let chain_id = self.chain_id;
+        let chain_id = self.chain_id.unwrap_or(CHAIN_ID);
 
         Config::foundry_block_cache_file(chain_id, block)
     }
@@ -531,7 +537,7 @@ impl NodeConfig {
         let mut env = revm::Env {
             cfg: CfgEnv {
                 spec_id: self.hardfork.into(),
-                chain_id: self.chain_id.into(),
+                chain_id: self.get_chain_id().into(),
                 ..Default::default()
             },
             block: BlockEnv {
@@ -539,7 +545,7 @@ impl NodeConfig {
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
+            tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
@@ -598,11 +604,18 @@ impl NodeConfig {
             }
 
             let block_hash = block.hash.unwrap();
-            let chain_id = provider.get_chainid().await.unwrap().as_u64();
-            // need to update the dev signers and env with the chain id
-            self.set_chain_id(chain_id);
-            env.cfg.chain_id = chain_id.into();
-            env.tx.chain_id = chain_id.into();
+
+            let chain_id = if let Some(chain_id) = self.chain_id {
+                chain_id
+            } else {
+                let chain_id = provider.get_chainid().await.unwrap().as_u64();
+                // need to update the dev signers and env with the chain id
+                self.set_chain_id(Some(chain_id));
+                env.cfg.chain_id = chain_id.into();
+                env.tx.chain_id = chain_id.into();
+                chain_id
+            };
+            let override_chain_id = self.chain_id;
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
@@ -624,6 +637,7 @@ impl NodeConfig {
                     block_hash,
                     provider,
                     chain_id,
+                    override_chain_id,
                     timestamp: block.timestamp.as_u64(),
                     base_fee: block.base_fee_per_gas,
                 },
