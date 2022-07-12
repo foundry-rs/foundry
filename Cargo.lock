@@ -2092,6 +2092,8 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
+ "once_cell",
+ "rand 0.8.5",
  "reqwest",
  "rlp",
  "rustc-hex",
