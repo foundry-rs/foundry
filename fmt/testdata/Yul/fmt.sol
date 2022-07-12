@@ -33,5 +33,79 @@ contract Yul {
         }
 
         assembly "evmasm" ("memory-safe") {}
+
+        bytes4 ERC20_TRANSFER_ID;
+        bytes4 PAIR_SWAP_ID;
+        address memUser;
+        // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
+        assembly {
+            // You can only access teh fallback function if you're authorized
+            if iszero(eq(caller(), memUser)) {
+                // Ohm (3, 3) makes your code more efficient
+                // WGMI
+                revert(3, 3)
+            }
+
+            // Extract out teh variables
+            // We don't have function signatures sweet saving EVEN MORE GAS
+
+            // bytes20
+            let token := shr(96, calldataload(0x00))
+            // bytes20
+            let pair := shr(96, calldataload(0x14))
+            // uint128
+            let amountIn := shr(128, calldataload(0x28))
+            // uint128
+            let amountOut := shr(128, calldataload(0x38))
+            // uint8
+            let tokenOutNo := shr(248, calldataload(0x48))
+
+            // **** calls token.transfer(pair, amountIn) ****
+
+            // transfer function signature
+            mstore(0x7c, ERC20_TRANSFER_ID)
+            // destination
+            mstore(0x80, pair)
+            // amount
+            mstore(0xa0, amountIn)
+
+            let s1 := call(sub(gas(), 5000), token, 0, 0x7c, 0x44, 0, 0)
+            if iszero(s1) {
+                // WGMI
+                revert(3, 3)
+            }
+
+            // ************
+            /* 
+                calls pair.swap(
+                    tokenOutNo == 0 ? amountOut : 0,
+                    tokenOutNo == 1 ? amountOut : 0,
+                    address(this),
+                    new bytes(0)
+                )
+            */
+
+            // swap function signature
+            mstore(0x7c, PAIR_SWAP_ID)
+            // tokenOutNo == 0 ? ....
+            switch tokenOutNo
+            case 0 {
+                mstore(0x80, amountOut)
+                mstore(0xa0, 0)
+            }
+            case 1 {
+                mstore(0x80, 0)
+                mstore(0xa0, amountOut)
+            }
+            // address(this)
+            mstore(0xc0, address())
+            // empty bytes
+            mstore(0xe0, 0x80)
+
+            let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
+            if iszero(s2) {
+                revert(3, 3)
+            }
+        }
     }
 }
