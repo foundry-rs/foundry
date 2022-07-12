@@ -2,7 +2,6 @@
 //! types
 use ethers_core::{types::*, utils::to_checksum};
 use serde::Deserialize;
-use std::str;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
@@ -64,8 +63,7 @@ impl UIfmt for Bytes {
 
 impl UIfmt for [u8; 32] {
     fn pretty(&self) -> String {
-        let res = str::from_utf8(self).unwrap().trim_matches(char::from(0));
-        String::from(res)
+        String::from_utf8_lossy(&self[..]).trim_matches('\0').to_string()
     }
 }
 
