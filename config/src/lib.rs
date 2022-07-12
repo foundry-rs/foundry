@@ -35,6 +35,7 @@ use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
+pub(crate) use macros::config_warn;
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
@@ -317,6 +318,9 @@ impl Config {
 
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
+
+    /// TOML section for profiles
+    pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
@@ -902,7 +906,7 @@ impl Config {
             let libs: toml_edit::Value =
                 self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
             let libs = toml_edit::value(libs);
-            doc["profile"][profile]["libs"] = libs;
+            doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
             true
         })
     }
@@ -932,7 +936,7 @@ impl Config {
         // wrap inner table in [profile.<profile>]
         let mut wrapping_table = toml::Value::Table(
             [(
-                "profile".into(),
+                Config::PROFILE_SECTION.into(),
                 toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
             )]
             .into_iter()
@@ -1182,6 +1186,152 @@ impl Config {
         }
 
         dir_size_recursive(fs::read_dir(chain_path)?)
+    }
+
+    fn fix_toml_for_profiles(toml_path: impl AsRef<Path>, profiles: &[Profile]) {
+        // parse toml
+        let toml_path = toml_path.as_ref();
+        let mut toml_doc: toml_edit::Document = match std::fs::read_to_string(toml_path) {
+            Ok(toml_str) => match toml_str.parse() {
+                Ok(value) => value,
+                Err(err) => {
+                    config_warn!("Invalid TOML at {}: {}", toml_path.display(), err);
+                    return
+                }
+            },
+            Err(err) => {
+                config_warn!("Could not read TOML at {}: {}", toml_path.display(), err);
+                return
+            }
+        };
+        // routine for inserting a [<profile>] into [profile.<profile>]
+        let insert_profile = |toml_map: &mut toml_edit::Table,
+                              profile_str: &str,
+                              value: toml_edit::Item| {
+            if toml_map.get(Config::PROFILE_SECTION).is_none() {
+                // insert profile section at the beginning of the map
+                let mut profile_section = toml_edit::Table::new();
+                profile_section.set_position(0);
+                profile_section.set_implicit(true);
+                toml_map.insert(Config::PROFILE_SECTION, toml_edit::Item::Table(profile_section));
+            }
+            // check the profile map for structure and existing keys
+            let profile_map = toml_map.get_mut(Config::PROFILE_SECTION).unwrap();
+            if !profile_map.is_table_like() {
+                config_warn!(
+                    "Could not insert into TOML at {}: Expected [{}] to be a Table",
+                    toml_path.display(),
+                    Config::PROFILE_SECTION
+                );
+                return Some(value)
+            }
+            if let Some(profile) = profile_map.as_table_like_mut().unwrap().get(profile_str) {
+                if !profile.is_table_like() {
+                    config_warn!(
+                        "Could not insert into TOML at {}: Expected [{}.{}] to be a
+            Table",
+                        toml_path.display(),
+                        Config::PROFILE_SECTION,
+                        profile_str
+                    );
+                    return Some(value)
+                }
+                if !profile.as_table_like().unwrap().is_empty() {
+                    config_warn!(
+                        "Could not merge [{}] for TOML at {}: [{}.{}] already exists",
+                        profile_str,
+                        toml_path.display(),
+                        Config::PROFILE_SECTION,
+                        profile_str
+                    );
+                    return Some(value)
+                }
+            }
+            // insert the profile
+            profile_map.as_table_like_mut().unwrap().insert(profile_str, value);
+            None
+        };
+        // move [<profile>] to [profile.<profile>]
+        let mut edited = false;
+        for profile in profiles {
+            let profile_str = profile.to_string().to_snake_case();
+            let toml_map = toml_doc.as_table_mut();
+            if let Some(value) = toml_map.remove(&profile_str) {
+                if !value.is_table_like() {
+                    config_warn!(
+                        "Invalid profile [{}] for TOML at {}: Expected [{}] to be a Table",
+                        profile_str,
+                        toml_path.display(),
+                        profile_str
+                    );
+                    toml_map.insert(&profile_str, value);
+                } else if let Some(non_inserted) = insert_profile(toml_map, &profile_str, value) {
+                    toml_map.insert(&profile_str, non_inserted);
+                } else {
+                    edited = true;
+                }
+            } else if profile == Config::DEFAULT_PROFILE &&
+                toml_map
+                    .get(Config::PROFILE_SECTION)
+                    .and_then(|val| val.as_table_like())
+                    .and_then(|table| table.get(&profile_str))
+                    .is_none() &&
+                insert_profile(
+                    toml_map,
+                    &profile_str,
+                    toml_edit::Item::Table(toml_edit::Table::new()),
+                )
+                .is_none()
+            {
+                // inserted default profile if it doesn't exist
+                edited = true;
+            }
+        }
+        // emit warnings for unknown sections
+        for section in
+            toml_doc.as_table().iter().map(|(k, _)| k).filter(|k| {
+                !(k == &Config::PROFILE_SECTION || Config::STANDALONE_SECTIONS.contains(k))
+            })
+        {
+            config_warn!("Unknown section [{}] found in TOML at {}. If you wish to use this section as a profile, run the command again with FOUNDRY_PROFILE=\"{}\".", section, toml_path.display(), section);
+        }
+        // write toml back to file
+        if edited {
+            if let Err(err) = fs::write(toml_path, toml_doc.to_string()) {
+                config_warn!("Could not write TOML to {}: {}", toml_path.display(), err);
+            }
+        }
+    }
+
+    /// Fix foundry.toml files. Making sure any implicit profile [<profile>] becomes
+    /// [profile.<profile>]
+    pub fn fix_tomls() {
+        let tomls = {
+            let mut tomls = vec![];
+            if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+                tomls.push(global_toml);
+            }
+            let local_toml = Env::var("FOUNDRY_CONFIG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| Config::default().__root.0.join(Config::FILE_NAME));
+            if local_toml.exists() {
+                tomls.push(local_toml);
+            } else {
+                config_warn!("No local TOML found to fix. Change the current directory to a project path or set the foundry.toml path with the FOUNDRY_CONFIG environment variable");
+            }
+            tomls
+        };
+        let profiles = {
+            let profile = Config::selected_profile();
+            let mut profiles = vec![Config::DEFAULT_PROFILE];
+            if profile != Config::DEFAULT_PROFILE {
+                profiles.push(profile);
+            }
+            profiles
+        };
+        for toml in tomls {
+            Self::fix_toml_for_profiles(toml, &profiles);
+        }
     }
 
     fn merge_toml_provider(
@@ -2153,7 +2303,7 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
         if let Some(profile) = figment.profiles().find(|p| self.profiles.contains(p)) {
             let src =
                 self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            macros::config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
+            config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
         }
         for profile in &self.profiles {
             figment = figment.merge(UnwrapProfileProvider::new(
@@ -3255,6 +3405,7 @@ mod tests {
             Ok(())
         });
     }
+
     #[test]
     fn test_fmt_config() {
         figment::Jail::expect_with(|jail| {
@@ -3271,6 +3422,105 @@ mod tests {
             assert_eq!(
                 loaded.fmt,
                 FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fix_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("HOME", jail.directory().display().to_string());
+            std::fs::create_dir(jail.directory().join(".foundry")).unwrap();
+
+            // add a default section if not exists
+            jail.create_file("foundry.toml", "")?;
+            Config::fix_tomls();
+            assert_eq!(
+                fs::read_to_string("foundry.toml").unwrap(),
+                r#"
+[profile.default]
+"#
+            );
+
+            // change profile name to nested name and leaving non-selected profile alone
+            // this should also emit a warning
+            jail.create_file(
+                "foundry2.toml",
+                r#"
+                [default]
+                src = "src"
+                # comment
+
+                [other]
+                src = "other-src"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_CONFIG", "foundry2.toml");
+            Config::fix_tomls();
+            assert_eq!(
+                fs::read_to_string("foundry2.toml").unwrap(),
+                r#"
+                [profile.default]
+                src = "src"
+                # comment
+
+                [other]
+                src = "other-src"
+                "#
+            );
+
+            // change both the default and a select profile if selected
+            jail.create_file(
+                "foundry3.toml",
+                r#"
+                [default]
+                src = "src"
+                # comment
+
+                [other]
+                src = "other-src"
+                "#,
+            )?;
+            jail.set_env("FOUNDRY_CONFIG", "foundry3.toml");
+            jail.set_env("FOUNDRY_PROFILE", "other");
+            Config::fix_tomls();
+            assert_eq!(
+                fs::read_to_string("foundry3.toml").unwrap(),
+                r#"
+                [profile.default]
+                src = "src"
+                # comment
+
+                [profile.other]
+                src = "other-src"
+                "#
+            );
+
+            // fix global foundry.toml as well
+            jail.create_file(
+                ".foundry/foundry.toml",
+                r#"
+                [default]
+                src = "src"
+                # comment
+
+                [other]
+                src = "other-src"
+                "#,
+            )?;
+            Config::fix_tomls();
+            assert_eq!(
+                fs::read_to_string(".foundry/foundry.toml").unwrap(),
+                r#"
+                [profile.default]
+                src = "src"
+                # comment
+
+                [profile.other]
+                src = "other-src"
+                "#
             );
 
             Ok(())

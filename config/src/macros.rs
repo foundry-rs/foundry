@@ -115,12 +115,12 @@ macro_rules! impl_figment_convert_cast {
 }
 
 macro_rules! config_warn {
-    ($($arg:tt),*) => {
+    ($($arg:tt)*) => {
         eprintln!(
             "{}{} {}",
             ansi_term::Color::Yellow.bold().paint("warning"),
             ansi_term::Style::new().bold().paint(":"),
-            format_args!($($arg),*)
+            format_args!($($arg)*)
         )
     }
 }
