@@ -77,7 +77,7 @@ pub struct NodeConfig {
     /// Default base fee
     pub base_fee: Option<U256>,
     /// The hardfork to use
-    pub hardfork: Hardfork,
+    pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
@@ -167,7 +167,7 @@ Derivation path:   {}
             );
         }
 
-        if (SpecId::from(self.hardfork) as u8) < (SpecId::LONDON as u8) {
+        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
                 config_string,
                 r#"
@@ -285,7 +285,7 @@ impl Default for NodeConfig {
             chain_id: Some(CHAIN_ID),
             gas_limit: U256::from(30_000_000),
             gas_price: None,
-            hardfork: Hardfork::default(),
+            hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
             // 100ETH default balance
@@ -319,6 +319,11 @@ impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_gas_price(&self) -> U256 {
         self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
+    }
+
+    /// Returns the base fee to use
+    pub fn get_hardfork(&self) -> Hardfork {
+        self.hardfork.unwrap_or_default()
     }
 
     /// Sets the chain ID
@@ -370,7 +375,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Hardfork) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<Hardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -536,7 +541,7 @@ impl NodeConfig {
         // configure the revm environment
         let mut env = revm::Env {
             cfg: CfgEnv {
-                spec_id: self.hardfork.into(),
+                spec_id: self.get_hardfork().into(),
                 chain_id: self.get_chain_id().into(),
                 ..Default::default()
             },
@@ -560,6 +565,13 @@ impl NodeConfig {
             );
 
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
+                // auto adjust hardfork if not specified
+                if self.hardfork.is_none() {
+                    let hardfork: Hardfork = fork_block_number.into();
+                    env.cfg.spec_id = hardfork.into();
+                    self.hardfork = Some(hardfork);
+                }
+
                 fork_block_number
             } else {
                 // pick the last block number but also ensure it's not pending anymore
@@ -678,6 +690,7 @@ pub enum Hardfork {
     Muirglacier,
     Berlin,
     London,
+    ArrowGlacier,
     Latest,
 }
 
@@ -698,6 +711,7 @@ impl FromStr for Hardfork {
             "muirglacier" | "9" => Hardfork::Muirglacier,
             "berlin" | "10" => Hardfork::Berlin,
             "london" | "11" => Hardfork::London,
+            "arrowglacier" => Hardfork::ArrowGlacier,
             "latest" | "12" => Hardfork::Latest,
             _ => return Err(format!("Unknown hardfork {}", s)),
         };
@@ -725,7 +739,32 @@ impl From<Hardfork> for SpecId {
             Hardfork::Muirglacier => SpecId::MUIRGLACIER,
             Hardfork::Berlin => SpecId::BERLIN,
             Hardfork::London => SpecId::LONDON,
-            Hardfork::Latest => SpecId::LATEST,
+            Hardfork::ArrowGlacier | Hardfork::Latest => SpecId::LATEST,
+        }
+    }
+}
+
+impl<T: Into<BlockNumber>> From<T> for Hardfork {
+    fn from(block: T) -> Hardfork {
+        let num = match block.into() {
+            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
+            BlockNumber::Earliest => 0,
+            BlockNumber::Number(num) => num.as_u64(),
+        };
+
+        match num {
+            _i if num < 1_150_000 => Hardfork::Frontier,
+            _i if num < 2463000 => Hardfork::Homestead,
+            _i if num < 2675000 => Hardfork::Tangerine,
+            _i if num < 4370000 => Hardfork::SpuriousDragon,
+            _i if num < 7280000 => Hardfork::Byzantium,
+            _i if num < 9069000 => Hardfork::Constantinople,
+            _i if num < 9200000 => Hardfork::Istanbul,
+            _i if num < 12244000 => Hardfork::Muirglacier,
+            _i if num < 12965000 => Hardfork::Berlin,
+            _i if num < 13773000 => Hardfork::London,
+
+            _ => Hardfork::Latest,
         }
     }
 }
@@ -821,4 +860,21 @@ async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Er
     }
 
     Ok(num)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hardfork_blocks() {
+        let hf: Hardfork = 12965000u64.into();
+        assert_eq!(hf, Hardfork::London);
+
+        let hf: Hardfork = 4370000u64.into();
+        assert_eq!(hf, Hardfork::Byzantium);
+
+        let hf: Hardfork = 12244000u64.into();
+        assert_eq!(hf, Hardfork::Berlin);
+    }
 }

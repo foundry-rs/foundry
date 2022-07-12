@@ -12,7 +12,7 @@ use std::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Hardfork::Berlin)).await;
+    let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
     let provider = handle.http_provider();
 
     let gas_price = 1337u64.into();
