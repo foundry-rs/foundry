@@ -1,4 +1,4 @@
-use revm::SubRoutine;
+use revm::{SubRoutine, Env};
 
 /// Represents a snapshot taken during evm execution
 #[derive(Clone, Debug)]
@@ -6,14 +6,16 @@ pub struct BackendSnapshot<T> {
     pub db: T,
     /// The subroutine state at a specific point
     pub subroutine: SubRoutine,
+    /// Contains the env at the time of the snapshot
+    pub env: Env
 }
 
 // === impl BackendSnapshot ===
 
 impl<T> BackendSnapshot<T> {
     /// Takes a new snapshot
-    pub fn new(db: T, subroutine: SubRoutine) -> Self {
-        Self { db, subroutine }
+    pub fn new(db: T, subroutine: SubRoutine, env: Env) -> Self {
+        Self { db, subroutine, env }
     }
 
     /// Called when this snapshot is reverted.
