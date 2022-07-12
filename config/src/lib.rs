@@ -318,6 +318,9 @@ impl Config {
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
 
+    /// Standalone sections in the config which get integrated into the selected profile
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
+
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
@@ -917,44 +920,30 @@ impl Config {
     /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         // serializing to value first to prevent `ValueAfterTable` errors
-        let value = toml::Value::try_from(self)?;
-        let mut s = toml::to_string_pretty(&value)?;
-
-        if self.optimizer_details.is_some() {
-            // this is a hack to make nested tables work because this requires the config's profile
-            s = s
-                .replace(
-                    "[optimizer_details]",
-                    &format!("[profile.{}.optimizer_details]", self.profile),
-                )
-                .replace(
-                    "[optimizer_details.yulDetails]",
-                    &format!("[profile.{}.optimizer_details.yulDetails]", self.profile),
-                );
-        }
-        if self.model_checker.is_some() {
-            // similarly to the optimizer details above,
-            // this is a hack to make nested tables work because this requires the config's profile
-            s = ["contracts", "engine", "targets", "timeout"]
-                .iter()
-                .fold(s, |acc, op| {
-                    acc.replace(
-                        &format!("[model_checker.{}]", op),
-                        &format!("[profile.{}.model_checker.{}]", self.profile, op),
-                    )
-                })
-                .replace("[model_checker]", &format!("[profile.{}.model_checker]", self.profile));
-        }
-        s = s.replace(
-            "[rpc_storage_caching]",
-            &format!("[profile.{}.rpc_storage_caching]", self.profile),
+        let mut value = toml::Value::try_from(self)?;
+        // remove standalone sections from inner table
+        let standalone_sections = Config::STANDALONE_SECTIONS
+            .iter()
+            .filter_map(|section| {
+                let section = section.to_string();
+                value.as_table_mut().unwrap().remove(&section).map(|value| (section, value))
+            })
+            .collect::<Vec<_>>();
+        // wrap inner table in [profile.<profile>]
+        let mut wrapping_table = toml::Value::Table(
+            [(
+                "profile".into(),
+                toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
+            )]
+            .into_iter()
+            .collect(),
         );
-
-        Ok(format!(
-            r#"[profile.{}]
-{}"#,
-            self.profile, s
-        ))
+        // insert standalone sections
+        for (section, value) in standalone_sections {
+            wrapping_table.as_table_mut().unwrap().insert(section, value);
+        }
+        // stringify
+        toml::to_string_pretty(&wrapping_table)
     }
 
     /// Returns the path to the `foundry.toml`  of this `Config`
@@ -1195,7 +1184,11 @@ impl Config {
         dir_size_recursive(fs::read_dir(chain_path)?)
     }
 
-    fn merge_toml_provider(figment: &mut Figment, toml_provider: impl Provider, profile: Profile) {
+    fn merge_toml_provider(
+        mut figment: Figment,
+        toml_provider: impl Provider,
+        profile: Profile,
+    ) -> Figment {
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -1208,16 +1201,15 @@ impl Config {
 
         // merge the default profile as a base
         if profile != Config::DEFAULT_PROFILE {
-            *figment = std::mem::take(figment)
-                .merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
+            figment = figment.merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
         }
         // merge special keys into config
-        for standalone_key in ["fmt", "rpc_endpoints"] {
-            *figment =
-                std::mem::take(figment).merge(provider.wrap(profile.clone(), standalone_key));
+        for standalone_key in Config::STANDALONE_SECTIONS {
+            figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
         }
         // merge the profile
-        *figment = std::mem::take(figment).merge(provider);
+        figment = figment.merge(provider);
+        figment
     }
 }
 
@@ -1228,15 +1220,15 @@ impl From<Config> for Figment {
 
         // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            Config::merge_toml_provider(
-                &mut figment,
+            figment = Config::merge_toml_provider(
+                figment,
                 TomlFileProvider::new(None, global_toml).cached(),
                 profile.clone(),
             );
         }
         // merge local foundry.toml file
-        Config::merge_toml_provider(
-            &mut figment,
+        figment = Config::merge_toml_provider(
+            figment,
             TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
                 .cached(),
             profile.clone(),
@@ -1360,8 +1352,8 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
 pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
     s: &str,
 ) -> Result<Option<(Profile, T)>, Error> {
-    let mut figment = Figment::new();
-    Config::merge_toml_provider(&mut figment, Toml::string(s), Config::DEFAULT_PROFILE);
+    let figment =
+        Config::merge_toml_provider(Figment::new(), Toml::string(s), Config::DEFAULT_PROFILE);
     if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
         Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
     } else {
