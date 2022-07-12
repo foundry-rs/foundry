@@ -391,7 +391,7 @@ async fn test_fork_nft_set_approve_all() {
         fork_config()
             .with_fork_block_number(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
-            .with_chain_id(1u64),
+            .with_chain_id(1u64.into()),
     )
     .await;
 
@@ -429,6 +429,31 @@ async fn test_fork_nft_set_approve_all() {
 
     let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
     assert_eq!(real_onwer, wallet.address());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/2261>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_with_custom_chain_id() {
+    // spawn a forked node with some random chainId
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(14812197u64))
+            .with_blocktime(Some(Duration::from_secs(5)))
+            .with_chain_id(3145u64.into()),
+    )
+    .await;
+
+    // get the eth chainId and the txn chainId
+    let eth_chain_id = api.eth_chain_id();
+    let txn_chain_id = api.chain_id();
+
+    // get the chainId in the config
+    let config_chain_id = handle.config().chain_id;
+
+    // check that the chainIds are the same
+    assert_eq!(eth_chain_id.unwrap().unwrap().as_u64(), 3145u64);
+    assert_eq!(txn_chain_id, 3145u64);
+    assert_eq!(config_chain_id, Some(3145u64));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/1920>
