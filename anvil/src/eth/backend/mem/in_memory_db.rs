@@ -180,7 +180,7 @@ mod tests {
         db.set_storage_at(test_addr, "0x1234567".into(), "0x1".into());
         db.set_storage_at(test_addr, "0x1234568".into(), "0x2".into());
 
-        let mut new_state = SerializableState::new();
+        let mut new_state = SerializableState::default();
 
         new_state.accounts.insert(
             test_addr2,
