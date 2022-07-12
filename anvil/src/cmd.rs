@@ -69,13 +69,8 @@ pub struct NodeArgs {
     #[clap(long, help = "Don't print anything on startup.")]
     pub silent: bool,
 
-    #[clap(
-        long,
-        help = "The EVM hardfork to use.",
-        default_value = "latest",
-        value_name = "HARDFORK"
-    )]
-    pub hardfork: Hardfork,
+    #[clap(long, help = "The EVM hardfork to use.", value_name = "HARDFORK")]
+    pub hardfork: Option<Hardfork>,
 
     #[clap(
         short,
