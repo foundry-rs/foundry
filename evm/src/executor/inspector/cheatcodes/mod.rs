@@ -1,17 +1,3 @@
-/// Cheatcodes related to the execution environment.
-mod env;
-pub use env::{Prank, RecordAccess, RecordedLogs};
-/// Assertion helpers (such as `expectEmit`)
-mod expect;
-pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
-/// Cheatcodes that interact with the external environment (FFI etc.)
-mod ext;
-/// Cheatcodes that configure the fuzzer
-mod fuzz;
-/// Utility cheatcodes (`sign` etc.)
-mod util;
-pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
-
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
@@ -19,7 +5,10 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
-    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    executor::{
+        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
+        HARDHAT_CONSOLE_ADDRESS,
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -30,8 +19,7 @@ use ethers::{
     },
 };
 use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
-    Return,
+    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
 };
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -40,6 +28,25 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
+/// Cheatcodes related to the execution environment.
+mod env;
+pub use env::{Prank, RecordAccess};
+/// Assertion helpers (such as `expectEmit`)
+mod expect;
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+
+/// Cheatcodes that interact with the external environment (FFI etc.)
+mod ext;
+/// Fork related cheatcodes
+mod fork;
+/// Cheatcodes that configure the fuzzer
+mod fuzz;
+/// Snapshot related cheatcodes
+mod snapshot;
+/// Utility cheatcodes (`sign` etc.)
+mod util;
+pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
 mod config;
 pub use config::CheatsConfig;
@@ -126,7 +133,7 @@ impl Cheatcodes {
         }
     }
 
-    fn apply_cheatcode<DB: Database>(
+    fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
         caller: Address,
@@ -141,14 +148,52 @@ impl Cheatcodes {
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
             .or_else(|| ext::apply(self, self.config.ffi, &decoded))
+            .or_else(|| snapshot::apply(self, data, &decoded))
+            .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }
 
 impl<DB> Inspector<DB> for Cheatcodes
 where
-    DB: Database,
+    DB: DatabaseExt,
 {
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
+        }
+
+        Return::Continue
+    }
+
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+        // Match logs if `expectEmit` has been called
+        if !self.expected_emits.is_empty() {
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
+        }
+
+        // Stores this log if `recordLogs` has been called
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs
+                .entries
+                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+        }
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -261,24 +306,6 @@ where
         }
     }
 
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _: bool,
-    ) -> Return {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            data.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
-        }
-
-        Return::Continue
-    }
-
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
@@ -311,24 +338,6 @@ where
         }
 
         Return::Continue
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
-        // Match logs if `expectEmit` has been called
-        if !self.expected_emits.is_empty() {
-            handle_expect_emit(
-                self,
-                RawLog { topics: topics.to_vec(), data: data.to_vec() },
-                address,
-            );
-        }
-
-        // Stores this log if `recordLogs` has been called
-        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
-            storage_recorded_logs
-                .entries
-                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
-        }
     }
 
     fn call_end(

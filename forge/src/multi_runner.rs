@@ -2,18 +2,206 @@ use crate::{result::SuiteResult, ContractRunner, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{utils::RuntimeOrHandle, Artifact, ProjectCompileOutput},
+    solc::{Artifact, ProjectCompileOutput},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_evm::executor::{
-    builder::Backend, inspector::CheatsConfig, opts::EvmOpts, DatabaseRef, Executor,
-    ExecutorBuilder, Fork, SpecId,
+use foundry_evm::{
+    executor::{
+        backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
+        ExecutorBuilder, SpecId,
+    },
+    revm,
 };
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
+use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
+
+pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
+
+/// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
+/// to run all test functions in these contracts.
+pub struct MultiContractRunner {
+    /// Mapping of contract name to Abi, creation bytecode and library bytecode which
+    /// needs to be deployed & linked against
+    pub contracts: DeployableContracts,
+    /// Compiled contracts by name that have an Abi and runtime bytecode
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    /// The EVM instance used in the test runner
+    pub evm_opts: EvmOpts,
+    /// The configured evm
+    pub env: revm::Env,
+    /// The EVM spec
+    pub evm_spec: SpecId,
+    /// All known errors, used for decoding reverts
+    pub errors: Option<Abi>,
+    /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
+    fuzzer: Option<TestRunner>,
+    /// The address which will be used as the `from` field in all EVM calls
+    sender: Option<Address>,
+    /// A map of contract names to absolute source file paths
+    pub source_paths: BTreeMap<String, String>,
+    /// The fork to use at launch
+    pub fork: Option<CreateFork>,
+    /// Additional cheatcode inspector related settings derived from the `Config`
+    pub cheats_config: CheatsConfig,
+    /// Whether to collect coverage info
+    pub coverage: bool,
+}
+
+impl MultiContractRunner {
+    pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions().filter(|func| filter.matches_test(func.signature()))
+            })
+            .count()
+    }
+
+    // Get all tests of matching path and contract
+    pub fn get_tests(&self, filter: &impl TestFilter) -> Vec<String> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
+            .filter(|sig| sig.starts_with("test"))
+            .collect()
+    }
+
+    /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
+    pub fn list(
+        &self,
+        filter: &impl TestFilter,
+    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        self.contracts
+            .iter()
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
+            })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map(|(id, (abi, _, _))| {
+                let source = id.source.as_path().display().to_string();
+                let name = id.name.clone();
+                let tests = abi
+                    .functions()
+                    .filter(|func| func.name.starts_with("test"))
+                    .filter(|func| filter.matches_test(func.signature()))
+                    .map(|func| func.name.clone())
+                    .collect::<Vec<_>>();
+
+                (source, name, tests)
+            })
+            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
+                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
+                acc
+            })
+    }
+
+    /// Executes _all_ tests that match the given `filter`
+    ///
+    /// This will create the runtime based on the configured `evm` ops and create the `Backend`
+    /// before executing all contracts and their tests in _parallel_.
+    ///
+    /// Each Executor gets its own instance of the `Backend`.
+    pub fn test(
+        &mut self,
+        filter: &impl TestFilter,
+        stream_result: Option<Sender<(String, SuiteResult)>>,
+        include_fuzz_tests: bool,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        tracing::info!(include_fuzz_tests= ?include_fuzz_tests, "running all tests");
+
+        let db = Backend::spawn(self.fork.take());
+
+        let results =
+            // the db backend that serves all the data, each contract gets its own instance
+
+             self
+                .contracts
+                .par_iter()
+                .filter(|(id, _)| {
+                    filter.matches_path(id.source.to_string_lossy()) &&
+                        filter.matches_contract(&id.name)
+                })
+                .filter(|(_, (abi, _, _))| {
+                    abi.functions().any(|func| filter.matches_test(&func.name))
+                })
+                .map(|(id, (abi, deploy_code, libs))| {
+                    let executor = ExecutorBuilder::default()
+                        .with_cheatcodes(self.cheats_config.clone())
+                        .with_config(self.env.clone())
+                        .with_spec(self.evm_spec)
+                        .with_gas_limit(self.evm_opts.gas_limit())
+                        .set_tracing(self.evm_opts.verbosity >= 3)
+                        .set_coverage(self.coverage)
+                        .build(db.clone());
+                    let identifier = id.identifier();
+                    tracing::trace!(contract= ?identifier, "start executing all tests in contract");
+
+                    let result = self.run_tests(
+                        &identifier,
+                        abi,
+                        executor,
+                        deploy_code.clone(),
+                        libs,
+                        (filter, include_fuzz_tests),
+                    )?;
+
+                    tracing::trace!(contract= ?identifier, "executed all tests in contract");
+                    Ok((identifier, result))
+                })
+                .filter_map(Result::<_>::ok)
+                .filter(|(_, results)| !results.is_empty())
+                .map_with(stream_result, |stream_result, (name, result)| {
+                    if let Some(stream_result) = stream_result.as_ref() {
+                        stream_result.send((name.clone(), result.clone())).unwrap();
+                    }
+                    (name, result)
+                })
+                .collect::<BTreeMap<_, _>>()
+        ;
+
+        Ok(results)
+    }
+
+    // The _name field is unused because we only want it for tracing
+    #[tracing::instrument(
+        name = "contract",
+        skip_all,
+        err,
+        fields(name = %_name)
+    )]
+    fn run_tests(
+        &self,
+        _name: &str,
+        contract: &Abi,
+        executor: Executor,
+        deploy_code: Bytes,
+        libs: &[Bytes],
+        (filter, include_fuzz_tests): (&impl TestFilter, bool),
+    ) -> Result<SuiteResult> {
+        let runner = ContractRunner::new(
+            executor,
+            contract,
+            deploy_code,
+            self.evm_opts.initial_balance,
+            self.sender,
+            self.errors.as_ref(),
+            libs,
+        );
+        runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
+    }
+}
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -27,15 +215,13 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The EVM spec to use
     pub evm_spec: Option<SpecId>,
-    /// The fork config
-    pub fork: Option<Fork>,
+    /// The fork to use at launch
+    pub fork: Option<CreateFork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: Option<CheatsConfig>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
 }
-
-pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
@@ -44,6 +230,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
+        env: revm::Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
     where
@@ -92,7 +279,7 @@ impl MultiContractRunnerBuilder {
                     };
 
                 let abi = contract.abi.expect("We should have an abi by now");
-                // if its a test, add it to deployable contracts
+                // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
@@ -123,6 +310,7 @@ impl MultiContractRunnerBuilder {
             contracts: deployable_contracts,
             known_contracts,
             evm_opts,
+            env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
             fuzzer: self.fuzzer,
@@ -159,7 +347,7 @@ impl MultiContractRunnerBuilder {
     }
 
     #[must_use]
-    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
         self.fork = fork;
         self
     }
@@ -177,180 +365,6 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-/// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
-/// to run all test functions in these contracts.
-pub struct MultiContractRunner {
-    /// Mapping of contract name to Abi, creation bytecode and library bytecode which
-    /// needs to be deployed & linked against
-    pub contracts: DeployableContracts,
-    /// Compiled contracts by name that have an Abi and runtime bytecode
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
-    /// The EVM instance used in the test runner
-    pub evm_opts: EvmOpts,
-    /// The EVM spec
-    pub evm_spec: SpecId,
-    /// All known errors, used for decoding reverts
-    pub errors: Option<Abi>,
-    /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
-    fuzzer: Option<TestRunner>,
-    /// The address which will be used as the `from` field in all EVM calls
-    sender: Option<Address>,
-    /// A map of contract names to absolute source file paths
-    pub source_paths: BTreeMap<String, String>,
-    /// The fork config
-    pub fork: Option<Fork>,
-    /// Additional cheatcode inspector related settings derived from the `Config`
-    pub cheats_config: CheatsConfig,
-    /// Whether or not to collect coverage info
-    pub coverage: bool,
-}
-
-impl MultiContractRunner {
-    pub fn count_filtered_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> usize {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .flat_map(|(_, (abi, _, _))| {
-                abi.functions().filter(|func| filter.matches_test(func.signature()))
-            })
-            .count()
-    }
-
-    // Get all tests of matching path and contract
-    pub fn get_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> Vec<String> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
-            .filter(|sig| sig.starts_with("test"))
-            .collect()
-    }
-
-    pub fn list(
-        &self,
-        filter: &(impl TestFilter + Send + Sync),
-    ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
-            .map(|(id, (abi, _, _))| {
-                let source = id.source.as_path().display().to_string();
-                let name = id.name.clone();
-                let tests = abi
-                    .functions()
-                    .filter(|func| func.name.starts_with("test"))
-                    .filter(|func| filter.matches_test(func.signature()))
-                    .map(|func| func.name.clone())
-                    .collect::<Vec<_>>();
-
-                (source, name, tests)
-            })
-            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
-                acc.entry(source).or_insert(BTreeMap::new()).insert(name, tests);
-                acc
-            })
-    }
-
-    pub fn test(
-        &mut self,
-        filter: &(impl TestFilter + Send + Sync),
-        stream_result: Option<Sender<(String, SuiteResult)>>,
-        include_fuzz_tests: bool,
-    ) -> Result<BTreeMap<String, SuiteResult>> {
-        tracing::info!(include_fuzz_tests= ?include_fuzz_tests, "running all tests");
-
-        let runtime = RuntimeOrHandle::new();
-        let env = runtime.block_on(self.evm_opts.evm_env());
-
-        // the db backend that serves all the data
-        let db = runtime.block_on(Backend::new(self.fork.take(), &env));
-
-        let results = self
-            .contracts
-            .par_iter()
-            .filter(|(id, _)| {
-                filter.matches_path(id.source.to_string_lossy()) &&
-                    filter.matches_contract(&id.name)
-            })
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
-            .map(|(id, (abi, deploy_code, libs))| {
-                let identifier = id.identifier();
-                tracing::trace!(contract= ?identifier, "start executing all tests in contract");
-
-                let executor = ExecutorBuilder::default()
-                    .with_cheatcodes(self.cheats_config.clone())
-                    .with_config(env.clone())
-                    .with_spec(self.evm_spec)
-                    .with_gas_limit(self.evm_opts.gas_limit())
-                    .set_tracing(self.evm_opts.verbosity >= 3)
-                    .set_coverage(self.coverage)
-                    .build(db.clone());
-
-                let result = self.run_tests(
-                    &identifier,
-                    abi,
-                    executor,
-                    deploy_code.clone(),
-                    libs,
-                    (filter, include_fuzz_tests),
-                )?;
-
-                tracing::trace!(contract= ?identifier, "executed all tests in contract");
-                Ok((identifier, result))
-            })
-            .filter_map(Result::<_>::ok)
-            .filter(|(_, results)| !results.is_empty())
-            .map_with(stream_result, |stream_result, (name, result)| {
-                if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result.send((name.clone(), result.clone())).unwrap();
-                }
-                (name, result)
-            })
-            .collect::<BTreeMap<_, _>>();
-
-        tracing::info!(num_tests= ?results.len(),"ran all tests");
-        Ok(results)
-    }
-
-    // The _name field is unused because we only want it for tracing
-    #[tracing::instrument(
-        name = "contract",
-        skip_all,
-        err,
-        fields(name = %_name)
-    )]
-    fn run_tests<DB: DatabaseRef + Send + Sync>(
-        &self,
-        _name: &str,
-        contract: &Abi,
-        executor: Executor<DB>,
-        deploy_code: Bytes,
-        libs: &[Bytes],
-        (filter, include_fuzz_tests): (&impl TestFilter, bool),
-    ) -> Result<SuiteResult> {
-        let mut runner = ContractRunner::new(
-            executor,
-            contract,
-            deploy_code,
-            self.evm_opts.initial_balance,
-            self.sender,
-            self.errors.as_ref(),
-            libs,
-        );
-        runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,22 +374,28 @@ mod tests {
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
         },
     };
-    use foundry_config::Config;
+    use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
     use foundry_evm::trace::TraceKind;
     use std::env;
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
-        MultiContractRunnerBuilder::default()
-            .sender(EVM_OPTS.sender)
-            .with_cheats_config(CheatsConfig::new(&Config::default(), &*EVM_OPTS))
+        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
     }
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
+        let mut config = Config::with_root(PROJECT.root());
+        config.rpc_endpoints = rpc_endpoints();
+
         base_runner()
-            .with_cheats_config(CheatsConfig::new(&Config::with_root(PROJECT.root()), &*EVM_OPTS))
-            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.clone())
+            .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
+            .build(
+                &PROJECT.paths.root,
+                (*COMPILED).clone(),
+                EVM_OPTS.evm_env_blocking(),
+                EVM_OPTS.clone(),
+            )
             .unwrap()
     }
 
@@ -383,7 +403,9 @@ mod tests {
     fn tracing_runner() -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
-        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
+        base_runner()
+            .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+            .unwrap()
     }
 
     // Builds a runner that runs against forked state
@@ -392,19 +414,28 @@ mod tests {
 
         opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
         opts.fork_url = Some(rpc.to_string());
-        let chain_id = opts.get_chain_id();
 
-        let fork = Some(Fork {
-            cache_path: None,
-            url: rpc.to_string(),
-            pin_block: None,
-            chain_id,
-            initial_backoff: 50,
-        });
+        let env = opts.evm_env_blocking();
+        let fork = opts.get_fork(env.clone());
+
         base_runner()
             .with_fork(fork)
-            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)
+            .build(&LIBS_PROJECT.paths.root, (*COMPILED_WITH_LIBS).clone(), env, opts)
             .unwrap()
+    }
+
+    /// the RPC endpoints used during tests
+    fn rpc_endpoints() -> RpcEndpoints {
+        RpcEndpoints::new([
+            (
+                "rpcAlias",
+                RpcEndpoint::Url(
+                    "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf"
+                        .to_string(),
+                ),
+            ),
+            ("rpcEnvAlias", RpcEndpoint::Env("RPC_ENV_ALIAS".to_string())),
+        ])
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
@@ -1090,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cheats() {
+    fn test_env_vars() {
         let mut runner = runner();
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,
@@ -1106,9 +1137,38 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
             env_var_key,
             env_var_val
         );
+    }
 
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
+    /// Executes all fork cheatcodes
+    #[test]
+    fn test_cheats_fork() {
+        let mut runner = runner();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*cheats/Fork"), None, true).unwrap();
         assert!(!suite_result.is_empty());
+
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                let logs = decode_console_logs(&result.logs);
+                assert!(
+                    result.success,
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name,
+                    result.reason,
+                    logs.join("\n")
+                );
+            }
+        }
+    }
+
+    /// Executes all cheat code tests but not fork cheat codes
+    #[test]
+    fn test_cheats_local() {
+        let mut runner = runner();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
+        assert!(!suite_result.is_empty());
+
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
@@ -1214,7 +1274,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner
-            .test(&Filter::new(".*", ".*", format!(".*Abstract.t.sol").as_str()), None, true)
+            .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None, true)
             .unwrap();
         println!("{:?}", results.keys());
         assert!(results

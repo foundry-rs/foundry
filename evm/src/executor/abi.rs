@@ -5,6 +5,7 @@ use std::collections::HashMap;
 /// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
 ///
 /// This is the same address as the one used in DappTools's HEVM.
+/// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
 pub static CHEATCODE_ADDRESS: Address = H160([
     0x71, 0x09, 0x70, 0x9E, 0xcf, 0xa9, 0x1a, 0x80, 0x62, 0x6f, 0xf3, 0x98, 0x9d, 0x68, 0xf6, 0x7f,
     0x5b, 0x1d, 0xd1, 0x2d,
@@ -84,6 +85,18 @@ ethers::contract::abigen!(
             toString(int256)
             toString(bytes32)
             toString(bool)
+            snapshot()(uint256)
+            revertTo(uint256)(bool)
+            createFork(string,uint256)(uint256)
+            createFork(string)(uint256)
+            createSelectFork(string,uint256)(uint256)
+            createSelectFork(string)(uint256)
+            selectFork(uint256)
+            activeFork()(uint256)
+            rollFork(uint256)
+            rollFork(uint256,uint256)
+            rpcUrl(string)(string)
+            rpcUrls()(string[2][])
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

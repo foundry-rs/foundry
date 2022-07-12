@@ -135,4 +135,34 @@ interface Cheats {
     function toString(bool)           external returns(string memory);
     function toString(uint256)        external returns(string memory);
     function toString(int256)         external returns(string memory);
+    // Snapshot the current state of the evm.
+    // Returns the id of the snapshot that was created.
+    // To revert a snapshot use `revertTo`
+    function snapshot() external returns(uint256);
+    // Revert the state of the evm to a previous snapshot
+    // Takes the snapshot id to revert to.
+    // This deletes the snapshot and all snapshots taken after the given snapshot id.
+    function revertTo(uint256) external returns(bool);
+    // Creates a new fork with the given endpoint and block and returns the identifier of the fork
+    function createFork(string calldata,uint256) external returns(uint256);
+    // Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork
+    function createFork(string calldata) external returns(uint256);
+    // Creates _and_ also selects a new fork with the given endpoint and block and returns the identifier of the fork
+    function createSelectFork(string calldata,uint256) external returns(uint256);
+    // Creates _and_ also selects a new fork with the given endpoint and the latest block and returns the identifier of the fork
+    function createSelectFork(string calldata) external returns(uint256);
+    // Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
+    function selectFork(uint256) external;
+    /// Returns the currently active fork
+    /// Reverts if no fork is currently active
+    function activeFork() external returns(uint256);
+    // Updates the currently active fork to given block number
+    // This is similar to `roll` but for the currently active fork
+    function rollFork(uint256) external;
+    // Updates the given fork to given block number
+    function rollFork(uint256 forkId, uint256 blockNumber) external;
+    /// Returns the RPC url for the given alias
+    function rpcUrl(string calldata) external returns(string memory);
+    /// Returns all rpc urls and their aliases `[alias, url][]`
+    function rpcUrls() external returns(string[2][] memory);
 }

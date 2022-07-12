@@ -1,16 +1,15 @@
+use super::*;
 use crate::{
-    cmd::{
-        forge::script::{sequence::TransactionWithMetadata, *},
-        needs_setup,
-    },
+    cmd::{forge::script::sequence::TransactionWithMetadata, needs_setup},
     utils,
 };
+use cast::executor::inspector::CheatsConfig;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{builder::Backend, inspector::CheatsConfig, ExecutorBuilder},
+    executor::{Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
@@ -146,24 +145,16 @@ impl ScriptArgs {
     }
 
     /// Creates the Runner that drives script execution
-    async fn prepare_runner(
-        &self,
-        script_config: &ScriptConfig,
-        sender: Address,
-    ) -> ScriptRunner<Backend> {
+    async fn prepare_runner(&self, script_config: &ScriptConfig, sender: Address) -> ScriptRunner {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = Backend::new(
-            utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
-            &env,
-        )
-        .await;
+        let db = Backend::spawn(script_config.evm_opts.get_fork(env.clone()));
 
         let executor = ExecutorBuilder::default()
             .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
+            .with_spec(utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
             .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug)
             .set_debugger(self.debug)
