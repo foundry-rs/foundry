@@ -1143,8 +1143,13 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_cheats_fork() {
         let mut runner = runner();
-        let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/Fork"), None, true).unwrap();
+        let suite_result = runner
+            .test(
+                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", std::path::MAIN_SEPARATOR)),
+                None,
+                true,
+            )
+            .unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
@@ -1165,8 +1170,13 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_cheats_local() {
         let mut runner = runner();
-        let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
+        let suite_result = runner
+            .test(
+                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", std::path::MAIN_SEPARATOR)),
+                None,
+                true,
+            )
+            .unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
