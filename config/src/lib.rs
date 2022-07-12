@@ -1502,8 +1502,11 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
 pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
     s: &str,
 ) -> Result<Option<(Profile, T)>, Error> {
-    let figment =
-        Config::merge_toml_provider(Figment::new(), Toml::string(s), Config::DEFAULT_PROFILE);
+    let figment = Config::merge_toml_provider(
+        Figment::new(),
+        Toml::string(s).nested(),
+        Config::DEFAULT_PROFILE,
+    );
     if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
         Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
     } else {
@@ -3426,6 +3429,31 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_parse_with_profile() {
+        let foundry_str = r#"
+            [profile.default]
+            src = 'src'
+            out = 'out'
+            libs = ['lib']
+
+            # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+        "#;
+        assert_eq!(
+            parse_with_profile::<BasicConfig>(foundry_str).unwrap().unwrap(),
+            (
+                Config::DEFAULT_PROFILE,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "src".into(),
+                    out: "out".into(),
+                    libs: vec!["lib".into()],
+                    remappings: vec![]
+                }
+            )
+        );
     }
 
     #[test]
