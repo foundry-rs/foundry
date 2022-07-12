@@ -1224,6 +1224,44 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
         Ok(())
     }
+
+    fn visit_block<T>(&mut self, loc: Loc, statements: &mut Vec<T>) -> Result<()>
+    where
+        T: Visitable + LineOfCode,
+    {
+        write_chunk!(self, "{{")?;
+
+        if let Some(statement) = statements.first() {
+            self.write_whitespace_separator(true)?;
+            self.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
+        }
+
+        self.indented(1, |fmt| {
+            fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
+
+            let prefix_comments = fmt.comments.remove_prefixes_before(loc.end());
+            if prefix_comments.is_empty() {
+                fmt.write_postfix_comments_before(loc.end())?;
+            } else {
+                let first_prefix = prefix_comments.first().unwrap();
+                fmt.write_postfix_comments_before(first_prefix.loc.start())?;
+                if first_prefix.has_newline_before && !fmt.is_beginning_of_line() {
+                    write!(fmt.buf(), "\n\n")?;
+                }
+                for prefix in prefix_comments {
+                    fmt.write_comment(&prefix)?;
+                }
+            }
+            Ok(())
+        })?;
+
+        if !statements.is_empty() {
+            self.write_whitespace_separator(true)?;
+        }
+        write_chunk!(self, loc.end(), "}}")?;
+
+        Ok(())
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -2215,38 +2253,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if unchecked {
             write_chunk!(self, loc.start(), "unchecked ")?;
         }
-        write_chunk!(self, "{{")?;
 
-        if let Some(statement) = statements.first() {
-            self.write_whitespace_separator(true)?;
-            self.write_postfix_comments_before(LineOfCode::loc(statement).start())?;
-        }
-
-        self.indented(1, |fmt| {
-            fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
-
-            let prefix_comments = fmt.comments.remove_prefixes_before(loc.end());
-            if prefix_comments.is_empty() {
-                fmt.write_postfix_comments_before(loc.end())?;
-            } else {
-                let first_prefix = prefix_comments.first().unwrap();
-                fmt.write_postfix_comments_before(first_prefix.loc.start())?;
-                if first_prefix.has_newline_before && !fmt.is_beginning_of_line() {
-                    write!(fmt.buf(), "\n\n")?;
-                }
-                for prefix in prefix_comments {
-                    fmt.write_comment(&prefix)?;
-                }
-            }
-            Ok(())
-        })?;
-
-        if !statements.is_empty() {
-            self.write_whitespace_separator(true)?;
-        }
-        write_chunk!(self, loc.end(), "}}")?;
-
-        Ok(())
+        self.visit_block(loc, statements)
     }
 
     fn visit_opening_paren(&mut self) -> Result<()> {
@@ -2872,6 +2880,102 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
         Ok(())
     }
+
+    fn visit_assembly(
+        &mut self,
+        loc: Loc,
+        dialect: &mut Option<StringLiteral>,
+        block: &mut YulBlock,
+        flags: &mut Option<Vec<StringLiteral>>,
+    ) -> Result<(), Self::Error> {
+        write_chunk!(self, loc.start(), "assembly")?;
+        if let Some(StringLiteral { loc, string, .. }) = dialect {
+            write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
+        }
+        if let Some(flags) = flags {
+            if !flags.is_empty() {
+                let loc_start = flags.first().unwrap().loc.start();
+                self.surrounded(loc_start, "(", ")", Some(block.loc.start()), |fmt, _| {
+                    let mut flags = flags.iter_mut().peekable();
+                    let mut chunks = vec![];
+                    while let Some(flag) = flags.next() {
+                        let next_byte_offset = flags.peek().map(|next_flag| next_flag.loc.start());
+                        chunks.push(fmt.chunked(flag.loc.start(), next_byte_offset, |fmt| {
+                            write!(fmt.buf(), "\"{}\"", flag.string)?;
+                            Ok(())
+                        })?);
+                    }
+                    fmt.write_chunks_separated(&chunks, ",", false)?;
+                    Ok(())
+                })?;
+            }
+        }
+
+        block.visit(self)
+    }
+
+    fn visit_yul_block(
+        &mut self,
+        loc: Loc,
+        statements: &mut Vec<YulStatement>,
+    ) -> Result<(), Self::Error> {
+        self.visit_block(loc, statements)
+    }
+
+    fn visit_yul_assignment(
+        &mut self,
+        loc: Loc,
+        _exprs: &mut Vec<YulExpression>,
+        _expr: &mut YulExpression,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
+
+    fn visit_yul_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
+
+    fn visit_yul_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
+
+    fn visit_yul_for(&mut self, stmt: &mut YulFor) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc) // TODO:
+    }
+
+    fn visit_yul_function_call(&mut self, stmt: &mut YulFunctionCall) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc) // TODO:
+    }
+
+    fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc) // TODO:
+    }
+
+    fn visit_yul_if(
+        &mut self,
+        loc: Loc,
+        _expr: &mut YulExpression,
+        _block: &mut YulBlock,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
+
+    fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
+
+    fn visit_yul_switch(&mut self, stmt: &mut YulSwitch) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc) // TODO:
+    }
+
+    fn visit_yul_var_declaration(
+        &mut self,
+        loc: Loc,
+        _idents: &mut Vec<YulTypedIdentifier>,
+        _expr: &mut Option<YulExpression>,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc) // TODO:
+    }
 }
 
 #[cfg(test)]
@@ -3055,4 +3159,5 @@ mod tests {
     test_directory! { ThisExpression }
     test_directory! { SimpleComments }
     test_directory! { LiteralExpression }
+    test_directory! { Yul }
 }
