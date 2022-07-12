@@ -83,6 +83,7 @@ foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
 serial_test = "0.7.0"
+path-slash = "0.2.0"
 
 [features]
 default = ["rustls"]
