@@ -57,7 +57,12 @@ impl ClientFork {
 
         if let Some(url) = url {
             self.config.write().update_url(url)?;
-            let chain_id = self.provider().get_chainid().await?;
+            let override_chain_id = self.config.read().override_chain_id;
+            let chain_id = if let Some(chain_id) = override_chain_id {
+                chain_id.into()
+            } else {
+                self.provider().get_chainid().await?
+            };
             self.config.write().chain_id = chain_id.as_u64();
         }
 
@@ -393,6 +398,7 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<RetryClient<Http>>>,
     pub chain_id: u64,
+    pub override_chain_id: Option<u64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

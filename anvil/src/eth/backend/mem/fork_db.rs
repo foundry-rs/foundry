@@ -1,5 +1,5 @@
 use crate::{
-    eth::backend::db::{Db, StateDb},
+    eth::backend::db::{Db, SerializableState, StateDb},
     revm::AccountInfo,
     Address, U256,
 };
@@ -13,6 +13,14 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
         self.database_mut().set_storage_at(address, slot, val)
+    }
+
+    fn dump_state(&self) -> Option<SerializableState> {
+        None
+    }
+
+    fn load_state(&mut self, _buf: SerializableState) -> bool {
+        false
     }
 
     fn snapshot(&mut self) -> U256 {

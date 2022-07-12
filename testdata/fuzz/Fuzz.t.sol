@@ -21,4 +21,9 @@ contract FuzzTest is Test {
     emit log("testSuccessfulFuzz");
     assertEq(uint256(a) + uint256(b), uint256(a) + uint256(b));
   }
+
+  function testToStringFuzz(bytes32 data) public {
+    Cheats cheats = Cheats(HEVM_ADDRESS);
+    cheats.toString(data);
+  }
 }

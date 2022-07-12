@@ -69,7 +69,7 @@ const BANNER: &str = r#"
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
-    pub chain_id: u64,
+    pub chain_id: Option<u64>,
     /// Default gas limit for all txs
     pub gas_limit: U256,
     /// Default gas price for all txs
@@ -77,7 +77,7 @@ pub struct NodeConfig {
     /// Default base fee
     pub base_fee: Option<U256>,
     /// The hardfork to use
-    pub hardfork: Hardfork,
+    pub hardfork: Option<Hardfork>,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
@@ -167,7 +167,7 @@ Derivation path:   {}
             );
         }
 
-        if (SpecId::from(self.hardfork) as u8) < (SpecId::LONDON as u8) {
+        if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
                 config_string,
                 r#"
@@ -282,10 +282,10 @@ impl Default for NodeConfig {
         // generate some random wallets
         let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
-            chain_id: CHAIN_ID,
+            chain_id: Some(CHAIN_ID),
             gas_limit: U256::from(30_000_000),
             gas_price: None,
-            hardfork: Hardfork::default(),
+            hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_accounts,
             // 100ETH default balance
@@ -321,21 +321,32 @@ impl NodeConfig {
         self.gas_price.unwrap_or_else(|| INITIAL_GAS_PRICE.into())
     }
 
+    /// Returns the base fee to use
+    pub fn get_hardfork(&self) -> Hardfork {
+        self.hardfork.unwrap_or_default()
+    }
+
     /// Sets the chain ID
     #[must_use]
-    pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
-        self.set_chain_id(chain_id.into());
+    pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: Option<U>) -> Self {
+        self.set_chain_id(chain_id);
         self
     }
 
+    /// Returns the chain ID to use
+    pub fn get_chain_id(&self) -> u64 {
+        self.chain_id.unwrap_or(CHAIN_ID)
+    }
+
     /// Sets the chain id and updates all wallets
-    pub fn set_chain_id(&mut self, chain_id: impl Into<u64>) {
-        self.chain_id = chain_id.into();
+    pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
+        self.chain_id = chain_id.map(Into::into);
+        let chain_id = self.get_chain_id();
         self.genesis_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(self.chain_id);
+            *wallet = wallet.clone().with_chain_id(chain_id);
         });
         self.signer_accounts.iter_mut().for_each(|wallet| {
-            *wallet = wallet.clone().with_chain_id(self.chain_id);
+            *wallet = wallet.clone().with_chain_id(chain_id);
         })
     }
 
@@ -364,7 +375,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Hardfork) -> Self {
+    pub fn with_hardfork(mut self, hardfork: Option<Hardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -517,7 +528,7 @@ impl NodeConfig {
         }
         // cache only if block explicitly set
         let block = self.fork_block_number?;
-        let chain_id = self.chain_id;
+        let chain_id = self.chain_id.unwrap_or(CHAIN_ID);
 
         Config::foundry_block_cache_file(chain_id, block)
     }
@@ -530,8 +541,8 @@ impl NodeConfig {
         // configure the revm environment
         let mut env = revm::Env {
             cfg: CfgEnv {
-                spec_id: self.hardfork.into(),
-                chain_id: self.chain_id.into(),
+                spec_id: self.get_hardfork().into(),
+                chain_id: self.get_chain_id().into(),
                 ..Default::default()
             },
             block: BlockEnv {
@@ -539,7 +550,7 @@ impl NodeConfig {
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
+            tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
@@ -554,6 +565,13 @@ impl NodeConfig {
             );
 
             let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
+                // auto adjust hardfork if not specified
+                if self.hardfork.is_none() {
+                    let hardfork: Hardfork = fork_block_number.into();
+                    env.cfg.spec_id = hardfork.into();
+                    self.hardfork = Some(hardfork);
+                }
+
                 fork_block_number
             } else {
                 // pick the last block number but also ensure it's not pending anymore
@@ -598,11 +616,18 @@ impl NodeConfig {
             }
 
             let block_hash = block.hash.unwrap();
-            let chain_id = provider.get_chainid().await.unwrap().as_u64();
-            // need to update the dev signers and env with the chain id
-            self.set_chain_id(chain_id);
-            env.cfg.chain_id = chain_id.into();
-            env.tx.chain_id = chain_id.into();
+
+            let chain_id = if let Some(chain_id) = self.chain_id {
+                chain_id
+            } else {
+                let chain_id = provider.get_chainid().await.unwrap().as_u64();
+                // need to update the dev signers and env with the chain id
+                self.set_chain_id(Some(chain_id));
+                env.cfg.chain_id = chain_id.into();
+                env.tx.chain_id = chain_id.into();
+                chain_id
+            };
+            let override_chain_id = self.chain_id;
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
@@ -624,6 +649,7 @@ impl NodeConfig {
                     block_hash,
                     provider,
                     chain_id,
+                    override_chain_id,
                     timestamp: block.timestamp.as_u64(),
                     base_fee: block.base_fee_per_gas,
                 },
@@ -664,6 +690,7 @@ pub enum Hardfork {
     Muirglacier,
     Berlin,
     London,
+    ArrowGlacier,
     Latest,
 }
 
@@ -684,6 +711,7 @@ impl FromStr for Hardfork {
             "muirglacier" | "9" => Hardfork::Muirglacier,
             "berlin" | "10" => Hardfork::Berlin,
             "london" | "11" => Hardfork::London,
+            "arrowglacier" => Hardfork::ArrowGlacier,
             "latest" | "12" => Hardfork::Latest,
             _ => return Err(format!("Unknown hardfork {}", s)),
         };
@@ -711,7 +739,32 @@ impl From<Hardfork> for SpecId {
             Hardfork::Muirglacier => SpecId::MUIRGLACIER,
             Hardfork::Berlin => SpecId::BERLIN,
             Hardfork::London => SpecId::LONDON,
-            Hardfork::Latest => SpecId::LATEST,
+            Hardfork::ArrowGlacier | Hardfork::Latest => SpecId::LATEST,
+        }
+    }
+}
+
+impl<T: Into<BlockNumber>> From<T> for Hardfork {
+    fn from(block: T) -> Hardfork {
+        let num = match block.into() {
+            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
+            BlockNumber::Earliest => 0,
+            BlockNumber::Number(num) => num.as_u64(),
+        };
+
+        match num {
+            _i if num < 1_150_000 => Hardfork::Frontier,
+            _i if num < 2463000 => Hardfork::Homestead,
+            _i if num < 2675000 => Hardfork::Tangerine,
+            _i if num < 4370000 => Hardfork::SpuriousDragon,
+            _i if num < 7280000 => Hardfork::Byzantium,
+            _i if num < 9069000 => Hardfork::Constantinople,
+            _i if num < 9200000 => Hardfork::Istanbul,
+            _i if num < 12244000 => Hardfork::Muirglacier,
+            _i if num < 12965000 => Hardfork::Berlin,
+            _i if num < 13773000 => Hardfork::London,
+
+            _ => Hardfork::Latest,
         }
     }
 }
@@ -807,4 +860,21 @@ async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Er
     }
 
     Ok(num)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hardfork_blocks() {
+        let hf: Hardfork = 12965000u64.into();
+        assert_eq!(hf, Hardfork::London);
+
+        let hf: Hardfork = 4370000u64.into();
+        assert_eq!(hf, Hardfork::Byzantium);
+
+        let hf: Hardfork = 12244000u64.into();
+        assert_eq!(hf, Hardfork::Berlin);
+    }
 }
