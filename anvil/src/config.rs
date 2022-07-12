@@ -545,10 +545,7 @@ impl NodeConfig {
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            tx: TxEnv { 
-                chain_id: self.get_chain_id().into(),
-                ..Default::default()
-            },
+            tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
         let mut fork_timestamp = None;
@@ -607,7 +604,7 @@ impl NodeConfig {
             }
 
             let block_hash = block.hash.unwrap();
-            
+
             let chain_id = if let Some(chain_id) = self.chain_id {
                 chain_id
             } else {
