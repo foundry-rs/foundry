@@ -652,12 +652,6 @@ impl BackendInner {
         &mut self.forks[idx]
     }
 
-    pub(crate) fn get_fork_db_by_id(&self, id: LocalForkId) -> Option<&ForkDB> {
-        self.issued_local_fork_ids
-            .get(&id)
-            .and_then(|fork_id| self.created_forks.get(fork_id).map(|idx| self.get_fork_db(*idx)))
-    }
-
     /// Reverts the entire fork database
     pub fn revert_snapshot(
         &mut self,
