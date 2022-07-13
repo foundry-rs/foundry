@@ -317,6 +317,9 @@ impl Executor {
         let (status, out, gas, state_changeset, logs) =
             self.backend_mut().inspect_ref(env, &mut inspector);
 
+        // if there are multiple forks we need to merge them
+        let logs = self.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         let call_result = convert_executed_call(inspector, executed_call)?;
 
@@ -359,6 +362,9 @@ impl Executor {
         let env = self.build_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+
+        let logs = db.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         convert_executed_call(inspector, executed_call)
     }
