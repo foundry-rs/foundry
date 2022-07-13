@@ -8,12 +8,15 @@ use ethers::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
         Lazy, LocalWallet, Signer, H160,
     },
+    signers::{coins_bip39::English, MnemonicBuilder},
     types::{NameOrAddress, H256, U256},
     utils,
     utils::keccak256,
 };
 use foundry_common::fmt::*;
 use revm::{CreateInputs, Database, EVMData};
+
+const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
@@ -71,6 +74,21 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     Ok((sig.v, r_bytes, s_bytes).encode().into())
 }
 
+fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
+    let derivation_path = format!("{}{}", path, index);
+
+    let wallet = MnemonicBuilder::<English>::default()
+        .phrase(mnemonic)
+        .derivation_path(&derivation_path)
+        .map_err(|err| err.to_string().encode())?
+        .build()
+        .map_err(|err| err.to_string().encode())?;
+
+    let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
+
+    Ok(private_key.encode().into())
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -79,6 +97,10 @@ pub fn apply<DB: Database>(
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
         HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id),
+        HEVMCalls::DeriveKey0(inner) => {
+            derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+        }
+        HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
