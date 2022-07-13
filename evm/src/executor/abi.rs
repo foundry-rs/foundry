@@ -39,6 +39,8 @@ ethers::contract::abigen!(
             envBytes(string,string)(bytes[])
             addr(uint256)(address)
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
+            derive(string,uint32)(uint256)
+            derive(string,string,uint32)(uint256)
             prank(address)
             startPrank(address)
             prank(address,address)
