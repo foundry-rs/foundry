@@ -180,4 +180,5 @@ interface Cheats {
     function rpcUrl(string calldata) external returns(string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
     function rpcUrls() external returns(string[2][] memory);
+    function parseJson(string calldata, string calldata) external returns(bytes memory);
 }

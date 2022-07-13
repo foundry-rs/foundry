@@ -1,6 +1,9 @@
 use crate::{
     abi::HEVMCalls,
-    executor::inspector::{cheatcodes::util, Cheatcodes},
+    executor::inspector::{
+        cheatcodes::util::{self, encode_error},
+        Cheatcodes,
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -129,8 +132,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
         Ok(Bytes::new())
     }
 }
-
-fn value_to_abi(val: Vec<&str>, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
+fn value_to_abi(val: Vec<&str>, r#type: ParamType, is_array: bool) -> Result<Bytes, Bytes> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -167,10 +169,10 @@ fn value_to_abi(val: Vec<&str>, r#type: ParamType, delim: Option<&str>) -> Resul
         })
         .collect::<Result<Vec<Token>, String>>()
         .map(|mut tokens| {
-            if delim.is_none() {
-                abi::encode(&[tokens.remove(0)]).into()
-            } else {
+            if is_array {
                 abi::encode(&[Token::Array(tokens)]).into()
+            } else {
+                abi::encode(&[tokens.remove(0)]).into()
             }
         })
         .map_err(|e| e.into())
@@ -183,7 +185,8 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
     } else {
         vec![val.as_str()]
     };
-    value_to_abi(val, r#type, delim)
+    let is_array: bool = if delim.is_some() { true } else { false };
+    value_to_abi(val, r#type, is_array)
 }
 
 fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
@@ -267,6 +270,47 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Find the ABI type of a JSON Value
+fn value_to_type(value: &Value) -> Option<ParamType> {
+    if value.is_boolean() {
+        Some(ParamType::Bool)
+    } else if value.is_string() {
+        // If string can be converted to Address, chances are that it is
+        // TODO: What about H160 that are NOT addresses?
+        match Address::from_str(value.as_str().unwrap()) {
+            Ok(addr) => Some(ParamType::Address),
+            _ => Some(ParamType::String),
+        }
+    } else if value.is_u64() {
+        Some(ParamType::Uint(256))
+    } else if value.is_i64() {
+        Some(ParamType::Int(256))
+    } else if value.is_array() {
+        value_to_type(&value[0])
+    } else {
+        None
+    }
+}
+fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
+    // let v: Value = serde_json::from_str(json).map_err(util::encode_error)?;
+    let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
+    // Assumes that the jsonpath key will return a single object (value/array)
+    let inner = &values.as_array().unwrap()[0];
+    let value_type = value_to_type(&inner).unwrap();
+    let abi_value = if inner.is_array() {
+        let string_values: Vec<String> = inner
+            .as_array()
+            .unwrap()
+            .into_iter()
+            .map(|val| val.to_string().replace(&['\'', '"'], ""))
+            .collect();
+        let str_values = string_values.iter().map(|s| &**s).collect::<Vec<&str>>();
+        value_to_abi(str_values, value_type, true)
+    } else {
+        value_to_abi(vec![&inner.to_string().replace(&['\'', '"'], "")], value_type, false)
+    };
+    abi_value.map(|val| abi::encode(&[Token::Bytes(val.to_vec())]).into())
+}
 pub fn apply(
     state: &mut Cheatcodes,
     ffi_enabled: bool,
@@ -304,6 +348,7 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        HEVMCalls::ParseJson(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }

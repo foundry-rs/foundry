@@ -106,6 +106,7 @@ ethers::contract::abigen!(
             rollFork(uint256,uint256)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
+            parseJson(string, string)(bytes)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
