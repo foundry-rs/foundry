@@ -35,6 +35,7 @@ use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
+pub(crate) use macros::config_warn;
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
@@ -49,8 +50,14 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
+mod fmt;
+pub use fmt::FormatterConfig;
+
 mod error;
 pub use error::SolidityErrorCode;
+
+// helpers for fixing configuration warnings
+pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
@@ -283,6 +290,8 @@ pub struct Config {
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
+    /// Configuration for `forge fmt`
+    pub fmt: FormatterConfig,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -312,6 +321,12 @@ impl Config {
 
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
+
+    /// TOML section for profiles
+    pub const PROFILE_SECTION: &'static str = "profile";
+
+    /// Standalone sections in the config which get integrated into the selected profile
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -411,7 +426,7 @@ impl Config {
     /// Joins all relative paths with the given root so that paths that are defined as:
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "src"
     /// out = "./out"
     /// libs = ["lib", "/var/lib"]
@@ -420,7 +435,7 @@ impl Config {
     /// Will be made canonic with the given root:
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "<root>/src"
     /// out = "<root>/out"
     /// libs = ["<root>/lib", "/var/lib"]
@@ -894,7 +909,7 @@ impl Config {
             let libs: toml_edit::Value =
                 self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
             let libs = toml_edit::value(libs);
-            doc[profile]["libs"] = libs;
+            doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
             true
         })
     }
@@ -904,7 +919,7 @@ impl Config {
     /// This serializes to a table with the name of the profile
     ///
     /// ```toml
-    /// [default]
+    /// [profile.default]
     /// src = "src"
     /// out = "out"
     /// libs = ["lib"]
@@ -912,42 +927,30 @@ impl Config {
     /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         // serializing to value first to prevent `ValueAfterTable` errors
-        let value = toml::Value::try_from(self)?;
-        let mut s = toml::to_string_pretty(&value)?;
-
-        if self.optimizer_details.is_some() {
-            // this is a hack to make nested tables work because this requires the config's profile
-            s = s
-                .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
-                .replace(
-                    "[optimizer_details.yulDetails]",
-                    &format!("[{}.optimizer_details.yulDetails]", self.profile),
-                );
+        let mut value = toml::Value::try_from(self)?;
+        // Config map always gets serialized as a table
+        let value_table = value.as_table_mut().unwrap();
+        // remove standalone sections from inner table
+        let standalone_sections = Config::STANDALONE_SECTIONS
+            .iter()
+            .filter_map(|section| {
+                let section = section.to_string();
+                value_table.remove(&section).map(|value| (section, value))
+            })
+            .collect::<Vec<_>>();
+        // wrap inner table in [profile.<profile>]
+        let mut wrapping_table = [(
+            Config::PROFILE_SECTION.into(),
+            toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
+        )]
+        .into_iter()
+        .collect::<toml::map::Map<_, _>>();
+        // insert standalone sections
+        for (section, value) in standalone_sections {
+            wrapping_table.insert(section, value);
         }
-        if self.model_checker.is_some() {
-            // similarly to the optimizer details above,
-            // this is a hack to make nested tables work because this requires the config's profile
-            s = ["contracts", "engine", "targets", "timeout"]
-                .iter()
-                .fold(s, |acc, op| {
-                    acc.replace(
-                        &format!("[model_checker.{}]", op),
-                        &format!("[{}.model_checker.{}]", self.profile, op),
-                    )
-                })
-                .replace("[model_checker]", &format!("[{}.model_checker]", self.profile));
-        }
-        s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
-
-        if !self.rpc_endpoints.is_empty() {
-            s = s.replace("[rpc_endpoints]", &format!("[{}.rpc_endpoints]", self.profile));
-        }
-
-        Ok(format!(
-            r#"[{}]
-{}"#,
-            self.profile, s
-        ))
+        // stringify
+        toml::to_string_pretty(&toml::Value::Table(wrapping_table))
     }
 
     /// Returns the path to the `foundry.toml`  of this `Config`
@@ -1187,6 +1190,34 @@ impl Config {
 
         dir_size_recursive(fs::read_dir(chain_path)?)
     }
+
+    fn merge_toml_provider(
+        mut figment: Figment,
+        toml_provider: impl Provider,
+        profile: Profile,
+    ) -> Figment {
+        // use [profile.<profile>] as [<profile>]
+        let mut profiles = vec![Config::DEFAULT_PROFILE];
+        if profile != Config::DEFAULT_PROFILE {
+            profiles.push(profile.clone());
+        }
+        let provider = toml_provider.strict_select(profiles);
+
+        // apply any key fixes
+        let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(provider));
+
+        // merge the default profile as a base
+        if profile != Config::DEFAULT_PROFILE {
+            figment = figment.merge(provider.rename(Config::DEFAULT_PROFILE, profile.clone()));
+        }
+        // merge special keys into config
+        for standalone_key in Config::STANDALONE_SECTIONS {
+            figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+        }
+        // merge the profile
+        figment = figment.merge(provider);
+        figment
+    }
 }
 
 impl From<Config> for Figment {
@@ -1194,32 +1225,24 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
 
-        // check global foundry.toml file
+        // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(
-                Toml::file(global_toml).nested(),
-            )))
+            figment = Config::merge_toml_provider(
+                figment,
+                TomlFileProvider::new(None, global_toml).cached(),
+                profile.clone(),
+            );
         }
+        // merge local foundry.toml file
+        figment = Config::merge_toml_provider(
+            figment,
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                .cached(),
+            profile.clone(),
+        );
 
-        if profile != Config::DEFAULT_PROFILE {
-            // a different profile was set: inherit from the `default` profile by merging the
-            // default profile of the toml file
-            let inherit = InheritProvider {
-                provider: BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
-                    "FOUNDRY_CONFIG",
-                    c.__root.0.join(Config::FILE_NAME),
-                ))),
-                parent: Config::DEFAULT_PROFILE,
-                profile: profile.clone(),
-            };
-            figment = figment.merge(inherit);
-        }
-
+        // merge environment variables
         figment = figment
-            .merge(BackwardsCompatTomlProvider(ForcedSnakeCaseData(TomlFileProvider::new(
-                "FOUNDRY_CONFIG",
-                c.__root.0.join(Config::FILE_NAME),
-            ))))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
@@ -1329,15 +1352,23 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
 /// returns a toml table like
 ///
 /// ```toml
-/// #[default]
+/// #[profile.default]
 /// src = "..."
 /// ```
-/// This ignores the `#[default]` part in the toml
+/// This ignores the `#[profile.default]` part in the toml
 pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
     s: &str,
-) -> Result<Option<(Profile, T)>, toml::de::Error> {
-    let val: Map<Profile, T> = toml::from_str(s)?;
-    Ok(val.into_iter().next())
+) -> Result<Option<(Profile, T)>, Error> {
+    let figment = Config::merge_toml_provider(
+        Figment::new(),
+        Toml::string(s).nested(),
+        Config::DEFAULT_PROFILE,
+    );
+    if figment.profiles().any(|p| p == Config::DEFAULT_PROFILE) {
+        Ok(Some((Config::DEFAULT_PROFILE, figment.select(Config::DEFAULT_PROFILE).extract()?)))
+    } else {
+        Ok(None)
+    }
 }
 
 impl Provider for Config {
@@ -1429,6 +1460,7 @@ impl Default for Config {
             sparse_mode: false,
             build_info: false,
             build_info_path: None,
+            fmt: Default::default(),
             __non_exhaustive: (),
         }
     }
@@ -1529,27 +1561,56 @@ impl<T: AsRef<str>> From<T> for SolcReq {
 /// A convenience provider to retrieve a toml file.
 /// This will return an error if the env var is set but the file does not exist
 struct TomlFileProvider {
-    pub env_var: &'static str,
+    pub env_var: Option<&'static str>,
     pub default: PathBuf,
+    pub cache: Option<Result<Map<Profile, Dict>, Error>>,
 }
 
 impl TomlFileProvider {
-    fn new(env_var: &'static str, default: impl Into<PathBuf>) -> Self {
-        Self { env_var, default: default.into() }
+    fn new(env_var: Option<&'static str>, default: impl Into<PathBuf>) -> Self {
+        Self { env_var, default: default.into(), cache: None }
+    }
+
+    fn env_val(&self) -> Option<String> {
+        self.env_var.and_then(Env::var)
     }
 
     fn file(&self) -> PathBuf {
-        Env::var(self.env_var).map(PathBuf::from).unwrap_or_else(|| self.default.clone())
+        self.env_val().map(PathBuf::from).unwrap_or_else(|| self.default.clone())
     }
 
     fn is_missing(&self) -> bool {
-        if let Some(file) = Env::var(self.env_var) {
+        if let Some(file) = self.env_val() {
             let path = Path::new(&file);
             if !path.exists() {
                 return true
             }
         }
         false
+    }
+
+    pub fn cached(mut self) -> Self {
+        self.cache = Some(self.read());
+        self
+    }
+
+    fn read(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
+        if let Some(file) = self.env_val() {
+            let path = Path::new(&file);
+            if !path.exists() {
+                return Err(Error::custom(format!(
+                    "Config file `{}` set in env var `{}` does not exist",
+                    file,
+                    self.env_var.unwrap()
+                )))
+            }
+            Toml::file(file)
+        } else {
+            Toml::file(&self.default)
+        }
+        .nested()
+        .data()
     }
 }
 
@@ -1563,22 +1624,11 @@ impl Provider for TomlFileProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        use serde::de::Error as _;
-
-        if let Some(file) = Env::var(self.env_var) {
-            let path = Path::new(&file);
-            if !path.exists() {
-                return Err(Error::custom(format!(
-                    "Config file `{}` set in env var `{}` does not exist",
-                    file, self.env_var
-                )))
-            }
-            Toml::file(file)
+        if let Some(cache) = self.cache.as_ref() {
+            cache.clone()
         } else {
-            Toml::file(&self.default)
+            self.read()
         }
-        .nested()
-        .data()
     }
 }
 
@@ -1596,27 +1646,6 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
         }
         Ok(map)
-    }
-}
-
-/// A Provider that extracts the data for a `parent` profile and emits that as `profile`.
-struct InheritProvider<P> {
-    provider: P,
-    parent: Profile,
-    profile: Profile,
-}
-
-impl<P: Provider> Provider for InheritProvider<P> {
-    fn metadata(&self) -> Metadata {
-        self.provider.metadata()
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut data = self.provider.data()?;
-        if let Some(data) = data.remove(&self.parent) {
-            return Ok(Map::from([(self.profile.clone(), data)]))
-        }
-        Ok(Default::default())
     }
 }
 
@@ -1941,6 +1970,239 @@ impl<'a> Provider for RemappingsProvider<'a> {
     }
 }
 
+/// Renames a profile from `from` to `to
+///
+/// For example given:
+///
+/// ```toml
+/// [from]
+/// key = "value"
+/// ```
+///
+/// RenameProfileProvider will output
+///
+/// ```toml
+/// [to]
+/// key = "value"
+/// ```
+struct RenameProfileProvider<P> {
+    provider: P,
+    from: Profile,
+    to: Profile,
+}
+
+impl<P> RenameProfileProvider<P> {
+    pub fn new(provider: P, from: impl Into<Profile>, to: impl Into<Profile>) -> Self {
+        Self { provider, from: from.into(), to: to.into() }
+    }
+}
+
+impl<P: Provider> Provider for RenameProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut data = self.provider.data()?;
+        if let Some(data) = data.remove(&self.from) {
+            return Ok(Map::from([(self.to.clone(), data)]))
+        }
+        Ok(Default::default())
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.to.clone())
+    }
+}
+
+/// Unwraps a profile reducing the key depth
+///
+/// For example given:
+///
+/// ```toml
+/// [wrapping_key.profile]
+/// key = "value"
+/// ```
+///
+/// UnwrapProfileProvider will output:
+///
+/// ```toml
+/// [profile]
+/// key = "value"
+/// ```
+struct UnwrapProfileProvider<P> {
+    provider: P,
+    wrapping_key: Profile,
+    profile: Profile,
+}
+
+impl<P> UnwrapProfileProvider<P> {
+    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+        Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
+    }
+}
+
+impl<P: Provider> Provider for UnwrapProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        self.provider.data().and_then(|mut data| {
+            if let Some(profiles) = data.remove(&self.wrapping_key) {
+                for (profile_str, profile_val) in profiles {
+                    let profile = Profile::new(&profile_str);
+                    if profile != self.profile {
+                        continue
+                    }
+                    match profile_val {
+                        Value::Dict(_, dict) => return Ok(profile.collect(dict)),
+                        bad_val => {
+                            let mut err = Error::from(figment::error::Kind::InvalidType(
+                                bad_val.to_actual(),
+                                "dict".into(),
+                            ));
+                            err.metadata = Some(self.provider.metadata());
+                            err.profile = Some(self.profile.clone());
+                            return Err(err)
+                        }
+                    }
+                }
+            }
+            Ok(Default::default())
+        })
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
+/// Wraps a profile in another profile
+///
+/// For example given:
+///
+/// ```toml
+/// [profile]
+/// key = "value"
+/// ```
+///
+/// WrapProfileProvider will output:
+///
+/// ```toml
+/// [wrapping_key.profile]
+/// key = "value"
+/// ```
+struct WrapProfileProvider<P> {
+    provider: P,
+    wrapping_key: Profile,
+    profile: Profile,
+}
+
+impl<P> WrapProfileProvider<P> {
+    pub fn new(provider: P, wrapping_key: impl Into<Profile>, profile: impl Into<Profile>) -> Self {
+        Self { provider, wrapping_key: wrapping_key.into(), profile: profile.into() }
+    }
+}
+
+impl<P: Provider> Provider for WrapProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        if let Some(inner) = self.provider.data()?.remove(&self.profile) {
+            let value = Value::from(inner);
+            let dict = [(self.profile.to_string().to_snake_case(), value)].into_iter().collect();
+            Ok(self.wrapping_key.collect(dict))
+        } else {
+            Ok(Default::default())
+        }
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
+/// Extracts the profile from the `profile` key and using the original key as backup, merging
+/// values where necessary
+///
+/// For example given:
+///
+/// ```toml
+/// [profile.cool]
+/// key = "value"
+///
+/// [cool]
+/// key2 = "value2"
+/// ```
+///
+/// OptionalStrictProfileProvider will output:
+///
+/// ```toml
+/// [cool]
+/// key = "value"
+/// key2 = "value2"
+/// ```
+///
+/// And emit a deprecation warning
+struct OptionalStrictProfileProvider<P> {
+    provider: P,
+    profiles: Vec<Profile>,
+}
+
+impl<P> OptionalStrictProfileProvider<P> {
+    pub const PROFILE_PROFILE: Profile = Profile::const_new("profile");
+
+    pub fn new(provider: P, profiles: impl IntoIterator<Item = impl Into<Profile>>) -> Self {
+        Self { provider, profiles: profiles.into_iter().map(|profile| profile.into()).collect() }
+    }
+}
+
+impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut figment = Figment::from(&self.provider);
+        if let Some(profile) = figment.profiles().find(|p| self.profiles.contains(p)) {
+            let src =
+                self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
+            config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
+        }
+        for profile in &self.profiles {
+            figment = figment.merge(UnwrapProfileProvider::new(
+                &self.provider,
+                Self::PROFILE_PROFILE,
+                profile.clone(),
+            ));
+        }
+        figment.data()
+    }
+    fn profile(&self) -> Option<Profile> {
+        self.profiles.last().cloned()
+    }
+}
+
+trait ProviderExt: Provider {
+    fn rename(
+        &self,
+        from: impl Into<Profile>,
+        to: impl Into<Profile>,
+    ) -> RenameProfileProvider<&Self> {
+        RenameProfileProvider::new(self, from, to)
+    }
+    fn wrap(
+        &self,
+        wrapping_key: impl Into<Profile>,
+        profile: impl Into<Profile>,
+    ) -> WrapProfileProvider<&Self> {
+        WrapProfileProvider::new(self, wrapping_key, profile)
+    }
+    fn strict_select(
+        &self,
+        profiles: impl IntoIterator<Item = impl Into<Profile>>,
+    ) -> OptionalStrictProfileProvider<&Self> {
+        OptionalStrictProfileProvider::new(self, profiles)
+    }
+}
+impl<P: Provider> ProviderExt for P {}
+
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
 ///
@@ -1954,7 +2216,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BasicConfig {
-    /// the profile tag: `[default]`
+    /// the profile tag: `[profile.default]`
     #[serde(skip)]
     pub profile: Profile,
     /// path of the source contracts dir, like `src` or `contracts`
@@ -1975,7 +2237,7 @@ impl BasicConfig {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
-            r#"[{}]
+            r#"[profile.{}]
 {}
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
             self.profile, s
@@ -2035,7 +2297,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['node_modules', 'lib']
             "#,
             )?;
@@ -2045,7 +2307,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['custom', 'node_modules', 'lib']
             "#,
             )?;
@@ -2093,9 +2355,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ['lib']
-                [local]
+                [profile.local]
                 libs = ['modules']
             "#,
             )?;
@@ -2141,12 +2403,12 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 test = "defaulttest"
                 src  = "defaultsrc"
                 libs = ['lib', 'node_modules']
                 
-                [custom]
+                [profile.custom]
                 src = "customsrc"
             "#,
             )?;
@@ -2172,7 +2434,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 test = "mytest"
             "#,
             )?;
@@ -2190,7 +2452,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2242,7 +2504,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2305,7 +2567,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 libs = ["node_modules"]
             "#,
             )?;
@@ -2328,7 +2590,7 @@ mod tests {
                 "foundry.toml",
                 &format!(
                     r#"
-                [default]
+                [profile.default]
                 gas_limit = "{}"
             "#,
                     gas
@@ -2349,7 +2611,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 eth_rpc_url = "https://example.com/
             "#,
             )?;
@@ -2378,7 +2640,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2387,11 +2649,14 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
-                rpc_endpoints = { optimism = "https://example.com/", mainnet = "${RPC_MAINNET}" }
                 bytecode_hash = "ipfs"
                 revert_strings = "strip"
                 allow_paths = ["allow", "paths"]
                 build_info_path = "build-info"
+
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${RPC_MAINNET}"
             "#,
             )?;
 
@@ -2436,7 +2701,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 remappings = ['nested/=lib/nested/']
             "#,
             )?;
@@ -2457,7 +2722,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 auto_detect_solc = true
                 block_base_fee_per_gas = 0
                 block_coinbase = '0x0000000000000000000000000000000000000000'
@@ -2499,11 +2764,11 @@ mod tests {
                 verbosity = 0
                 via_ir = false
                 
-                [default.rpc_storage_caching]
+                [profile.default.rpc_storage_caching]
                 chains = 'all'
                 endpoints = 'all'
 
-                [default.rpc_endpoints]
+                [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
 
@@ -2534,7 +2799,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc_version = "0.8.12"
             "#,
             )?;
@@ -2545,7 +2810,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc = "0.8.12"
             "#,
             )?;
@@ -2556,7 +2821,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 solc = "path/to/local/solc"
             "#,
             )?;
@@ -2577,7 +2842,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "some-source"
                 out = "some-out"
                 cache = true
@@ -2611,7 +2876,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 extra_output = ["metadata", "ir-optimized"]
                 extra_output_files = ["metadata"]
             "#,
@@ -2635,7 +2900,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "mysrc"
                 out = "myout"
                 verbosity = 3
@@ -2679,13 +2944,13 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = "mysrc"
                 out = "myout"
                 verbosity = 3
                 evm_version = 'berlin'
 
-                [other]
+                [profile.other]
                 src = "other-src"
             "#,
             )?;
@@ -2793,7 +3058,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                libraries= [
                         './src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
                         './src/SizeAuction.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
@@ -2877,13 +3142,13 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 optimizer = true
 
-                [default.optimizer_details]
+                [profile.default.optimizer_details]
                 yul = false
 
-                [default.optimizer_details.yulDetails]
+                [profile.default.optimizer_details.yulDetails]
                 stackAllocation = true
             "#,
             )?;
@@ -2916,9 +3181,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
 
-                [default.model_checker]
+                [profile.default.model_checker]
                 contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
@@ -2958,9 +3223,9 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
 
-                [default.model_checker]
+                [profile.default.model_checker]
                 contracts = { 'a.sol' = [ 'A1', 'A2' ], 'b.sol' = [ 'B1', 'B2' ] }
                 engine = 'chc'
                 targets = [ 'assert', 'outOfBounds' ]
@@ -2999,6 +3264,53 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_fmt_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fmt]
+                line_length = 100
+                tab_width = 2
+                bracket_spacing = true
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            assert_eq!(
+                loaded.fmt,
+                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_with_profile() {
+        let foundry_str = r#"
+            [profile.default]
+            src = 'src'
+            out = 'out'
+            libs = ['lib']
+
+            # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+        "#;
+        assert_eq!(
+            parse_with_profile::<BasicConfig>(foundry_str).unwrap().unwrap(),
+            (
+                Config::DEFAULT_PROFILE,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "src".into(),
+                    out: "out".into(),
+                    libs: vec!["lib".into()],
+                    remappings: vec![]
+                }
+            )
+        );
     }
 
     // a test to print the config, mainly used to update the example config in the README

@@ -95,6 +95,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
+        fmt: Default::default(),
         __non_exhaustive: (),
     };
     prj.write_config(input.clone());
