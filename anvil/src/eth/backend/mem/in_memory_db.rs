@@ -129,7 +129,7 @@ mod tests {
         let contract_code: Bytes = Bytes::from("fake contract code");
 
         dump_db.insert_account(
-            test_addr.clone(),
+            test_addr,
             AccountInfo {
                 balance: 123456.into(),
                 code_hash: KECCAK_EMPTY,
@@ -168,7 +168,7 @@ mod tests {
         let mut db = MemDb::default();
 
         db.insert_account(
-            test_addr.clone(),
+            test_addr,
             AccountInfo {
                 balance: 123456.into(),
                 code_hash: KECCAK_EMPTY,
