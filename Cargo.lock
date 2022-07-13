@@ -1904,6 +1904,7 @@ dependencies = [
 name = "forge-fmt"
 version = "0.2.0"
 dependencies = [
+ "foundry-config",
  "itertools",
  "pretty_assertions",
  "semver",
@@ -2028,6 +2029,7 @@ name = "foundry-config"
 version = "0.2.0"
 dependencies = [
  "Inflector",
+ "ansi_term",
  "dirs-next",
  "ethers-core",
  "ethers-solc",
@@ -5091,6 +5093,7 @@ version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d82e1a7758622a465f8cee077614c73484dac5b836c02ff6a40d5d1010324d7"
 dependencies = [
+ "indexmap",
  "serde",
 ]
 
