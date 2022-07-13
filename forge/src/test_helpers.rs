@@ -119,7 +119,11 @@ pub mod filter {
         }
 
         fn matches_path(&self, path: impl AsRef<str>) -> bool {
-            self.path_regex.is_match(path.as_ref())
+            let path = path.as_ref();
+            dbg!(path);
+            dbg!(self.path_regex.is_match(path));
+            dbg!(&self.path_regex);
+            self.path_regex.is_match(path)
         }
     }
 }
