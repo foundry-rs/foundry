@@ -93,6 +93,7 @@ pub mod filter {
 
     impl Filter {
         pub fn new(test_pattern: &str, contract_pattern: &str, path_pattern: &str) -> Self {
+            dbg!(path_pattern);
             Filter {
                 test_regex: Regex::new(test_pattern).unwrap(),
                 contract_regex: Regex::new(contract_pattern).unwrap(),
