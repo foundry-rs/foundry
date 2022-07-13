@@ -928,29 +928,29 @@ impl Config {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         // serializing to value first to prevent `ValueAfterTable` errors
         let mut value = toml::Value::try_from(self)?;
+        // Config map always gets serialized as a table
+        let value_table = value.as_table_mut().unwrap();
         // remove standalone sections from inner table
         let standalone_sections = Config::STANDALONE_SECTIONS
             .iter()
             .filter_map(|section| {
                 let section = section.to_string();
-                value.as_table_mut().unwrap().remove(&section).map(|value| (section, value))
+                value_table.remove(&section).map(|value| (section, value))
             })
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
-        let mut wrapping_table = toml::Value::Table(
-            [(
-                Config::PROFILE_SECTION.into(),
-                toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
-            )]
-            .into_iter()
-            .collect(),
-        );
+        let mut wrapping_table = [(
+            Config::PROFILE_SECTION.into(),
+            toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
+        )]
+        .into_iter()
+        .collect::<toml::map::Map<_, _>>();
         // insert standalone sections
         for (section, value) in standalone_sections {
-            wrapping_table.as_table_mut().unwrap().insert(section, value);
+            wrapping_table.insert(section, value);
         }
         // stringify
-        toml::to_string_pretty(&wrapping_table)
+        toml::to_string_pretty(&toml::Value::Table(wrapping_table))
     }
 
     /// Returns the path to the `foundry.toml`  of this `Config`
