@@ -3,6 +3,10 @@ pragma solidity >=0.8.0;
 
 import "forge-std/Test.sol";
 
+interface Cheats {
+    function toString(bytes32) external returns (string memory);
+}
+
 contract FuzzTest is Test {
   constructor() {
     emit log("constructor");
