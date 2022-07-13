@@ -602,8 +602,16 @@ impl NodeConfig {
             if self.base_fee.is_none() {
                 if let Some(base_fee) = block.base_fee_per_gas {
                     self.base_fee = Some(base_fee);
-                    fees.set_base_fee(base_fee);
                     env.block.basefee = base_fee;
+                    // this is the base fee of the current block, but we need the base fee of the
+                    // next block
+                    let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+                        block.gas_used,
+                        block.gas_limit,
+                        block.base_fee_per_gas.unwrap_or_default(),
+                    );
+                    // update next base fee
+                    fees.set_base_fee(next_block_base_fee.into());
                 }
             }
 
