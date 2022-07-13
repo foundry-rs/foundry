@@ -34,7 +34,7 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(short = 'd', long = "debounce-delay", forbid_empty_values = true, value_name = "DELAY")]
+    #[clap(long = "debounce-delay", forbid_empty_values = true, value_name = "DELAY")]
     pub debounce_delay: Option<String>,
 
     #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]

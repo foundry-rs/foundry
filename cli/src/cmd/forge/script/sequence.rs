@@ -222,7 +222,6 @@ impl ScriptSequence {
                 }
             }
 
-            println!("Salut");
             println!("##\nStart Contract Verification2");
             for verification in future_verifications {
                 verification.await?;
