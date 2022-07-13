@@ -21,9 +21,9 @@ interface Cheats {
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
     // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path m/44'/60'/0'/0/{index}
-    function derive(string calldata, uint32) external returns (uint256);
+    function deriveKey(string calldata, uint32) external returns (uint256);
     // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path {path}{index}
-    function derive(string calldata, string calldata, uint32) external returns (uint256);
+    function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
     // Set environment variables, (name, value)
