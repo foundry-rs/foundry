@@ -19,7 +19,7 @@ mod fuzz;
 mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
-use crate::{abi::CHEATCODE_ADDRESS, executor::backend::snapshot::BackendSnapshot};
+use crate::{abi::CHEATCODE_ADDRESS, executor::backend::snapshot::BackendSnapshot, CALLER};
 pub use in_memory_db::MemDb;
 
 // A `revm::Database` that is used in forking mode
@@ -292,27 +292,33 @@ impl Backend {
             "Test contract address must be set"
         );
         let test_addr = self.inner.test_contract_address.expect("Test contract address is set");
-        self.update_fork_db_contract(test_addr, subroutine, fork)
+        let accs = vec![test_addr, self.inner.caller.unwrap_or(CALLER)];
+        self.update_fork_db_contracts(accs, subroutine, fork)
     }
 
     /// Copies the state of the `addr` from the currently active db into the given `fork`
-    pub(crate) fn update_fork_db_contract(
+    pub(crate) fn update_fork_db_contracts(
         &self,
-        addr: Address,
+        accounts: Vec<Address>,
         subroutine: &mut SubRoutine,
         fork: &mut Fork,
     ) {
         if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
             let active = self.inner.get_fork(*fork_idx);
-            clone_data(addr, &active.db, subroutine, fork)
+            clone_data(accounts, &active.db, subroutine, fork)
         } else {
-            clone_data(addr, &self.mem_db, subroutine, fork)
+            clone_data(accounts, &self.mem_db, subroutine, fork)
         }
     }
 
     /// Returns the memory db used if not in forking mode
     pub fn mem_db(&self) -> &InMemoryDB {
         &self.mem_db
+    }
+
+    /// Returns true if the `id` is currently active
+    pub fn is_active_fork(&self, id: LocalForkId) -> bool {
+        self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
     }
 
     /// Returns the currently active `Fork`, if any
@@ -378,6 +384,7 @@ impl Backend {
     where
         INSP: Inspector<Self>,
     {
+        self.inner.caller = Some(env.tx.caller);
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.inner.test_contract_address = Some(to);
         }
@@ -452,11 +459,13 @@ impl DatabaseExt for Backend {
         env: &mut Env,
         subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
-        println!("selecting {}", id);
-        let fork_id = self.ensure_fork_id(id).cloned()?;
+        if self.is_active_fork(id) {
+            // nothing to do
+            return Ok(())
+        }
 
+        let fork_id = self.ensure_fork_id(id).cloned()?;
         let idx = self.inner.ensure_fork_index(&fork_id)?;
-        println!("index {}", idx);
         let fork_env = self
             .forks
             .get_env(fork_id)?
@@ -690,6 +699,8 @@ pub struct BackendInner {
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
     pub test_contract_address: Option<Address>,
+    /// Tracks the caller of the test function
+    pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
     pub next_fork_id: U256,
 }
@@ -711,12 +722,14 @@ impl BackendInner {
     }
 
     /// Returns the underlying
+    #[track_caller]
     fn get_fork(&self, idx: ForkLookupIndex) -> &Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_ref().unwrap()
     }
 
     /// Returns the underlying
+    #[track_caller]
     fn get_fork_mut(&mut self, idx: ForkLookupIndex) -> &mut Fork {
         debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
         self.forks[idx].as_mut().unwrap()
@@ -771,7 +784,9 @@ impl BackendInner {
         let fork_id = self.ensure_fork_id(id)?;
         let idx = self.ensure_fork_index(fork_id)?;
 
-        if let Some(f) = self.forks[idx].as_mut() { f.db.db = backend; }
+        if let Some(f) = self.forks[idx].as_mut() {
+            f.db.db = backend;
+        }
 
         // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
@@ -822,22 +837,22 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
 
 // clones the data of the given address from the `active` database into the `fork_db`
 pub(crate) fn clone_data<ExtDB: DatabaseRef>(
-    addr: Address,
+    accounts: Vec<Address>,
     active: &CacheDB<ExtDB>,
     active_subroutine: &mut SubRoutine,
     fork: &mut Fork,
 ) {
-    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
-    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-        fork.db.contracts.insert(acc.info.code_hash, code);
-    }
-    fork.db.accounts.insert(addr, acc);
+    for addr in accounts {
+        let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+        if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
+            fork.db.contracts.insert(acc.info.code_hash, code);
+        }
+        fork.db.accounts.insert(addr, acc);
 
-    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-        fork.subroutine.state.insert(addr, acc);
+        if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
+            fork.subroutine.state.insert(addr, acc);
+        }
     }
 
     *active_subroutine = fork.subroutine.clone();
-
-    // TODO copy precompiles
 }

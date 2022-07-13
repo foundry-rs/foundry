@@ -31,15 +31,15 @@ contract ForkTest is DSTest {
         assert(forkA != forkB);
     }
 
-    // ensures forks use different ids
-    function testCanSwitchForks() public {
-        cheats.selectFork(forkA);
-        cheats.selectFork(forkB);
-        cheats.selectFork(forkB);
-        cheats.selectFork(forkA);
-    }
+//    // ensures forks use different ids
+//    function testCanSwitchForks() public {
+//        cheats.selectFork(forkA);
+//        cheats.selectFork(forkB);
+//        cheats.selectFork(forkB);
+//        cheats.selectFork(forkA);
+//    }
 
-    function testLocalStatePersistent() public {
+    function testForksHaveSeparatedStorage() public {
         cheats.selectFork(forkA);
         // read state from forkA
         assert(
@@ -48,8 +48,9 @@ contract ForkTest is DSTest {
 
         cheats.selectFork(forkB);
         // read state from forkB
+        uint256 forkBbalance =  WETH.balanceOf(0x0000000000000000000000000000000000000000);
         assert(
-            WETH.balanceOf(0x0000000000000000000000000000000000000000) != 1
+            forkBbalance != 1
         );
 
         cheats.selectFork(forkA);
@@ -62,8 +63,25 @@ contract ForkTest is DSTest {
         cheats.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
         assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
 
-        // switch forks and ensure local modified state is persistent
+        // switch forks and ensure the balance on forkB remains untouched
         cheats.selectFork(forkB);
-        assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
+        assert(
+            forkBbalance != 1
+        );
+        // balance of forkB is untouched
+        assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), forkBbalance, "Cheatcode did not change value at the storage slot.");
+    }
+
+    function testCanShareDataAcrossSwaps() public {
+        uint256 val = 300;
+        cheats.selectFork(forkA);
+        assertEq(val, 300);
+
+        cheats.selectFork(forkB);
+        assertEq(val, 300);
+
+        val = 99;
+        cheats.selectFork(forkA);
+        assertEq(val, 99);
     }
 }

@@ -76,24 +76,6 @@ contract ForkTest is DSTest {
         assert(mainHash != optimismHash);
     }
 
-    function testCanSwitchContracts() public {
-        cheats.selectFork(mainnetFork);
-        MyContract contract1 = new MyContract(mainnetFork);
-
-        contract1.ensureForkId(mainnetFork); // Valid
-        contract1.ensureBlockHash(); // Valid
-
-        cheats.selectFork(optimismFork);
-
-        cheats.expectRevert("ForkId does not match");
-        contract1.ensureForkId(optimismFork);
-
-        contract1.ensureForkId(mainnetFork); // Valid
-
-        cheats.expectRevert("Block Hash does not match");
-        contract1.ensureBlockHash();
-    }
-
     // test that we can switch between forks, and "roll" blocks
     function testCanRollFork() public {
         cheats.selectFork(mainnetFork);
