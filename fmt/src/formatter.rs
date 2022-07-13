@@ -3031,7 +3031,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 expr.visit(fmt)?;
                 fmt.visit_yul_block(block.loc, &mut block.statements, true)?;
                 let is_last = cases.peek().is_none();
-                if !is_last || (is_last && stmt.default.is_some()) {
+                if !is_last || stmt.default.is_some() {
                     writeln_chunk!(fmt)?;
                 }
             }
