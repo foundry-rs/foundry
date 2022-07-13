@@ -10,7 +10,7 @@ use ethers::prelude::{H160, H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{
     db::DatabaseRef, Account, AccountInfo, Database, Env, Inspector, Log, Return, SubRoutine,
-    TransactOut, TransactTo,
+    TransactOut,
 };
 use std::borrow::Cow;
 
@@ -36,15 +36,13 @@ pub struct FuzzBackendWrapper<'a> {
     ///
     /// No calls on the `FuzzBackendWrapper` will ever persistently modify the `backend`'s state.
     pub backend: Cow<'a, Backend>,
-
-    pub test_contract_address: Option<Address>,
 }
 
 // === impl FuzzBackendWrapper ===
 
 impl<'a> FuzzBackendWrapper<'a> {
     pub fn new(backend: &'a Backend) -> Self {
-        Self { backend: Cow::Borrowed(backend), test_contract_address: None }
+        Self { backend: Cow::Borrowed(backend) }
     }
 
     /// Executes the configured transaction of the `env` without committing state changes
@@ -56,9 +54,6 @@ impl<'a> FuzzBackendWrapper<'a> {
     where
         INSP: Inspector<Self>,
     {
-        if let TransactTo::Call(to) = env.tx.transact_to {
-            self.test_contract_address = Some(to);
-        }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
 }

@@ -244,6 +244,12 @@ impl Backend {
         self
     }
 
+    /// Sets the caller address
+    pub fn set_caller(&mut self, addr: Address) -> &mut Self {
+        self.inner.caller = Some(addr);
+        self
+    }
+
     /// Returns the address of the set `DSTest` contract
     pub fn test_contract_address(&self) -> Option<Address> {
         self.inner.test_contract_address

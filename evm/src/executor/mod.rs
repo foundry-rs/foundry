@@ -161,10 +161,11 @@ impl Executor {
     pub fn setup(
         &mut self,
         from: Option<Address>,
-        address: Address,
+        to: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
         let from = from.unwrap_or(CALLER);
-        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
+        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.

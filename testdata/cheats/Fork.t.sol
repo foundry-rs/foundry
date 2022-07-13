@@ -34,13 +34,13 @@ contract ForkTest is DSTest {
         assert(forkA != forkB);
     }
 
-//    // ensures forks use different ids
-//    function testCanSwitchForks() public {
-//        cheats.selectFork(forkA);
-//        cheats.selectFork(forkB);
-//        cheats.selectFork(forkB);
-//        cheats.selectFork(forkA);
-//    }
+    // ensures forks use different ids
+    function testCanSwitchForks() public {
+        cheats.selectFork(forkA);
+        cheats.selectFork(forkB);
+        cheats.selectFork(forkB);
+        cheats.selectFork(forkA);
+    }
 
     function testForksHaveSeparatedStorage() public {
         cheats.selectFork(forkA);
