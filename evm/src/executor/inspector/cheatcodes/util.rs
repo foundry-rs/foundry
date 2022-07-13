@@ -97,7 +97,9 @@ pub fn apply<DB: Database>(
     Some(match call {
         HEVMCalls::Addr(inner) => addr(inner.0),
         HEVMCalls::Sign(inner) => sign(inner.0, inner.1.into(), data.env.cfg.chain_id),
-        HEVMCalls::DeriveKey0(inner) => derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1),
+        HEVMCalls::DeriveKey0(inner) => {
+            derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
+        }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
