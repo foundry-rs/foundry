@@ -31,7 +31,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
         HEVMCalls::ActiveFork(_) => data
             .db
-            .active_fork()
+            .active_fork_id()
             .map(|id| id.encode().into())
             .ok_or_else(|| util::encode_error("No active fork")),
         HEVMCalls::RollFork0(fork) => {

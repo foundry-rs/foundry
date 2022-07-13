@@ -81,7 +81,7 @@ impl Executor {
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        backend.db.insert_account_info(
+        backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );

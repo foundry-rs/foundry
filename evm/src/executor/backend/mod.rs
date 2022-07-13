@@ -9,9 +9,9 @@ use ethers::{
 };
 use hashbrown::HashMap as Map;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB},
-    Account, AccountInfo, Database, DatabaseCommit, Env, Inspector, Log, Return, SubRoutine,
-    TransactOut, TransactTo,
+    db::{CacheDB, DatabaseRef},
+    Account, AccountInfo, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log, Return,
+    SubRoutine, TransactOut, TransactTo,
 };
 use std::collections::HashMap;
 use tracing::{trace, warn};
@@ -21,6 +21,18 @@ pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
 use crate::{abi::CHEATCODE_ADDRESS, executor::backend::snapshot::BackendSnapshot};
 pub use in_memory_db::MemDb;
+
+// A `revm::Database` that is used in forking mode
+type ForkDB = CacheDB<SharedBackend>;
+
+/// Represents a numeric `ForkId` valid only for the existence of the `Backend`.
+/// The difference between `ForkId` and `LocalForkId` is that `ForkId` tracks pairs of `endpoint +
+/// block` which can be reused by multiple tests, whereas the `LocalForkId` is unique within a test
+pub type LocalForkId = U256;
+
+/// Represents the index of a fork in the created forks vector
+/// This is used for fast lookup
+type ForkLookupIndex = usize;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -39,7 +51,7 @@ pub trait DatabaseExt: Database {
     /// **N.B.** While this reverts the state of the evm to the snapshot, it keeps new logs made
     /// since the snapshots was created. This way we can show logs that were emitted between
     /// snapshot and its revert.
-    /// This will also revert any changes in the `Env` and replace it with the caputured `Env` of
+    /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
     /// `Self::snapshot`
     fn revert(&mut self, id: U256, subroutine: &SubRoutine, env: &mut Env) -> Option<SubRoutine>;
 
@@ -81,7 +93,7 @@ pub trait DatabaseExt: Database {
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
-    fn active_fork(&self) -> Option<U256>;
+    fn active_fork_id(&self) -> Option<LocalForkId>;
 
     /// Ensures that an appropriate fork exits
     ///
@@ -151,9 +163,12 @@ pub trait DatabaseExt: Database {
 pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
-    /// The database that holds the entire state, uses an internal database depending on current
-    /// state
-    pub db: CacheDB<BackendDatabase>,
+    // The default in memory db
+    mem_db: InMemoryDB,
+    /// The currently active fork database
+    ///
+    /// If this is set, then the Backend is currently in forking mode
+    active_fork_db: Option<(LocalForkId, ForkLookupIndex)>,
     /// holds additional Backend data
     inner: BackendInner,
 }
@@ -171,46 +186,61 @@ impl Backend {
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
     /// database
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
-        let (db, launched_with) = if let Some(f) = fork {
-            let (id, fork) = forks.create_fork(f).expect("Unable to fork");
-            (CacheDB::new(BackendDatabase::Forked(fork.clone(), U256::zero())), Some((id, fork)))
-        } else {
-            (CacheDB::new(BackendDatabase::InMemory(EmptyDB())), None)
-        };
         // Note: this will take of registering the `fork`
-        Self { forks, db, inner: BackendInner::new(launched_with) }
+        let mut backend = Self {
+            forks,
+            mem_db: InMemoryDB::default(),
+            active_fork_db: None,
+            inner: Default::default(),
+        };
+
+        if let Some(fork) = fork {
+            let (fork_id, fork) = backend.forks.create_fork(fork).expect("Unable to create fork");
+            let fork_db = ForkDB::new(fork);
+            backend.active_fork_db = Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db));
+            backend.inner.launched_with_fork = Some(fork_id);
+        }
+
+        backend
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
-        let mut db = self.db.clone();
-        db.db = BackendDatabase::InMemory(EmptyDB());
-        Self { forks: self.forks.clone(), db, inner: Default::default() }
+        Self {
+            forks: self.forks.clone(),
+            mem_db: InMemoryDB::default(),
+            active_fork_db: None,
+            inner: Default::default(),
+        }
     }
 
     pub fn insert_account_info(&mut self, address: H160, account: AccountInfo) {
-        self.db.insert_account_info(address, account)
+        if let Some(db) = self.active_fork_mut() {
+            db.insert_account_info(address, account)
+        } else {
+            self.mem_db.insert_account_info(address, account)
+        }
     }
 
     /// Returns all forks created by this backend
-    pub fn created_forks(&self) -> &HashMap<ForkId, SharedBackend> {
-        &self.inner.created_forks
+    pub fn created_forks(&self) -> impl Iterator<Item = (&ForkId, &ForkDB)> + '_ {
+        self.inner.forks_iter()
     }
 
     /// Returns all snapshots created in this backend
-    pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>> {
+    pub fn snapshots(&self) -> &Snapshots<BackendSnapshot<BackendDatabaseSnapshot>> {
         &self.inner.snapshots
     }
 
     /// Sets the address of the `DSTest` contract that is being executed
     pub fn set_test_contract(&mut self, addr: Address) -> &mut Self {
-        self.inner.test_contract_context = Some(addr);
+        self.inner.test_contract_address = Some(addr);
         self
     }
 
     /// Returns the address of the set `DSTest` contract
     pub fn test_contract_address(&self) -> Option<Address> {
-        self.inner.test_contract_context
+        self.inner.test_contract_address
     }
 
     /// Checks if the test contract associated with this backend failed, See
@@ -249,6 +279,52 @@ impl Backend {
         value == U256::one()
     }
 
+    /// when creating or switching forks, we update the AccountInfo of the contract
+    pub(crate) fn update_fork_db(&self, fork_db: &mut ForkDB) {
+        debug_assert!(
+            self.inner.test_contract_address.is_some(),
+            "Test contract address must be set"
+        );
+        let test_addr = self.inner.test_contract_address.expect("Test contract address is set");
+        self.update_fork_db_contract(test_addr, fork_db)
+    }
+
+    /// Copies the state of the `addr` from the currently active db into the given `fork_db`
+    pub(crate) fn update_fork_db_contract(&self, addr: Address, fork_db: &mut ForkDB) {
+        if let Some((_, fork_idx)) = self.active_fork_db.as_ref() {
+            let active = self.inner.get_fork_db(*fork_idx);
+            clone_data(addr, active, fork_db)
+        } else {
+            clone_data(addr, &self.mem_db, fork_db)
+        }
+    }
+
+    /// Returns the memory db used if not in forking mode
+    pub fn mem_db(&self) -> &InMemoryDB {
+        &self.mem_db
+    }
+
+    /// Returns the currently active `ForkDB`, if any
+    pub fn active_fork(&self) -> Option<&ForkDB> {
+        self.active_fork_db.map(|(_, idx)| self.inner.get_fork_db(idx))
+    }
+
+    /// Returns the currently active `ForkDB`, if any
+    fn active_fork_mut(&mut self) -> Option<&mut ForkDB> {
+        self.active_fork_db.map(|(_, idx)| self.inner.get_fork_db_mut(idx))
+    }
+
+    /// Creates a snapshot of the currently active database
+    pub(crate) fn create_db_snapshot(&self) -> BackendDatabaseSnapshot {
+        if let Some((id, idx)) = self.active_fork_db {
+            let fork_db = self.inner.get_fork_db(idx).clone();
+            let fork_id = self.inner.ensure_fork_id(id).cloned().expect("Exists; qed");
+            BackendDatabaseSnapshot::Forked(id, fork_id, idx, fork_db)
+        } else {
+            BackendDatabaseSnapshot::InMemory(self.mem_db.clone())
+        }
+    }
+
     /// Executes the configured test call of the `env` without commiting state changes
     pub fn inspect_ref<INSP>(
         &mut self,
@@ -259,7 +335,7 @@ impl Backend {
         INSP: Inspector<Self>,
     {
         if let TransactTo::Call(to) = env.tx.transact_to {
-            self.inner.test_contract_context = Some(to);
+            self.inner.test_contract_address = Some(to);
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
@@ -270,7 +346,7 @@ impl Backend {
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
         let id = self.inner.snapshots.insert(BackendSnapshot::new(
-            self.db.clone(),
+            self.create_db_snapshot(),
             subroutine.clone(),
             env.clone(),
         ));
@@ -294,7 +370,16 @@ impl DatabaseExt for Backend {
             // merge additional logs
             snapshot.merge(subroutine);
             let BackendSnapshot { db, subroutine, env } = snapshot;
-            self.db = db;
+            match db {
+                BackendDatabaseSnapshot::InMemory(mem_db) => {
+                    self.mem_db = mem_db;
+                }
+                BackendDatabaseSnapshot::Forked(id, fork_id, idx, fork_db) => {
+                    self.inner.revert_snapshot(id, fork_id, idx, fork_db);
+                    self.active_fork_db = Some((id, idx))
+                }
+            }
+
             update_current_env_with_fork_env(current, env);
 
             trace!(target: "backend", "Reverted snapshot {}", id);
@@ -305,20 +390,30 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256> {
-        let (id, fork) = self.forks.create_fork(fork)?;
-        let id = self.inner.insert_new_fork(id, fork);
+    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
+        let (fork_id, fork) = self.forks.create_fork(fork)?;
+        let fork_db = ForkDB::new(fork);
+        let (id, _) = self.inner.insert_new_fork(fork_id, fork_db);
         Ok(id)
     }
 
-    fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()> {
+    /// When switching forks we copy the shared state
+    fn select_fork(&mut self, id: LocalForkId, env: &mut Env) -> eyre::Result<()> {
         let fork_id = self.ensure_fork_id(id).cloned()?;
+        let idx = self.inner.ensure_fork_index(&fork_id)?;
         let fork_env = self
             .forks
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
-        let fork = self.inner.ensure_backend(id).cloned()?;
-        self.db.db = BackendDatabase::Forked(fork, id);
+
+        // update the shared state and track
+        // TODO(mattsse): can we get rid of this clone
+        let mut fork_db = self.inner.get_fork_db_mut(idx).clone();
+        self.update_fork_db(&mut fork_db);
+        self.inner.forks.insert(idx, fork_db);
+
+        self.active_fork_db = Some((id, idx));
+        // update the environment accordingly
         update_current_env_with_fork_env(env, fork_env);
         Ok(())
     }
@@ -327,153 +422,162 @@ impl DatabaseExt for Backend {
         &mut self,
         env: &mut Env,
         block_number: U256,
-        id: Option<U256>,
+        id: Option<LocalForkId>,
     ) -> eyre::Result<()> {
         let id = self.ensure_fork(id)?;
-        let (fork_id, fork) =
+        let (fork_id, backend) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
-        self.inner.update_fork_mapping(id, fork_id, fork);
-        if self.active_fork() == Some(id) {
+        self.inner.roll_fork(id, fork_id, backend)?;
+        if self.active_fork_id() == Some(id) {
             // need to update the block number right away
             env.block.number = block_number;
         }
         Ok(())
     }
 
-    fn active_fork(&self) -> Option<U256> {
-        self.db.db.as_fork()
+    fn active_fork_id(&self) -> Option<LocalForkId> {
+        self.active_fork_db.map(|(id, _)| id)
     }
 
-    fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256> {
+    fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
         if let Some(id) = id {
             if self.inner.issued_local_fork_ids.contains_key(&id) {
                 return Ok(id)
             }
             eyre::bail!("Requested fork `{}` does not exit", id)
         }
-        if let Some(id) = self.active_fork() {
+        if let Some(id) = self.active_fork_id() {
             Ok(id)
         } else {
             eyre::bail!("No fork active")
         }
     }
 
-    fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
+    fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.inner.ensure_fork_id(id)
     }
 }
 
 impl DatabaseRef for Backend {
     fn basic(&self, address: H160) -> AccountInfo {
-        self.db.basic(address)
+        if let Some(db) = self.active_fork() {
+            db.basic(address)
+        } else {
+            self.mem_db.basic(address)
+        }
     }
 
     fn code_by_hash(&self, code_hash: H256) -> Bytes {
-        self.db.code_by_hash(code_hash)
+        if let Some(db) = self.active_fork() {
+            db.code_by_hash(code_hash)
+        } else {
+            self.mem_db.code_by_hash(code_hash)
+        }
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        DatabaseRef::storage(&self.db, address, index)
+        if let Some(db) = self.active_fork() {
+            DatabaseRef::storage(db, address, index)
+        } else {
+            DatabaseRef::storage(&self.mem_db, address, index)
+        }
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.db.block_hash(number)
+        if let Some(db) = self.active_fork() {
+            db.block_hash(number)
+        } else {
+            self.mem_db.block_hash(number)
+        }
     }
 }
 
 impl<'a> DatabaseRef for &'a mut Backend {
     fn basic(&self, address: H160) -> AccountInfo {
-        DatabaseRef::basic(&self.db, address)
+        if let Some(db) = self.active_fork() {
+            DatabaseRef::basic(db, address)
+        } else {
+            DatabaseRef::basic(&self.mem_db, address)
+        }
     }
 
     fn code_by_hash(&self, code_hash: H256) -> Bytes {
-        DatabaseRef::code_by_hash(&self.db, code_hash)
+        if let Some(db) = self.active_fork() {
+            DatabaseRef::code_by_hash(db, code_hash)
+        } else {
+            DatabaseRef::code_by_hash(&self.mem_db, code_hash)
+        }
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        DatabaseRef::storage(&self.db, address, index)
+        if let Some(db) = self.active_fork() {
+            DatabaseRef::storage(db, address, index)
+        } else {
+            DatabaseRef::storage(&self.mem_db, address, index)
+        }
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        DatabaseRef::block_hash(&self.db, number)
+        if let Some(db) = self.active_fork() {
+            DatabaseRef::block_hash(db, number)
+        } else {
+            DatabaseRef::block_hash(&self.mem_db, number)
+        }
     }
 }
 
 impl DatabaseCommit for Backend {
     fn commit(&mut self, changes: Map<H160, Account>) {
-        self.db.commit(changes)
+        if let Some(db) = self.active_fork_mut() {
+            db.commit(changes)
+        } else {
+            self.mem_db.commit(changes)
+        }
     }
 }
 
 impl Database for Backend {
     fn basic(&mut self, address: H160) -> AccountInfo {
-        self.db.basic(address)
+        if let Some(db) = self.active_fork_mut() {
+            db.basic(address)
+        } else {
+            self.mem_db.basic(address)
+        }
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
-        self.db.code_by_hash(code_hash)
+        if let Some(db) = self.active_fork_mut() {
+            db.code_by_hash(code_hash)
+        } else {
+            self.mem_db.code_by_hash(code_hash)
+        }
     }
 
     fn storage(&mut self, address: H160, index: U256) -> U256 {
-        Database::storage(&mut self.db, address, index)
+        if let Some(db) = self.active_fork_mut() {
+            Database::storage(db, address, index)
+        } else {
+            Database::storage(&mut self.mem_db, address, index)
+        }
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.db.block_hash(number)
+        if let Some(db) = self.active_fork_mut() {
+            db.block_hash(number)
+        } else {
+            self.mem_db.block_hash(number)
+        }
     }
 }
 
 /// Variants of a [revm::Database]
 #[derive(Debug, Clone)]
-pub enum BackendDatabase {
+pub enum BackendDatabaseSnapshot {
     /// Simple in-memory [revm::Database]
-    InMemory(EmptyDB),
-    /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
-    /// same data
-    Forked(SharedBackend, U256),
-}
-
-// === impl BackendDatabase ===
-
-impl BackendDatabase {
-    /// Returns the `ForkId` if in fork mode
-    pub fn as_fork(&self) -> Option<U256> {
-        match self {
-            BackendDatabase::InMemory(_) => None,
-            BackendDatabase::Forked(_, id) => Some(*id),
-        }
-    }
-}
-
-impl DatabaseRef for BackendDatabase {
-    fn basic(&self, address: H160) -> AccountInfo {
-        match self {
-            BackendDatabase::InMemory(inner) => inner.basic(address),
-            BackendDatabase::Forked(inner, _) => inner.basic(address),
-        }
-    }
-
-    fn code_by_hash(&self, address: H256) -> Bytes {
-        match self {
-            BackendDatabase::InMemory(inner) => inner.code_by_hash(address),
-            BackendDatabase::Forked(inner, _) => inner.code_by_hash(address),
-        }
-    }
-
-    fn storage(&self, address: H160, index: U256) -> U256 {
-        match self {
-            BackendDatabase::InMemory(inner) => inner.storage(address, index),
-            BackendDatabase::Forked(inner, _) => inner.storage(address, index),
-        }
-    }
-
-    fn block_hash(&self, number: U256) -> H256 {
-        match self {
-            BackendDatabase::InMemory(inner) => inner.block_hash(number),
-            BackendDatabase::Forked(inner, _) => inner.block_hash(number),
-        }
-    }
+    InMemory(InMemoryDB),
+    /// Contains the entire forking mode database
+    Forked(LocalForkId, ForkId, ForkLookupIndex, ForkDB),
 }
 
 /// Container type for various Backend related data
@@ -486,7 +590,7 @@ pub struct BackendInner {
     pub launched_with_fork: Option<ForkId>,
     /// This tracks numeric fork ids and the `ForkId` used by the handler.
     ///
-    /// This is neceessary, because there can be multiple `Backends` associated with a single
+    /// This is necessary, because there can be multiple `Backends` associated with a single
     /// `ForkId` which is only a pair of endpoint + block. Since an existing fork can be
     /// modified (e.g. `roll_fork`), but this should only affect the fork that's unique for the
     /// test and not the `ForkId`
@@ -495,11 +599,14 @@ pub struct BackendInner {
     /// is basically creating(or reusing) another `ForkId` that's then mapped to the previous
     /// issued _local_ numeric identifier, that remains constant, even if the underlying fork
     /// backend changes.
-    pub issued_local_fork_ids: HashMap<U256, ForkId>,
-    /// tracks all created forks
-    pub created_forks: HashMap<ForkId, SharedBackend>,
+    pub issued_local_fork_ids: HashMap<LocalForkId, ForkId>,
+    /// tracks all the created forks
+    /// Contains the index of the corresponding `ForkDB` in the `forks` vec
+    pub created_forks: HashMap<ForkId, ForkLookupIndex>,
+    /// Holds all created fork databases
+    pub forks: Vec<ForkDB>,
     /// Contains snapshots made at a certain point
-    pub snapshots: Snapshots<BackendSnapshot<CacheDB<BackendDatabase>>>,
+    pub snapshots: Snapshots<BackendSnapshot<BackendDatabaseSnapshot>>,
     /// Tracks whether there was a failure in a snapshot that was reverted
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
@@ -514,7 +621,7 @@ pub struct BackendInner {
     ///
     /// This address can be used to inspect the state of the contract when a test is being
     /// executed. E.g. the `_failed` variable of `DSTest`
-    pub test_contract_context: Option<Address>,
+    pub test_contract_address: Option<Address>,
     /// Tracks numeric identifiers for forks
     pub next_fork_id: U256,
 }
@@ -522,46 +629,93 @@ pub struct BackendInner {
 // === impl BackendInner ===
 
 impl BackendInner {
-    /// Creates a new instance that tracks the fork used at launch
-    pub fn new(launched_with: Option<(ForkId, SharedBackend)>) -> Self {
-        launched_with.map(|(id, backend)| Self::forked(id, backend)).unwrap_or_default()
-    }
-
-    pub fn forked(id: ForkId, fork: SharedBackend) -> Self {
-        let launched_with_fork = Some(id.clone());
-        let mut backend = Self { launched_with_fork, ..Default::default() };
-        backend.insert_new_fork(id, fork);
-        backend
-    }
-
-    pub fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
+    pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.issued_local_fork_ids
             .get(&id)
             .ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
     }
 
-    /// Ensures that the `SharedBackend` for the given `id` exits
-    pub fn ensure_backend(&self, id: U256) -> eyre::Result<&SharedBackend> {
-        self.get_backend(id).ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
+    pub fn ensure_fork_index(&self, id: &ForkId) -> eyre::Result<ForkLookupIndex> {
+        self.created_forks
+            .get(id)
+            .copied()
+            .ok_or_else(|| eyre::eyre!("No matching fork found for {}", id))
     }
 
-    /// Returns the matching `SharedBackend` for the givne id
-    fn get_backend(&self, id: U256) -> Option<&SharedBackend> {
-        self.issued_local_fork_ids.get(&id).and_then(|id| self.created_forks.get(id))
+    fn get_fork_db(&self, idx: ForkLookupIndex) -> &ForkDB {
+        debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
+        &self.forks[idx]
     }
 
-    /// Updates the fork and the local mapping
-    pub fn update_fork_mapping(&mut self, id: U256, fork: ForkId, backend: SharedBackend) {
-        self.created_forks.insert(fork.clone(), backend);
-        self.issued_local_fork_ids.insert(id, fork);
+    fn get_fork_db_mut(&mut self, idx: ForkLookupIndex) -> &mut ForkDB {
+        debug_assert!(idx < self.forks.len(), "fork lookup index must exist");
+        &mut self.forks[idx]
     }
 
-    /// Issues a new local fork identifier
-    pub fn insert_new_fork(&mut self, fork: ForkId, backend: SharedBackend) -> U256 {
-        self.created_forks.insert(fork.clone(), backend);
+    pub(crate) fn get_fork_db_by_id(&self, id: LocalForkId) -> Option<&ForkDB> {
+        self.issued_local_fork_ids
+            .get(&id)
+            .and_then(|fork_id| self.created_forks.get(fork_id).map(|idx| self.get_fork_db(*idx)))
+    }
+
+    /// Reverts the entire fork database
+    pub fn revert_snapshot(
+        &mut self,
+        id: LocalForkId,
+        fork_id: ForkId,
+        idx: ForkLookupIndex,
+        fork_db: ForkDB,
+    ) {
+        self.created_forks.insert(fork_id.clone(), idx);
+        self.issued_local_fork_ids.insert(id, fork_id);
+        *self.get_fork_db_mut(idx) = fork_db;
+    }
+
+    /// Updates the fork and the local mapping and returns the new index for the `fork_db`
+    pub fn update_fork_mapping(
+        &mut self,
+        id: LocalForkId,
+        fork_id: ForkId,
+        fork_db: ForkDB,
+    ) -> ForkLookupIndex {
+        let idx = self.forks.len();
+        self.issued_local_fork_ids.insert(id, fork_id.clone());
+        self.created_forks.insert(fork_id, idx);
+        self.forks.push(fork_db);
+        idx
+    }
+
+    pub fn roll_fork(
+        &mut self,
+        id: LocalForkId,
+        new_fork_id: ForkId,
+        backend: SharedBackend,
+    ) -> eyre::Result<ForkLookupIndex> {
+        let fork_id = self.ensure_fork_id(id)?;
+        let idx = self.ensure_fork_index(fork_id)?;
+
+        self.forks[idx].db = backend;
+
+        // update mappings
+        self.issued_local_fork_ids.insert(id, new_fork_id.clone());
+        self.created_forks.insert(new_fork_id, idx);
+        Ok(idx)
+    }
+
+    /// Inserts a _new_ `ForkDB` and issues a new local fork identifier
+    ///
+    /// Also returns the index where the `ForDB` is stored
+    pub fn insert_new_fork(
+        &mut self,
+        fork_id: ForkId,
+        fork_db: ForkDB,
+    ) -> (LocalForkId, ForkLookupIndex) {
+        let idx = self.forks.len();
+        self.created_forks.insert(fork_id.clone(), idx);
         let id = self.next_id();
-        self.issued_local_fork_ids.insert(id, fork);
-        id
+        self.issued_local_fork_ids.insert(id, fork_id);
+        self.forks.push(fork_db);
+        (id, idx)
     }
 
     fn next_id(&mut self) -> U256 {
@@ -569,10 +723,40 @@ impl BackendInner {
         self.next_fork_id += U256::one();
         id
     }
+
+    /// Returns the number of issued ids
+    pub fn len(&self) -> usize {
+        self.issued_local_fork_ids.len()
+    }
+
+    /// Returns true if no forks are issued
+    pub fn is_empty(&self) -> bool {
+        self.issued_local_fork_ids.is_empty()
+    }
+
+    /// Returns all forks created by this backend
+    pub fn forks_iter(&self) -> impl Iterator<Item = (&ForkId, &ForkDB)> + '_ {
+        self.created_forks.iter().map(|(id, idx)| (id, self.get_fork_db(*idx)))
+    }
 }
 
 /// This updates the currently used env with the fork's environment
 pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
     current.block = fork.block;
     current.cfg = fork.cfg;
+}
+
+// clones the data of the given address from the `active` database into the `fork_db`
+pub(crate) fn clone_data<ExtDB: DatabaseRef>(
+    addr: Address,
+    active: &CacheDB<ExtDB>,
+    fork_db: &mut ForkDB,
+) {
+    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
+        fork_db.contracts.insert(acc.info.code_hash, code);
+    }
+    fork_db.accounts.insert(addr, acc);
+
+    // TODO copy precompiles
 }
