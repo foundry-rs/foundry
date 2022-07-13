@@ -30,7 +30,7 @@ pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into());
+        return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
     if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
@@ -47,7 +47,7 @@ fn addr(private_key: U256) -> Result<Bytes, Bytes> {
 
 fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into());
+        return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
     if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
@@ -75,11 +75,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = format!(
-        "{}{}",
-        path,
-        index
-    );
+    let derivation_path = format!("{}{}", path, index);
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
