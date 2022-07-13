@@ -754,15 +754,15 @@ impl<T: Into<BlockNumber>> From<T> for Hardfork {
 
         match num {
             _i if num < 1_150_000 => Hardfork::Frontier,
-            _i if num < 2463000 => Hardfork::Homestead,
-            _i if num < 2675000 => Hardfork::Tangerine,
-            _i if num < 4370000 => Hardfork::SpuriousDragon,
-            _i if num < 7280000 => Hardfork::Byzantium,
-            _i if num < 9069000 => Hardfork::Constantinople,
-            _i if num < 9200000 => Hardfork::Istanbul,
-            _i if num < 12244000 => Hardfork::Muirglacier,
-            _i if num < 12965000 => Hardfork::Berlin,
-            _i if num < 13773000 => Hardfork::London,
+            _i if num < 2_463_000 => Hardfork::Homestead,
+            _i if num < 2_675_000 => Hardfork::Tangerine,
+            _i if num < 4_370_000 => Hardfork::SpuriousDragon,
+            _i if num < 7_280_000 => Hardfork::Byzantium,
+            _i if num < 9_069_000 => Hardfork::Constantinople,
+            _i if num < 9_200_000 => Hardfork::Istanbul,
+            _i if num < 12_244_000 => Hardfork::Muirglacier,
+            _i if num < 12_965_000 => Hardfork::Berlin,
+            _i if num < 13_773_000 => Hardfork::London,
 
             _ => Hardfork::Latest,
         }
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_hardfork_blocks() {
-        let hf: Hardfork = 12965000u64.into();
+        let hf: Hardfork = 12_965_000u64.into();
         assert_eq!(hf, Hardfork::London);
 
         let hf: Hardfork = 4370000u64.into();
