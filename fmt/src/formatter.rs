@@ -2918,7 +2918,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         &mut self,
         loc: Loc,
         statements: &mut Vec<YulStatement>,
+        attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
+        if attempt_single_line && statements.len() == 1 {
+            let chunk = self.chunked(loc.start(), Some(loc.end()), |fmt| {
+                write!(fmt.buf(), "{{ ")?;
+                for stmt in statements.iter_mut() {
+                    stmt.visit(fmt)?;
+                }
+                write!(fmt.buf(), " }}")?;
+                Ok(())
+            })?;
+            if self.will_chunk_fit("{}", &chunk)? {
+                return self.write_chunk(&chunk)
+            }
+        }
+
         self.visit_block(loc, statements)
     }
 
@@ -2931,20 +2946,59 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.visit_source(loc) // TODO:
     }
 
+    fn visit_yul_expr(&mut self, expr: &mut YulExpression) -> Result<(), Self::Error> {
+        // TODO:
+        match expr {
+            // YulExpression::BoolLiteral(loc, val, ident) => {
+            //     let val = if *val { "true" } else { "false" };
+            //     write_chunk!(self, loc.start(), loc.end(), "{val}",)
+            // }
+            YulExpression::FunctionCall(expr) => self.visit_yul_function_call(expr),
+            // YulExpression::HexNumberLiteral(loc, val, ident) => {}
+            // YulExpression::HexStringLiteral(val, ident) => {}
+            // YulExpression::NumberLiteral(loc, val, expr /* TODO: */, ident) => {}
+            // YulExpression::StringLiteral(val, ident) => {}
+            // YulExpression::SuffixAccess(loc, expr, ident) => {}
+            YulExpression::Variable(ident) => {
+                write_chunk!(self, ident.loc.start(), ident.loc.end(), "{}", ident.name)
+            }
+            _ => self.visit_source(expr.loc()),
+        }
+    }
+
     fn visit_yul_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        self.visit_source(loc) // TODO:
+        write_chunk!(self, loc.start(), loc.end(), "break")
     }
 
     fn visit_yul_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        self.visit_source(loc) // TODO:
+        write_chunk!(self, loc.start(), loc.end(), "continue")
     }
 
     fn visit_yul_for(&mut self, stmt: &mut YulFor) -> Result<(), Self::Error> {
-        self.visit_source(stmt.loc) // TODO:
+        write_chunk!(self, stmt.loc.start(), "for")?;
+        self.visit_yul_block(stmt.init_block.loc, &mut stmt.init_block.statements, true)?;
+        stmt.condition.visit(self)?;
+        self.visit_yul_block(stmt.post_block.loc, &mut stmt.post_block.statements, true)?;
+        self.visit_yul_block(stmt.execution_block.loc, &mut stmt.execution_block.statements, true)?;
+        Ok(())
     }
 
     fn visit_yul_function_call(&mut self, stmt: &mut YulFunctionCall) -> Result<(), Self::Error> {
-        self.visit_source(stmt.loc) // TODO:
+        write_chunk!(self, stmt.loc.start(), "{}", stmt.id.name)?;
+        if stmt.arguments.is_empty() {
+            write!(self.buf(), "()")?;
+        } else {
+            write!(self.buf(), "(")?;
+            let chunks = self.items_to_chunks(
+                Some(stmt.loc.end()),
+                stmt.arguments.iter_mut().map(|arg| Ok((arg.loc(), arg))),
+            )?;
+            let multiline = self.are_chunks_separated_multiline("{})", &chunks, ",")?;
+            self.write_chunks_separated(&chunks, ",", multiline)?;
+            write!(self.buf(), ")")?;
+        }
+
+        Ok(())
     }
 
     fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
@@ -2954,18 +3008,39 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_yul_if(
         &mut self,
         loc: Loc,
-        _expr: &mut YulExpression,
-        _block: &mut YulBlock,
+        expr: &mut YulExpression,
+        block: &mut YulBlock,
     ) -> Result<(), Self::Error> {
-        self.visit_source(loc) // TODO:
+        write_chunk!(self, loc.start(), "if")?;
+        expr.visit(self)?;
+        block.visit(self)
     }
 
     fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        self.visit_source(loc) // TODO:
+        write_chunk!(self, loc.start(), loc.end(), "leave")
     }
 
     fn visit_yul_switch(&mut self, stmt: &mut YulSwitch) -> Result<(), Self::Error> {
-        self.visit_source(stmt.loc) // TODO:
+        write_chunk!(self, stmt.loc.start(), "switch")?;
+        stmt.condition.visit(self)?;
+        writeln_chunk!(self)?;
+        self.indented(1, |fmt| {
+            let mut cases = stmt.cases.iter_mut().peekable();
+            while let Some(YulSwitchOptions::Case(loc, expr, block)) = cases.next() {
+                write_chunk!(fmt, loc.start(), "case")?;
+                expr.visit(fmt)?;
+                fmt.visit_yul_block(block.loc, &mut block.statements, true)?;
+                let is_last = cases.peek().is_none();
+                if !is_last || (is_last && stmt.default.is_some()) {
+                    writeln_chunk!(fmt)?;
+                }
+            }
+            if let Some(YulSwitchOptions::Default(loc, ref mut block)) = stmt.default {
+                write_chunk!(fmt, loc.start(), "default")?;
+                fmt.visit_yul_block(block.loc, &mut block.statements, true)?;
+            }
+            Ok(())
+        })
     }
 
     fn visit_yul_var_declaration(

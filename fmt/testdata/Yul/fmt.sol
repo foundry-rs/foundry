@@ -1,17 +1,17 @@
 contract Yul {
     function test() external {
+        // https://github.com/euler-xyz/euler-contracts/blob/d4f207a4ac5a6e8ab7447a0f09d1399150c41ef4/contracts/vendor/MerkleProof.sol#L54
         bytes32 value;
         bytes32 a;
         bytes32 b;
-        // https://github.com/euler-xyz/euler-contracts/blob/d4f207a4ac5a6e8ab7447a0f09d1399150c41ef4/contracts/vendor/MerkleProof.sol#L54
         assembly {
             mstore(0x00, a)
             mstore(0x20, b)
             value := keccak256(0x00, 0x40)
         }
 
-        address moduleImpl;
         // https://github.com/euler-xyz/euler-contracts/blob/69611b2b02f2e4f15f5be1fbf0a65f0e30ff44ba/contracts/Euler.sol#L49
+        address moduleImpl;
         assembly {
             let payloadSize := sub(calldatasize(), 4)
             calldatacopy(0, 4, payloadSize)
@@ -26,18 +26,10 @@ contract Yul {
                 default { return(0, returndatasize()) }
         }
 
-        assembly ("memory-safe") {
-            let p := mload(0x40)
-            returndatacopy(p, 0, returndatasize())
-            revert(p, returndatasize())
-        }
-
-        assembly "evmasm" ("memory-safe") {}
-
+        // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
         bytes4 ERC20_TRANSFER_ID;
         bytes4 PAIR_SWAP_ID;
         address memUser;
-        // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
         assembly {
             // You can only access teh fallback function if you're authorized
             if iszero(eq(caller(), memUser)) {
@@ -89,14 +81,14 @@ contract Yul {
             mstore(0x7c, PAIR_SWAP_ID)
             // tokenOutNo == 0 ? ....
             switch tokenOutNo
-            case 0 {
-                mstore(0x80, amountOut)
-                mstore(0xa0, 0)
-            }
-            case 1 {
-                mstore(0x80, 0)
-                mstore(0xa0, amountOut)
-            }
+                case 0 {
+                    mstore(0x80, amountOut)
+                    mstore(0xa0, 0)
+                }
+                case 1 {
+                    mstore(0x80, 0)
+                    mstore(0xa0, amountOut)
+                }
             // address(this)
             mstore(0xc0, address())
             // empty bytes
@@ -106,6 +98,19 @@ contract Yul {
             if iszero(s2) {
                 revert(3, 3)
             }
+        }
+
+        // MISC
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            returndatacopy(p, 0, returndatasize())
+            revert(p, returndatasize())
+        }
+
+        assembly "evmasm" ("memory-safe") {}
+
+        assembly {
+            for { let i := 0 } lt(i, 10) { i := add(i, 1) } { mstore(i, 7) }
         }
     }
 }

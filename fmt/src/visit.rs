@@ -323,12 +323,13 @@ pub trait Visitor {
         &mut self,
         loc: Loc,
         _stmts: &mut Vec<YulStatement>,
+        _attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_yul_statement(&mut self, stmt: &mut YulStatement) -> Result<(), Self::Error> {
-        self.visit_source(stmt.loc())
+    fn visit_yul_expr(&mut self, expr: &mut YulExpression) -> Result<(), Self::Error> {
+        self.visit_source(expr.loc())
     }
 
     fn visit_yul_assignment(
@@ -570,7 +571,7 @@ impl Visitable for YulBlock {
     where
         V: Visitor,
     {
-        v.visit_yul_block(self.loc, self.statements.as_mut())
+        v.visit_yul_block(self.loc, self.statements.as_mut(), false)
     }
 }
 
@@ -581,7 +582,9 @@ impl Visitable for YulStatement {
     {
         match self {
             YulStatement::Assign(loc, exprs, expr) => v.visit_yul_assignment(*loc, exprs, expr),
-            YulStatement::Block(block) => v.visit_yul_block(block.loc, block.statements.as_mut()),
+            YulStatement::Block(block) => {
+                v.visit_yul_block(block.loc, block.statements.as_mut(), false)
+            }
             YulStatement::Break(loc) => v.visit_yul_break(*loc),
             YulStatement::Continue(loc) => v.visit_yul_continue(*loc),
             YulStatement::For(stmt) => v.visit_yul_for(stmt),
@@ -619,3 +622,4 @@ impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
 impl_visitable!(IdentifierPath, visit_ident_path);
+impl_visitable!(YulExpression, visit_yul_expr);
