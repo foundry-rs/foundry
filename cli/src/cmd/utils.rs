@@ -116,7 +116,7 @@ pub fn get_cached_entry_by_name(
 pub struct RetryArgs {
     #[clap(
         long,
-        help = "Number of attempts for retrying",
+        help = "Number of attempts for retrying verification",
         default_value = "1",
         validator = u32_validator(1, 10),
         value_name = "RETRIES"
@@ -125,11 +125,11 @@ pub struct RetryArgs {
 
     #[clap(
         long,
-        help = "Optional timeout to apply inbetween attempts in seconds.",
+        help = "Optional timeout to apply inbetween verification attempts in seconds.",
         validator = u32_validator(0, 30),
-        value_name = "DELAY"
+        value_name = "TIMEOUT"
     )]
-    pub delay: Option<u32>,
+    pub timeout: Option<u32>,
 }
 
 fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
@@ -145,7 +145,7 @@ fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
 
 impl From<RetryArgs> for Retry {
     fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, r.delay)
+        Retry::new(r.retries, r.timeout)
     }
 }
 

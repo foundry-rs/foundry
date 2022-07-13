@@ -3,7 +3,6 @@ use crate::{cmd::forge::{build::CoreBuildArgs, create::RETRY_VERIFY_ON_CREATE}, 
 use clap::{Parser, ValueHint};
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
-use crate::cmd::RetryArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(DebugArgs, opts, evm_opts);

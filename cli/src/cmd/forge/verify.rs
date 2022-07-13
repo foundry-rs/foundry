@@ -36,7 +36,7 @@ use tracing::{trace, warn};
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some(10) };
+pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, timeout: Some(10) };
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -98,7 +98,10 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten)]
+    #[clap(
+        flatten,
+        help = "Allows to use retry arguments for contract verification"
+    )]
     pub retry: RetryArgs,
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
