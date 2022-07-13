@@ -20,10 +20,13 @@ contract ForkTest is DSTest {
     uint256 forkA;
     uint256 forkB;
 
+    uint256 testValue;
+
     // this will create two _different_ forks during setup
     function setUp() public {
         forkA = cheats.createFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", mainblock);
         forkB = cheats.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
+        testValue = 999;
     }
 
     // ensures forks use different ids
@@ -73,15 +76,23 @@ contract ForkTest is DSTest {
     }
 
     function testCanShareDataAcrossSwaps() public {
+        assertEq(testValue, 999);
+
         uint256 val = 300;
         cheats.selectFork(forkA);
         assertEq(val, 300);
 
+        testValue = 100;
+
         cheats.selectFork(forkB);
         assertEq(val, 300);
+        assertEq(testValue, 100);
 
         val = 99;
+        testValue = 300;
+
         cheats.selectFork(forkA);
         assertEq(val, 99);
+        assertEq(testValue, 300);
     }
 }
