@@ -34,6 +34,12 @@ contract ForkTest is DSTest {
         assert(forkA != forkB);
     }
 
+    // ensures we can create and select in one step
+    function testCreateSelect() public {
+       uint256 fork = cheats.createSelectFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
+       assertEq(fork, cheats.activeFork());
+    }
+
     // ensures forks use different ids
     function testCanSwitchForks() public {
         cheats.selectFork(forkA);
