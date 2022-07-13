@@ -69,7 +69,10 @@ pub fn apply<DB: DatabaseExt>(
 
 /// Selects the given fork id
 fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
-    data.db.select_fork(fork_id, data.env).map(|_| Default::default()).map_err(util::encode_error)
+    data.db
+        .select_fork(fork_id, data.env, &mut data.subroutine)
+        .map(|_| Default::default())
+        .map_err(util::encode_error)
 }
 
 /// Creates and then also selects the new fork
@@ -80,7 +83,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_select_fork(fork, data.env).map_err(util::encode_error)
+    data.db.create_select_fork(fork, data.env, &mut data.subroutine).map_err(util::encode_error)
 }
 
 /// Creates a new fork
@@ -91,7 +94,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork).map_err(util::encode_error)
+    data.db.create_fork(fork, &data.subroutine).map_err(util::encode_error)
 }
 
 /// Creates the request object for a new fork request

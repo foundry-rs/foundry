@@ -77,12 +77,21 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         self.backend.to_mut().revert(id, subroutine, current)
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
-        self.backend.to_mut().create_fork(fork)
+    fn create_fork(
+        &mut self,
+        fork: CreateFork,
+        subroutine: &SubRoutine,
+    ) -> eyre::Result<LocalForkId> {
+        self.backend.to_mut().create_fork(fork, subroutine)
     }
 
-    fn select_fork(&mut self, id: LocalForkId, env: &mut Env) -> eyre::Result<()> {
-        self.backend.to_mut().select_fork(id, env)
+    fn select_fork(
+        &mut self,
+        id: LocalForkId,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
+    ) -> eyre::Result<()> {
+        self.backend.to_mut().select_fork(id, env, subroutine)
     }
 
     fn roll_fork(

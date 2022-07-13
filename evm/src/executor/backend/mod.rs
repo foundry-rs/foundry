@@ -58,14 +58,19 @@ pub trait DatabaseExt: Database {
     /// Creates and also selects a new fork
     ///
     /// This is basically `create_fork` + `select_fork`
-    fn create_select_fork(&mut self, fork: CreateFork, env: &mut Env) -> eyre::Result<U256> {
-        let id = self.create_fork(fork)?;
-        self.select_fork(id, env)?;
+    fn create_select_fork(
+        &mut self,
+        fork: CreateFork,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
+    ) -> eyre::Result<U256> {
+        let id = self.create_fork(fork, subroutine)?;
+        self.select_fork(id, env, subroutine)?;
         Ok(id)
     }
 
     /// Creates a new fork but does _not_ select it
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<U256>;
+    fn create_fork(&mut self, fork: CreateFork, subroutine: &SubRoutine) -> eyre::Result<U256>;
 
     /// Selects the fork's state
     ///
@@ -76,7 +81,12 @@ pub trait DatabaseExt: Database {
     /// # Errors
     ///
     /// Returns an error if no fork with the given `id` exists
-    fn select_fork(&mut self, id: U256, env: &mut Env) -> eyre::Result<()>;
+    fn select_fork(
+        &mut self,
+        id: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
+    ) -> eyre::Result<()>;
 
     /// Updates the fork to given block number.
     ///
@@ -390,7 +400,11 @@ impl DatabaseExt for Backend {
         }
     }
 
-    fn create_fork(&mut self, fork: CreateFork) -> eyre::Result<LocalForkId> {
+    fn create_fork(
+        &mut self,
+        fork: CreateFork,
+        subroutine: &SubRoutine,
+    ) -> eyre::Result<LocalForkId> {
         let (fork_id, fork) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
         let (id, _) = self.inner.insert_new_fork(fork_id, fork_db);
@@ -398,9 +412,17 @@ impl DatabaseExt for Backend {
     }
 
     /// When switching forks we copy the shared state
-    fn select_fork(&mut self, id: LocalForkId, env: &mut Env) -> eyre::Result<()> {
+    fn select_fork(
+        &mut self,
+        id: LocalForkId,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
+    ) -> eyre::Result<()> {
+        println!("selecting {}", id);
         let fork_id = self.ensure_fork_id(id).cloned()?;
+
         let idx = self.inner.ensure_fork_index(&fork_id)?;
+        println!("index {}", idx);
         let fork_env = self
             .forks
             .get_env(fork_id)?
