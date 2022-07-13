@@ -20,7 +20,7 @@ use rustc_hex::ToHex;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
 
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, timeout: Some(3) };
+pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
