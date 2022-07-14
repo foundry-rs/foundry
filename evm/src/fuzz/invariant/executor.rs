@@ -108,13 +108,12 @@ impl<'a> InvariantExecutor<'a> {
         let executor = RefCell::new(&mut self.evm);
 
         let reverts = Cell::new(0);
-        let broken_invariants = Cell::new(0);
-
-        // If a new contract is created, we need another runner to generate new inputs
-        let branch_runner = RefCell::new(self.runner.clone());
+        let broken_invariants_count = Cell::new(0);
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs` until
-        // the desired `depth` so we can use the state during the run.
+        // the desired `depth` so we can use the evolved state into the fuzz dictionary during the
+        // run. We need another runner for that.
+        let branch_runner = RefCell::new(self.runner.clone());
         let _test_error = self
             .runner
             .run(&strat, |mut inputs| {
@@ -124,19 +123,21 @@ impl<'a> InvariantExecutor<'a> {
                         return Err(TestCaseError::fail("Revert occurred."))
                     }
 
-                    if broken_invariants.get() == invariants.len() {
+                    if broken_invariants_count.get() == invariants.len() {
                         return Err(TestCaseError::fail("All invariants have been broken."))
                     }
                 }
 
-                let mut current_depth = 0;
-                let mut sequence = vec![];
-                let mut created = vec![];
+                // Used for statistics.
+                let mut fuzz_runs = vec![];
 
-                'outer: while current_depth < test_options.depth {
+                // Created contracts during a run.
+                let mut created_contracts = vec![];
+
+                'fuzz_run: for _ in 0..test_options.depth {
                     let (sender, (address, calldata)) = inputs.last().unwrap();
 
-                    // Executes the call from the randomly generated sequence
+                    // Executes the call from the randomly generated sequence.
                     let RawCallResult {
                         result, reverted, gas, stipend, state_changeset, logs, ..
                     } = executor
@@ -144,14 +145,23 @@ impl<'a> InvariantExecutor<'a> {
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
-                    // Collect data for fuzzing
+                    // Collect data for fuzzing.
                     let state_changeset =
                         state_changeset.to_owned().expect("we should have a state changeset");
-                    collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
 
-                    // Commit changes
-                    executor.borrow_mut().backend_mut().db.commit(state_changeset.clone());
-                    sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
+                    collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
+                    collect_created_contracts(
+                        &state_changeset,
+                        self.project_contracts,
+                        self.setup_contracts,
+                        targeted_contracts.clone(),
+                        &mut created_contracts,
+                    );
+
+                    // Commit changes to the database.
+                    executor.borrow_mut().backend_mut().db.commit(state_changeset);
+
+                    fuzz_runs.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
 
                     if !reverted {
                         if assert_invariants(
@@ -165,14 +175,14 @@ impl<'a> InvariantExecutor<'a> {
                         )
                         .is_err()
                         {
-                            broken_invariants.set(
+                            broken_invariants_count.set(
                                 failed_invariants
                                     .borrow()
                                     .iter()
                                     .filter_map(|case| case.1.as_ref())
                                     .count(),
                             );
-                            break 'outer
+                            break 'fuzz_run
                         }
                     } else {
                         reverts.set(reverts.get() + 1);
@@ -193,41 +203,31 @@ impl<'a> InvariantExecutor<'a> {
                                     .insert(invariant.name.clone(), Some(error.clone()));
                             }
 
-                            break 'outer
+                            break 'fuzz_run
                         }
                     }
 
-                    collect_created_contracts(
-                        state_changeset,
-                        self.project_contracts,
-                        self.setup_contracts,
-                        targeted_contracts.clone(),
-                        &mut created,
-                    );
-
-                    // Generates the next call with an updated `EvmFuzzState`
+                    // Generates the next call with an updated `EvmFuzzState`.
                     inputs.extend(
                         strat
                             .new_tree(&mut branch_runner.borrow_mut())
                             .map_err(|_| TestCaseError::Fail("Could not generate case".into()))?
                             .current(),
                     );
-
-                    current_depth += 1;
                 }
 
-                // Before each test, we must reset to the initial state
+                // Before each run, we must reset the database state.
                 executor.borrow_mut().backend_mut().db = clean_db.clone();
 
-                // We clear all the targeted contracts created during this run
-                if !created.is_empty() {
-                    let mut targeted = targeted_contracts.write();
-                    for addr in created.iter() {
-                        targeted.remove(addr);
+                // We clear all the targeted contracts created during this run.
+                if !created_contracts.is_empty() {
+                    let mut writable_targeted = targeted_contracts.write();
+                    for addr in created_contracts.iter() {
+                        writable_targeted.remove(addr);
                     }
                 }
 
-                fuzz_cases.borrow_mut().push(FuzzedCases::new(sequence));
+                fuzz_cases.borrow_mut().push(FuzzedCases::new(fuzz_runs));
 
                 Ok(())
             })

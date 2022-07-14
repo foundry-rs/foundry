@@ -165,18 +165,18 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
 }
 
 /// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores
-/// them at `targeted_contracts` and `created`.
+/// them at `targeted_contracts` and `created_contracts`.
 pub fn collect_created_contracts(
-    state_changeset: StateChangeset,
+    state_changeset: &StateChangeset,
     project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     setup_contracts: &BTreeMap<Address, (String, Abi)>,
     targeted_contracts: FuzzRunIdentifiedContracts,
-    created: &mut Vec<Address>,
+    created_contracts: &mut Vec<Address>,
 ) -> bool {
-    let mut targeted = targeted_contracts.write();
-    let before = created.len();
+    let mut writable_targeted = targeted_contracts.write();
+    let before = created_contracts.len();
 
-    for (address, account) in &state_changeset {
+    for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
                 if !code.is_empty() {
@@ -184,13 +184,14 @@ pub fn collect_created_contracts(
                         .iter()
                         .find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
                     {
-                        created.push(*address);
-                        targeted.insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
+                        created_contracts.push(*address);
+                        writable_targeted
+                            .insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
                     }
                 }
             }
         }
     }
 
-    created.len() > before
+    created_contracts.len() > before
 }
