@@ -698,8 +698,8 @@ fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
         if *c == b'%' {
             if pos == 0 {
                 expect_fmt = true;
-            } else  {
-                expect_fmt = spec[pos-1] != b'%';
+            } else {
+                expect_fmt = spec[pos - 1] != b'%';
                 if !expect_fmt {
                     result.push_str("%"); // apply % escaping
                 }
@@ -712,7 +712,7 @@ fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
             end += 1;
             if end >= v.len() {
                 // now that we've exhausted values in v, push the remaining string
-                result.push_str(&String::from_utf8_lossy(&spec[pos+1..]));
+                result.push_str(&String::from_utf8_lossy(&spec[pos + 1..]));
                 break
             }
         } else {
