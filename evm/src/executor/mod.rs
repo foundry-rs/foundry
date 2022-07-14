@@ -64,7 +64,7 @@ pub struct Executor {
     // so the performance difference should be negligible.
     backend: Backend,
     env: Env,
-    pub inspector_config: InspectorStackConfig, //todo
+    inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
     /// the passed in environment, as those limits are used by the EVM for certain opcodes like
     /// `gaslimit`.
@@ -97,6 +97,14 @@ impl Executor {
 
     pub fn backend(&self) -> &Backend {
         &self.backend
+    }
+
+    pub fn inspector_config(&self) -> &InspectorStackConfig {
+        &self.inspector_config
+    }
+
+    pub fn inspector_config_mut(&mut self) -> &mut InspectorStackConfig {
+        &mut self.inspector_config
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.

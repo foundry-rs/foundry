@@ -154,7 +154,7 @@ impl<'a> InvariantExecutor<'a> {
                         if assert_invariants(
                             self.sender,
                             abi,
-                            executor.borrow_mut(),
+                            &executor,
                             invariant_address,
                             &invariants,
                             invariant_doesnt_hold.borrow_mut(),

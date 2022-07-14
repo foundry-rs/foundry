@@ -187,7 +187,7 @@ pub struct Config {
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
-    /// The number of calls executed to attempt to break invariants
+    /// The number of calls executed to attempt to break invariants in one run.
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a reversion occurs
     pub invariant_fail_on_revert: bool,

@@ -17,12 +17,7 @@ use proptest::{
     test_runner::{TestError, TestRunner},
 };
 
-use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::RefMut,
-    collections::BTreeMap,
-    sync::Arc,
-};
+use std::{borrow::BorrowMut, cell::RefMut, collections::BTreeMap, sync::Arc};
 
 use crate::executor::{Executor, RawCallResult};
 
@@ -35,7 +30,7 @@ pub type BasicTxDetails = (Address, (Address, Bytes));
 /// Metadata on how to run invariant tests
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InvariantTestOptions {
-    /// The number of calls executed to attempt to break invariants
+    /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
     /// Fails the invariant fuzzing if a reversion occurs
     pub fail_on_revert: bool,
@@ -63,23 +58,22 @@ pub struct InvariantExecutor<'a> {
 pub fn assert_invariants<'a>(
     sender: Address,
     abi: &Abi,
-    mut executor: RefMut<&mut &mut Executor>,
+    executor: &'a RefCell<&mut &mut Executor>,
     invariant_address: Address,
     invariants: &'a [&Function],
     mut invariant_doesnt_hold: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
     inputs: &[BasicTxDetails],
 ) -> eyre::Result<()> {
     let mut found_case = false;
-    let inner_sequence = {
-        let generator = &mut executor.inspector_config.fuzzer.as_mut().unwrap().generator;
+    let mut inner_sequence = vec![];
 
-        // // will need the exact depth and all to replay
-        let sequence = generator.last_sequence.read().clone();
-        sequence
-    };
+    if let Some(fuzzer) = &executor.borrow().inspector_config().fuzzer {
+        inner_sequence.extend(fuzzer.generator.last_sequence.read().iter().cloned())
+    }
 
     for func in invariants {
         let RawCallResult { reverted, state_changeset, result, .. } = executor
+            .borrow()
             .call_raw(
                 sender,
                 invariant_address,

@@ -27,7 +27,7 @@ use tracing::{error, trace};
 pub struct TestOptions {
     /// Whether fuzz tests should be run
     pub include_fuzz_tests: bool,
-    /// The number of calls executed to attempt to break invariants
+    /// The number of calls executed to attempt to break invariants in one run.
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a reversion occurs
     pub invariant_fail_on_revert: bool,
@@ -479,7 +479,7 @@ impl<'a> ContractRunner<'a> {
                             self.executor.set_tracing(true);
                             let mut generator = &mut self
                                 .executor
-                                .inspector_config
+                                .inspector_config_mut()
                                 .fuzzer
                                 .as_mut()
                                 .unwrap()
