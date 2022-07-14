@@ -13,6 +13,7 @@ use forge::{
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
+use tracing::trace;
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -24,6 +25,7 @@ impl ScriptArgs {
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
+        trace!("start executing script");
         let CompactContractBytecode { abi, bytecode, .. } = contract;
 
         let abi = abi.expect("no ABI for contract");
@@ -146,6 +148,7 @@ impl ScriptArgs {
 
     /// Creates the Runner that drives script execution
     async fn prepare_runner(&self, script_config: &ScriptConfig, sender: Address) -> ScriptRunner {
+        trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
