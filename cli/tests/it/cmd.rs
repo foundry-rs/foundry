@@ -234,6 +234,31 @@ forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: Test
     }
 });
 
+// Checks that a forge project fails to initialise if dir is already git repo and dirty
+forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
+    use std::process::Command;
+    prj.wipe();
+
+    // initialise new git
+    Command::new("git").arg("init").current_dir(prj.root()).output().unwrap();
+
+    std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
+
+    // create nested dir and execute init in nested dir
+    let nested = prj.root().join("nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    cmd.current_dir(&nested);
+    cmd.arg("init");
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_detect_dirty_git_status_on_init.stderr"),
+    );
+
+    // ensure nothing was emitted, dir is empty
+    assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
+});
+
 // Checks that a forge project can be initialized without creating a git repository
 forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
     prj.wipe();
