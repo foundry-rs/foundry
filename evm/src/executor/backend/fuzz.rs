@@ -17,7 +17,7 @@ use std::borrow::Cow;
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
 /// Any changes made during its existence that affect the caching layer of the underlying Database
-/// will result in a clone of the initial Database. Therefor, this backend type is basically
+/// will result in a clone of the initial Database. Therefore, this backend type is basically
 /// a clone-on-write `Backend`, where cloning is only necessary if cheatcodes will modify the
 /// `Backend`
 ///
