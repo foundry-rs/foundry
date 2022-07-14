@@ -6,7 +6,6 @@ use crate::executor::{backend::Backend, inspector::CheatsConfig};
 use ethers::types::U256;
 
 use crate::fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
-
 use revm::{Env, SpecId};
 
 #[derive(Default, Debug)]
