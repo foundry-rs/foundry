@@ -1,4 +1,4 @@
-use ethers::types::{Address, Selector, H160};
+use ethers::types::{Address, Selector, H160, U256};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
@@ -680,6 +680,266 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
     ])
 });
 
+// Similar to hardhat's but ignores all specifiers except %s. %s works on all solidity values.
+// Support for other specifiers may be added in the future
+fn format_hardhat_log(spec: &str, v: &[&str]) -> String {
+    let mut result = spec.to_string().replace("%%", "%");
+
+    let mut end = v.len();
+    for (pos, t) in v.iter().enumerate() {
+        if result.find("%s").is_some() {
+            result = result.replacen("%s", t, 1);
+        } else {
+            end = pos;
+            break
+        }
+    }
+    for t in &v[end..] {
+        result.push_str(&format!(" {}", t));
+    }
+    result
+}
+
+pub trait HardhatConsoleLogf {
+    fn logf(&self) -> String;
+}
+
+trait ToStringer {}
+impl ToStringer for String {}
+impl ToStringer for bool {}
+impl ToStringer for U256 {}
+
+trait VerboseToString {
+    fn to_verbose_string(&self) -> String;
+}
+
+// specialization to avoid the truncating behavior in default Display format (0x00..0000)
+impl VerboseToString for Address {
+    fn to_verbose_string(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+impl<T: ToStringer + std::fmt::Display> VerboseToString for T {
+    fn to_verbose_string(&self) -> String {
+        self.to_string()
+    }
+}
+
+macro_rules! impl_logf_2 {
+        ($($t:ty),+) => {
+        $(impl HardhatConsoleLogf for $t {
+            fn logf(&self) -> String {
+                let a1 = self.p_1.to_verbose_string();
+                format_hardhat_log(&self.p_0, &[&a1])
+            }
+        })+
+    }
+}
+
+macro_rules! impl_logf_3 {
+        ($($t:ty),+) => {
+        $(impl HardhatConsoleLogf for $t {
+            fn logf(&self) -> String {
+                let a1 = self.p_1.to_verbose_string();
+                let a2 = self.p_2.to_verbose_string();
+                format_hardhat_log(&self.p_0, &[&a1, &a2])
+           }
+        })+
+    }
+}
+
+macro_rules! impl_logf_4 {
+        ($($t:ty),+) => {
+        $(impl HardhatConsoleLogf for $t {
+            fn logf(&self) -> String {
+                let a1 = self.p_1.to_verbose_string();
+                let a2 = self.p_2.to_verbose_string();
+                let a3 = self.p_3.to_verbose_string();
+                format_hardhat_log(&self.p_0, &[&a1, &a2, &a3])
+           }
+        })+
+    }
+}
+
+// Implement printf for each LogXCAll struct that can accept a format string
+impl_logf_2!(Log7Call); // log(string,address)
+impl_logf_2!(Log9Call); // log(string,string)
+impl_logf_2!(Log17Call); // log(string,uint256)
+impl_logf_2!(Log18Call); // log(string,bool)
+
+impl_logf_3!(Log24Call); // log(string,address,uint256)
+impl_logf_3!(Log30Call); // log(string,uint256,address)
+impl_logf_3!(Log35Call); // log(string,string,string)
+impl_logf_3!(Log42Call); // log(string,string,uint256)
+impl_logf_3!(Log43Call); // log(string,uint256,string)
+impl_logf_3!(Log53Call); // log(string,bool,bool)
+impl_logf_3!(Log55Call); // log(string,bool,address)
+impl_logf_3!(Log57Call); // log(string,string,address)
+impl_logf_3!(Log62Call); // log(string,string,bool)
+impl_logf_3!(Log67Call); // log(string,address,bool)
+impl_logf_3!(Log68Call); // log(string,bool,uint256)
+impl_logf_3!(Log69Call); // log(string,uint256,uint256)
+impl_logf_3!(Log70Call); // log(string,uint256,bool)
+impl_logf_3!(Log76Call); // log(string,address,string)
+impl_logf_3!(Log77Call); // log(string,bool,string)
+impl_logf_3!(Log84Call); // log(string,address,address)
+
+impl_logf_4!(Log87Call);
+impl_logf_4!(Log100Call);
+impl_logf_4!(Log123Call);
+impl_logf_4!(Log125Call);
+impl_logf_4!(Log127Call);
+impl_logf_4!(Log133Call);
+impl_logf_4!(Log136Call);
+impl_logf_4!(Log138Call);
+impl_logf_4!(Log140Call);
+impl_logf_4!(Log149Call);
+impl_logf_4!(Log150Call);
+impl_logf_4!(Log151Call);
+impl_logf_4!(Log153Call);
+impl_logf_4!(Log165Call);
+impl_logf_4!(Log173Call);
+impl_logf_4!(Log174Call);
+impl_logf_4!(Log177Call);
+impl_logf_4!(Log179Call);
+impl_logf_4!(Log180Call);
+impl_logf_4!(Log182Call);
+impl_logf_4!(Log183Call);
+impl_logf_4!(Log184Call);
+impl_logf_4!(Log190Call);
+impl_logf_4!(Log191Call);
+impl_logf_4!(Log203Call);
+impl_logf_4!(Log208Call);
+impl_logf_4!(Log210Call);
+impl_logf_4!(Log212Call);
+impl_logf_4!(Log213Call);
+impl_logf_4!(Log217Call);
+impl_logf_4!(Log218Call);
+impl_logf_4!(Log219Call);
+impl_logf_4!(Log222Call);
+impl_logf_4!(Log224Call);
+impl_logf_4!(Log226Call);
+impl_logf_4!(Log230Call);
+impl_logf_4!(Log231Call);
+impl_logf_4!(Log235Call);
+impl_logf_4!(Log237Call);
+impl_logf_4!(Log238Call);
+impl_logf_4!(Log244Call);
+impl_logf_4!(Log245Call);
+impl_logf_4!(Log247Call);
+impl_logf_4!(Log254Call);
+impl_logf_4!(Log256Call);
+impl_logf_4!(Log267Call);
+impl_logf_4!(Log268Call);
+impl_logf_4!(Log270Call);
+impl_logf_4!(Log272Call);
+impl_logf_4!(Log278Call);
+impl_logf_4!(Log289Call);
+impl_logf_4!(Log290Call);
+impl_logf_4!(Log294Call);
+impl_logf_4!(Log306Call);
+impl_logf_4!(Log312Call);
+impl_logf_4!(Log314Call);
+impl_logf_4!(Log315Call);
+impl_logf_4!(Log316Call);
+impl_logf_4!(Log320Call);
+impl_logf_4!(Log323Call);
+impl_logf_4!(Log326Call);
+impl_logf_4!(Log330Call);
+impl_logf_4!(Log335Call);
+impl_logf_4!(Log338Call);
+
+pub fn format_hardhat_call(call: &HardhatConsoleCalls) -> String {
+    match call {
+        HardhatConsoleCalls::Log7(c) => c.logf(),
+        HardhatConsoleCalls::Log9(c) => c.logf(),
+        HardhatConsoleCalls::Log17(c) => c.logf(),
+        HardhatConsoleCalls::Log18(c) => c.logf(),
+        HardhatConsoleCalls::Log24(c) => c.logf(),
+        HardhatConsoleCalls::Log30(c) => c.logf(),
+        HardhatConsoleCalls::Log35(c) => c.logf(),
+        HardhatConsoleCalls::Log42(c) => c.logf(),
+        HardhatConsoleCalls::Log43(c) => c.logf(),
+        HardhatConsoleCalls::Log53(c) => c.logf(),
+        HardhatConsoleCalls::Log55(c) => c.logf(),
+        HardhatConsoleCalls::Log57(c) => c.logf(),
+        HardhatConsoleCalls::Log62(c) => c.logf(),
+        HardhatConsoleCalls::Log67(c) => c.logf(),
+        HardhatConsoleCalls::Log68(c) => c.logf(),
+        HardhatConsoleCalls::Log69(c) => c.logf(),
+        HardhatConsoleCalls::Log70(c) => c.logf(),
+        HardhatConsoleCalls::Log76(c) => c.logf(),
+        HardhatConsoleCalls::Log77(c) => c.logf(),
+        HardhatConsoleCalls::Log84(c) => c.logf(),
+        HardhatConsoleCalls::Log87(c) => c.logf(),
+        HardhatConsoleCalls::Log100(c) => c.logf(),
+        HardhatConsoleCalls::Log123(c) => c.logf(),
+        HardhatConsoleCalls::Log125(c) => c.logf(),
+        HardhatConsoleCalls::Log127(c) => c.logf(),
+        HardhatConsoleCalls::Log133(c) => c.logf(),
+        HardhatConsoleCalls::Log136(c) => c.logf(),
+        HardhatConsoleCalls::Log138(c) => c.logf(),
+        HardhatConsoleCalls::Log140(c) => c.logf(),
+        HardhatConsoleCalls::Log149(c) => c.logf(),
+        HardhatConsoleCalls::Log150(c) => c.logf(),
+        HardhatConsoleCalls::Log151(c) => c.logf(),
+        HardhatConsoleCalls::Log153(c) => c.logf(),
+        HardhatConsoleCalls::Log165(c) => c.logf(),
+        HardhatConsoleCalls::Log173(c) => c.logf(),
+        HardhatConsoleCalls::Log174(c) => c.logf(),
+        HardhatConsoleCalls::Log177(c) => c.logf(),
+        HardhatConsoleCalls::Log179(c) => c.logf(),
+        HardhatConsoleCalls::Log180(c) => c.logf(),
+        HardhatConsoleCalls::Log182(c) => c.logf(),
+        HardhatConsoleCalls::Log183(c) => c.logf(),
+        HardhatConsoleCalls::Log184(c) => c.logf(),
+        HardhatConsoleCalls::Log190(c) => c.logf(),
+        HardhatConsoleCalls::Log191(c) => c.logf(),
+        HardhatConsoleCalls::Log203(c) => c.logf(),
+        HardhatConsoleCalls::Log208(c) => c.logf(),
+        HardhatConsoleCalls::Log210(c) => c.logf(),
+        HardhatConsoleCalls::Log212(c) => c.logf(),
+        HardhatConsoleCalls::Log213(c) => c.logf(),
+        HardhatConsoleCalls::Log217(c) => c.logf(),
+        HardhatConsoleCalls::Log218(c) => c.logf(),
+        HardhatConsoleCalls::Log219(c) => c.logf(),
+        HardhatConsoleCalls::Log222(c) => c.logf(),
+        HardhatConsoleCalls::Log224(c) => c.logf(),
+        HardhatConsoleCalls::Log226(c) => c.logf(),
+        HardhatConsoleCalls::Log230(c) => c.logf(),
+        HardhatConsoleCalls::Log231(c) => c.logf(),
+        HardhatConsoleCalls::Log235(c) => c.logf(),
+        HardhatConsoleCalls::Log237(c) => c.logf(),
+        HardhatConsoleCalls::Log238(c) => c.logf(),
+        HardhatConsoleCalls::Log244(c) => c.logf(),
+        HardhatConsoleCalls::Log245(c) => c.logf(),
+        HardhatConsoleCalls::Log247(c) => c.logf(),
+        HardhatConsoleCalls::Log254(c) => c.logf(),
+        HardhatConsoleCalls::Log256(c) => c.logf(),
+        HardhatConsoleCalls::Log267(c) => c.logf(),
+        HardhatConsoleCalls::Log268(c) => c.logf(),
+        HardhatConsoleCalls::Log270(c) => c.logf(),
+        HardhatConsoleCalls::Log272(c) => c.logf(),
+        HardhatConsoleCalls::Log278(c) => c.logf(),
+        HardhatConsoleCalls::Log289(c) => c.logf(),
+        HardhatConsoleCalls::Log290(c) => c.logf(),
+        HardhatConsoleCalls::Log294(c) => c.logf(),
+        HardhatConsoleCalls::Log306(c) => c.logf(),
+        HardhatConsoleCalls::Log312(c) => c.logf(),
+        HardhatConsoleCalls::Log314(c) => c.logf(),
+        HardhatConsoleCalls::Log315(c) => c.logf(),
+        HardhatConsoleCalls::Log316(c) => c.logf(),
+        HardhatConsoleCalls::Log320(c) => c.logf(),
+        HardhatConsoleCalls::Log323(c) => c.logf(),
+        HardhatConsoleCalls::Log326(c) => c.logf(),
+        HardhatConsoleCalls::Log330(c) => c.logf(),
+        HardhatConsoleCalls::Log335(c) => c.logf(),
+        HardhatConsoleCalls::Log338(c) => c.logf(),
+        _ => call.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,5 +950,17 @@ mod tests {
             let patched = patch_hardhat_console_selector(hh.to_vec());
             assert_eq!(abigen.to_vec(), patched);
         }
+    }
+
+    #[test]
+    fn test_format_hardhat_log() {
+        assert_eq!("%s", format_hardhat_log("%s", &[]));
+        assert_eq!("%", format_hardhat_log("%%", &[]));
+        assert_eq!("x", format_hardhat_log("%s", &["x"]));
+        assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
+        assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
+        assert_eq!("x %s", format_hardhat_log("%s %s", &["x"]));
+        assert_eq!("x y", format_hardhat_log("%s", &["x", "y"]));
+        assert_eq!(" x", format_hardhat_log("", &["x"]));
     }
 }

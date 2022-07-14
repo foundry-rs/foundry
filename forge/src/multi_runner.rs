@@ -498,8 +498,8 @@ mod tests {
                         logs.iter().eq(expected_logs.iter()),
                         "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                         test_name,
-                        logs.join("\n"),
-                        expected_logs.join("\n")
+                        expected_logs.join("\n"),
+                        logs.join("\n")
                     );
                 }
 
@@ -507,7 +507,7 @@ mod tests {
                     assert_eq!(
                         warnings_count, expected_warning_count,
                         "Test {} did not pass as expected. Expected:\n{}Got:\n{}",
-                        test_name, warnings_count, expected_warning_count
+                        test_name, expected_warning_count, warnings_count
                     );
                 }
             }
@@ -802,8 +802,8 @@ mod tests {
                             None,
                             Some(vec![
                                 "constructor".into(),
-                                "testMisc, 0x0000000000000000000000000000000000000001".into(),
-                                "testMisc, 42".into(),
+                                "testMisc 0x0000000000000000000000000000000000000001".into(),
+                                "testMisc 42".into(),
                             ]),
                             None,
                         ),
@@ -1113,6 +1113,48 @@ mod tests {
                             true,
                             None,
                             Some(vec!["constructor".into(), "0x0000000000000000000000000000000000000001".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatString()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatUint()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatAddress()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log addr=0x0000000000000000000000000000000000000001".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatMulti()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatEscape()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log % test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatSpill()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log test 1".into()]),
                             None,
                         ),
                     ],
