@@ -701,7 +701,7 @@ fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
             } else {
                 expect_fmt = spec[pos - 1] != b'%';
                 if !expect_fmt {
-                    result.push_str("%"); // apply % escaping
+                    result.push('%'); // escape observed %%
                 }
             }
             continue
