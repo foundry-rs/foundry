@@ -1,17 +1,19 @@
 use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
-    utils,
+    utils, TEST_CONTRACT_ADDRESS,
 };
 use bytes::Bytes;
-use ethers::prelude::H160;
 use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
 pub struct Fuzzer {
-    pub generator: Option<RandomCallGenerator>,
-    pub fuzz_state: EvmFuzzState,
+    /// Given a strategy, it generates a random call.
+    pub call_generator: Option<RandomCallGenerator>,
+    /// If set, it collects `stack` and `memory` values for fuzzing purposes.
     pub collect: bool,
+    /// If `collect` is set, we store the collected values in this fuzz dictionary.
+    pub fuzz_state: EvmFuzzState,
 }
 
 impl<DB> Inspector<DB> for Fuzzer
@@ -24,10 +26,13 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if self.generator.is_some() && data.env.tx.caller != call.context.caller {
+        // We don't want to override the very first call made to the test contract.
+        if self.call_generator.is_some() && data.env.tx.caller != call.context.caller {
             self.override_call(call);
         }
 
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
         self.collect = true;
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
@@ -39,7 +44,7 @@ where
         _: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
-        // We only collect before and after calls
+        // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interpreter);
             self.collect = false;
@@ -56,10 +61,12 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if let Some(ref mut generator) = self.generator {
-            generator.used = false;
+        if let Some(ref mut call_generator) = self.call_generator {
+            call_generator.used = false;
         }
 
+        // We only collect `stack` and `memory` data before and after calls.
+        // this will be turned off on the next `step`
         self.collect = true;
 
         (status, remaining_gas, retdata)
@@ -67,7 +74,7 @@ where
 }
 
 impl Fuzzer {
-    /// Collects `state` and `memory` values into the fuzz dictionary.
+    /// Collects `stack` and `memory` values into the fuzz dictionary.
     fn collect_data(&mut self, interpreter: &mut Interpreter) {
         let mut state = self.fuzz_state.write();
 
@@ -85,26 +92,24 @@ impl Fuzzer {
 
     /// Overrides an external call and tries to call any method of msg.sender.
     fn override_call(&mut self, call: &mut CallInputs) {
-        if let Some(ref mut generator) = self.generator {
-            // We only override external calls which are not coming from the test contract
-            if call.context.caller !=
-                H160([
-                    180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100,
-                    34, 126, 132,
-                ]) &&
+        if let Some(ref mut call_generator) = self.call_generator {
+            // We only override external calls which are not coming from the test contract.
+            if call.context.caller != TEST_CONTRACT_ADDRESS &&
                 call.context.scheme == CallScheme::Call &&
-                !generator.used
+                !call_generator.used
             {
                 if let Some((sender, (contract, input))) =
-                    generator.next(call.context.caller, call.contract)
+                    call_generator.next(call.context.caller, call.contract)
                 {
                     call.input = input.0;
                     call.context.caller = sender;
                     call.contract = contract;
+
+                    // TODO: in what scenarios can the following be problematic
                     call.context.code_address = contract;
                     call.context.address = contract;
 
-                    generator.used = true;
+                    call_generator.used = true;
                 }
             }
         }

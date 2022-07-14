@@ -68,8 +68,8 @@ pub fn assert_invariants<'a>(
     let mut inner_sequence = vec![];
 
     if let Some(ref fuzzer) = executor.borrow().inspector_config().fuzzer {
-        if let Some(ref generator) = fuzzer.generator {
-            inner_sequence.extend(generator.last_sequence.read().iter().cloned());
+        if let Some(ref call_generator) = fuzzer.call_generator {
+            inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
         }
     }
 
@@ -201,9 +201,10 @@ pub struct RandomCallGenerator {
     pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
-    /// Flag to know if a call has been overriden. Don't allow nested for now.
+    /// Flag to know if a call has been overriden. Don't allow nesting for now.
     pub used: bool,
-    /// If set to `true`, consumes the next call from `last_sequence`, otherwise from the strategy.
+    /// If set to `true`, consumes the next call from `last_sequence`, otherwise queries it from
+    /// the strategy.
     pub replay: bool,
     /// Saves the sequence of generated calls that can be replayed later on.
     pub last_sequence: Arc<RwLock<Vec<Option<BasicTxDetails>>>>,

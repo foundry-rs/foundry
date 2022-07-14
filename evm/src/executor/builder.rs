@@ -49,14 +49,14 @@ impl ExecutorBuilder {
         self
     }
 
-    /// Enables the fuzzer
+    /// Enables the fuzzer for data collection and maybe call overriding
     #[must_use]
     pub fn with_fuzzer(
         mut self,
-        generator: Option<RandomCallGenerator>,
+        call_generator: Option<RandomCallGenerator>,
         fuzz_state: EvmFuzzState,
     ) -> Self {
-        self.inspector_config.fuzzer = Some(Fuzzer { generator, fuzz_state, collect: false });
+        self.inspector_config.fuzzer = Some(Fuzzer { call_generator, fuzz_state, collect: false });
         self
     }
 
