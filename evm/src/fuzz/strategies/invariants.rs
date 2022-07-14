@@ -43,6 +43,16 @@ pub fn override_call_strat(
     .sboxed()
 }
 
+/// Creates the invariant strategy.
+///
+/// Given the known and future contracts, it generates the next call by fuzzing the `caller`,
+/// `calldata` and `target`. The generated data is evaluated lazily for every single call to fully
+/// leverage the evolving fuzz dictionary.
+///
+/// The fuzzed parameters can be filtered through different methods implemented in the test
+/// contract:
+///
+/// `targetContracts()`, `targetSenders()`, `excludeContracts()`, `targetSelectors()`
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,

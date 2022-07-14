@@ -227,6 +227,9 @@ impl RandomCallGenerator {
             used: false,
         }
     }
+
+    /// All `self.next()` calls will now pop `self.last_sequence`. Used to replay an invariant
+    /// failure.
     pub fn set_replay(&mut self, status: bool) {
         self.replay = status;
         if status {

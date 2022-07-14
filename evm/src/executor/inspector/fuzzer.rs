@@ -98,6 +98,7 @@ impl Fuzzer {
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {
+                // There's only a 30% chance that an override happens.
                 if let Some((sender, (contract, input))) =
                     call_generator.next(call.context.caller, call.contract)
                 {

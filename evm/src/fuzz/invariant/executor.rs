@@ -60,54 +60,57 @@ impl<'a> InvariantExecutor<'a> {
             eyre::bail!("No contracts to fuzz!");
         }
 
-        // Stores the consumed gas and calldata of every successful fuzz call
+        // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 
-        // Stores fuzz state for use with [fuzz_calldata_from_state]
+        // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.backend().db);
+
+        // During execution, any newly created contract is added here and used through the rest of
+        // the fuzz run.
         let targeted_contracts: FuzzRunIdentifiedContracts =
             Arc::new(RwLock::new(targeted_contracts));
 
-        // Creates strategy
+        // Creates invariant strategy.
         let strat =
-            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone());
+            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone())
+                .no_shrink();
 
-        // stores the latest reason of a test call, this will hold the return reason of failed test
-        // case if the runner failed
+        // Stores the latest reason of a test call.  If the runner fails, it will hold the return
+        // reason of the failed test
         let revert_reason = RefCell::new(None);
-        let mut all_invars = BTreeMap::new();
-        invariants.iter().for_each(|f| {
-            all_invars.insert(f.name.to_string(), None);
-        });
-        let invariant_doesnt_hold = RefCell::new(all_invars);
+
+        let failed_invariants =
+            RefCell::new(invariants.iter().map(|f| (f.name.to_string(), None)).collect());
 
         // Prepare executor
         self.evm.set_tracing(false);
 
-        let target_reference = Arc::new(RwLock::new(Address::zero()));
-
-        let mut generator = None;
+        let mut call_generator = None;
         if test_options.call_override {
-            generator = Some(RandomCallGenerator::new(
+            // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
+            // EVM execution.
+            let target_contract_ref = Arc::new(RwLock::new(Address::zero()));
+
+            call_generator = Some(RandomCallGenerator::new(
                 self.runner.clone(),
                 override_call_strat(
                     fuzz_state.clone(),
                     targeted_contracts.clone(),
-                    target_reference.clone(),
+                    target_contract_ref.clone(),
                 ),
-                target_reference,
+                target_contract_ref,
             ));
         }
-        self.evm.set_fuzzer(generator, fuzz_state.clone());
+        self.evm.set_fuzzer(call_generator, fuzz_state.clone());
 
         let clean_db = self.evm.backend().db.clone();
         let executor = RefCell::new(&mut self.evm);
 
-        let strat = strat.no_shrink();
         let reverts = Cell::new(0);
         let broken_invariants = Cell::new(0);
 
-        // If a new contract is created, we need another runner to create newly generated inputs
+        // If a new contract is created, we need another runner to generate new inputs
         let branch_runner = RefCell::new(self.runner.clone());
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs` until
@@ -157,13 +160,13 @@ impl<'a> InvariantExecutor<'a> {
                             &executor,
                             invariant_address,
                             &invariants,
-                            invariant_doesnt_hold.borrow_mut(),
+                            failed_invariants.borrow_mut(),
                             &inputs,
                         )
                         .is_err()
                         {
                             broken_invariants.set(
-                                invariant_doesnt_hold
+                                failed_invariants
                                     .borrow()
                                     .iter()
                                     .filter_map(|case| case.1.as_ref())
@@ -185,7 +188,7 @@ impl<'a> InvariantExecutor<'a> {
                             *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
 
                             for invariant in invariants.iter() {
-                                invariant_doesnt_hold
+                                failed_invariants
                                     .borrow_mut()
                                     .insert(invariant.name.clone(), Some(error.clone()));
                             }
@@ -242,7 +245,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // TODO only saving one sequence case per invariant failure. Do we want more?
         Ok(Some(InvariantFuzzTestResult {
-            invariants: invariant_doesnt_hold.into_inner(),
+            invariants: failed_invariants.into_inner(),
             cases: fuzz_cases.into_inner(),
             reverts: reverts.get(),
         }))

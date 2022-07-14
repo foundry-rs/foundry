@@ -103,6 +103,7 @@ impl Executor {
         &self.inspector_config
     }
 
+    /// Returns a mutable reference to the InspectorStackConfig
     pub fn inspector_config_mut(&mut self) -> &mut InspectorStackConfig {
         &mut self.inspector_config
     }
