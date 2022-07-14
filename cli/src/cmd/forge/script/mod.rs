@@ -1,6 +1,9 @@
 //! script command
 use crate::{
-    cmd::{forge::build::{BuildArgs, ProjectPathsArgs}, RetryArgs},
+    cmd::{
+        forge::build::{BuildArgs, ProjectPathsArgs},
+        RetryArgs,
+    },
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
@@ -129,10 +132,7 @@ pub struct ScriptArgs {
     )]
     pub with_gas_price: Option<U256>,
 
-    #[clap(
-        flatten,
-        help = "Allows to use retry arguments for contract verification"
-    )]
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
     pub retry: RetryArgs,
 }
 
@@ -463,7 +463,6 @@ impl VerifyBundle {
             hardhat: config.profile == Config::HARDHAT_PROFILE,
             config_path: if config_path.exists() { Some(config_path) } else { None },
         };
-
 
         VerifyBundle {
             num_of_optimizations,

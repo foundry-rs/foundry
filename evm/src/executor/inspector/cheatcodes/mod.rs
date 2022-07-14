@@ -247,7 +247,7 @@ where
                             .to_string()
                             .encode()
                             .into()
-                        )
+                        );
                     }
                 }
             }
