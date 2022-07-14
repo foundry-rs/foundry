@@ -385,6 +385,7 @@ mod tests {
         include_fuzz_tests: true,
         invariant_depth: 15,
         invariant_fail_on_revert: false,
+        invariant_call_override: false,
     };
 
     /// Builds a base runner
@@ -1319,8 +1320,11 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         let mut runner = runner();
         runner.fuzzer = Some(TestRunner::new(proptest::test_runner::Config::default()));
 
+        let mut opts = TEST_OPTS;
+        opts.invariant_call_override = true;
+
         let results =
-            runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, TEST_OPTS).unwrap();
+            runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, opts).unwrap();
 
         assert_multiple(
             &results,

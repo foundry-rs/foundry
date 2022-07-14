@@ -61,6 +61,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz_max_global_rejects: 100203,
         invariant_depth: 15,
         invariant_fail_on_revert: false,
+        invariant_call_override: false,
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),

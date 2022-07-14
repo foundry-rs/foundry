@@ -16,7 +16,7 @@ use crate::fuzz::{
 };
 
 /// Given a target address, we generate random calldata.
-pub fn reentrancy_strat(
+pub fn override_call_strat(
     fuzz_state: EvmFuzzState,
     contracts: FuzzRunIdentifiedContracts,
     target: Arc<RwLock<Address>>,

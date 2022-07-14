@@ -20,7 +20,7 @@ use crate::{
     fuzz::{
         strategies::{
             build_initial_state, collect_created_contracts, collect_state_from_call,
-            invariant_strat, reentrancy_strat, EvmFuzzState,
+            invariant_strat, override_call_strat, EvmFuzzState,
         },
         FuzzCase, FuzzedCases,
     },
@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     assert_invariants, FuzzRunIdentifiedContracts, InvariantExecutor, InvariantFuzzError,
-    InvariantFuzzTestResult, RandomCallGenerator,
+    InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
 };
 
 impl<'a> InvariantExecutor<'a> {
@@ -50,8 +50,7 @@ impl<'a> InvariantExecutor<'a> {
         invariants: Vec<&Function>,
         invariant_address: Address,
         abi: &Abi,
-        invariant_depth: usize,
-        fail_on_revert: bool,
+        test_options: InvariantTestOptions,
     ) -> eyre::Result<Option<InvariantFuzzTestResult>> {
         // Finds out the chosen deployed contracts and/or senders.
         let (targeted_senders, targeted_contracts) =
@@ -86,18 +85,20 @@ impl<'a> InvariantExecutor<'a> {
         self.evm.set_tracing(false);
 
         let target_reference = Arc::new(RwLock::new(Address::zero()));
-        self.evm.set_fuzzer(
-            RandomCallGenerator::new(
-                self.runner.clone(),
-                reentrancy_strat(
-                    fuzz_state.clone(),
-                    targeted_contracts.clone(),
-                    target_reference.clone(),
+        if test_options.call_override {
+            self.evm.set_fuzzer(
+                RandomCallGenerator::new(
+                    self.runner.clone(),
+                    override_call_strat(
+                        fuzz_state.clone(),
+                        targeted_contracts.clone(),
+                        target_reference.clone(),
+                    ),
+                    target_reference,
                 ),
-                target_reference,
-            ),
-            fuzz_state.clone(),
-        );
+                fuzz_state.clone(),
+            );
+        }
 
         let clean_db = self.evm.backend().db.clone();
         let executor = RefCell::new(&mut self.evm);
@@ -116,7 +117,7 @@ impl<'a> InvariantExecutor<'a> {
             .run(&strat, |mut inputs| {
                 {
                     // Scenarios where we want to fail as soon as possible.
-                    if fail_on_revert && reverts.get() == 1 {
+                    if test_options.fail_on_revert && reverts.get() == 1 {
                         return Err(TestCaseError::fail("Revert occurred."))
                     }
 
@@ -125,11 +126,11 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 }
 
-                let mut current_depth: usize = 0;
+                let mut current_depth = 0;
                 let mut sequence = vec![];
                 let mut created = vec![];
 
-                'outer: while current_depth < invariant_depth {
+                'outer: while current_depth < test_options.depth {
                     let (sender, (address, calldata)) = inputs.last().unwrap();
 
                     // Executes the call from the randomly generated sequence
@@ -172,7 +173,7 @@ impl<'a> InvariantExecutor<'a> {
                         }
                     } else {
                         reverts.set(reverts.get() + 1);
-                        if fail_on_revert {
+                        if test_options.fail_on_revert {
                             let error = InvariantFuzzError::new(
                                 invariant_address,
                                 None,

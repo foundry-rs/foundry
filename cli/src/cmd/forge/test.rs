@@ -474,6 +474,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         include_fuzz_tests,
         invariant_depth: config.invariant_depth,
         invariant_fail_on_revert: config.invariant_fail_on_revert,
+        invariant_call_override: config.invariant_call_override,
     };
 
     // Setup the fuzzer

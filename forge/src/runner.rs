@@ -11,7 +11,7 @@ use eyre::Result;
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{InvariantExecutor, InvariantFuzzTestResult},
+        invariant::{InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions},
         CounterExample, FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -31,6 +31,8 @@ pub struct TestOptions {
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a reversion occurs
     pub invariant_fail_on_revert: bool,
+    /// Allows randomly overriding an external call when running invariant tests
+    pub invariant_call_override: bool,
 }
 
 /// A type that executes all tests of a contract
@@ -455,8 +457,11 @@ impl<'a> ContractRunner<'a> {
             functions,
             address,
             self.contract,
-            test_options.invariant_depth as usize,
-            test_options.invariant_fail_on_revert,
+            InvariantTestOptions {
+                depth: test_options.invariant_depth,
+                fail_on_revert: test_options.invariant_fail_on_revert,
+                call_override: test_options.invariant_call_override,
+            },
         )? {
             let results = invariants
                 .iter()

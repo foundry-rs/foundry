@@ -32,6 +32,17 @@ pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
 pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
 pub type BasicTxDetails = (Address, (Address, Bytes));
 
+/// Metadata on how to run invariant tests
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InvariantTestOptions {
+    /// The number of calls executed to attempt to break invariants
+    pub depth: u32,
+    /// Fails the invariant fuzzing if a reversion occurs
+    pub fail_on_revert: bool,
+    /// Allows randomly overriding an external call when running invariant tests
+    pub call_override: bool,
+}
+
 /// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
@@ -185,7 +196,7 @@ impl InvariantFuzzError {
 }
 
 /// Given a TestRunner and a strategy, it generates calls. Used inside the Fuzzer inspector to
-/// override external calls to test for reentrancy.
+/// override external calls to test for potential reentrancy vulnerabilities..
 #[derive(Debug, Clone)]
 pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.

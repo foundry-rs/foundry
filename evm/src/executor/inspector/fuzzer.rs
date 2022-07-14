@@ -25,7 +25,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if data.env.tx.caller != call.context.caller {
-            self.reentrancy(call);
+            self.override_call(call);
         }
 
         self.collect = true;
@@ -81,7 +81,7 @@ impl Fuzzer {
     }
 
     /// Overrides an external call and tries to call any method of msg.sender.
-    fn reentrancy(&mut self, call: &mut CallInputs) {
+    fn override_call(&mut self, call: &mut CallInputs) {
         // We only override external calls which are not coming from the test contract
         if call.context.caller !=
             H160([
