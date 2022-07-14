@@ -241,7 +241,7 @@ impl FromStr for Dependency {
         let mut dependency = dependency.to_string();
 
         // this will update wrong conventional aliases
-        for (alias, real_org) in COMMON_ORG_ALIASES.into_iter() {
+        for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
             if dependency.starts_with(alias) {
                 dependency = dependency.replacen(alias, real_org, 1);
                 break
