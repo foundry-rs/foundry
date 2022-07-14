@@ -16,6 +16,7 @@ use std::{
     process::Command,
     str,
 };
+use tracing::trace;
 use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
@@ -222,6 +223,7 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
 }
 
 fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
+    trace!("installing git submodule {:?} in {}", dep, target_dir);
     let url = dep.url.as_ref().unwrap();
 
     let output = Command::new("git")
@@ -229,6 +231,9 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         .current_dir(&libs)
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, "`git submodule add`");
+
     if stderr.contains("remote: Repository not found") {
         eyre::bail!("Repo: \"{}\" not found!", url)
     } else if stderr.contains("already exists in the index") {
