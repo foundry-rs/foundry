@@ -1,4 +1,4 @@
-use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{
@@ -10,7 +10,7 @@ use ethers::{
 use forge::{
     debug::DebugArena,
     executor::{
-        builder::Backend, inspector::CheatsConfig, opts::EvmOpts, DeployResult, ExecutorBuilder,
+        inspector::CheatsConfig, opts::EvmOpts, Backend, DeployResult, ExecutorBuilder,
         RawCallResult,
     },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
@@ -75,8 +75,7 @@ impl RunArgs {
 
             // Set up the execution environment
             let env = evm_opts.evm_env().await;
-            let db =
-                Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env).await;
+            let db = Backend::spawn(evm_opts.get_fork(env.clone()));
 
             let builder = ExecutorBuilder::default()
                 .with_config(env)
@@ -112,11 +111,7 @@ impl RunArgs {
 
             // Execute our transaction
             let mut result = {
-                executor.set_tracing(true).set_gas_limit(tx.gas);
-
-                if self.debug {
-                    executor.set_debugger(true);
-                }
+                executor.set_tracing(true).set_gas_limit(tx.gas).set_debugger(self.debug);
 
                 if let Some(to) = tx.to {
                     let RawCallResult { reverted, gas, traces, debug: run_debug, .. } =

@@ -9,12 +9,12 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::{
-    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
+    executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
         invariant::{InvariantExecutor, InvariantFuzzTestResult},
         CounterExample, FuzzedExecutor,
     },
-    trace::{load_contracts, CallTraceArena, TraceKind},
+    trace::{load_contracts, TraceKind},
     CALLER,
 };
 use parking_lot::RwLock;
@@ -33,9 +33,11 @@ pub struct TestOptions {
     pub invariant_fail_on_revert: bool,
 }
 
-pub struct ContractRunner<'a, DB: DatabaseRef + Clone> {
+/// A type that executes all tests of a contract
+#[derive(Debug, Clone)]
+pub struct ContractRunner<'a> {
     /// The executor used by the runner.
-    pub executor: Executor<DB>,
+    pub executor: Executor,
 
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
@@ -52,10 +54,10 @@ pub struct ContractRunner<'a, DB: DatabaseRef + Clone> {
     pub sender: Address,
 }
 
-impl<'a, DB: DatabaseRef + Clone> ContractRunner<'a, DB> {
+impl<'a> ContractRunner<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        executor: Executor<DB>,
+        executor: Executor,
         contract: &'a Abi,
         code: Bytes,
         initial_balance: U256,
@@ -75,7 +77,7 @@ impl<'a, DB: DatabaseRef + Clone> ContractRunner<'a, DB> {
     }
 }
 
-impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
+impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
@@ -87,7 +89,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = vec![];
+        let mut traces = Vec::with_capacity(self.predeploy_libs.len());
         for code in self.predeploy_libs.iter() {
             match self.executor.deploy(self.sender, code.0.clone(), 0u32.into(), self.errors) {
                 Ok(DeployResult { traces: tmp_traces, .. }) => {
@@ -98,11 +100,8 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
                     // If we failed to call the constructor, force the tracekind to be setup so
                     // a trace is shown.
-                    let traces = if let Some(traces) = traces {
-                        vec![(TraceKind::Setup, traces)]
-                    } else {
-                        vec![]
-                    };
+                    let traces =
+                        traces.map(|traces| vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
                     return Ok(TestSetup {
                         address: Address::zero(),
@@ -124,11 +123,8 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         {
             Ok(d) => d,
             Err(EvmError::Execution { reason, traces, logs, labels, .. }) => {
-                let traces = if let Some(traces) = traces {
-                    vec![(TraceKind::Setup, traces)]
-                } else {
-                    vec![]
-                };
+                let traces =
+                    traces.map(|traces| vec![(TraceKind::Setup, traces)]).unwrap_or_default();
 
                 return Ok(TestSetup {
                     address: Address::zero(),
@@ -152,7 +148,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         self.executor.deploy_create2_deployer()?;
 
         // Optionally call the `setUp` function
-        Ok(if setup {
+        let setup = if setup {
             trace!("setting up");
             let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) =
                 match self.executor.setup(None, address) {
@@ -176,17 +172,19 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                     }
                 };
             traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
-            logs.extend_from_slice(&setup_logs);
+            logs.extend(setup_logs);
 
             TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
         } else {
             TestSetup { address, logs, traces, ..Default::default() }
-        })
+        };
+
+        Ok(setup)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
-        &mut self,
+        mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
         test_options: TestOptions,
@@ -284,7 +282,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
             .par_iter()
             .filter_map(|(func, should_fail)| {
                 let result = if func.inputs.is_empty() {
-                    Some(self.run_test(func, *should_fail, setup.clone()))
+                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 } else {
                     fuzzer.as_ref().map(|fuzzer| {
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
@@ -339,9 +337,15 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         Ok(SuiteResult::new(duration, test_results, warnings))
     }
 
+    /// Runs a single test
+    ///
+    /// Calls the given functions and returns the `TestResult`.
+    ///
+    /// State modifications are not committed to the evm database but discarded after the call,
+    /// similar to `eth_call`.
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(
-        &self,
+        mut self,
         func: &Function,
         should_fail: bool,
         setup: TestSetup,
@@ -351,7 +355,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         // Run unit test
         let start = Instant::now();
         let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
-            match self.executor.call::<(), _, _>(
+            match self.executor.execute_test::<(), _, _>(
                 self.sender,
                 address,
                 func.clone(),
@@ -390,7 +394,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                     (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
                 }
                 Err(err) => {
-                    tracing::error!(?err);
+                    error!(?err);
                     return Err(err.into())
                 }
             };
@@ -404,7 +408,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         );
 
         // Record test execution time
-        tracing::trace!(
+        tracing::debug!(
             duration = ?start.elapsed(),
             %success,
             %gas
@@ -438,7 +442,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         let start = Instant::now();
-        let prev_db = self.executor.db.clone();
+        let prev_db = self.executor.backend().db.clone();
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
@@ -466,7 +470,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                         let mut ided_contracts = identified_contracts.clone();
                         if let TestError::Fail(_reason, vec_addr_bytes) = &error.test_error {
                             // Reset DB state
-                            self.executor.db = prev_db.clone();
+                            self.executor.backend_mut().db = prev_db.clone();
                             self.executor.set_tracing(true);
                             let mut generator = &mut self
                                 .executor
@@ -555,7 +559,7 @@ impl<'a, DB: DatabaseRef + Send + Sync + Clone> ContractRunner<'a, DB> {
                 .collect();
 
             // Final clean-up
-            self.executor.db = prev_db;
+            self.executor.backend_mut().db = prev_db;
 
             Ok(results)
         } else {

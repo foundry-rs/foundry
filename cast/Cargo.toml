@@ -12,6 +12,7 @@ keywords = ["ethereum", "web3"]
 foundry-utils = { path = "../utils" }
 foundry-evm = { path = "./../evm" }
 foundry-config = { path = "./../config" }
+foundry-common = {path = "./../common"}
 
 futures = "0.3.17"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -27,7 +28,7 @@ hex = "0.4.3"
 
 [dev-dependencies]
 async-trait = "0.1.53"
-tokio = "1.17.0"
+tokio = "1"
 thiserror = "1.0.30"
 
 [features]

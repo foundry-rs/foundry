@@ -1,5 +1,7 @@
-use super::sequence::ScriptSequence;
-use crate::{init_progress, update_progress, utils::print_receipt};
+use crate::{
+    cmd::forge::script::sequence::ScriptSequence, init_progress, update_progress,
+    utils::print_receipt,
+};
 use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -30,7 +32,7 @@ pub async fn wait_for_receipts(
     )
     .buffer_unordered(10);
 
-    let mut receipts = vec![];
+    let mut receipts = Vec::with_capacity(tx_hashes.len());
     let mut errors: Vec<String> = vec![];
     let pb = init_progress!(tx_hashes, "receipts");
     update_progress!(pb, -1);
@@ -60,6 +62,9 @@ pub async fn wait_for_receipts(
             break
         }
     }
+
+    // sort receipts by blocks asc and index
+    receipts.sort_unstable();
 
     for receipt in receipts {
         print_receipt(&receipt);

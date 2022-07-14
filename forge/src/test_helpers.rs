@@ -8,7 +8,7 @@ use ethers::{
 };
 use foundry_evm::{
     executor::{
-        builder::Backend,
+        backend::Backend,
         opts::{Env, EvmOpts},
         DatabaseRef, Executor, ExecutorBuilder,
     },
@@ -75,11 +75,17 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     ..Default::default()
 });
 
-pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {
+pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
     FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), CALLER)
 }
+
+#[cfg(not(windows))]
+pub const RE_PATH_SEPARATOR: &str = "/";
+
+#[cfg(windows)]
+pub const RE_PATH_SEPARATOR: &str = "\\\\";
 
 pub mod filter {
     use super::*;

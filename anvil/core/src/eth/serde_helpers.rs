@@ -117,7 +117,8 @@ where
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Params<T> {
+pub struct Params<T: Default> {
+    #[serde(default)]
     pub params: T,
 }
 

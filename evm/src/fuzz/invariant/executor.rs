@@ -13,7 +13,7 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use revm::{db::DatabaseRef, DatabaseCommit};
+use revm::DatabaseCommit;
 
 use crate::{
     executor::{Executor, RawCallResult},
@@ -31,13 +31,10 @@ use super::{
     InvariantFuzzTestResult, RandomCallGenerator,
 };
 
-impl<'a, DB> InvariantExecutor<'a, DB>
-where
-    DB: DatabaseRef + Clone,
-{
+impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        evm: &'a mut Executor<DB>,
+        evm: &'a mut Executor,
         runner: TestRunner,
         sender: Address,
         setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
@@ -68,7 +65,7 @@ where
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
-        let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.db);
+        let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.backend().db);
         let targeted_contracts: FuzzRunIdentifiedContracts =
             Arc::new(RwLock::new(targeted_contracts));
 
@@ -102,7 +99,7 @@ where
             fuzz_state.clone(),
         );
 
-        let clean_db = self.evm.db.clone();
+        let clean_db = self.evm.backend().db.clone();
         let executor = RefCell::new(&mut self.evm);
 
         let strat = strat.no_shrink();
@@ -149,7 +146,7 @@ where
                     collect_state_from_call(&logs, &state_changeset, fuzz_state.clone());
 
                     // Commit changes
-                    executor.borrow_mut().db.commit(state_changeset.clone());
+                    executor.borrow_mut().backend_mut().db.commit(state_changeset.clone());
                     sequence.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
 
                     if !reverted {
@@ -216,7 +213,7 @@ where
                 }
 
                 // Before each test, we must reset to the initial state
-                executor.borrow_mut().db = clean_db.clone();
+                executor.borrow_mut().backend_mut().db = clean_db.clone();
 
                 // We clear all the targeted contracts created during this run
                 if !created.is_empty() {

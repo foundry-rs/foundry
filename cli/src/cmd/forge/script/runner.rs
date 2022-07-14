@@ -1,20 +1,20 @@
 use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor, RawCallResult},
+    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
 
 /// Drives script execution
-pub struct ScriptRunner<DB: DatabaseRef> {
-    pub executor: Executor<DB>,
+pub struct ScriptRunner {
+    pub executor: Executor,
     pub initial_balance: U256,
     pub sender: Address,
 }
 
-impl<DB: DatabaseRef> ScriptRunner<DB> {
-    pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
+impl ScriptRunner {
+    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
 

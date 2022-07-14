@@ -16,7 +16,7 @@ use proptest::{
     strategy::SBoxedStrategy,
     test_runner::{TestError, TestRunner},
 };
-use revm::db::DatabaseRef;
+
 use std::{
     borrow::{Borrow, BorrowMut},
     cell::RefMut,
@@ -37,10 +37,10 @@ pub type BasicTxDetails = (Address, (Address, Bytes));
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
 /// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
+pub struct InvariantExecutor<'a> {
     // evm: RefCell<&'a mut E>,
     /// The VM todo executor
-    pub evm: &'a mut Executor<DB>,
+    pub evm: &'a mut Executor,
     runner: TestRunner,
     sender: Address,
     setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
@@ -49,18 +49,15 @@ pub struct InvariantExecutor<'a, DB: DatabaseRef + Clone> {
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_doesnt_hold` map and returns `Err(())`
-pub fn assert_invariants<'a, DB>(
+pub fn assert_invariants<'a>(
     sender: Address,
     abi: &Abi,
-    mut executor: RefMut<&mut &mut Executor<DB>>,
+    mut executor: RefMut<&mut &mut Executor>,
     invariant_address: Address,
     invariants: &'a [&Function],
     mut invariant_doesnt_hold: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
     inputs: &[BasicTxDetails],
-) -> eyre::Result<()>
-where
-    DB: DatabaseRef,
-{
+) -> eyre::Result<()> {
     let mut found_case = false;
     let inner_sequence = {
         let generator = &mut executor.inspector_config.fuzzer.as_mut().unwrap().generator;

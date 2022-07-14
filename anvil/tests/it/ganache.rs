@@ -111,7 +111,7 @@ contract Contract {
     println!("{}", compiled);
     assert!(!compiled.has_compiler_errors());
 
-    let contract = compiled.remove("Contract").unwrap();
+    let contract = compiled.remove_first("Contract").unwrap();
 
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
@@ -147,7 +147,7 @@ contract Contract {
 
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove("Contract").unwrap();
+    let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let client = Arc::new(http_client());

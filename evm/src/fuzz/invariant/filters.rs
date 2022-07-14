@@ -3,15 +3,12 @@ use ethers::{
     prelude::U256,
 };
 use eyre::ContextCompat;
-use revm::db::DatabaseRef;
+
 use tracing::warn;
 
 use super::{InvariantExecutor, TargetedContracts};
 
-impl<'a, DB> InvariantExecutor<'a, DB>
-where
-    DB: DatabaseRef + Clone,
-{
+impl<'a> InvariantExecutor<'a> {
     /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
     /// `targetContracts() -> address[]` and `excludeContracts() -> address[]`.
     pub fn select_contracts_and_senders(

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
 
 /// Results and duration for a set of tests included in the same test contract
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,

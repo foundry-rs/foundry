@@ -1,24 +1,28 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, Cmd, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
     compile,
-    opts::{EthereumOpts, WalletType},
-    utils::{get_http_provider, parse_ether_value, parse_u256},
+    opts::{EthereumOpts, TransactionOpts, WalletType},
+    utils::get_http_provider,
 };
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{info::ContractInfo, utils::RuntimeOrHandle},
-    types::{transaction::eip2718::TypedTransaction, Chain, U256},
+    solc::{
+        info::ContractInfo,
+        utils::{canonicalized, read_json_file},
+    },
+    types::{transaction::eip2718::TypedTransaction, Chain},
 };
-use eyre::{Context, Result};
+use eyre::Context;
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
 
@@ -50,67 +54,11 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    #[clap(
-        long,
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Send a legacy transaction instead of an EIP1559 transaction.",
-        long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
-
-This is automatically enabled for common networks without EIP1559."#
-    )]
-    legacy: bool,
-
-    #[clap(
-        long = "gas-price",
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
-        env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_ether_value),
-        value_name = "PRICE"
-    )]
-    gas_price: Option<U256>,
-
-    #[clap(
-        long,
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Nonce for the transaction.",
-        parse(try_from_str = parse_u256),
-        value_name = "NONCE"
-    )]
-    nonce: Option<U256>,
-
-    #[clap(
-    long = "gas-limit",
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Gas limit for the transaction.",
-        env = "ETH_GAS_LIMIT",
-        parse(try_from_str = parse_u256),
-        value_name = "GAS_LIMIT"
-    )]
-    gas_limit: Option<U256>,
-
-    #[clap(
-        long = "priority-fee", 
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Gas priority fee for EIP1559 transactions.",
-        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value),
-        value_name = "PRICE"
-    )]
-    priority_fee: Option<U256>,
-    #[clap(
-        long,
-        help_heading = "TRANSACTION OPTIONS",
-        help = "Ether to send in the transaction.",
-        long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-        parse(try_from_str = parse_ether_value),
-        value_name = "VALUE"
-    )]
-    value: Option<U256>,
-
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+    tx: TransactionOpts,
 
     #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
     eth: EthereumOpts,
@@ -126,26 +74,24 @@ Examples: 1ether, 10gwei, 0.01ether"#,
     verify: bool,
 }
 
-impl Cmd for CreateArgs {
-    type Output = ();
-    fn run(self) -> eyre::Result<Self::Output> {
-        RuntimeOrHandle::new().block_on(self.run_create())
-    }
-}
-
 impl CreateArgs {
-    pub async fn run_create(self) -> Result<()> {
+    /// Executes the command to create a contract
+    pub async fn run(mut self) -> eyre::Result<()> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        if self.json || self.opts.silent {
+        let mut output = if self.json || self.opts.silent {
             // Suppress compile stdout messages when printing json output or when silent
-            compile::suppress_compile(&project)?;
+            compile::suppress_compile(&project)
         } else {
-            compile::compile(&project, false, false)?;
+            compile::compile(&project, false, false)
+        }?;
+
+        if let Some(ref mut path) = self.contract.path {
+            // paths are absolute in the project's output
+            *path = format!("{}", canonicalized(project.root().join(&path)).display());
         }
 
-        // Get ABI and BIN
-        let (abi, bin, _) = crate::cmd::utils::read_artifact(&project, self.contract.clone())?;
+        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -172,11 +118,25 @@ impl CreateArgs {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        if !std::path::Path::new(&constructor_args_path).exists() {
-                            eyre::bail!("constructor args path not found");
+                        if !constructor_args_path.exists() {
+                            eyre::bail!(
+                                "Constructor args file \"{}\" not found",
+                                constructor_args_path.display()
+                            );
                         }
-                        let file = fs::read_to_string(constructor_args_path)?;
-                        file.split(' ').map(|s| s.to_string()).collect::<Vec<String>>()
+                        if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
+                            match read_json_file(constructor_args_path) {
+                                Ok(args) => args,
+                                Err(err) => eyre::bail!(
+                                    "Constructor args file \"{}\" must encode a json array: \"{}\"",
+                                    constructor_args_path.display(),
+                                    err
+                                ),
+                            }
+                        } else {
+                            let file = fs::read_to_string(constructor_args_path)?;
+                            file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
+                        }
                     } else {
                         self.constructor_args.clone()
                     };
@@ -205,7 +165,7 @@ impl CreateArgs {
         bin: BytecodeObject,
         args: Vec<Token>,
         provider: M,
-    ) -> Result<()> {
+    ) -> eyre::Result<()> {
         let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
@@ -224,33 +184,36 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy =
-            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let is_legacy = self.tx.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
+
+        // set tx value if specified
+        if let Some(value) = self.tx.value {
+            deployer.tx.set_value(value);
+        }
 
         // fill tx first because if you target a lower gas than current base, eth_estimateGas
         // will fail and create will fail
-        let mut tx = deployer.tx;
-        provider.fill_transaction(&mut tx, None).await?;
-        deployer.tx = tx;
+        provider.fill_transaction(&mut deployer.tx, None).await?;
 
         // set gas price if specified
-        if let Some(gas_price) = self.gas_price {
+        if let Some(gas_price) = self.tx.gas_price {
             deployer.tx.set_gas_price(gas_price);
         }
 
         // set gas limit if specified
-        if let Some(gas_limit) = self.gas_limit {
+        if let Some(gas_limit) = self.tx.gas_limit {
             deployer.tx.set_gas(gas_limit);
         }
 
         // set nonce if specified
-        if let Some(nonce) = self.nonce {
+        if let Some(nonce) = self.tx.nonce {
             deployer.tx.set_nonce(nonce);
         }
 
         // set priority fee if specified
-        if let Some(priority_fee) = self.priority_fee {
+        if let Some(priority_fee) = self.tx.priority_gas_price {
             if is_legacy {
                 panic!("there is no priority fee for legacy txs");
             }
@@ -260,11 +223,6 @@ impl CreateArgs {
                 ),
                 _ => deployer.tx,
             };
-        }
-
-        // set tx value if specified
-        if let Some(value) = self.value {
-            deployer.tx.set_value(value);
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
@@ -328,7 +286,7 @@ impl CreateArgs {
         &self,
         constructor: &Constructor,
         constructor_args: &[String],
-    ) -> Result<Vec<Token>> {
+    ) -> eyre::Result<Vec<Token>> {
         let params = constructor
             .inputs
             .iter()

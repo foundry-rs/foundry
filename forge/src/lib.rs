@@ -17,8 +17,8 @@ pub use traits::*;
 
 pub mod result;
 
-/// The Forge EVM backend
-pub use foundry_evm::*;
-
 #[cfg(test)]
 mod test_helpers;
+
+/// The Forge EVM backend
+pub use foundry_evm::*;

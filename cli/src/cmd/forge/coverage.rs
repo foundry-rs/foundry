@@ -10,14 +10,14 @@ use crate::{
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
-    prelude::{Artifact, Project, ProjectCompileOutput},
+    prelude::{Artifact, Bytes, Project, ProjectCompileOutput},
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap, ArtifactId},
 };
 use forge::{
     coverage::{
         CoverageMap, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter, Visitor,
     },
-    executor::opts::EvmOpts,
+    executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
     trace::identifier::LocalTraceIdentifier,
     MultiContractRunnerBuilder,
@@ -119,15 +119,19 @@ impl CoverageArgs {
 
     /// Builds the coverage map.
     fn prepare(&self, output: ProjectCompileOutput) -> eyre::Result<(CoverageMap, SourceMaps)> {
-        // Get sources and source maps
+        // Extract artifacts
         let (artifacts, sources) = output.into_artifacts_with_sources();
-
-        let source_maps: SourceMaps = artifacts
+        let artifacts: HashMap<ArtifactId, CompactContractBytecode> = artifacts
             .into_iter()
             .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
-            .filter_map(|(id, artifact): (ArtifactId, CompactContractBytecode)| {
+            .collect();
+
+        // Get source maps
+        let source_maps: SourceMaps = artifacts
+            .iter()
+            .filter_map(|(id, artifact)| {
                 Some((
-                    id,
+                    id.clone(),
                     (
                         artifact.get_source_map()?.ok()?,
                         artifact
@@ -137,6 +141,20 @@ impl CoverageArgs {
                             .as_ref()?
                             .source_map()?
                             .ok()?,
+                    ),
+                ))
+            })
+            .collect();
+
+        // Get bytecodes
+        let bytecodes: HashMap<ArtifactId, (Bytes, Bytes)> = artifacts
+            .iter()
+            .filter_map(|(id, artifact)| {
+                Some((
+                    id.clone(),
+                    (
+                        artifact.get_bytecode_bytes()?.into_owned(),
+                        artifact.get_deployed_bytecode_bytes()?.into_owned(),
                     ),
                 ))
             })
@@ -165,12 +183,23 @@ impl CoverageArgs {
                                 id.source == PathBuf::from(&path)
                         })
                         .map(|(id, (_, source_map))| {
-                            // TODO: Deploy source map too?
+                            // TODO: Deploy source map too
                             (id.name.clone(), source_map.clone())
                         })
                         .collect();
+                    let bytecodes: HashMap<String, Bytes> = bytecodes
+                        .iter()
+                        .filter(|(id, _)| {
+                            id.version == versioned_source.version &&
+                                id.source == PathBuf::from(&path)
+                        })
+                        .map(|(id, (_, bytecode))| {
+                            // TODO: Deploy bytecode too
+                            (id.name.clone(), bytecode.clone())
+                        })
+                        .collect();
 
-                    let items = Visitor::new(source.id, fs::read_to_string(&path)?, source_maps)
+                    let items = Visitor::new(fs::read_to_string(&path)?, source_maps, bytecodes)
                         .visit_ast(ast)?;
 
                     if items.is_empty() {
@@ -207,6 +236,8 @@ impl CoverageArgs {
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
         let root = project.paths.root;
 
+        let env = evm_opts.evm_env_blocking();
+
         // Build the contract runner
         let evm_spec = utils::evm_spec(&config.evm_version);
         let mut runner = MultiContractRunnerBuilder::default()
@@ -214,9 +245,11 @@ impl CoverageArgs {
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
-            .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
+            .with_fork(evm_opts.get_fork(env.clone()))
+            .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
             .set_coverage(true)
-            .build(root.clone(), output, evm_opts)?;
+            .build(root.clone(), output, env, evm_opts)?;
+
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Set up identifier

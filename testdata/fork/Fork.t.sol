@@ -6,6 +6,7 @@ import "./DssExecLib.sol";
 
 interface Cheats {
     function store(address account, bytes32 slot, bytes32 value) external;
+    function activeFork() external returns(uint256);
 }
 
 
@@ -26,6 +27,14 @@ contract DummyContract {
 contract ForkTest is DSTest {
     address constant DAI_TOKEN_ADDR = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+
+    // checks that we can retrieve the fork we launched with
+    function testActiveFork() public {
+        Cheats cheatvm = Cheats(HEVM_ADDRESS);
+        uint256 activeFork = cheatvm.activeFork();
+        // launch fork has id `0`
+        assertEq(activeFork, 0);
+    }
 
     function testReadState() public { 
         ERC20 DAI = ERC20(DAI_TOKEN_ADDR);

@@ -161,50 +161,104 @@ impl Comments {
     }
 }
 
-enum CommentState {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CommentState {
     None,
+    LineStart1,
+    LineStart2,
     Line,
+    BlockStart1,
+    BlockStart2,
     Block,
+    BlockEnd1,
+    BlockEnd2,
+}
+
+impl Default for CommentState {
+    fn default() -> Self {
+        CommentState::None
+    }
+}
+
+/// An Iterator over characters and indexes in a string slice with information about the state of
+/// comments
+pub struct CommentStateCharIndices<'a> {
+    iter: std::iter::Peekable<std::str::CharIndices<'a>>,
+    state: CommentState,
+}
+
+impl<'a> CommentStateCharIndices<'a> {
+    fn new(string: &'a str) -> Self {
+        Self { iter: string.char_indices().peekable(), state: CommentState::None }
+    }
+    pub fn with_state(mut self, state: CommentState) -> Self {
+        self.state = state;
+        self
+    }
+}
+
+impl<'a> Iterator for CommentStateCharIndices<'a> {
+    type Item = (CommentState, usize, char);
+    fn next(&mut self) -> Option<Self::Item> {
+        let (idx, ch) = self.iter.next()?;
+        match self.state {
+            CommentState::None => {
+                if ch == '/' {
+                    match self.iter.peek() {
+                        Some((_, '/')) => {
+                            self.state = CommentState::LineStart1;
+                        }
+                        Some((_, '*')) => {
+                            self.state = CommentState::BlockStart1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            CommentState::LineStart1 => {
+                self.state = CommentState::LineStart2;
+            }
+            CommentState::LineStart2 => {
+                self.state = CommentState::Line;
+            }
+            CommentState::Line => {
+                if ch == '\n' {
+                    self.state = CommentState::None;
+                }
+            }
+            CommentState::BlockStart1 => {
+                self.state = CommentState::BlockStart2;
+            }
+            CommentState::BlockStart2 => {
+                self.state = CommentState::Block;
+            }
+            CommentState::Block => {
+                if ch == '*' {
+                    if let Some((_, '/')) = self.iter.peek() {
+                        self.state = CommentState::BlockEnd1;
+                    }
+                }
+            }
+            CommentState::BlockEnd1 => {
+                self.state = CommentState::BlockEnd2;
+            }
+            CommentState::BlockEnd2 => {
+                self.state = CommentState::None;
+            }
+        }
+        Some((self.state, idx, ch))
+    }
 }
 
 /// An Iterator over characters in a string slice which are not a apart of comments
-pub struct NonCommentChars<'a> {
-    iter: std::iter::Peekable<std::str::Chars<'a>>,
-    state: CommentState,
-}
+pub struct NonCommentChars<'a>(CommentStateCharIndices<'a>);
 
 impl<'a> Iterator for NonCommentChars<'a> {
     type Item = char;
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(ch) = self.iter.next() {
-            match self.state {
-                CommentState::None => match ch {
-                    '/' => match self.iter.peek() {
-                        Some('/') => {
-                            self.iter.next();
-                            self.state = CommentState::Line;
-                        }
-                        Some('*') => {
-                            self.iter.next();
-                            self.state = CommentState::Block;
-                        }
-                        _ => return Some(ch),
-                    },
-                    _ => return Some(ch),
-                },
-                CommentState::Line => {
-                    if ch == '\n' {
-                        self.state = CommentState::None;
-                        return Some('\n')
-                    }
-                }
-                CommentState::Block => {
-                    if ch == '*' {
-                        if let Some('/') = self.iter.next() {
-                            self.state = CommentState::None
-                        }
-                    }
-                }
+        for (state, _, ch) in self.0.by_ref() {
+            if state == CommentState::None {
+                return Some(ch)
             }
         }
         None
@@ -213,7 +267,10 @@ impl<'a> Iterator for NonCommentChars<'a> {
 
 /// Helpers for iterating over non-comment characters
 pub trait CommentStringExt {
-    fn non_comment_chars(&self) -> NonCommentChars;
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices;
+    fn non_comment_chars(&self) -> NonCommentChars {
+        NonCommentChars(self.comment_state_char_indices())
+    }
     fn trim_comments(&self) -> String {
         self.non_comment_chars().collect()
     }
@@ -223,13 +280,13 @@ impl<T> CommentStringExt for T
 where
     T: AsRef<str>,
 {
-    fn non_comment_chars(&self) -> NonCommentChars {
-        NonCommentChars { iter: self.as_ref().chars().peekable(), state: CommentState::None }
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+        CommentStateCharIndices::new(self.as_ref())
     }
 }
 
 impl CommentStringExt for str {
-    fn non_comment_chars(&self) -> NonCommentChars {
-        NonCommentChars { iter: self.chars().peekable(), state: CommentState::None }
+    fn comment_state_char_indices(&self) -> CommentStateCharIndices {
+        CommentStateCharIndices::new(self)
     }
 }
