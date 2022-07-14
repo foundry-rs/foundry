@@ -1196,6 +1196,14 @@ impl Config {
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
+        // provide warnings for unknown sections in toml provider
+        for unknown_key in toml_provider.data().unwrap_or_default().keys().filter(|k| {
+            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+        }) {
+            let src =
+                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
+            config_warn!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead or run `forge config --fix`.");
+        }
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -2160,11 +2168,6 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     }
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut figment = Figment::from(&self.provider);
-        if let Some(profile) = figment.profiles().find(|p| self.profiles.contains(p)) {
-            let src =
-                self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
-        }
         for profile in &self.profiles {
             figment = figment.merge(UnwrapProfileProvider::new(
                 &self.provider,
@@ -3311,6 +3314,25 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn test_implicit_profile_loads() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = 'my-src'
+                out = 'my-out'
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            assert_eq!(loaded.src.file_name().unwrap(), "my-src");
+            assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+
+            Ok(())
+        });
     }
 
     // a test to print the config, mainly used to update the example config in the README
