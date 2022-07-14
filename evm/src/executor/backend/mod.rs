@@ -63,14 +63,18 @@ pub trait DatabaseExt: Database {
         fork: CreateFork,
         env: &mut Env,
         subroutine: &mut SubRoutine,
-    ) -> eyre::Result<U256> {
+    ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork, subroutine)?;
         self.select_fork(id, env, subroutine)?;
         Ok(id)
     }
 
     /// Creates a new fork but does _not_ select it
-    fn create_fork(&mut self, fork: CreateFork, subroutine: &SubRoutine) -> eyre::Result<U256>;
+    fn create_fork(
+        &mut self,
+        fork: CreateFork,
+        subroutine: &SubRoutine,
+    ) -> eyre::Result<LocalForkId>;
 
     /// Selects the fork's state
     ///
@@ -83,7 +87,7 @@ pub trait DatabaseExt: Database {
     /// Returns an error if no fork with the given `id` exists
     fn select_fork(
         &mut self,
-        id: U256,
+        id: LocalForkId,
         env: &mut Env,
         subroutine: &mut SubRoutine,
     ) -> eyre::Result<()>;
@@ -99,7 +103,7 @@ pub trait DatabaseExt: Database {
         &mut self,
         env: &mut Env,
         block_number: U256,
-        id: Option<U256>,
+        id: Option<LocalForkId>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -115,10 +119,10 @@ pub trait DatabaseExt: Database {
     /// Returns an error if the given `id` does not match any forks
     ///
     /// Returns an error if no fork exits
-    fn ensure_fork(&self, id: Option<U256>) -> eyre::Result<U256>;
+    fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId>;
 
     /// Ensures that a corresponding `ForkId` exists for the given local `id`
-    fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId>;
+    fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId>;
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -140,11 +144,13 @@ pub trait DatabaseExt: Database {
 /// (`Backend::clone`). This way each contract uses its own encapsulated evm state. For in-memory
 /// testing, the database is just an owned `revm::InMemoryDB`.
 ///
-/// The `db` if fork-mode basically consists of 2 halves:
+/// Each `Fork`, identified by a unique id, uses completely separate storage, write operations are
+/// performed only in the fork's own database, `ForkDB`.
+///
+/// A `ForkDB` consists of 2 halves:
 ///   - everything fetched from the remote is readonly
 ///   - all local changes (instructed by the contract) are written to the backend's `db` and don't
-///     alter the state of the remote client. This way a fork (`SharedBackend`), can be used by
-///     multiple contracts at the same time.
+///     alter the state of the remote client.
 ///
 /// # Fork swapping
 ///
@@ -154,8 +160,10 @@ pub trait DatabaseExt: Database {
 /// When swapping forks (`Backend::select_fork()`) we also update the current `Env` of the `EVM`
 /// accordingly, so that all `block.*` config values match
 ///
-/// **Note:** this only affects the readonly half of the `db`, local changes are persistent across
-/// fork-state swaps.
+/// When another for is selected [`DatabaseExt::select_fork()`] the entire storage, including
+/// `Subroutine` is swapped, but the storage of the caller's and the test contract account is
+/// _always_ cloned. This way a fork has entirely separate storage but data can still be shared
+/// across fork boundaries via stack and contract variables.
 ///
 /// # Snapshotting
 ///
@@ -708,7 +716,7 @@ pub struct BackendInner {
     /// Tracks the caller of the test function
     pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
-    pub next_fork_id: U256,
+    pub next_fork_id: LocalForkId,
 }
 
 // === impl BackendInner ===

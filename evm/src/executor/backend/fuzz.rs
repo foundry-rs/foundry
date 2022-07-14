@@ -93,7 +93,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         &mut self,
         env: &mut Env,
         block_number: U256,
-        id: Option<U256>,
+        id: Option<LocalForkId>,
     ) -> eyre::Result<()> {
         self.backend.to_mut().roll_fork(env, block_number, id)
     }
