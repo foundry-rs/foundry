@@ -2031,6 +2031,7 @@ dependencies = [
  "ethers-core",
  "ethers-solc",
  "eyre",
+ "fastrlp",
  "figment",
  "globset",
  "number_prefix",
