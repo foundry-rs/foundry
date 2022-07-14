@@ -114,7 +114,22 @@ pub(crate) fn install(
             if !no_commit && !git_status_clean(root)? {
                 eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
             }
-            install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+            let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+
+            // Pin branch to submodule if branch is used
+            if let Some(branch) = tag {
+                if !(branch.is_empty()) {
+                    Command::new("git")
+                        .args(&[
+                            "submodule",
+                            "set-branch",
+                            "-b",
+                            &branch,
+                            install_lib_dir.join(&target_dir).to_str().unwrap(),
+                        ])
+                        .exec()?;
+                }
+            }
         }
 
         p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
@@ -148,27 +163,33 @@ fn install_as_submodule(
     libs: &Path,
     target_dir: &str,
     no_commit: bool,
-) -> eyre::Result<()> {
+) -> eyre::Result<Option<String>> {
     // install the dep
     git_submodule(dep, libs, target_dir)?;
 
     // checkout the tag if necessary
-    let message = if dep.tag.is_none() {
-        format!("forge install: {target_dir}")
+    let tag = if dep.tag.is_none() {
+        None
     } else {
         let tag = git_checkout(dep, libs, target_dir, true)?;
         if !no_commit {
             Command::new("git").args(&["add", &libs.display().to_string()]).exec()?;
         }
-        format!("forge install: {target_dir}\n\n{tag}")
+        Some(tag)
     };
 
     // commit the added submodule
     if !no_commit {
+        let message = if let Some(tag) = &tag {
+            format!("forge install: {target_dir}\n\n{tag}")
+        } else {
+            format!("forge install: {target_dir}")
+        };
+
         Command::new("git").args(&["commit", "-m", &message]).current_dir(&libs).exec()?;
     }
 
-    Ok(())
+    Ok(tag)
 }
 
 // check that there are no modification in git working/staging area
@@ -245,9 +266,16 @@ fn git_checkout(
     }
 
     let mut tag = dep.tag.as_ref().unwrap().clone();
+    let mut is_branch = false;
     // only try to match tag if current terminal is a tty
     if atty::is(Stream::Stdout) {
-        tag = match_tag(&tag, libs, target_dir)?
+        let branch = match_branch(&tag, libs, target_dir)?;
+        if tag.is_empty() {
+            tag = match_tag(&tag, libs, target_dir)?;
+        } else {
+            tag = branch;
+            is_branch = true;
+        }
     }
     let url = dep.url.as_ref().unwrap();
 
@@ -271,7 +299,11 @@ fn git_checkout(
         }
     }
 
-    Ok(tag)
+    if is_branch {
+        Ok(tag)
+    } else {
+        Ok(String::new())
+    }
 }
 
 /// disambiguate tag if it is a version tag
@@ -341,7 +373,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         stdout().flush()?;
         let mut input = String::new();
         stdin().read_line(&mut input)?;
-        // default selection, return fist candidate
+        // default selection, return first candidate
         if input.trim().is_empty() {
             println!("[1] {} selected", candidates[1]);
             return Ok(candidates[1].clone())
@@ -355,5 +387,77 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
             }
             _ => continue,
         }
+    }
+}
+
+fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String> {
+    // fetch remote branches and check for tag
+    let output = Command::new("git")
+        .args(&["branch", "-r"])
+        .current_dir(&libs.join(&target_dir))
+        .get_stdout_lossy()?;
+    let mut candidates: Vec<String> = output
+        .lines()
+        .map(|x| x.trim().trim_start_matches("origin/"))
+        .filter(|x| x.starts_with(&tag.to_string()))
+        .map(str::to_string)
+        .rev()
+        .collect();
+
+    // no match found, fall back to the user-provided tag
+    if candidates.is_empty() {
+        return Ok(String::new())
+    }
+
+    // have exact match
+    for candidate in candidates.iter() {
+        if candidate == tag {
+            return Ok(tag.into())
+        }
+    }
+
+    // only one candidate, ask whether the user wants to accept or not
+    if candidates.len() == 1 {
+        let matched_tag = candidates[0].clone();
+        print!("Found a similar branch: {}, do you want to use this instead? ([y]/n)", matched_tag);
+        stdout().flush()?;
+        let mut input = String::new();
+        stdin().read_line(&mut input)?;
+        input = input.trim().to_lowercase();
+        return if input.is_empty() || input == "y" || input == "yes" {
+            Ok(matched_tag)
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    // multiple candidates, ask the user to choose one or skip
+    candidates.insert(0, tag.clone() + " (original branch)");
+    println!("There are multiple matching branches:");
+    for (i, candidate) in candidates.iter().enumerate() {
+        println!("[{}] {}", i, candidate);
+    }
+
+    let n_candidates = candidates.len();
+    print!("Please select a tag (0-{}, default: 1, Press <enter> to cancel): ", n_candidates - 1);
+    stdout().flush()?;
+    let mut input = String::new();
+    stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    // default selection, return first candidate
+    if input.is_empty() {
+        println!("cancel branch matching");
+        return Ok(String::new())
+    }
+
+    // match user input, 0 indicates skipping and use original tag
+    match input.parse::<usize>() {
+        Ok(i) if i == 0 => Ok(tag.into()),
+        Ok(i) if (1..=n_candidates).contains(&i) => {
+            println!("[{}] {} selected", i, candidates[i]);
+            Ok(candidates[i].clone())
+        }
+        _ => Ok(String::new()),
     }
 }
