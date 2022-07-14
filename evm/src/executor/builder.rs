@@ -13,7 +13,7 @@ pub struct ExecutorBuilder {
     /// The execution environment configuration.
     env: Env,
     /// The configuration used to build an [InspectorStack].
-    inspector_config: InspectorStackConfig, // todo
+    inspector_config: InspectorStackConfig,
     gas_limit: Option<U256>,
 }
 
@@ -51,7 +51,11 @@ impl ExecutorBuilder {
 
     /// Enables the fuzzer
     #[must_use]
-    pub fn with_fuzzer(mut self, generator: RandomCallGenerator, fuzz_state: EvmFuzzState) -> Self {
+    pub fn with_fuzzer(
+        mut self,
+        generator: Option<RandomCallGenerator>,
+        fuzz_state: EvmFuzzState,
+    ) -> Self {
         self.inspector_config.fuzzer = Some(Fuzzer { generator, fuzz_state, collect: false });
         self
     }

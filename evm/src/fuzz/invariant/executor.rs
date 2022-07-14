@@ -85,20 +85,20 @@ impl<'a> InvariantExecutor<'a> {
         self.evm.set_tracing(false);
 
         let target_reference = Arc::new(RwLock::new(Address::zero()));
+
+        let mut generator = None;
         if test_options.call_override {
-            self.evm.set_fuzzer(
-                RandomCallGenerator::new(
-                    self.runner.clone(),
-                    override_call_strat(
-                        fuzz_state.clone(),
-                        targeted_contracts.clone(),
-                        target_reference.clone(),
-                    ),
-                    target_reference,
+            generator = Some(RandomCallGenerator::new(
+                self.runner.clone(),
+                override_call_strat(
+                    fuzz_state.clone(),
+                    targeted_contracts.clone(),
+                    target_reference.clone(),
                 ),
-                fuzz_state.clone(),
-            );
+                target_reference,
+            ));
         }
+        self.evm.set_fuzzer(generator, fuzz_state.clone());
 
         let clean_db = self.evm.backend().db.clone();
         let executor = RefCell::new(&mut self.evm);

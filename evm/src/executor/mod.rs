@@ -166,7 +166,7 @@ impl Executor {
 
     pub fn set_fuzzer(
         &mut self,
-        generator: RandomCallGenerator,
+        generator: Option<RandomCallGenerator>,
         fuzz_state: EvmFuzzState,
     ) -> &mut Self {
         self.inspector_config.fuzzer = Some(Fuzzer { generator, fuzz_state, collect: false });

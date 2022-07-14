@@ -67,8 +67,10 @@ pub fn assert_invariants<'a>(
     let mut found_case = false;
     let mut inner_sequence = vec![];
 
-    if let Some(fuzzer) = &executor.borrow().inspector_config().fuzzer {
-        inner_sequence.extend(fuzzer.generator.last_sequence.read().iter().cloned())
+    if let Some(ref fuzzer) = executor.borrow().inspector_config().fuzzer {
+        if let Some(ref generator) = fuzzer.generator {
+            inner_sequence.extend(generator.last_sequence.read().iter().cloned());
+        }
     }
 
     for func in invariants {
@@ -199,7 +201,7 @@ pub struct RandomCallGenerator {
     pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
     /// Reference to which contract we want a fuzzed calldata from.
     pub target_reference: Arc<RwLock<Address>>,
-    /// Flag to know if a call has been overriden.
+    /// Flag to know if a call has been overriden. Don't allow nested for now.
     pub used: bool,
     /// If set to `true`, consumes the next call from `last_sequence`, otherwise from the strategy.
     pub replay: bool,

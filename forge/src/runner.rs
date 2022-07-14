@@ -477,16 +477,16 @@ impl<'a> ContractRunner<'a> {
                             // Reset DB state
                             self.executor.backend_mut().db = prev_db.clone();
                             self.executor.set_tracing(true);
-                            let mut generator = &mut self
-                                .executor
-                                .inspector_config_mut()
-                                .fuzzer
-                                .as_mut()
-                                .unwrap()
-                                .generator;
-                            generator.set_replay(true);
-                            generator.last_sequence =
-                                Arc::new(RwLock::new(error.inner_sequence.clone()));
+
+                            if let Some(ref mut fuzzer) =
+                                self.executor.inspector_config_mut().fuzzer
+                            {
+                                if let Some(ref mut generator) = fuzzer.generator {
+                                    generator.set_replay(true);
+                                    generator.last_sequence =
+                                        Arc::new(RwLock::new(error.inner_sequence.clone()));
+                                }
+                            }
 
                             for (sender, (addr, bytes)) in vec_addr_bytes.iter() {
                                 let call_result = self

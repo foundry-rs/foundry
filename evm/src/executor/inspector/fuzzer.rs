@@ -9,7 +9,7 @@ use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interp
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
 pub struct Fuzzer {
-    pub generator: RandomCallGenerator,
+    pub generator: Option<RandomCallGenerator>,
     pub fuzz_state: EvmFuzzState,
     pub collect: bool,
 }
@@ -24,7 +24,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if data.env.tx.caller != call.context.caller {
+        if self.generator.is_some() && data.env.tx.caller != call.context.caller {
             self.override_call(call);
         }
 
@@ -56,7 +56,10 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.generator.used = false;
+        if let Some(ref mut generator) = self.generator {
+            generator.used = false;
+        }
+
         self.collect = true;
 
         (status, remaining_gas, retdata)
@@ -82,25 +85,27 @@ impl Fuzzer {
 
     /// Overrides an external call and tries to call any method of msg.sender.
     fn override_call(&mut self, call: &mut CallInputs) {
-        // We only override external calls which are not coming from the test contract
-        if call.context.caller !=
-            H160([
-                180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100, 34,
-                126, 132,
-            ]) &&
-            call.context.scheme == CallScheme::Call &&
-            !self.generator.used
-        {
-            if let Some((sender, (contract, input))) =
-                self.generator.next(call.context.caller, call.contract)
+        if let Some(ref mut generator) = self.generator {
+            // We only override external calls which are not coming from the test contract
+            if call.context.caller !=
+                H160([
+                    180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100,
+                    34, 126, 132,
+                ]) &&
+                call.context.scheme == CallScheme::Call &&
+                !generator.used
             {
-                call.input = input.0;
-                call.context.caller = sender;
-                call.contract = contract;
-                call.context.code_address = contract;
-                call.context.address = contract;
+                if let Some((sender, (contract, input))) =
+                    generator.next(call.context.caller, call.contract)
+                {
+                    call.input = input.0;
+                    call.context.caller = sender;
+                    call.contract = contract;
+                    call.context.code_address = contract;
+                    call.context.address = contract;
 
-                self.generator.used = true;
+                    generator.used = true;
+                }
             }
         }
     }
