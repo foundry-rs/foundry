@@ -215,25 +215,6 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
-// checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(!foundry_toml.exists());
-
-    prj.wipe();
-
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_non_empty_stdout();
-
-    cmd.arg("--force");
-
-    for _ in 0..2 {
-        assert!(foundry_toml.exists());
-        pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
-        cmd.assert_non_empty_stdout();
-    }
-});
-
 // Checks that a forge project fails to initialise if dir is already git repo and dirty
 forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
     use std::process::Command;
