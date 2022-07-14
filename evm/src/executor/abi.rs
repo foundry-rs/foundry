@@ -1,6 +1,8 @@
-use ethers::types::{Address, Selector, H160, U256};
+use ethers::types::{Address, Selector, H160};
+use foundry_common::fmt::UIfmt;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::fmt::Write;
 
 /// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
 ///
@@ -682,20 +684,44 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
 
 // Similar to hardhat's but ignores all specifiers except %s. %s works on all solidity values.
 // Support for other specifiers may be added in the future
-fn format_hardhat_log(spec: &str, v: &[&str]) -> String {
-    let mut result = spec.to_string().replace("%%", "%");
+fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
+    if v.is_empty() {
+        return specstr.to_string()
+    }
 
-    let mut end = v.len();
-    for (pos, t) in v.iter().enumerate() {
-        if result.find("%s").is_some() {
-            result = result.replacen("%s", t, 1);
+    let mut result = String::new();
+    let mut end = 0;
+
+    let spec = specstr.as_bytes();
+    let mut expect_fmt = false;
+    for (pos, c) in spec.iter().enumerate() {
+        if *c == b'%' {
+            if pos == 0 {
+                expect_fmt = true;
+            } else  {
+                expect_fmt = spec[pos-1] != b'%';
+                if !expect_fmt {
+                    result.push_str("%"); // apply % escaping
+                }
+            }
+            continue
+        }
+        if expect_fmt && *c == b's' {
+            expect_fmt = false;
+            write!(result, "{}", v[end]).unwrap();
+            end += 1;
+            if end >= v.len() {
+                // now that we've exhausted values in v, push the remaining string
+                result.push_str(&String::from_utf8_lossy(&spec[pos+1..]));
+                break
+            }
         } else {
-            end = pos;
-            break
+            result.push(*c as char);
         }
     }
+
     for t in &v[end..] {
-        result.push_str(&format!(" {}", t));
+        write!(result, " {t}").unwrap();
     }
     result
 }
@@ -704,33 +730,11 @@ pub trait HardhatConsoleLogf {
     fn logf(&self) -> String;
 }
 
-trait ToStringer {}
-impl ToStringer for String {}
-impl ToStringer for bool {}
-impl ToStringer for U256 {}
-
-trait VerboseToString {
-    fn to_verbose_string(&self) -> String;
-}
-
-// specialization to avoid the truncating behavior in default Display format (0x00..0000)
-impl VerboseToString for Address {
-    fn to_verbose_string(&self) -> String {
-        format!("{:?}", self)
-    }
-}
-
-impl<T: ToStringer + std::fmt::Display> VerboseToString for T {
-    fn to_verbose_string(&self) -> String {
-        self.to_string()
-    }
-}
-
 macro_rules! impl_logf_2 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.to_verbose_string();
+                let a1 = self.p_1.pretty();
                 format_hardhat_log(&self.p_0, &[&a1])
             }
         })+
@@ -741,8 +745,8 @@ macro_rules! impl_logf_3 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.to_verbose_string();
-                let a2 = self.p_2.to_verbose_string();
+                let a1 = self.p_1.pretty();
+                let a2 = self.p_2.pretty();
                 format_hardhat_log(&self.p_0, &[&a1, &a2])
            }
         })+
@@ -753,9 +757,9 @@ macro_rules! impl_logf_4 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.to_verbose_string();
-                let a2 = self.p_2.to_verbose_string();
-                let a3 = self.p_3.to_verbose_string();
+                let a1 = self.p_1.pretty();
+                let a2 = self.p_2.pretty();
+                let a3 = self.p_3.pretty();
                 format_hardhat_log(&self.p_0, &[&a1, &a2, &a3])
            }
         })+
@@ -955,12 +959,14 @@ mod tests {
     #[test]
     fn test_format_hardhat_log() {
         assert_eq!("%s", format_hardhat_log("%s", &[]));
-        assert_eq!("%", format_hardhat_log("%%", &[]));
+        assert_eq!("%%", format_hardhat_log("%%", &[]));
         assert_eq!("x", format_hardhat_log("%s", &["x"]));
         assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
         assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
         assert_eq!("x %s", format_hardhat_log("%s %s", &["x"]));
         assert_eq!("x y", format_hardhat_log("%s", &["x", "y"]));
         assert_eq!(" x", format_hardhat_log("", &["x"]));
+        assert_eq!("%s 10", format_hardhat_log("%%s", &["10"]));
+        assert_eq!("% % % %s %", format_hardhat_log("%% %s %%", &["%", "%s", "%"]));
     }
 }
