@@ -339,7 +339,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used().gas()
+        self.result.kind.report().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -463,7 +463,7 @@ fn short_test_result(name: &str, result: &TestResult) {
         Paint::red(txt)
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used());
+    println!("{} {} {}", status, name, result.kind.report());
 }
 
 pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
