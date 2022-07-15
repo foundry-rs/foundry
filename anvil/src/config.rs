@@ -25,6 +25,7 @@ use ethers::{
     types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
+use foundry_common::fmt::UIfmt;
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -135,7 +136,7 @@ Available Accounts
         );
         let balance = format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            let _ = write!(config_string, "\n({}) {:?} ({} ETH)", idx, wallet.address(), balance);
+            let _ = write!(config_string, "\n({}) {:?} ({} ETH)", idx, wallet.address().pretty(), balance);
         }
 
         let _ = write!(
