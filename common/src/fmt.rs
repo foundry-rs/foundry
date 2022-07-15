@@ -259,6 +259,8 @@ impl UIfmt for OtherFields {
 pub enum EthValue {
     U64(U64),
     U256(U256),
+    U64Array(Vec<U64>),
+    U256Array(Vec<U256>),
     Other(serde_json::Value),
 }
 
@@ -273,6 +275,8 @@ impl UIfmt for EthValue {
         match self {
             EthValue::U64(num) => num.pretty(),
             EthValue::U256(num) => num.pretty(),
+            EthValue::U64Array(arr) => arr.pretty(),
+            EthValue::U256Array(arr) => arr.pretty(),
             EthValue::Other(val) => val.to_string().trim_matches('"').to_string(),
         }
     }
