@@ -1262,6 +1262,48 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_member_access<'b, T, M>(
+        &mut self,
+        expr: &'b mut Box<T>,
+        ident: &mut Identifier,
+        mut matcher: M,
+    ) -> Result<()>
+    where
+        T: LineOfCode + Visitable,
+        M: FnMut(&mut Self, &'b mut Box<T>) -> Result<Option<(&'b mut Box<T>, &'b mut Identifier)>>,
+    {
+        let chunk_member_access = |fmt: &mut Self, ident: &mut Identifier, expr: &mut Box<T>| {
+            fmt.chunked(ident.loc.start(), Some(expr.loc().start()), |fmt| ident.visit(fmt))
+        };
+
+        let mut chunks: Vec<Chunk> = vec![chunk_member_access(self, ident, expr)?];
+        let mut remaining = expr;
+        while let Some((inner_expr, inner_ident)) = matcher(self, remaining)? {
+            chunks.push(chunk_member_access(self, inner_ident, inner_expr)?);
+            remaining = inner_expr;
+        }
+
+        chunks.reverse();
+        chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
+
+        if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
+            self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
+        }
+        Ok(())
+    }
+
+    fn visit_yul_literal(
+        &mut self,
+        loc: Loc,
+        val: &str,
+        ident: &mut Option<Identifier>,
+    ) -> Result<()> {
+        let ident =
+            if let Some(ident) = ident { format!(":{}", ident.name) } else { "".to_owned() };
+        write_chunk!(self, loc.start(), loc.end(), "{val}{ident}")?;
+        Ok(())
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1645,11 +1687,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
-                    if *unicode {
-                        write_chunk!(self, loc.start(), loc.end(), "unicode\"{string}\"")?;
-                    } else {
-                        write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
-                    }
+                    let prefix = if *unicode { "unicode" } else { "" };
+                    write_chunk!(self, loc.start(), loc.end(), "{prefix}\"{string}\"")?;
                 }
             }
             Expression::HexLiteral(vals) => {
@@ -1829,27 +1868,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, loc.end(), "{}", ident.name)?;
             }
             Expression::MemberAccess(_, expr, ident) => {
-                let chunk_member_access =
-                    |fmt: &mut Self, ident: &mut Identifier, expr: &mut Box<Expression>| {
-                        fmt.chunked(ident.loc.start(), Some(expr.loc().start()), |fmt| {
-                            ident.visit(fmt)
-                        })
-                    };
-
-                let mut chunks: Vec<Chunk> = vec![chunk_member_access(self, ident, expr)?];
-                let mut remaining = expr.as_mut();
-                while let Expression::MemberAccess(_, inner_expr, inner_ident) = remaining {
-                    chunks.push(chunk_member_access(self, inner_ident, inner_expr)?);
-                    remaining = inner_expr;
-                }
-
-                chunks.reverse();
-                chunks.iter_mut().for_each(|chunk| chunk.content.insert(0, '.'));
-
-                remaining.visit(self)?;
-                if !self.try_on_single_line(|fmt| fmt.write_chunks_separated(&chunks, "", false))? {
-                    self.grouped(|fmt| fmt.write_chunks_separated(&chunks, "", true))?;
-                }
+                self.visit_member_access(expr, ident, |fmt, expr| match expr.as_mut() {
+                    Expression::MemberAccess(_, inner_expr, inner_ident) => {
+                        Ok(Some((inner_expr, inner_ident)))
+                    }
+                    expr => {
+                        expr.visit(fmt)?;
+                        Ok(None)
+                    }
+                })?;
             }
             Expression::List(loc, items) => {
                 self.surrounded(
@@ -2947,22 +2974,40 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_yul_expr(&mut self, expr: &mut YulExpression) -> Result<(), Self::Error> {
-        // TODO:
         match expr {
-            // YulExpression::BoolLiteral(loc, val, ident) => {
-            //     let val = if *val { "true" } else { "false" };
-            //     write_chunk!(self, loc.start(), loc.end(), "{val}",)
-            // }
+            YulExpression::BoolLiteral(loc, val, ident) => {
+                let val = if *val { "true" } else { "false" };
+                self.visit_yul_literal(*loc, val, ident)
+            }
             YulExpression::FunctionCall(expr) => self.visit_yul_function_call(expr),
-            // YulExpression::HexNumberLiteral(loc, val, ident) => {}
-            // YulExpression::HexStringLiteral(val, ident) => {}
-            // YulExpression::NumberLiteral(loc, val, expr /* TODO: */, ident) => {}
-            // YulExpression::StringLiteral(val, ident) => {}
-            // YulExpression::SuffixAccess(loc, expr, ident) => {}
+            YulExpression::HexNumberLiteral(loc, val, ident) => {
+                self.visit_yul_literal(*loc, val, ident)
+            }
+            YulExpression::HexStringLiteral(val, ident) => {
+                self.visit_yul_literal(val.loc, &val.hex, ident)
+            }
+            YulExpression::NumberLiteral(loc, val, expr, ident) => {
+                let val =
+                    if expr.is_empty() { val.to_owned() } else { format!("{}e{}", val, expr) };
+                self.visit_yul_literal(*loc, &val, ident)
+            }
+            YulExpression::StringLiteral(val, ident) => {
+                self.visit_yul_literal(val.loc, &val.string, ident)
+            }
+            YulExpression::SuffixAccess(_, expr, ident) => {
+                self.visit_member_access(expr, ident, |fmt, expr| match expr.as_mut() {
+                    YulExpression::SuffixAccess(_, inner_expr, inner_ident) => {
+                        Ok(Some((inner_expr, inner_ident)))
+                    }
+                    expr => {
+                        expr.visit(fmt)?;
+                        Ok(None)
+                    }
+                })
+            }
             YulExpression::Variable(ident) => {
                 write_chunk!(self, ident.loc.start(), ident.loc.end(), "{}", ident.name)
             }
-            _ => self.visit_source(expr.loc()),
         }
     }
 
