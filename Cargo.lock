@@ -2037,6 +2037,7 @@ dependencies = [
  "figment",
  "globset",
  "number_prefix",
+ "once_cell",
  "path-slash",
  "pretty_assertions",
  "regex",

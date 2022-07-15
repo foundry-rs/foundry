@@ -149,14 +149,16 @@ The `rpc_endpoints` value accepts a list of `alias = "<url|env var>"` pairs.
 
 The following example declares two pairs:
 The alias `optimism` references the endpoint URL directly.
-The alias `mainnet` references the environment variable `RPC_MAINNET` which holds the actual URL.
+The alias `mainnet` references the environment variable `RPC_MAINNET` which holds the entire URL.
+The alias `goerli` references an endpoint that will be interpolated with the value the `GOERLI_API_KEY` holds.
 
 Environment variables need to be wrapped in `${}`
 
 ```toml
 [default.rpc_endpoints]
-optimism = "https://optimism.alchemyapi.io/v2/..."
+optimism = "https://optimism.alchemyapi.io/v2/1234567"
 mainnet = "${RPC_MAINNET}"
+goerli = "https://eth-goerli.alchemyapi.io/v2/${GOERLI_API_KEY}"
 ```
 
 ##### Additional Model Checker settings
