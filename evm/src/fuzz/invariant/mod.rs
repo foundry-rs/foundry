@@ -57,7 +57,7 @@ pub struct InvariantExecutor<'a> {
 /// external `invariant_doesnt_hold` map and returns `Err(())`
 pub fn assert_invariants<'a>(
     sender: Address,
-    abi: &Abi,
+    test_contract_abi: &Abi,
     executor: &'a RefCell<&mut &mut Executor>,
     invariant_address: Address,
     invariants: &'a [&Function],
@@ -106,7 +106,7 @@ pub fn assert_invariants<'a>(
                 Some(InvariantFuzzError::new(
                     invariant_address,
                     Some(func),
-                    abi,
+                    test_contract_abi,
                     &result,
                     inputs,
                     &inner_sequence,
