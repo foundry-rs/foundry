@@ -6,6 +6,8 @@ use eyre::ContextCompat;
 
 use tracing::warn;
 
+use crate::CALLER;
+
 use super::{InvariantExecutor, TargetedContracts};
 
 impl<'a> InvariantExecutor<'a> {
@@ -46,7 +48,7 @@ impl<'a> InvariantExecutor<'a> {
     }
 
     /// Selects the functions to fuzz based on the contract method `targetSelectors() -> (address,
-    /// bytes4)[]`.
+    /// bytes4[])[]`.
     pub fn select_selectors(
         &self,
         address: Address,
@@ -74,6 +76,8 @@ impl<'a> InvariantExecutor<'a> {
 
         for (address, bytes4_array) in selectors.into_iter() {
             if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
+                // The contract is already part of our filter, and all we do is specify that we're
+                // only looking at specific functions coming from `bytes4_array`.
                 for selector in bytes4_array {
                     add_function(name, selector, abi, address_selectors)?;
                 }
@@ -101,8 +105,8 @@ impl<'a> InvariantExecutor<'a> {
         let mut list: Vec<T> = vec![];
 
         if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
-            if let Ok(call_result) = self.evm.call::<Vec<T>, _, _>(
-                self.sender,
+            if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
+                CALLER,
                 address,
                 func.clone(),
                 (),

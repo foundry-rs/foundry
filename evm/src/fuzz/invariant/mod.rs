@@ -1,5 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::fuzz::*;
+use crate::{fuzz::*, CALLER};
 
 mod executor;
 mod filters;
@@ -44,25 +44,25 @@ pub struct InvariantTestOptions {
 /// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
 pub struct InvariantExecutor<'a> {
-    // evm: RefCell<&'a mut E>,
-    /// The VM todo executor
-    pub evm: &'a mut Executor,
+    pub executor: &'a mut Executor,
+    /// Proptest runner.
     runner: TestRunner,
-    sender: Address,
+    /// Contracts deployed with `setUp()`
     setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+    /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
+    /// to identify them from the stateset changes.
     project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
-/// external `invariant_doesnt_hold` map and returns `Err(())`
+/// external `failed_invariant` map and returns a generic error.
 pub fn assert_invariants<'a>(
-    sender: Address,
     test_contract_abi: &Abi,
     executor: &'a RefCell<&mut &mut Executor>,
     invariant_address: Address,
     invariants: &'a [&Function],
-    mut invariant_doesnt_hold: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
-    inputs: &[BasicTxDetails],
+    calldata: &[BasicTxDetails],
+    mut failed_invariant: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
 ) -> eyre::Result<()> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
@@ -77,7 +77,7 @@ pub fn assert_invariants<'a>(
         let RawCallResult { reverted, state_changeset, result, .. } = executor
             .borrow()
             .call_raw(
-                sender,
+                CALLER,
                 invariant_address,
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
                 U256::zero(),
@@ -101,14 +101,14 @@ pub fn assert_invariants<'a>(
         };
 
         if let Some((func, result)) = err {
-            invariant_doesnt_hold.borrow_mut().insert(
+            failed_invariant.borrow_mut().insert(
                 func.name.clone(),
                 Some(InvariantFuzzError::new(
                     invariant_address,
                     Some(func),
                     test_contract_abi,
                     &result,
-                    inputs,
+                    calldata,
                     &inner_sequence,
                 )),
             );
@@ -134,17 +134,17 @@ pub struct InvariantFuzzTestResult {
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
-    /// The proptest error occurred as a result of a test case
+    /// The proptest error occurred as a result of a test case.
     pub test_error: TestError<Vec<BasicTxDetails>>,
-    /// The return reason of the offending call
+    /// The return reason of the offending call.
     pub return_reason: Reason,
-    /// The revert string of the offending call
+    /// The revert string of the offending call.
     pub revert_reason: String,
-    /// Address of the invariant asserter
+    /// Address of the invariant asserter.
     pub addr: Address,
-    /// Function data for invariant check
+    /// Function data for invariant check.
     pub func: Option<ethers::prelude::Bytes>,
-    /// Inner Fuzzing Sequence
+    /// Inner fuzzing Sequence coming from overriding calls.
     pub inner_sequence: Vec<Option<BasicTxDetails>>,
 }
 
@@ -154,7 +154,7 @@ impl InvariantFuzzError {
         error_func: Option<&Function>,
         abi: &Abi,
         result: &bytes::Bytes,
-        inputs: &[BasicTxDetails],
+        calldata: &[BasicTxDetails],
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         let mut func = None;
@@ -178,7 +178,7 @@ impl InvariantFuzzError {
                     }
                 )
                 .into(),
-                inputs.to_vec(),
+                calldata.to_vec(),
             ),
             return_reason: "".into(),
             // return_reason: status,

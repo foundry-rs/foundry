@@ -448,7 +448,6 @@ impl<'a> ContractRunner<'a> {
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
-            self.sender,
             &identified_contracts,
             project_contracts,
         );

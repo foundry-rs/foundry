@@ -34,13 +34,12 @@ use super::{
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        evm: &'a mut Executor,
+        executor: &'a mut Executor,
         runner: TestRunner,
-        sender: Address,
         setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
         project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> Self {
-        Self { evm, runner, sender, setup_contracts, project_contracts }
+        Self { executor, runner, setup_contracts, project_contracts }
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`
@@ -66,8 +65,8 @@ impl<'a> InvariantExecutor<'a> {
         let failed_invariants =
             RefCell::new(invariants.iter().map(|f| (f.name.to_string(), None)).collect());
 
-        let clean_db = self.evm.backend().db.clone();
-        let executor = RefCell::new(&mut self.evm);
+        let clean_db = self.executor.backend().db.clone();
+        let executor = RefCell::new(&mut self.executor);
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs` until
         // the desired `depth` so we can use the evolving fuzz dictionary during the
@@ -105,7 +104,7 @@ impl<'a> InvariantExecutor<'a> {
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
-                    // Collect data for fuzzing.
+                    // Collect data for fuzzing from the state changeset.
                     let state_changeset =
                         state_changeset.to_owned().expect("to have a state changeset.");
 
@@ -125,13 +124,12 @@ impl<'a> InvariantExecutor<'a> {
 
                     if !reverted {
                         if assert_invariants(
-                            self.sender,
                             test_contract_abi,
                             &executor,
                             invariant_address,
                             &invariants,
-                            failed_invariants.borrow_mut(),
                             &inputs,
+                            failed_invariants.borrow_mut(),
                         )
                         .is_err()
                         {
@@ -146,6 +144,9 @@ impl<'a> InvariantExecutor<'a> {
                         }
                     } else {
                         reverts.set(reverts.get() + 1);
+
+                        // The user might want to stop all execution if a revert happens to better
+                        // bound their testing space.
                         if test_options.fail_on_revert {
                             let error = InvariantFuzzError::new(
                                 invariant_address,
@@ -157,6 +158,7 @@ impl<'a> InvariantExecutor<'a> {
                             );
                             *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
 
+                            // Hacky to provide the full error to the user.
                             for invariant in invariants.iter() {
                                 failed_invariants
                                     .borrow_mut()
@@ -231,7 +233,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state: EvmFuzzState = build_initial_state(&self.evm.backend().db);
+        let fuzz_state: EvmFuzzState = build_initial_state(&self.executor.backend().db);
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
@@ -260,11 +262,11 @@ impl<'a> InvariantExecutor<'a> {
                 target_contract_ref,
             ));
         }
-        self.evm.set_fuzzer(call_generator, fuzz_state.clone());
+        self.executor.set_fuzzer(call_generator, fuzz_state.clone());
 
         // Tracing should be off when running all runs. It will be turned on later for the failure
         // cases.
-        self.evm.set_tracing(false);
+        self.executor.set_tracing(false);
 
         Ok((fuzz_state, targeted_contracts, strat))
     }
