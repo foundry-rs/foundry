@@ -262,6 +262,8 @@ impl EthApi {
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
                 self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
+            EthRequest::DumpState(_) => self.anvil_dump_state().await.to_rpc_result(),
+            EthRequest::LoadState(buf) => self.anvil_load_state(buf).await.to_rpc_result(),
             EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
@@ -1249,6 +1251,24 @@ impl EthApi {
         node_info!("anvil_setCoinbase");
         self.backend.set_coinbase(address);
         Ok(())
+    }
+
+    /// Create a bufer that represents all state on the chain, which can be loaded to separate
+    /// process by calling `anvil_laodState`
+    ///
+    /// Handler for RPC call: `anvil_dumpState`
+    pub async fn anvil_dump_state(&self) -> Result<Bytes> {
+        node_info!("anvil_dumpState");
+        self.backend.dump_state()
+    }
+
+    /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
+    /// storage.
+    ///
+    /// Handler for RPC call: `anvil_loadState`
+    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
+        node_info!("anvil_loadState");
+        self.backend.load_state(buf)
     }
 
     /// Snapshot the state of the blockchain at the current block.

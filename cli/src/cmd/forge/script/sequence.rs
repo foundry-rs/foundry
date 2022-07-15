@@ -1,5 +1,5 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::cmd::forge::{create::RETRY_VERIFY_ON_CREATE, verify};
+use crate::cmd::forge::verify;
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     abi::{Abi, Address},
@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::trace;
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -133,7 +134,7 @@ impl ScriptSequence {
 
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
-        out.push(format!("{chain_id}"));
+        out.push(chain_id.to_string());
 
         fs::create_dir_all(&out)?;
 
@@ -145,6 +146,7 @@ impl ScriptSequence {
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
+        trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
         if let Some(etherscan_key) = &verify.etherscan_key {
             let mut future_verifications = vec![];
 
@@ -201,7 +203,7 @@ impl ScriptSequence {
                                 flatten: false,
                                 force: false,
                                 watch: true,
-                                retry: RETRY_VERIFY_ON_CREATE,
+                                retry: verify.retry.clone(),
                                 libraries: self.libraries.clone(),
                             };
 

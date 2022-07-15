@@ -6,6 +6,7 @@ use ethers::prelude::{Http, PendingTransaction, Provider, RetryClient, TxHash};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
+use tracing::trace;
 
 /// Gets the receipts of previously pending transactions.
 pub async fn wait_for_pending(
@@ -27,6 +28,7 @@ pub async fn wait_for_receipts(
     deployment_sequence: &mut ScriptSequence,
     provider: Arc<Provider<RetryClient<Http>>>,
 ) -> eyre::Result<()> {
+    trace!("waiting for receipts of {} transactions", tx_hashes.len());
     let mut tasks = futures::stream::iter(
         tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
     )
@@ -47,6 +49,8 @@ pub async fn wait_for_receipts(
                                 .push(format!("Transaction Failure: {}", receipt.transaction_hash));
                         }
                     }
+                    trace!(?receipt.transaction_hash, "received tx receipt");
+
                     deployment_sequence.remove_pending(receipt.transaction_hash);
                     receipts.push(receipt)
                 }
@@ -72,7 +76,7 @@ pub async fn wait_for_receipts(
     }
 
     if !errors.is_empty() {
-        let mut error_msg = format!("{:?}", errors);
+        let mut error_msg = errors.join("\n");
         if !deployment_sequence.pending.is_empty() {
             error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting
     the transactions."

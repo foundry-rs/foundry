@@ -372,6 +372,7 @@ mod tests {
         decode::decode_console_logs,
         test_helpers::{
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+            RE_PATH_SEPARATOR,
         },
     };
     use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
@@ -1143,8 +1144,13 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_cheats_fork() {
         let mut runner = runner();
-        let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/Fork"), None, true).unwrap();
+        let suite_result = runner
+            .test(
+                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR)),
+                None,
+                true,
+            )
+            .unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
@@ -1165,8 +1171,13 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_cheats_local() {
         let mut runner = runner();
-        let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*cheats/[^Fork]"), None, true).unwrap();
+        let suite_result = runner
+            .test(
+                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)),
+                None,
+                true,
+            )
+            .unwrap();
         assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {

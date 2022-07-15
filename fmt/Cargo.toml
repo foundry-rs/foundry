@@ -15,6 +15,7 @@ semver = "1.0.4"
 solang-parser = "=0.1.16"
 itertools = "0.10.3"
 thiserror = "1.0.30"
+foundry-config = { path = "../config" }
 
 [dev-dependencies]
 pretty_assertions = "1.0.0"
