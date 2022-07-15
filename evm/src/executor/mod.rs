@@ -99,6 +99,7 @@ impl Executor {
         &self.backend
     }
 
+    /// Returns an immutable reference to the InspectorStackConfig
     pub fn inspector_config(&self) -> &InspectorStackConfig {
         &self.inspector_config
     }
@@ -165,6 +166,7 @@ impl Executor {
         self
     }
 
+    /// Sets the fuzzer inspector of the executor.
     pub fn set_fuzzer(
         &mut self,
         call_generator: Option<RandomCallGenerator>,

@@ -25,6 +25,8 @@ use proptest::strategy::{Strategy, ValueTree};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
 pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
+
+/// (Sender, (TargetContract, Calldata))
 pub type BasicTxDetails = (Address, (Address, Bytes));
 
 /// Metadata on how to run invariant tests

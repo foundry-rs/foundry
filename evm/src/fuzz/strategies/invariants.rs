@@ -63,6 +63,8 @@ pub fn invariant_strat(
     vec![generate_call(fuzz_state, senders, contracts); 1].sboxed()
 }
 
+/// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
+/// through specific strategies.
 fn generate_call(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
@@ -82,6 +84,10 @@ fn generate_call(
         .sboxed()
 }
 
+/// Strategy to select a sender address:
+/// * If `senders` is empty, then it's a completely random address.
+/// * If `senders` is not empty, then there's an 80% chance that one from the list is selected. The
+///   remaining 20% will be random.
 fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
     let fuzz_strategy =
         fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).sboxed();
@@ -96,6 +102,7 @@ fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address>
     }
 }
 
+/// Strategy to randomly select a contract from the `contracts` list.
 fn select_random_contract(
     contracts: FuzzRunIdentifiedContracts,
 ) -> impl Strategy<Value = (Address, Abi, Vec<Function>)> {
@@ -108,6 +115,10 @@ fn select_random_contract(
     })
 }
 
+/// Strategy to select a random mutable function from the abi.
+///
+/// If `targeted_functions` is not empty, select one from it. Otherwise, take any
+/// of the available abi functions.
 fn select_random_function(
     abi: Abi,
     targeted_functions: Vec<Function>,
