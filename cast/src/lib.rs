@@ -1,6 +1,6 @@
 //! Cast
 //!
-//! TODO
+//! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
@@ -19,7 +19,6 @@ pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr};
 use rustc_hex::{FromHexIter, ToHex};
-use serde_json::Value;
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
@@ -58,7 +57,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -120,7 +119,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -141,9 +140,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list<'a>(
+    pub async fn access_list(
         &self,
-        builder_output: TxBuilderPeekOutput<'a>,
+        builder_output: TxBuilderPeekOutput<'_>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
@@ -268,7 +267,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate<'a>(&self, builder_output: TxBuilderPeekOutput<'a>) -> Result<U256> {
+    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
         let res = self.provider.estimate_gas(tx).await?;
@@ -1122,7 +1121,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
