@@ -17,13 +17,11 @@ use eyre::{Context, Result};
 use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr};
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-mod print_utils;
 mod rlp_converter;
 mod tx;
 
@@ -303,7 +301,7 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                get_pretty_block_attr(block, field)
+                get_pretty_block_attr(&block, field)
                     .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -321,7 +319,7 @@ where
                 if field == "transactions" {
                     "use --full to view transactions".to_string()
                 } else {
-                    get_pretty_block_attr(block, field)
+                    get_pretty_block_attr(&block, field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
@@ -549,7 +547,7 @@ where
         };
 
         let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(transaction_result, field)
+            get_pretty_tx_attr(&transaction_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
@@ -616,7 +614,7 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(receipt_result, field)
+            get_pretty_tx_receipt_attr(&receipt_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
         } else if to_json {
             serde_json::to_string(&receipt)?
