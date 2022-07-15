@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, HumanReadableParser, Token,
+        Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units, rlp},
@@ -921,11 +921,32 @@ impl SimpleCast {
     ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("constructor(uint a)", &["1"]).unwrap().as_str()
+    ///     );
     /// #    Ok(())
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = HumanReadableParser::parse_function(sig)?;
+        let func = match HumanReadableParser::parse_function(sig) {
+            Ok(func) => func,
+            Err(err) => {
+                if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                    #[allow(deprecated)]
+                    Function {
+                        name: "constructor".to_string(),
+                        inputs: constructor.inputs,
+                        outputs: vec![],
+                        constant: None,
+                        state_mutability: Default::default(),
+                    }
+                } else {
+                    // we return the `Function` parse error as this case is more likely
+                    return Err(err.into())
+                }
+            }
+        };
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
