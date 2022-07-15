@@ -21,6 +21,7 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
+use foundry_common::fmt::UIfmt;
 use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
@@ -127,7 +128,7 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address.pretty());
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await

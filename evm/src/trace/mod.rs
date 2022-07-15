@@ -8,6 +8,7 @@ pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+use foundry_common::fmt::UIfmt;
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ethers::{
@@ -366,7 +367,7 @@ impl Default for CallTrace {
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let address =
-            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
+            if f.alternate() { format!("{:?}", self.address.pretty()) } else { format!("{}", self.address.pretty()) };
         if self.created() {
             write!(
                 f,

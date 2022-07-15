@@ -17,7 +17,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::fs;
+use foundry_common::{fs, fmt::UIfmt};
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
@@ -229,14 +229,14 @@ impl CreateArgs {
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": deployer_address,
-                "deployedTo": address,
+                "deployer": deployer_address.pretty(),
+                "deployedTo": address.pretty(),
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {deployer_address:?}");
-            println!("Deployed to: {:?}", address);
+            println!("Deployer: {:?}", deployer_address.pretty());
+            println!("Deployed to: {:?}", address.pretty());
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 

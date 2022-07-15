@@ -21,7 +21,7 @@ use ethers::{
     types::{Address, NameOrAddress, U256},
 };
 use eyre::WrapErr;
-use foundry_common::fs;
+use foundry_common::{fs, fmt::UIfmt};
 use foundry_config::Chain;
 use foundry_utils::{
     format_tokens,
@@ -247,7 +247,7 @@ async fn main() -> eyre::Result<()> {
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = Provider::try_from(rpc_url)?;
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {:?}", addr);
+            println!("Computed Address: {:?}", addr.pretty());
         }
         Subcommands::Code { block, who, rpc_url } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
@@ -603,7 +603,7 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{:?}", address);
+            println!("{:?}", address.pretty());
         }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
