@@ -442,3 +442,18 @@ impl LineOfCode for Unit {
         }
     }
 }
+
+macro_rules! impl_loc {
+    ($type:ty) => {
+        impl LineOfCode for $type {
+            fn loc(&self) -> Loc {
+                self.loc
+            }
+        }
+    };
+}
+
+impl_loc! { IdentifierPath }
+impl_loc! { YulTypedIdentifier }
+impl_loc! { EventParameter }
+impl_loc! { ErrorParameter }

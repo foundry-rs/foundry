@@ -21,24 +21,10 @@ contract Events {
         anonymous;
 
     event Event1(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
+        uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256
     );
     event Event1(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
+        uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256
     ) anonymous;
 
     event Event1(

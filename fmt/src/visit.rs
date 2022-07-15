@@ -386,6 +386,10 @@ pub trait Visitor {
     ) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
+
+    fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
+        self.visit_source(ident.loc)
+    }
 }
 
 /// All `solang::pt::*` types, such as [Statement](solang::pt::Statement) should implement the
@@ -623,3 +627,4 @@ impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
 impl_visitable!(IdentifierPath, visit_ident_path);
 impl_visitable!(YulExpression, visit_yul_expr);
+impl_visitable!(YulTypedIdentifier, visit_yul_typed_ident);
