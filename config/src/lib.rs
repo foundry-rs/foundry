@@ -2638,6 +2638,59 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_endpoints() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${_CONFIG_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${_CONFIG_API_KEY1}"
+                mainnet_3 = "https://eth-mainnet.alchemyapi.io/v2/${_CONFIG_API_KEY1}/${_CONFIG_API_KEY2}"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
+
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+            jail.set_env("_CONFIG_API_KEY1", "123456");
+            jail.set_env("_CONFIG_API_KEY2", "98765");
+
+            let endpoints = config.rpc_endpoints.resolved();
+
+            assert!(!endpoints.has_unresolved());
+
+            assert_eq!(
+                endpoints,
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    (
+                        "mainnet",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                    ),
+                    (
+                        "mainnet_2",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                    ),
+                    (
+                        "mainnet_3",
+                        RpcEndpoint::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
+                        )
+                    ),
+                ])
+                .resolved()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2660,6 +2713,8 @@ mod tests {
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
+                mainnet_3 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
             "#,
             )?;
 
@@ -2687,7 +2742,20 @@ mod tests {
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
                         ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                        ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                        ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                        (
+                            "mainnet_2",
+                            RpcEndpoint::Env(
+                                "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
+                            )
+                        ),
+                        (
+                            "mainnet_3",
+                            RpcEndpoint::Env(
+                                "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
+                                    .to_string()
+                            )
+                        ),
                     ]),
                     build_info_path: Some("build-info".into()),
                     ..Config::default()
@@ -2774,6 +2842,7 @@ mod tests {
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
 
             "#,
             )?;
@@ -2788,7 +2857,13 @@ mod tests {
                 config.rpc_endpoints,
                 RpcEndpoints::new([
                     ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                    ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                    ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                    (
+                        "mainnet_2",
+                        RpcEndpoint::Env(
+                            "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
+                        )
+                    ),
                 ]),
             );
 

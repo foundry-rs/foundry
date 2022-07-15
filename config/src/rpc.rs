@@ -1,7 +1,13 @@
 //! Support for multiple RPC-endpoints
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeMap, env, env::VarError, fmt, ops::Deref};
+
+/// A regex that matches `${val}` placeholders
+pub static RE_PLACEHOLDER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)(?P<outer>\$\{\s*(?P<inner>.*?)\s*})").unwrap());
 
 /// Container type for rpc endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -49,7 +55,9 @@ impl Deref for RpcEndpoints {
 pub enum RpcEndpoint {
     /// A raw Url (ws, http)
     Url(String),
-    /// Reference to an env var in the form of `${ENV_VAR}`
+    /// An endpoint that contains at least one `${ENV_VAR}` placeholder
+    ///
+    /// **Note:** this contains the endpoint as is, like `https://eth-mainnet.alchemyapi.io/v2/${API_KEY}` or `${EPC_ENV_VAR}`
     Env(String),
 }
 
@@ -80,10 +88,23 @@ impl RpcEndpoint {
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
             RpcEndpoint::Url(url) => Ok(url),
-            RpcEndpoint::Env(var) => {
-                env::var(&var).map_err(|source| UnresolvedEnvVarError { var, source })
-            }
+            RpcEndpoint::Env(val) => Self::interpolate(&val),
         }
+    }
+
+    /// Replaces all Env var placeholders in the input string with the values they hold
+    pub fn interpolate(input: &str) -> Result<String, UnresolvedEnvVarError> {
+        let mut res = input.to_string();
+
+        // loop over all placeholders in the input and replace them one by one
+        for caps in RE_PLACEHOLDER.captures_iter(input) {
+            let var = &caps["inner"];
+            let value = env::var(var)
+                .map_err(|source| UnresolvedEnvVarError { var: var.to_string(), source })?;
+
+            res = res.replacen(&caps["outer"], &value, 1);
+        }
+        Ok(res)
     }
 }
 
@@ -91,9 +112,7 @@ impl fmt::Display for RpcEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RpcEndpoint::Url(url) => url.fmt(f),
-            RpcEndpoint::Env(var) => {
-                write!(f, "${{{var}}}")
-            }
+            RpcEndpoint::Env(var) => var.fmt(f),
         }
     }
 }
@@ -121,8 +140,8 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
-        let endpoint = if val.starts_with('$') {
-            RpcEndpoint::Env(parse_env_ref(&val))
+        let endpoint = if RE_PLACEHOLDER.is_match(&val) {
+            RpcEndpoint::Env(val)
         } else {
             RpcEndpoint::Url(val)
         };
@@ -137,6 +156,15 @@ pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var
     /// alias
     endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
+}
+
+// === impl ResolvedRpcEndpoints ===
+
+impl ResolvedRpcEndpoints {
+    /// Returns true if there's an endpoint that couldn't be resolved
+    pub fn has_unresolved(&self) -> bool {
+        self.endpoints.values().any(|val| val.is_err())
+    }
 }
 
 impl Deref for ResolvedRpcEndpoints {
@@ -168,9 +196,23 @@ impl std::error::Error for UnresolvedEnvVarError {
     }
 }
 
-/// Extracts the value surrounded by `${<val>}`
-///
-/// TODO(mattsse): make this a bit more sophisticated
-fn parse_env_ref(val: &str) -> String {
-    val.trim_start_matches("${").trim_end_matches('}').to_string()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_find_placeholder() {
+        let val = "https://eth-mainnet.alchemyapi.io/v2/346273846238426342";
+        assert!(!RE_PLACEHOLDER.is_match(val));
+
+        let val = "${RPC_ENV}";
+        assert!(RE_PLACEHOLDER.is_match(val));
+
+        let val = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}";
+        assert!(RE_PLACEHOLDER.is_match(val));
+
+        let cap = RE_PLACEHOLDER.captures(val).unwrap();
+        assert_eq!(cap.name("outer").unwrap().as_str(), "${API_KEY}");
+        assert_eq!(cap.name("inner").unwrap().as_str(), "API_KEY");
+    }
 }
