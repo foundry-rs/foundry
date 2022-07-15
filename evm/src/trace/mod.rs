@@ -367,7 +367,7 @@ impl Default for CallTrace {
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let address =
-            if f.alternate() { format!("{:?}", self.address.pretty()) } else { format!("{}", self.address.pretty()) };
+            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
         if self.created() {
             write!(
                 f,
