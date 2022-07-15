@@ -1222,7 +1222,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         } else {
             write!(self.buf(), "{whitespace}(")?;
-            let byte_offset = offsets.0.unwrap_or(items.first().as_ref().unwrap().loc().start());
+            let byte_offset =
+                offsets.0.unwrap_or_else(|| items.first().as_ref().unwrap().loc().start());
             self.surrounded(byte_offset, "", ")", offsets.1, |fmt, _multiline| {
                 let args = fmt
                     .items_to_chunks(offsets.1, items.iter_mut().map(|arg| Ok((arg.loc(), arg))))?;
@@ -3001,7 +3002,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
-        self.visit_yul_literal(ident.loc, &mut ident.id.name, &mut ident.ty)
+        self.visit_yul_literal(ident.loc, &ident.id.name, &mut ident.ty)
     }
 
     fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
