@@ -435,7 +435,7 @@ mod tests {
                         .to_string(),
                 ),
             ),
-            ("rpcEnvAlias", RpcEndpoint::Env("RPC_ENV_ALIAS".to_string())),
+            ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
         ])
     }
 
