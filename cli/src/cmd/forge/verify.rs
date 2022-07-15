@@ -22,7 +22,6 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
-use foundry_common::fmt::UIfmt;
 use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
