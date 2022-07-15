@@ -564,10 +564,7 @@ value                0".to_string();
             Some("0xFdCeDC3bFca10eCb0890337fbdD1977aba84807a".to_string()),
             get_pretty_tx_attr(&block.transactions[0], "from")
         );
-        assert_eq!(
-            Some("90000".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "gas")
-        );
+        assert_eq!(Some("90000".to_string()), get_pretty_tx_attr(&block.transactions[0], "gas"));
         assert_eq!(
             Some("20000000000".to_string()),
             get_pretty_tx_attr(&block.transactions[0], "gasPrice")
@@ -576,14 +573,8 @@ value                0".to_string();
             Some("0xc3c5f700243de37ae986082fd2af88d2a7c2752a0c0f7b9d6ac47c729d45e067".to_string()),
             get_pretty_tx_attr(&block.transactions[0], "hash")
         );
-        assert_eq!(
-            Some("0x".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "input")
-        );
-        assert_eq!(
-            Some("2".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "nonce")
-        );
+        assert_eq!(Some("0x".to_string()), get_pretty_tx_attr(&block.transactions[0], "input"));
+        assert_eq!(Some("2".to_string()), get_pretty_tx_attr(&block.transactions[0], "nonce"));
         assert_eq!(
             Some("0x19f2694eb9113656dbea0b925e2e7ceb43df83e601c4116aee9c0dd99130be88".to_string()),
             get_pretty_tx_attr(&block.transactions[0], "r")
@@ -601,10 +592,7 @@ value                0".to_string();
             get_pretty_tx_attr(&block.transactions[0], "transactionIndex")
         );
         assert_eq!(Some("37".to_string()), get_pretty_tx_attr(&block.transactions[0], "v"));
-        assert_eq!(
-            Some("0".to_string()),
-            get_pretty_tx_attr(&block.transactions[0], "value")
-        );
+        assert_eq!(Some("0".to_string()), get_pretty_tx_attr(&block.transactions[0], "value"));
     }
     #[test]
     fn test_pretty_block_attr() {
