@@ -98,7 +98,7 @@ where
                 .iter()
                 .map(|item| {
                     match item {
-                        Token::Address(inner) => format!("{}", utils::to_checksum(inner, None)),
+                        Token::Address(inner) => utils::to_checksum(inner, None),
                         // add 0x
                         Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
                         Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
