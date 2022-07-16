@@ -18,7 +18,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::{fs};
+use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
@@ -236,8 +236,8 @@ impl CreateArgs {
             });
             println!("{output}");
         } else {
-            println!("Deployer: {:?}", SimpleCast::checksum_address(&deployer_address)?);
-            println!("Deployed to: {:?}", SimpleCast::checksum_address(&address)?);
+            println!("Deployer: {}", SimpleCast::checksum_address(&deployer_address)?);
+            println!("Deployed to: {}", SimpleCast::checksum_address(&address)?);
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
