@@ -3397,7 +3397,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [default]
+                [profile.default]
                 src = 'my-src'
                 out = 'my-out'
             "#,
