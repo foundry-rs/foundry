@@ -8,7 +8,6 @@ pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use foundry_common::fmt::UIfmt;
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ethers::{
