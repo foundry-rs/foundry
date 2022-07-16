@@ -110,7 +110,9 @@ dependencies = [
 name = "anvil-core"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ethers-core",
+ "fastrlp",
  "foundry-evm",
  "hash-db",
  "hash256-std-hasher",
