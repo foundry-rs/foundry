@@ -27,6 +27,9 @@ rayon = "1.5"
 rlp = "0.5.1"
 once_cell = "1.13"
 comfy-table = "6.0.0"
+fs2 = "0.4.3"
+termcolor = "1.1.3"
+atty = "0.2.14"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }

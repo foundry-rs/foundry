@@ -59,6 +59,8 @@ pub use error::SolidityErrorCode;
 // helpers for fixing configuration warnings
 pub mod fix;
 
+pub mod manifest;
+
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 

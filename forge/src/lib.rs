@@ -1,6 +1,8 @@
 /// Gas reports
 pub mod gas_report;
 
+pub mod registry;
+
 /// Coverage reports
 pub mod coverage;
 
