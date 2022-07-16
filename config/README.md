@@ -25,7 +25,7 @@ The following is an example of what such a file might look like. This can also b
 
 ```toml
 ## defaults for _all_ profiles
-[default]
+[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -33,13 +33,13 @@ solc = "0.8.10" # to use a specific local solc install set the path as `solc = "
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
-[hardhat]
+[profile.hardhat]
 src = "contracts"
 out = "artifacts"
 libs = ["node_modules"]
 
 ## set only when the `spells` profile is selected
-[spells]
+[profile.spells]
 ## --snip-- more settings
 ```
 
@@ -54,13 +54,13 @@ and merge, at the per-key level:
 
 The selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
 
-#### All Options
+### All Options
 
 The following is a foundry.toml file with all configuration options set.
 
 ```toml
 ## defaults for _all_ profiles
-[default]
+[profile.default]
 src = 'src'
 test = 'test'
 out = 'out'
@@ -123,27 +123,27 @@ sparse_mode = false
 etherscan_api_key="YOURETHERSCANAPIKEY"
 ```
 
-##### Additional Optimizer settings
+#### Additional Optimizer settings
 
 Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
 The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond
-to: `[default.optimizer_details]`
-belongs to the `[default]` profile
+to: `[profile.default.optimizer_details]`
+belongs to the `[profile.default]` profile
 
 ```toml
-[default.optimizer_details]
+[profile.default.optimizer_details]
 constantOptimizer = true
 yul = true
 # this sets the `yulDetails` of the `optimizer_details` for the `default` profile
-[default.optimizer_details.yulDetails]
+[profile.default.optimizer_details.yulDetails]
 stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
 
-##### RPC-Endpoints settings
+#### RPC-Endpoints settings
 
 The `rpc_endpoints` value accepts a list of `alias = "<url|env var>"` pairs.
 
@@ -155,7 +155,7 @@ The alias `goerli` references an endpoint that will be interpolated with the val
 Environment variables need to be wrapped in `${}`
 
 ```toml
-[default.rpc_endpoints]
+[profile.default.rpc_endpoints]
 optimism = "https://optimism.alchemyapi.io/v2/1234567"
 mainnet = "${RPC_MAINNET}"
 goerli = "https://eth-goerli.alchemyapi.io/v2/${GOERLI_API_KEY}"
@@ -174,11 +174,11 @@ The latter requires the z3 library version [4.8.8, 4.8.14] to be installed
 in the system (SO version 4.8).
 
 Similarly to the optimizer settings above, the `model_checker` settings must be
-prefixed with the profile they correspond to: `[default.model_checker]` belongs
-to the `[default]` profile.
+prefixed with the profile they correspond to: `[profile.default.model_checker]` belongs
+to the `[profile.default]` profile.
 
 ```toml
-[default.model_checker]
+[profile.default.model_checker]
 contracts = { '/path/to/project/src/Contract.sol' = [ 'Contract' ] }
 engine = 'chc'
 timeout = 10000
