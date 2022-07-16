@@ -4,6 +4,7 @@ use crate::cmd::{
     forge::build::{CoreBuildArgs, ProjectPathsArgs},
     RetryArgs,
 };
+use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -127,7 +128,7 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
