@@ -6,6 +6,7 @@ use crate::{
     opts::{EthereumOpts, TransactionOpts, WalletType},
     utils::get_http_provider,
 };
+use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
@@ -229,14 +230,14 @@ impl CreateArgs {
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": deployer_address,
-                "deployedTo": address,
+                "deployer": SimpleCast::checksum_address(&deployer_address)?,
+                "deployedTo": SimpleCast::checksum_address(&address)?,
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {deployer_address:?}");
-            println!("Deployed to: {:?}", address);
+            println!("Deployer: {}", SimpleCast::checksum_address(&deployer_address)?);
+            println!("Deployed to: {}", SimpleCast::checksum_address(&address)?);
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
