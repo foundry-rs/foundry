@@ -225,14 +225,14 @@ pub enum RawOrDecodedCall {
     ///
     /// The first element in the tuple is the function name, and the second element is a vector of
     /// decoded parameters.
-    Decoded(String, Vec<String>),
+    Decoded(String, String, Vec<String>),
 }
 
 impl RawOrDecodedCall {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
             RawOrDecodedCall::Raw(raw) => raw.clone(),
-            RawOrDecodedCall::Decoded(_, _) => {
+            RawOrDecodedCall::Decoded(_, _, _) => {
                 vec![]
             }
         }
@@ -385,7 +385,7 @@ impl fmt::Display for CallTrace {
                     assert!(bytes.len() >= 4);
                     (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
                 }
-                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
             };
 
             let action = match self.kind {
