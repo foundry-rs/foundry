@@ -685,6 +685,7 @@ enum FormatSpec {
     String,
     Number,
     Integer,
+    Object,
 }
 
 // Consumes a single format specifier for the given value
@@ -709,11 +710,12 @@ where
             }
             continue
         }
-        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i') {
+        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i' || *c == b'o') {
             let fspec = match *c {
                 b's' => FormatSpec::String,
                 b'd' => FormatSpec::Number,
                 b'i' => FormatSpec::Integer,
+                b'o' => FormatSpec::Object,
                 _ => unreachable!(),
             };
             let v = f(fspec);
@@ -735,6 +737,7 @@ impl ConsoleLogFragment for String {
     fn log_fragment(&self, spec: &str) -> (String, usize) {
         let formatter = |spec| match spec {
             FormatSpec::String => self.clone(),
+            FormatSpec::Object => format!("'{}'", self.clone()),
             FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
         };
         format_fragment(spec, formatter, self)
@@ -745,6 +748,7 @@ impl ConsoleLogFragment for bool {
     fn log_fragment(&self, spec: &str) -> (String, usize) {
         let formatter = |spec| match spec {
             FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number => (*self as i32).to_string(),
             FormatSpec::Integer => String::from("NaN"),
         };
@@ -770,6 +774,7 @@ impl ConsoleLogFragment for Address {
     fn log_fragment(&self, spec: &str) -> (String, usize) {
         let formatter = |spec| match spec {
             FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
         };
         format_fragment(spec, formatter, &self.pretty())
@@ -780,6 +785,7 @@ impl ConsoleLogFragment for Bytes {
     fn log_fragment(&self, spec: &str) -> (String, usize) {
         let formatter = |spec| match spec {
             FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
             FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
         };
         format_fragment(spec, formatter, &self.pretty())
@@ -1029,21 +1035,25 @@ mod tests {
         assert_eq!("foo", String::from("foo").log_fragment("%s").0);
         assert_eq!("NaN", String::from("foo").log_fragment("%d").0);
         assert_eq!("NaN", String::from("foo").log_fragment("%i").0);
+        assert_eq!("'foo'", String::from("foo").log_fragment("%o").0);
 
         assert_eq!("true", true.log_fragment("%s").0);
         assert_eq!("1", true.log_fragment("%d").0);
         assert_eq!("0", false.log_fragment("%d").0);
         assert_eq!("NaN", true.log_fragment("%i").0);
+        assert_eq!("'true'", true.log_fragment("%o").0);
 
         let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
         assert_eq!("0xdEADBEeF00000000000000000000000000000000", addr.log_fragment("%s").0);
         assert_eq!("NaN", addr.log_fragment("%d").0);
         assert_eq!("NaN", addr.log_fragment("%i").0);
+        assert_eq!("'0xdEADBEeF00000000000000000000000000000000'", addr.log_fragment("%o").0);
 
         let bytes = Bytes::from_str("0xdeadbeef").unwrap();
         assert_eq!("0xdeadbeef", bytes.log_fragment("%s").0);
         assert_eq!("NaN", bytes.log_fragment("%d").0);
         assert_eq!("NaN", bytes.log_fragment("%i").0);
+        assert_eq!("'0xdeadbeef'", bytes.log_fragment("%o").0);
 
         assert_eq!("100", U256::from(100).log_fragment("%s").0);
         assert_eq!("100", U256::from(100).log_fragment("%d").0);

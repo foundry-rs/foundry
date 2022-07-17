@@ -223,7 +223,7 @@ contract HardhatLogsTest {
     }
 
     function testConsoleLogFormatMulti() public view {
-        console.log("formatted log str=%s uint=%s", testStr, testUint);
+        console.log("formatted log str=%s uint=%d", testStr, testUint);
     }
 
     function testConsoleLogFormatEscape() public view {
