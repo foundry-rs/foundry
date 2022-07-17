@@ -1,8 +1,7 @@
-use ethers::types::{Address, Selector, H160};
+use ethers::types::{Address, Bytes, Selector, H160, I256, U256};
 use foundry_common::fmt::UIfmt;
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::fmt::Write;
+use std::{collections::HashMap, fmt::Write};
 
 /// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
 ///
@@ -682,16 +681,31 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
     ])
 });
 
-// Similar to hardhat's but ignores all specifiers except %s. %s works on all solidity values.
-// Support for other specifiers may be added in the future
-fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
-    if v.is_empty() {
-        return specstr.to_string()
+enum FormatSpec {
+    String,
+    Number,
+    Integer,
+}
+
+impl FormatSpec {
+    fn from_u8(c: u8) -> FormatSpec {
+        match c {
+            b's' => FormatSpec::String,
+            b'd' => FormatSpec::Number,
+            b'i' => FormatSpec::Integer,
+            _ => panic!("invalid format spec"),
+        }
     }
+}
 
+// Consumes a single format specifier for the given value
+// Returns the formatted fragment and the index of the unread spec
+// Formatting rules is similar to hardhat's, which follows nodejs' util.format
+fn format_fragment<F>(specstr: &str, f: F, default: &str) -> (String, usize)
+where
+    F: Fn(FormatSpec) -> String,
+{
     let mut result = String::new();
-    let mut end = 0;
-
     let spec = specstr.as_bytes();
     let mut expect_fmt = false;
     for (pos, c) in spec.iter().enumerate() {
@@ -706,24 +720,75 @@ fn format_hardhat_log(specstr: &str, v: &[&str]) -> String {
             }
             continue
         }
-        if expect_fmt && *c == b's' {
-            expect_fmt = false;
-            write!(result, "{}", v[end]).unwrap();
-            end += 1;
-            if end >= v.len() {
-                // now that we've exhausted values in v, push the remaining string
-                result.push_str(&String::from_utf8_lossy(&spec[pos + 1..]));
-                break
-            }
+        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i' || *c == b'f') {
+            let v = f(FormatSpec::from_u8(*c));
+            result.push_str(&v);
+            return (result, pos + 1)
         } else {
             result.push(*c as char);
         }
     }
+    write!(result, " {default}").unwrap();
+    (result, spec.len())
+}
 
-    for t in &v[end..] {
-        write!(result, " {t}").unwrap();
+trait ConsoleLogFragment {
+    fn log_fragment(&self, spec: &str) -> (String, usize);
+}
+
+impl ConsoleLogFragment for String {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |spec| match spec {
+            FormatSpec::String => self.clone(),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        };
+        format_fragment(spec, formatter, self)
     }
-    result
+}
+
+impl ConsoleLogFragment for bool {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |spec| match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Number => (*self as i32).to_string(),
+            FormatSpec::Integer => String::from("NaN"),
+        };
+        format_fragment(spec, formatter, &self.pretty())
+    }
+}
+
+impl ConsoleLogFragment for U256 {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |_spec| self.pretty();
+        format_fragment(spec, formatter, &self.pretty())
+    }
+}
+
+impl ConsoleLogFragment for I256 {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |_spec| self.pretty();
+        format_fragment(spec, formatter, &self.pretty())
+    }
+}
+
+impl ConsoleLogFragment for Address {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |spec| match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        };
+        format_fragment(spec, formatter, &self.pretty())
+    }
+}
+
+impl ConsoleLogFragment for Bytes {
+    fn log_fragment(&self, spec: &str) -> (String, usize) {
+        let formatter = |spec| match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        };
+        format_fragment(spec, formatter, &self.pretty())
+    }
 }
 
 pub trait HardhatConsoleLogf {
@@ -734,8 +799,10 @@ macro_rules! impl_logf_2 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.pretty();
-                format_hardhat_log(&self.p_0, &[&a1])
+                let (mut res, pos) = self.p_1.log_fragment(&self.p_0);
+                let suffix = self.p_0[pos..].to_string().replace("%%", "%");
+                write!(res, "{suffix}").unwrap();
+                res
             }
         })+
     }
@@ -745,9 +812,11 @@ macro_rules! impl_logf_3 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.pretty();
-                let a2 = self.p_2.pretty();
-                format_hardhat_log(&self.p_0, &[&a1, &a2])
+                let (mut res_1, pos_1) = self.p_1.log_fragment(&self.p_0);
+                let (res_2, pos_2) = self.p_2.log_fragment(&self.p_0[pos_1..]);
+                let suffix = self.p_0[pos_1+pos_2..].to_string().replace("%%", "%");
+                write!(res_1, "{res_2}{suffix}").unwrap();
+                res_1
            }
         })+
     }
@@ -757,10 +826,12 @@ macro_rules! impl_logf_4 {
         ($($t:ty),+) => {
         $(impl HardhatConsoleLogf for $t {
             fn logf(&self) -> String {
-                let a1 = self.p_1.pretty();
-                let a2 = self.p_2.pretty();
-                let a3 = self.p_3.pretty();
-                format_hardhat_log(&self.p_0, &[&a1, &a2, &a3])
+                let (mut res_1, pos_1) = self.p_1.log_fragment(&self.p_0);
+                let (res_2, pos_2) = self.p_2.log_fragment(&self.p_0[pos_1..]);
+                let (res_3, pos_3) = self.p_3.log_fragment(&self.p_0[pos_1+pos_2..]);
+                let suffix = self.p_0[pos_1+pos_2+pos_3..].to_string().replace("%%", "%");
+                write!(res_1, "{res_2}{res_3}{suffix}").unwrap();
+                res_1
            }
         })+
     }
@@ -957,16 +1028,68 @@ mod tests {
     }
 
     #[test]
-    fn test_format_hardhat_log() {
-        assert_eq!("%s", format_hardhat_log("%s", &[]));
-        assert_eq!("%%", format_hardhat_log("%%", &[]));
-        assert_eq!("x", format_hardhat_log("%s", &["x"]));
-        assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
-        assert_eq!("x y", format_hardhat_log("%s %s", &["x", "y"]));
-        assert_eq!("x %s", format_hardhat_log("%s %s", &["x"]));
-        assert_eq!("x y", format_hardhat_log("%s", &["x", "y"]));
-        assert_eq!(" x", format_hardhat_log("", &["x"]));
-        assert_eq!("%s 10", format_hardhat_log("%%s", &["10"]));
-        assert_eq!("% % % %s %", format_hardhat_log("%% %s %%", &["%", "%s", "%"]));
+    fn test_log_fragment() {
+        use std::str::FromStr;
+
+        assert_eq!("foo", String::from("foo").log_fragment("%s").0);
+        assert_eq!("NaN", String::from("foo").log_fragment("%d").0);
+        assert_eq!("NaN", String::from("foo").log_fragment("%i").0);
+
+        assert_eq!("true", true.log_fragment("%s").0);
+        assert_eq!("1", true.log_fragment("%d").0);
+        assert_eq!("0", false.log_fragment("%d").0);
+        assert_eq!("NaN", true.log_fragment("%i").0);
+
+        let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
+        assert_eq!("0xdEADBEeF00000000000000000000000000000000", addr.log_fragment("%s").0);
+        assert_eq!("NaN", addr.log_fragment("%d").0);
+        assert_eq!("NaN", addr.log_fragment("%i").0);
+
+        let bytes = Bytes::from_str("0xdeadbeef").unwrap();
+        assert_eq!("0xdeadbeef", bytes.log_fragment("%s").0);
+        assert_eq!("NaN", bytes.log_fragment("%d").0);
+        assert_eq!("NaN", bytes.log_fragment("%i").0);
+
+        assert_eq!("100", U256::from(100).log_fragment("%s").0);
+        assert_eq!("100", U256::from(100).log_fragment("%d").0);
+        assert_eq!("100", U256::from(100).log_fragment("%i").0);
+
+        assert_eq!("100", I256::from(100).log_fragment("%s").0);
+        assert_eq!("100", I256::from(100).log_fragment("%d").0);
+        assert_eq!("100", I256::from(100).log_fragment("%i").0);
+    }
+
+    #[test]
+    fn test_console_log_format() {
+        use std::str::FromStr;
+
+        assert_eq!("foo 100", Log17Call { p_0: "foo %s".to_string(), p_1: U256::from(100) }.logf());
+        assert_eq!("foo 100", Log17Call { p_0: "foo".to_string(), p_1: U256::from(100) }.logf());
+        assert_eq!("100 foo", Log17Call { p_0: "%s foo".to_string(), p_1: U256::from(100) }.logf());
+
+        assert_eq!(
+            "foo true 100",
+            Log68Call { p_0: "foo %s %s".to_string(), p_1: true, p_2: U256::from(100) }.logf()
+        );
+        assert_eq!(
+            "foo true 100",
+            Log68Call { p_0: "foo".to_string(), p_1: true, p_2: U256::from(100) }.logf()
+        );
+        assert_eq!(
+            "true 100 foo",
+            Log68Call { p_0: "%s %s foo".to_string(), p_1: true, p_2: U256::from(100) }.logf()
+        );
+
+        // Log87Call: (string, Address, bool, String)
+        assert_eq!(
+            "foo 0xdEADBEeF00000000000000000000000000000000 %s true bar foo %",
+            Log87Call {
+                p_0: "foo %s %%s %s %s foo %%".to_string(),
+                p_1: Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap(),
+                p_2: true,
+                p_3: "bar".to_string()
+            }
+            .logf()
+        );
     }
 }
