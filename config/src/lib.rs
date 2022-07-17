@@ -59,6 +59,7 @@ pub use error::SolidityErrorCode;
 // helpers for fixing configuration warnings
 pub mod fix;
 
+/// Contains the `foundry.toml` manifest representation
 pub mod manifest;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments

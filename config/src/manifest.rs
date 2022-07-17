@@ -1,3 +1,5 @@
+use ethers_solc::remappings::RelativeRemapping;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -8,13 +10,15 @@ use std::collections::BTreeMap;
 /// foundry.toml, env vars
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest {
+    /// All dependencies declared in the `foundry.toml`
     pub dependencies: Option<BTreeMap<String, FoundryDependency>>,
+    /// All declared profiles
     pub profiles: Option<FoundryProfiles>,
     // TODO add standalone entries, like rpc_endpoints
 }
 
 /// Represents a dependency entry
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum FoundryDependency {
     /// `dependency = "org/name@tag"`
@@ -23,22 +27,43 @@ pub enum FoundryDependency {
     Detailed(DetailedFoundryDependency),
 }
 
+/// Represents detailed settings for a dependency
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
-#[serde(rename_all = "kebab-case")]
 pub struct DetailedFoundryDependency {
-    version: Option<String>,
-    registry: Option<String>,
+    /// The version of the dependency
+    pub version: Option<Version>,
     /// The _relative_ path to a  dependency.
-    path: Option<String>,
-    git: Option<String>,
-    branch: Option<String>,
-    tag: Option<String>,
-    rev: Option<String>,
+    pub path: Option<String>,
+    /// URL where this dependency can be found
+    pub git: Option<String>,
+    /// branch of the `git` repository
+    pub branch: Option<String>,
+    /// tag of the `git` repository
+    pub tag: Option<String>,
+    /// commit of the `git` repository
+    pub rev: Option<String>,
+    /// The remappings to use for this repository
+    #[serde(alias = "remappings")]
+    pub remappings: Option<TomlRemappings>,
 }
 
+/// Represents the remappings a dependency provides
+#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum TomlRemappings {
+    /// A single remapping for the dependency
+    Single(RelativeRemapping),
+    /// Multiple remappings, to account for nested submodules
+    Multiple(Vec<RelativeRemapping>),
+}
+
+/// Represents a set of profiles in a `foundry.toml`
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct FoundryProfiles(BTreeMap<String, FoundryProfile>);
 
+/// A single profile in a `foundry.toml`
+///
+/// This is essentially an excerpt of `crate::Config`
 #[derive(Deserialize, Serialize, Clone, Debug, Default, Eq, PartialEq)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct FoundryProfile {

@@ -1,8 +1,7 @@
 //! forge's registry support
 
+use crate::registry::{files::FileSystem, shell::Shell};
 use std::cell::RefCell;
-use crate::registry::files::FileSystem;
-use crate::registry::shell::Shell;
 
 mod files;
 mod package;
