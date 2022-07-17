@@ -687,17 +687,6 @@ enum FormatSpec {
     Integer,
 }
 
-impl FormatSpec {
-    fn from_u8(c: u8) -> FormatSpec {
-        match c {
-            b's' => FormatSpec::String,
-            b'd' => FormatSpec::Number,
-            b'i' => FormatSpec::Integer,
-            _ => panic!("invalid format spec"),
-        }
-    }
-}
-
 // Consumes a single format specifier for the given value
 // Returns the formatted fragment and the index of the unread spec
 // Formatting rules is similar to hardhat's, which follows nodejs' util.format
@@ -720,8 +709,14 @@ where
             }
             continue
         }
-        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i' || *c == b'f') {
-            let v = f(FormatSpec::from_u8(*c));
+        if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i') {
+            let fspec = match *c {
+                b's' => FormatSpec::String,
+                b'd' => FormatSpec::Number,
+                b'i' => FormatSpec::Integer,
+                _ => unreachable!(),
+            };
+            let v = f(fspec);
             result.push_str(&v);
             return (result, pos + 1)
         } else {
