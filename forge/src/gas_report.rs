@@ -142,14 +142,12 @@ impl Display for GasReport {
             ]);
             contract.functions.iter().for_each(|(fname, sigs)| {
                 sigs.iter().for_each(|(sig, function)| {
-                    let fn_display = if sigs.len() == 1 {
-                        fname.clone()
-                    } else {
-                        sig.replace(":", "")
-                    };
+                    // show function signature if overloaded else name
+                    let fn_display =
+                        if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
 
                     table.add_row(vec![
-                        Cell::new(fn_display.to_string()).add_attribute(Attribute::Bold),
+                        Cell::new(fn_display).add_attribute(Attribute::Bold),
                         Cell::new(function.min.to_string()).fg(Color::Green),
                         Cell::new(function.mean.to_string()).fg(Color::Yellow),
                         Cell::new(function.median.to_string()).fg(Color::Yellow),

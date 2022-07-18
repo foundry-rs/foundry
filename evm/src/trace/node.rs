@@ -125,7 +125,8 @@ impl CallTraceNode {
             };
 
             // add signature to decoded calls for better calls filtering
-            self.trace.data = RawOrDecodedCall::Decoded(func.name.clone(), func.signature(), inputs);
+            self.trace.data =
+                RawOrDecodedCall::Decoded(func.name.clone(), func.signature(), inputs);
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() {
