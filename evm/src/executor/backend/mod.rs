@@ -19,7 +19,11 @@ mod fuzz;
 mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod in_memory_db;
-use crate::{abi::CHEATCODE_ADDRESS, executor::backend::snapshot::BackendSnapshot, CALLER};
+use crate::{
+    abi::CHEATCODE_ADDRESS,
+    executor::{backend::snapshot::BackendSnapshot, inspector::DEFAULT_CREATE2_DEPLOYER},
+    CALLER,
+};
 pub use in_memory_db::MemDb;
 
 // A `revm::Database` that is used in forking mode
@@ -306,7 +310,12 @@ impl Backend {
             "Test contract address must be set"
         );
         let test_addr = self.inner.test_contract_address.expect("Test contract address is set");
-        let accs = vec![test_addr, self.inner.caller.unwrap_or(CALLER)];
+        let accs = vec![
+            test_addr,
+            self.inner.caller.unwrap_or(CALLER),
+            CHEATCODE_ADDRESS,
+            DEFAULT_CREATE2_DEPLOYER,
+        ];
         self.update_fork_db_contracts(accs, subroutine, fork)
     }
 
@@ -410,6 +419,7 @@ impl Backend {
 
 impl DatabaseExt for Backend {
     fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
+        trace!("create snapshot");
         let id = self.inner.snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
             subroutine.clone(),
@@ -425,6 +435,7 @@ impl DatabaseExt for Backend {
         subroutine: &SubRoutine,
         current: &mut Env,
     ) -> Option<SubRoutine> {
+        trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
@@ -460,6 +471,7 @@ impl DatabaseExt for Backend {
         fork: CreateFork,
         subroutine: &SubRoutine,
     ) -> eyre::Result<LocalForkId> {
+        trace!("create fork");
         let (fork_id, fork) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
         let (id, _) = self.inner.insert_new_fork(fork_id, fork_db, subroutine.clone());
@@ -473,6 +485,7 @@ impl DatabaseExt for Backend {
         env: &mut Env,
         subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
+        trace!(?id, "select fork");
         if self.is_active_fork(id) {
             // nothing to do
             return Ok(())
@@ -507,6 +520,7 @@ impl DatabaseExt for Backend {
         block_number: U256,
         id: Option<LocalForkId>,
     ) -> eyre::Result<()> {
+        trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
         let (fork_id, backend) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
@@ -857,6 +871,7 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     fork: &mut Fork,
 ) {
     for addr in accounts {
+        trace!(?addr, "cloning data");
         let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
         if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
             fork.db.contracts.insert(acc.info.code_hash, code);
@@ -864,6 +879,7 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
         fork.db.accounts.insert(addr, acc);
 
         if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
+            trace!(?addr, "updating subroutine account data");
             fork.subroutine.state.insert(addr, acc);
         }
     }

@@ -13,6 +13,7 @@ use revm::{
     TransactOut,
 };
 use std::borrow::Cow;
+use tracing::trace;
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -60,6 +61,7 @@ impl<'a> FuzzBackendWrapper<'a> {
 
 impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
+        trace!("fuzz: create snapshot");
         self.backend.to_mut().snapshot(subroutine, env)
     }
 
@@ -69,6 +71,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         subroutine: &SubRoutine,
         current: &mut Env,
     ) -> Option<SubRoutine> {
+        trace!(?id, "fuzz: revert snapshot");
         self.backend.to_mut().revert(id, subroutine, current)
     }
 
@@ -77,6 +80,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         fork: CreateFork,
         subroutine: &SubRoutine,
     ) -> eyre::Result<LocalForkId> {
+        trace!("fuzz: create fork");
         self.backend.to_mut().create_fork(fork, subroutine)
     }
 
@@ -86,6 +90,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         env: &mut Env,
         subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
+        trace!(?id, "fuzz: select fork");
         self.backend.to_mut().select_fork(id, env, subroutine)
     }
 
@@ -95,6 +100,7 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         block_number: U256,
         id: Option<LocalForkId>,
     ) -> eyre::Result<()> {
+        trace!(?id, ?block_number, "fuzz: roll fork");
         self.backend.to_mut().roll_fork(env, block_number, id)
     }
 
