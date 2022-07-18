@@ -179,7 +179,7 @@ to the `[profile.default]` profile.
 
 ```toml
 [profile.default.model_checker]
-contracts = { '/path/to/project/src/Contract.sol' = [ 'Contract' ] }
+contracts = { 'src/Contract.sol' = [ 'Contract' ] }
 engine = 'chc'
 timeout = 10000
 targets = [ 'assert' ]
