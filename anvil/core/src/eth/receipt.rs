@@ -1,4 +1,7 @@
+use std::cmp::Ordering;
+
 use crate::eth::utils::enveloped;
+use bytes::Buf;
 use ethers_core::{
     types::{Address, Bloom, Bytes, H256, U256},
     utils::{
@@ -6,10 +9,11 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
+use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::revm;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
@@ -50,7 +54,7 @@ impl Decodable for Log {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, RlpEncodable, RlpDecodable)]
 pub struct EIP658Receipt {
     pub status_code: u8,
     pub gas_used: U256,
@@ -150,6 +154,92 @@ impl Decodable for TypedReceipt {
     }
 }
 
+impl fastrlp::Encodable for TypedReceipt {
+    fn length(&self) -> usize {
+        match self {
+            TypedReceipt::Legacy(r) => r.length(),
+            receipt => {
+                let payload_len = match receipt {
+                    TypedReceipt::EIP2930(r) => r.length() + 1,
+                    TypedReceipt::EIP1559(r) => r.length() + 1,
+                    _ => unreachable!("receipt already matched"),
+                };
+
+                // we include a string header for typed receipts, so include the length here
+                payload_len + length_of_length(payload_len)
+            }
+        }
+    }
+    fn encode(&self, out: &mut dyn fastrlp::BufMut) {
+        match self {
+            TypedReceipt::Legacy(r) => r.encode(out),
+            receipt => {
+                let payload_len = match receipt {
+                    TypedReceipt::EIP2930(r) => r.length() + 1,
+                    TypedReceipt::EIP1559(r) => r.length() + 1,
+                    _ => unreachable!("receipt already matched"),
+                };
+
+                match receipt {
+                    TypedReceipt::EIP2930(r) => {
+                        let receipt_string_header =
+                            Header { list: false, payload_length: payload_len };
+
+                        receipt_string_header.encode(out);
+                        out.put_u8(0x01);
+                        r.encode(out);
+                    }
+                    TypedReceipt::EIP1559(r) => {
+                        let receipt_string_header =
+                            Header { list: false, payload_length: payload_len };
+
+                        receipt_string_header.encode(out);
+                        out.put_u8(0x02);
+                        r.encode(out);
+                    }
+                    _ => unreachable!("receipt already matched"),
+                }
+            }
+        }
+    }
+}
+
+impl fastrlp::Decodable for TypedReceipt {
+    fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
+        // a receipt is either encoded as a string (non legacy) or a list (legacy).
+        // We should not consume the buffer if we are decoding a legacy receipt, so let's
+        // check if the first byte is between 0x80 and 0xbf.
+        let rlp_type = *buf
+            .first()
+            .ok_or(fastrlp::DecodeError::Custom("cannot decode a receipt from empty bytes"))?;
+
+        match rlp_type.cmp(&fastrlp::EMPTY_LIST_CODE) {
+            Ordering::Less => {
+                // strip out the string header
+                let _header = Header::decode(buf)?;
+                let receipt_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
+                    "typed receipt cannot be decoded from an empty slice",
+                ))?;
+                if receipt_type == 0x01 {
+                    buf.advance(1);
+                    <EIP2930Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::EIP2930)
+                } else if receipt_type == 0x02 {
+                    buf.advance(1);
+                    <EIP1559Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::EIP1559)
+                } else {
+                    Err(fastrlp::DecodeError::Custom("invalid receipt type"))
+                }
+            }
+            Ordering::Equal => {
+                Err(fastrlp::DecodeError::Custom("an empty list is not a valid receipt encoding"))
+            }
+            Ordering::Greater => {
+                <EIP658Receipt as fastrlp::Decodable>::decode(buf).map(TypedReceipt::Legacy)
+            }
+        }
+    }
+}
+
 impl From<TypedReceipt> for EIP658Receipt {
     fn from(v3: TypedReceipt) -> Self {
         match v3 {
@@ -157,5 +247,79 @@ impl From<TypedReceipt> for EIP658Receipt {
             TypedReceipt::EIP2930(receipt) => receipt,
             TypedReceipt::EIP1559(receipt) => receipt,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use ethers_core::{
+        types::{Bytes, H160, H256},
+        utils::hex,
+    };
+    use fastrlp::{Decodable, Encodable};
+
+    use super::{EIP658Receipt, Log, TypedReceipt};
+
+    #[test]
+    // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
+    fn encode_legacy_receipt() {
+        let expected = hex::decode("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff").unwrap();
+
+        let mut data = vec![];
+        let receipt = TypedReceipt::Legacy(EIP658Receipt {
+            logs_bloom: [0; 256].into(),
+            gas_used: 0x1u64.into(),
+            logs: vec![Log {
+                address: H160::from_str("0000000000000000000000000000000000000011").unwrap(),
+                topics: vec![
+                    H256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000dead",
+                    )
+                    .unwrap(),
+                    H256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000beef",
+                    )
+                    .unwrap(),
+                ],
+                data: Bytes::from_str("0100ff").unwrap(),
+            }],
+            status_code: 0,
+        });
+        receipt.encode(&mut data);
+
+        // check that the rlp length equals the length of the expected rlp
+        assert_eq!(receipt.length(), expected.len());
+        assert_eq!(data, expected);
+    }
+
+    #[test]
+    // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
+    fn decode_legacy_receipt() {
+        let data = hex::decode("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff").unwrap();
+
+        let expected = TypedReceipt::Legacy(EIP658Receipt {
+            logs_bloom: [0; 256].into(),
+            gas_used: 0x1u64.into(),
+            logs: vec![Log {
+                address: H160::from_str("0000000000000000000000000000000000000011").unwrap(),
+                topics: vec![
+                    H256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000dead",
+                    )
+                    .unwrap(),
+                    H256::from_str(
+                        "000000000000000000000000000000000000000000000000000000000000beef",
+                    )
+                    .unwrap(),
+                ],
+                data: Bytes::from_str("0100ff").unwrap(),
+            }],
+            status_code: 0,
+        });
+
+        let receipt = TypedReceipt::decode(&mut &data[..]).unwrap();
+        assert_eq!(receipt, expected);
     }
 }

@@ -340,7 +340,13 @@ Examples:
             value_name = "CONFIRMATIONS"
         )]
         confirmations: usize,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Exit immediately if the transaction was not found."
+        )]
         cast_async: bool,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
@@ -361,7 +367,13 @@ Examples:
         sig: Option<String>,
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
+        )]
         cast_async: bool,
         #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
         tx: TransactionOpts,
@@ -390,7 +402,13 @@ Examples:
     PublishTx {
         #[clap(help = "The raw transaction", value_name = "RAW_TX")]
         raw_tx: String,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
+        )]
         cast_async: bool,
         // FIXME: We only need the RPC URL and `--flashbots` options from this.
         #[clap(flatten)]

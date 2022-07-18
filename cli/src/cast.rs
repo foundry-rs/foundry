@@ -247,7 +247,7 @@ async fn main() -> eyre::Result<()> {
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = Provider::try_from(rpc_url)?;
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {:?}", addr);
+            println!("Computed Address: {}", SimpleCast::checksum_address(&addr)?);
         }
         Subcommands::Code { block, who, rpc_url } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
@@ -603,7 +603,7 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{:?}", address);
+            println!("{}", SimpleCast::checksum_address(&address)?);
         }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
