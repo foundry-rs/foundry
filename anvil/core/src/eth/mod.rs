@@ -173,7 +173,7 @@ pub enum EthRequest {
         #[serde(default)] Vec<f64>,
     ),
 
-    #[serde(rename = "eth_syncing",  with = "empty_params")]
+    #[serde(rename = "eth_syncing", with = "empty_params")]
     EthSyncing(()),
 
     /// geth's `debug_traceTransaction`  endpoint
