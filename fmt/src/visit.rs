@@ -173,11 +173,11 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
+    fn visit_break(&mut self, loc: Loc, _semicolon: bool) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
+    fn visit_continue(&mut self, loc: Loc, _semicolon: bool) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -338,14 +338,6 @@ pub trait Visitor {
         _exprs: &mut Vec<YulExpression>,
         _expr: &mut YulExpression,
     ) -> Result<(), Self::Error> {
-        self.visit_source(loc)
-    }
-
-    fn visit_yul_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        self.visit_source(loc)
-    }
-
-    fn visit_yul_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -518,8 +510,8 @@ impl Visitable for Statement {
                 v.visit_for(*loc, init, cond, update, body)
             }
             Statement::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
-            Statement::Continue(loc) => v.visit_continue(*loc),
-            Statement::Break(loc) => v.visit_break(*loc),
+            Statement::Continue(loc) => v.visit_continue(*loc, true),
+            Statement::Break(loc) => v.visit_break(*loc, true),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
             Statement::RevertNamedArgs(loc, error, args) => {
@@ -589,8 +581,8 @@ impl Visitable for YulStatement {
             YulStatement::Block(block) => {
                 v.visit_yul_block(block.loc, block.statements.as_mut(), false)
             }
-            YulStatement::Break(loc) => v.visit_yul_break(*loc),
-            YulStatement::Continue(loc) => v.visit_yul_continue(*loc),
+            YulStatement::Break(loc) => v.visit_break(*loc, false),
+            YulStatement::Continue(loc) => v.visit_continue(*loc, false),
             YulStatement::For(stmt) => v.visit_yul_for(stmt),
             YulStatement::FunctionCall(stmt) => v.visit_yul_function_call(stmt),
             YulStatement::FunctionDefinition(stmt) => v.visit_yul_fun_def(stmt),

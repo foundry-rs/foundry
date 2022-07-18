@@ -1204,11 +1204,15 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit the list of comma separated items.
+    /// If the prefix is not empty, then the function will write
+    /// the whitespace before the parentheses (if they are required).
     fn visit_list<T>(
         &mut self,
         prefix: &str,
         items: &mut Vec<T>,
-        offsets: (Option<usize>, Option<usize>),
+        start_offset: Option<usize>,
+        end_offset: Option<usize>,
         paren_required: bool,
     ) -> Result<()>
     where
@@ -1223,10 +1227,12 @@ impl<'a, W: Write> Formatter<'a, W> {
         } else {
             write!(self.buf(), "{whitespace}(")?;
             let byte_offset =
-                offsets.0.unwrap_or_else(|| items.first().as_ref().unwrap().loc().start());
-            self.surrounded(byte_offset, "", ")", offsets.1, |fmt, _multiline| {
-                let args = fmt
-                    .items_to_chunks(offsets.1, items.iter_mut().map(|arg| Ok((arg.loc(), arg))))?;
+                start_offset.unwrap_or_else(|| items.first().as_ref().unwrap().loc().start());
+            self.surrounded(byte_offset, "", ")", end_offset, |fmt, _multiline| {
+                let args = fmt.items_to_chunks(
+                    end_offset,
+                    items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
+                )?;
                 let multiline = fmt.are_chunks_separated_multiline("{})", &args, ",")?;
                 fmt.write_chunks_separated(&args, ",", multiline)?;
                 Ok(())
@@ -1273,6 +1279,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit the generic member access expression and
+    /// attempt flatten it by checking if the inner expression
+    /// matches a given member access variant.
     fn visit_member_access<'b, T, M>(
         &mut self,
         expr: &'b mut Box<T>,
@@ -1303,7 +1312,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_yul_literal(
+    /// Visit the yul string with an optional identifier.
+    /// If the identifier is present, write the value in the format `<val>:<ident>`.
+    /// Ref: https://docs.soliditylang.org/en/v0.8.15/yul.html#variable-declarations
+    fn visit_yul_string_with_ident(
         &mut self,
         loc: Loc,
         val: &str,
@@ -1910,7 +1922,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::FunctionCall(loc, expr, exprs) => {
                 self.visit_expr(expr.loc(), expr)?;
-                self.visit_list("", exprs, (Some(expr.loc().end()), Some(loc.end())), true)?;
+                self.visit_list("", exprs, Some(expr.loc().end()), Some(loc.end()), true)?;
             }
             Expression::NamedFunctionCall(loc, expr, args) => {
                 self.visit_expr(expr.loc(), expr)?;
@@ -1982,12 +1994,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_break(&mut self, loc: Loc) -> Result<()> {
-        write_chunk!(self, loc.start(), loc.end(), "break;")
+    fn visit_break(&mut self, loc: Loc, semicolon: bool) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "break{}", if semicolon { ";" } else { "" })
     }
 
-    fn visit_continue(&mut self, loc: Loc) -> Result<()> {
-        write_chunk!(self, loc.start(), loc.end(), "continue;")
+    fn visit_continue(&mut self, loc: Loc, semicolon: bool) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "continue{}", if semicolon { ";" } else { "" })
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
@@ -2129,7 +2141,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Virtual(loc) => write_chunk!(self, loc.end(), "virtual")?,
             FunctionAttribute::Immutable(loc) => write_chunk!(self, loc.end(), "immutable")?,
             FunctionAttribute::Override(loc, args) => {
-                self.visit_list("override", args, (None, Some(loc.end())), false)?
+                self.visit_list("override", args, None, Some(loc.end()), false)?
             }
             FunctionAttribute::BaseOrModifier(loc, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
@@ -2301,7 +2313,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let formatted_name = self.chunk_to_string(&name)?;
         write!(self.buf(), "{formatted_name}")?;
-        self.visit_list("", &mut event.fields, (None, None), true)?;
+        self.visit_list("", &mut event.fields, None, None, true)?;
 
         self.grouped(|fmt| {
             write_chunk!(
@@ -2339,7 +2351,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let formatted_name = self.chunk_to_string(&name)?;
         write!(self.buf(), "{formatted_name}")?;
-        self.visit_list("", &mut error.fields, (None, None), true)?;
+        self.visit_list("", &mut error.fields, None, None, true)?;
         self.write_semicolon()?;
 
         Ok(())
@@ -2456,7 +2468,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             VariableAttribute::Constant(_) => Some("constant".to_string()),
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
             VariableAttribute::Override(loc, idents) => {
-                self.visit_list("override", idents, (Some(loc.start()), Some(loc.end())), false)?;
+                self.visit_list("override", idents, Some(loc.start()), Some(loc.end()), false)?;
                 None
             }
         };
@@ -2670,7 +2682,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if let Some(error) = error {
             error.visit(self)?;
         }
-        self.visit_list("", args, (None, Some(loc.end())), true)?;
+        self.visit_list("", args, None, Some(loc.end()), true)?;
         self.write_semicolon()?;
 
         Ok(())
@@ -2946,21 +2958,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         match expr {
             YulExpression::BoolLiteral(loc, val, ident) => {
                 let val = if *val { "true" } else { "false" };
-                self.visit_yul_literal(*loc, val, ident)
+                self.visit_yul_string_with_ident(*loc, val, ident)
             }
             YulExpression::FunctionCall(expr) => self.visit_yul_function_call(expr),
             YulExpression::HexNumberLiteral(loc, val, ident) => {
-                self.visit_yul_literal(*loc, val, ident)
+                self.visit_yul_string_with_ident(*loc, val, ident)
             }
             YulExpression::HexStringLiteral(val, ident) => {
-                self.visit_yul_literal(val.loc, &val.hex, ident)
+                self.visit_yul_string_with_ident(val.loc, &val.hex, ident)
             }
             YulExpression::NumberLiteral(loc, val, expr, ident) => {
                 let val = if expr.is_empty() { val.to_owned() } else { format!("{val}e{expr}") };
-                self.visit_yul_literal(*loc, &val, ident)
+                self.visit_yul_string_with_ident(*loc, &val, ident)
             }
             YulExpression::StringLiteral(val, ident) => {
-                self.visit_yul_literal(val.loc, &val.string, ident)
+                self.visit_yul_string_with_ident(val.loc, &val.string, ident)
             }
             YulExpression::SuffixAccess(_, expr, ident) => {
                 self.visit_member_access(expr, ident, |fmt, expr| match expr.as_mut() {
@@ -2979,14 +2991,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
     }
 
-    fn visit_yul_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        write_chunk!(self, loc.start(), loc.end(), "break")
-    }
-
-    fn visit_yul_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
-        write_chunk!(self, loc.start(), loc.end(), "continue")
-    }
-
     fn visit_yul_for(&mut self, stmt: &mut YulFor) -> Result<(), Self::Error> {
         write_chunk!(self, stmt.loc.start(), "for")?;
         self.visit_yul_block(stmt.init_block.loc, &mut stmt.init_block.statements, true)?;
@@ -2998,17 +3002,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_yul_function_call(&mut self, stmt: &mut YulFunctionCall) -> Result<(), Self::Error> {
         write_chunk!(self, stmt.loc.start(), "{}", stmt.id.name)?;
-        self.visit_list("", &mut stmt.arguments, (None, Some(stmt.loc.end())), true)
+        self.visit_list("", &mut stmt.arguments, None, Some(stmt.loc.end()), true)
     }
 
     fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
-        self.visit_yul_literal(ident.loc, &ident.id.name, &mut ident.ty)
+        self.visit_yul_string_with_ident(ident.loc, &ident.id.name, &mut ident.ty)
     }
 
     fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
         write_chunk!(self, stmt.loc.start(), "function {}", stmt.id.name)?;
 
-        self.visit_list("", &mut stmt.params, (None, None), true)?;
+        self.visit_list("", &mut stmt.params, None, None, true)?;
 
         if !stmt.returns.is_empty() {
             self.grouped(|fmt| {
