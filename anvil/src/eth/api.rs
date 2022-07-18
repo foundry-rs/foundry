@@ -241,7 +241,9 @@ impl EthApi {
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::Reset(fork) => self.anvil_reset(fork).await.to_rpc_result(),
+            EthRequest::Reset(fork) => {
+                self.anvil_reset(fork.and_then(|p| p.params)).await.to_rpc_result()
+            }
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
