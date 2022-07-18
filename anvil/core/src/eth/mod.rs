@@ -173,6 +173,9 @@ pub enum EthRequest {
         #[serde(default)] Vec<f64>,
     ),
 
+    #[serde(rename = "eth_syncing", with = "empty_params")]
+    EthSyncing(()),
+
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction")]
     DebugTraceTransaction(H256, #[serde(default)] GethDebugTracingOptions),
@@ -446,6 +449,13 @@ mod tests {
     #[test]
     fn test_eth_block_number() {
         let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_syncing() {
+        let s = r#"{"method": "eth_syncing", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

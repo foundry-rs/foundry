@@ -206,6 +206,7 @@ impl EthApi {
             }
             EthRequest::EthGetLogs(filter) => self.logs(filter).await.to_rpc_result(),
             EthRequest::EthGetWork(_) => self.work().to_rpc_result(),
+            EthRequest::EthSyncing(_) => self.syncing().to_rpc_result(),
             EthRequest::EthSubmitWork(nonce, pow, digest) => {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
             }
@@ -836,6 +837,14 @@ impl EthApi {
     pub fn work(&self) -> Result<Work> {
         node_info!("eth_getWork");
         Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Returns the sync status, always be fails.
+    ///
+    /// Handler for ETH RPC call: `eth_syncing`
+    pub fn syncing(&self) -> Result<bool> {
+        node_info!("eth_syncing");
+        Ok(false)
     }
 
     /// Used for submitting a proof-of-work solution.
