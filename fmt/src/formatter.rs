@@ -1,7 +1,8 @@
 //! A Solidity formatter
 
-use std::fmt::Write;
+use std::{fmt::Write, str::FromStr};
 
+use ethers_core::{types::H160, utils::to_checksum};
 use itertools::Itertools;
 use solang_parser::pt::*;
 use thiserror::Error;
@@ -1582,6 +1583,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
             Expression::HexNumberLiteral(loc, val) => {
+                // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
+                let val = if val.len() == 42 {
+                    to_checksum(&H160::from_str(val).expect(""), None)
+                } else {
+                    val.to_owned()
+                };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
             Expression::RationalNumberLiteral(loc, val, fraction, expr) => {

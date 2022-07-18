@@ -117,6 +117,16 @@ where
     }
 }
 
+impl AstEq for String {
+    fn ast_eq(&self, other: &Self) -> bool {
+        if self.starts_with("0x") && self.chars().count() == 42 {
+            self.to_lowercase() == other.to_lowercase()
+        } else {
+            self == other
+        }
+    }
+}
+
 macro_rules! derive_ast_eq {
     ($name:ident) => {
         impl AstEq for $name {
@@ -196,7 +206,6 @@ derive_ast_eq! { (0 A, 1 B) }
 derive_ast_eq! { (0 A, 1 B, 2 C) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
-derive_ast_eq! { String }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }

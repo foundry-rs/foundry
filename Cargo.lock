@@ -1906,6 +1906,7 @@ dependencies = [
 name = "forge-fmt"
 version = "0.2.0"
 dependencies = [
+ "ethers-core",
  "foundry-config",
  "itertools",
  "pretty_assertions",
