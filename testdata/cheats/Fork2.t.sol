@@ -98,4 +98,26 @@ contract ForkTest is DSTest {
         cheats.selectFork(otherMain);
         assertEq(block.number, mainBlock + 1);
     }
+
+
+    function testCanDeploy() public {
+        cheats.selectFork(mainnetFork);
+        DummyContract dummy = new DummyContract();
+        dummy.hello();
+
+        address dummyAddress = address(dummy);
+
+        cheats.selectFork(optimismFork);
+        assertEq(dummyAddress, address(dummy));
+
+        cheats.expectRevert();
+        dummy.hello();
+    }
+
+}
+
+contract DummyContract {
+
+    function hello() external { }
+
 }
