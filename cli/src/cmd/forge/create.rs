@@ -1,7 +1,10 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
+    cmd::{
+        forge::build::{CoreBuildArgs, SolcArgs},
+        utils, RetryArgs,
+    },
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
     utils::get_http_provider,
@@ -58,6 +61,9 @@ pub struct CreateArgs {
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "SOLC OPTIONS")]
+    solc: SolcArgs,
 
     #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
     tx: TransactionOpts,

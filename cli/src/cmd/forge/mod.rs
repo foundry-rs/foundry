@@ -50,6 +50,7 @@ pub mod fourbyte;
 pub mod init;
 pub mod inspect;
 pub mod install;
+pub mod multibuild;
 pub mod remappings;
 pub mod remove;
 pub mod script;

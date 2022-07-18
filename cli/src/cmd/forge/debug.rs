@@ -1,4 +1,8 @@
-use super::{build::BuildArgs, script::ScriptArgs, watch::WatchArgs};
+use super::{
+    build::{BuildArgs, SolcArgs},
+    script::ScriptArgs,
+    watch::WatchArgs,
+};
 use crate::{
     cmd::forge::{build::CoreBuildArgs, create::RETRY_VERIFY_ON_CREATE},
     opts::MultiWallet,
@@ -38,6 +42,9 @@ pub struct DebugArgs {
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     pub opts: CoreBuildArgs,
 
+    #[clap(flatten, next_help_heading = "SOLC OPTIONS")]
+    pub solc: SolcArgs,
+
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 }
@@ -55,6 +62,7 @@ impl DebugArgs {
                 args: self.opts,
                 names: false,
                 sizes: false,
+                solc: SolcArgs { no_auto_detect: false, use_solc: None },
                 watch: WatchArgs::default(),
             },
             wallets: MultiWallet::default(),

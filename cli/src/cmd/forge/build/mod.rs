@@ -24,6 +24,9 @@ pub use self::core::CoreBuildArgs;
 mod paths;
 pub use self::paths::ProjectPathsArgs;
 
+mod solc;
+pub use self::solc::SolcArgs;
+
 // All `forge build` related arguments
 //
 // CLI arguments take the highest precedence in the Config/Figment hierarchy.
@@ -49,6 +52,10 @@ pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub args: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "SOLC OPTIONS")]
+    #[serde(flatten)]
+    pub solc: SolcArgs,
 
     #[clap(help = "Print compiled contract names.", long = "names")]
     #[serde(skip)]
@@ -80,8 +87,8 @@ impl BuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
+    /// [`utils::find_project_root_path`]) and merges the cli `BuildArgs` into it before
+    /// returning [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
         self.args.project()
     }

@@ -7,6 +7,8 @@ mod config;
 #[cfg(not(feature = "external-integration-tests"))]
 mod create;
 #[cfg(not(feature = "external-integration-tests"))]
+mod multibuild;
+#[cfg(not(feature = "external-integration-tests"))]
 mod script;
 #[cfg(not(feature = "external-integration-tests"))]
 mod test_cmd;

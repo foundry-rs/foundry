@@ -91,6 +91,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Remappings(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Multibuild(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Init(cmd) => {
             cmd.run()?;
         }

@@ -1,7 +1,10 @@
 //! Coverage command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, test::Filter},
+        forge::{
+            build::{CoreBuildArgs, SolcArgs},
+            test::Filter,
+        },
         Cmd,
     },
     compile::ProjectCompiler,
@@ -49,6 +52,9 @@ pub struct CoverageArgs {
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "SOLC OPTIONS")]
+    solc: SolcArgs,
 }
 
 impl CoverageArgs {

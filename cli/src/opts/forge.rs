@@ -16,6 +16,7 @@ use crate::cmd::forge::{
     init::InitArgs,
     inspect,
     install::InstallArgs,
+    multibuild::MultibuildArgs,
     remappings::RemappingArgs,
     script::ScriptArgs,
     snapshot, test, tree,
@@ -97,6 +98,12 @@ pub enum Subcommands {
         about = "Get the automatically inferred remappings for the project."
     )]
     Remappings(RemappingArgs),
+
+    #[clap(
+        visible_alias = "mb",
+        about = "Build the project's smart contracts with multiple Solidity versions."
+    )]
+    Multibuild(MultibuildArgs),
 
     #[clap(
         visible_alias = "v",

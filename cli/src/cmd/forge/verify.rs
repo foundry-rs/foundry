@@ -181,7 +181,7 @@ impl VerifyArgs {
         Ok(())
     }
 
-    /// Creates the `VerifyContract` etherescan request in order to verify the contract
+    /// Creates the `VerifyContract` Etherscan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
@@ -191,8 +191,6 @@ impl VerifyArgs {
             out_path: Default::default(),
             compiler: Default::default(),
             ignored_error_codes: vec![],
-            no_auto_detect: false,
-            use_solc: None,
             offline: false,
             force: false,
             libraries: self.libraries.clone(),

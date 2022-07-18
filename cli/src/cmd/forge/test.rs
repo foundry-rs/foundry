@@ -1,7 +1,11 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
+        forge::{
+            build::{CoreBuildArgs, SolcArgs},
+            debug::DebugArgs,
+            watch::WatchArgs,
+        },
         Cmd,
     },
     compile,
@@ -267,6 +271,9 @@ pub struct TestArgs {
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "SOLC OPTIONS")]
+    solc: SolcArgs,
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     pub watch: WatchArgs,
@@ -538,6 +545,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                         args: Vec::new(),
                         debug: true,
                         opts: args.opts,
+                        solc: args.solc,
                         evm_opts: args.evm_opts,
                     };
                     utils::block_on(debugger.debug())?;

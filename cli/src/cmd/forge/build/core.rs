@@ -49,17 +49,6 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
-    #[clap(help_heading = "COMPILER OPTIONS", help = "Do not auto-detect solc.", long)]
-    #[serde(skip)]
-    pub no_auto_detect: bool,
-
-    /// Specify the solc version, or a path to a local solc, to build with.
-    ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
-    #[clap(help_heading = "COMPILER OPTIONS", value_name = "SOLC_VERSION", long = "use")]
-    #[serde(skip)]
-    pub use_solc: Option<String>,
-
     #[clap(
         help_heading = "COMPILER OPTIONS",
         help = "Do not access the network.",
@@ -125,8 +114,8 @@ impl CoreBuildArgs {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
-    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project()`]
+    /// [`utils::find_project_root_path`]) and merges the cli `BuildArgs` into it before
+    /// returning [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
         Ok(config.project()?)
@@ -187,14 +176,6 @@ impl Provider for CoreBuildArgs {
         let value = Value::serialize(self)?;
         let error = InvalidType(value.to_actual(), "map".into());
         let mut dict = value.into_dict().ok_or(error)?;
-
-        if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), false.into());
-        }
-
-        if let Some(ref solc) = self.use_solc {
-            dict.insert("solc".to_string(), solc.trim_start_matches("solc:").into());
-        }
 
         if self.offline {
             dict.insert("offline".to_string(), true.into());

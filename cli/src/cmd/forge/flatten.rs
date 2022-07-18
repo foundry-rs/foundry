@@ -31,14 +31,13 @@ impl Cmd for FlattenArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let FlattenArgs { target_path, output, project_paths } = self;
 
-        // flatten is a subset of `BuildArgs` so we can reuse that to get the config
+        // flatten is a subset of `CoreBuildArgs` so we can reuse that to get the config
         let build_args = CoreBuildArgs {
             project_paths,
             out_path: Default::default(),
             compiler: Default::default(),
             ignored_error_codes: vec![],
-            no_auto_detect: false,
-            use_solc: None,
+
             offline: false,
             force: false,
             libraries: vec![],
