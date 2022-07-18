@@ -223,6 +223,12 @@ impl TestProject {
         self.inner().add_source("test.sol", s).unwrap()
     }
 
+    /// Adds `console.sol` as a source under "console.sol"
+    pub fn insert_console(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/logs/console.sol");
+        self.inner().add_source("console.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources

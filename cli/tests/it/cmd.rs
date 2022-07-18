@@ -6,7 +6,7 @@ use ethers::solc::{
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
+    util::{read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf};
