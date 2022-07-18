@@ -215,23 +215,29 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
-// checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(!foundry_toml.exists());
-
+// Checks that a forge project fails to initialise if dir is already git repo and dirty
+forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
+    use std::process::Command;
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    // initialise new git
+    Command::new("git").arg("init").current_dir(prj.root()).output().unwrap();
 
-    cmd.arg("--force");
+    std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
 
-    for _ in 0..2 {
-        assert!(foundry_toml.exists());
-        pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
-        cmd.assert_non_empty_stdout();
-    }
+    // create nested dir and execute init in nested dir
+    let nested = prj.root().join("nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    cmd.current_dir(&nested);
+    cmd.arg("init");
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_detect_dirty_git_status_on_init.stderr"),
+    );
+
+    // ensure nothing was emitted, dir is empty
+    assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
 });
 
 // Checks that a forge project can be initialized without creating a git repository
@@ -807,3 +813,51 @@ forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCo
     // install again
     install(&mut cmd);
 });
+
+// Tests that forge update doesn't break a working depencency by recursively updating nested
+// dependencies
+forgetest!(
+    can_update_library_with_outdated_nested_dependency,
+    |prj: TestProject, mut cmd: TestCommand| {
+        cmd.git_init();
+
+        let libs = prj.root().join("lib");
+        let git_mod = prj.root().join(".git/modules/lib");
+        let git_mod_file = prj.root().join(".gitmodules");
+
+        let package = libs.join("issue-2264-repro");
+        let package_mod = git_mod.join("issue-2264-repro");
+
+        let install = |cmd: &mut TestCommand| {
+            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
+            cmd.assert_non_empty_stdout();
+            assert!(package.exists());
+            assert!(package_mod.exists());
+
+            let submods = read_string(&git_mod_file);
+            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
+        };
+
+        install(&mut cmd);
+        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
+        cmd.stdout_lossy();
+
+        prj.inner()
+            .add_source(
+                "MyTokenCopy",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.6.0;
+import "issue-2264-repro/MyToken.sol";
+contract MyTokenCopy is MyToken {
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.forge_fuse().args(["build"]);
+        let output = cmd.stdout_lossy();
+
+        assert!(output.contains("Compiler run successful",));
+    }
+);

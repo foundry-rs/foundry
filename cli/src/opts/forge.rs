@@ -232,14 +232,27 @@ const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
 const ALIAS_SEPARATOR: char = '=';
 
+/// Commonly used aliases for solidity repos,
+const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin")];
+
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        let mut dependency = dependency.to_string();
+
+        // this will update wrong conventional aliases
+        for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
+            if dependency.starts_with(alias) {
+                dependency = dependency.replacen(alias, real_org, 1);
+                break
+            }
+        }
+
         // everything before "=" should be considered the alias
         let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1)
         } else {
-            (None, dependency)
+            (None, dependency.as_str())
         };
 
         let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
@@ -261,19 +274,32 @@ impl FromStr for Dependency {
             }
         };
 
-        // everything after the "@" should be considered the version
+        // everything after the last "@" should be considered the version if there are no path
+        // segments
         let (url, name, tag) = if let Some(url_with_version) = url_with_version {
-            let mut split = url_with_version.split(VERSION_SEPARATOR);
-            let url = split
-                .next()
-                .ok_or_else(|| eyre::eyre!("no dependency path was provided"))?
-                .to_string();
+            // `@`s are actually valid github project name chars but we assume this is unlikely and
+            // treat everything after the last `@` as the version tag there's still the
+            // case that the user tries to use `@<org>/<project>`, so we need to check that the
+            // `tag` does not contain a slash
+            let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
+
+            let mut tag = None;
+            let mut url = url_with_version.as_str();
+
+            let maybe_tag = split.next().unwrap();
+            if let Some(actual_url) = split.next() {
+                if !maybe_tag.contains('/') {
+                    tag = Some(maybe_tag.to_string());
+                    url = actual_url;
+                }
+            }
+
+            let url = url.to_string();
             let name = url
                 .split('/')
                 .last()
                 .ok_or_else(|| eyre::eyre!("no dependency name found"))?
                 .to_string();
-            let tag = split.next().map(ToString::to_string);
 
             (Some(url), Some(name), tag)
         } else {
@@ -423,5 +449,29 @@ mod tests {
             let contract = ContractInfo::from_str(input);
             assert!(contract.is_err())
         });
+    }
+
+    #[test]
+    fn can_parse_oz_dep() {
+        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable").unwrap();
+        assert_eq!(dep.name, "contracts-upgradeable");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+        );
+        assert_eq!(dep.tag, None);
+        assert_eq!(dep.alias, None);
+    }
+
+    #[test]
+    fn can_parse_oz_dep_tag() {
+        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable@v1").unwrap();
+        assert_eq!(dep.name, "contracts-upgradeable");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+        );
+        assert_eq!(dep.tag, Some("v1".to_string()));
+        assert_eq!(dep.alias, None);
     }
 }

@@ -11,6 +11,7 @@ use crate::{
     macros::*,
     solang_ext::*,
     visit::{Visitable, Visitor},
+    FormatterConfig,
 };
 
 /// A custom Error thrown by the Formatter
@@ -60,23 +61,6 @@ macro_rules! bail {
 }
 
 type Result<T, E = FormatterError> = std::result::Result<T, E>;
-
-/// Contains the config and rule set
-#[derive(Debug, Clone)]
-pub struct FormatterConfig {
-    /// Maximum line length where formatter will try to wrap the line
-    pub line_length: usize,
-    /// Number of spaces per indentation level
-    pub tab_width: usize,
-    /// Print spaces between brackets
-    pub bracket_spacing: bool,
-}
-
-impl Default for FormatterConfig {
-    fn default() -> Self {
-        FormatterConfig { line_length: 80, tab_width: 4, bracket_spacing: false }
-    }
-}
 
 /// An indent group. The group may optionally skip the first line
 #[derive(Default, Clone, Debug)]

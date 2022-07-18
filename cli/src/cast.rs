@@ -292,6 +292,14 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(trezor) => trezor.address(),
                 };
 
+                // prevent misconfigured hwlib from sending a transaction that defies
+                // user-specified --from
+                if let Some(specified_from) = eth.wallet.from {
+                    if specified_from != from {
+                        eyre::bail!("The specified sender via CLI/env vars does not match the sender configured via the hardware wallet's HD Path. Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which corresponds to the sender. This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289")
+                    }
+                }
+
                 if resend {
                     tx.nonce = Some(provider.get_transaction_count(from, None).await?);
                 }

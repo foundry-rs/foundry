@@ -31,6 +31,7 @@ impl ScriptArgs {
             &build_output.project,
             &script_config.config,
             unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
         );
 
         Ok((build_output, verify))

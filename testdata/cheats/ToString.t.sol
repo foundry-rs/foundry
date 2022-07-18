@@ -17,7 +17,7 @@ contract ToStringTest is DSTest {
     function testBytes32ToString() public {
         bytes32 testBytes = "test";
         string memory stringBytes = cheats.toString(testBytes);
-        assertEq("test", stringBytes);
+        assertEq("0x7465737400000000000000000000000000000000000000000000000000000000", stringBytes);
     }
 
     function testBoolToString() public {

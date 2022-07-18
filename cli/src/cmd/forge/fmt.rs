@@ -1,8 +1,9 @@
 use crate::{cmd::Cmd, utils::FoundryPathExt};
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{Comments, Formatter, FormatterConfig, Visitable};
+use forge_fmt::{Comments, Formatter, Visitable};
 use foundry_common::fs;
+use foundry_config::{load_config_with_root, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -46,7 +47,7 @@ pub struct FmtArgs {
 
 impl FmtArgs {
     /// Returns all inputs to format
-    fn inputs(&self) -> Vec<Input> {
+    fn inputs(&self, config: &Config) -> Vec<Input> {
         if let Some(ref path) = self.path {
             if path.is_dir() {
                 ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
@@ -60,9 +61,7 @@ impl FmtArgs {
                 vec![]
             }
         } else {
-            let config = foundry_config::load_config_with_root(self.root.clone());
-            let paths = config.project_paths();
-            paths.input_files().into_iter().map(Input::Path).collect()
+            config.project_paths().input_files().into_iter().map(Input::Path).collect()
         }
     }
 }
@@ -71,7 +70,8 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let inputs = self.inputs();
+        let config = load_config_with_root(self.root.clone());
+        let inputs = self.inputs(&config);
 
         let diffs = inputs
             .par_iter()
@@ -92,7 +92,7 @@ impl Cmd for FmtArgs {
 
                 let mut output = String::new();
                 let mut formatter =
-                    Formatter::new(&mut output, &source, comments, FormatterConfig::default());
+                    Formatter::new(&mut output, &source, comments, config.fmt.clone());
 
                 source_unit.visit(&mut formatter).unwrap();
 

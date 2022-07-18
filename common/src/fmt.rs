@@ -1,8 +1,10 @@
 //! Contains a helper pretty() function to print human redeable string versions of usual ethers
 //! types
-use ethers_core::{types::*, utils::to_checksum};
+use ethers_core::{
+    types::*,
+    utils::{hex, to_checksum},
+};
 use serde::Deserialize;
-use std::str;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
 const NAME_COLUMN_LEN: usize = 20usize;
@@ -64,8 +66,7 @@ impl UIfmt for Bytes {
 
 impl UIfmt for [u8; 32] {
     fn pretty(&self) -> String {
-        let res = str::from_utf8(self).unwrap().trim_matches(char::from(0));
-        String::from(res)
+        format!("0x{}", hex::encode(&self[..]))
     }
 }
 
@@ -258,6 +259,8 @@ impl UIfmt for OtherFields {
 pub enum EthValue {
     U64(U64),
     U256(U256),
+    U64Array(Vec<U64>),
+    U256Array(Vec<U256>),
     Other(serde_json::Value),
 }
 
@@ -272,6 +275,8 @@ impl UIfmt for EthValue {
         match self {
             EthValue::U64(num) => num.pretty(),
             EthValue::U256(num) => num.pretty(),
+            EthValue::U64Array(arr) => arr.pretty(),
+            EthValue::U256Array(arr) => arr.pretty(),
             EthValue::Other(val) => val.to_string().trim_matches('"').to_string(),
         }
     }
@@ -328,6 +333,21 @@ pub fn to_bytes(uint: U256) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn can_format_bytes32() {
+        let val = hex::decode("7465737400000000000000000000000000000000000000000000000000000000")
+            .unwrap();
+        let mut b32 = [0u8; 32];
+        b32.copy_from_slice(&val);
+
+        assert_eq!(
+            b32.pretty(),
+            "0x7465737400000000000000000000000000000000000000000000000000000000"
+        );
+        let b: Bytes = val.into();
+        assert_eq!(b.pretty(), b32.pretty());
+    }
 
     #[test]
     fn can_pretty_print_optimism_tx() {

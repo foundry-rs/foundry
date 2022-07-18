@@ -391,7 +391,7 @@ async fn test_fork_nft_set_approve_all() {
         fork_config()
             .with_fork_block_number(Some(14812197u64))
             .with_blocktime(Some(Duration::from_secs(5)))
-            .with_chain_id(1u64),
+            .with_chain_id(1u64.into()),
     )
     .await;
 
@@ -429,6 +429,31 @@ async fn test_fork_nft_set_approve_all() {
 
     let real_onwer = nouns.owner_of(token_id).call().await.unwrap();
     assert_eq!(real_onwer, wallet.address());
+}
+
+// <https://github.com/foundry-rs/foundry/issues/2261>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_with_custom_chain_id() {
+    // spawn a forked node with some random chainId
+    let (api, handle) = spawn(
+        fork_config()
+            .with_fork_block_number(Some(14812197u64))
+            .with_blocktime(Some(Duration::from_secs(5)))
+            .with_chain_id(3145u64.into()),
+    )
+    .await;
+
+    // get the eth chainId and the txn chainId
+    let eth_chain_id = api.eth_chain_id();
+    let txn_chain_id = api.chain_id();
+
+    // get the chainId in the config
+    let config_chain_id = handle.config().chain_id;
+
+    // check that the chainIds are the same
+    assert_eq!(eth_chain_id.unwrap().unwrap().as_u64(), 3145u64);
+    assert_eq!(txn_chain_id, 3145u64);
+    assert_eq!(config_chain_id, Some(3145u64));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/1920>
@@ -477,4 +502,24 @@ async fn test_fork_base_fee() {
     let tx = TransactionRequest::new().from(from).to(addr).value(val).gas(0u64);
 
     let _res = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_init_base_fee() {
+    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(13184859u64))).await;
+
+    let provider = handle.http_provider();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    // <https://etherscan.io/block/13184859>
+    assert_eq!(block.number.unwrap().as_u64(), 13184859u64);
+    let init_base_fee = block.base_fee_per_gas.unwrap();
+    assert_eq!(init_base_fee, 63739886069u64.into());
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let next_base_fee = block.base_fee_per_gas.unwrap();
+    assert!(next_base_fee < init_base_fee);
 }

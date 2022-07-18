@@ -5,7 +5,7 @@ use crate::{
         backend::{
             cheats,
             cheats::CheatsManager,
-            db::Db,
+            db::{Db, SerializableState},
             executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -405,6 +405,35 @@ impl Backend {
             self.set_block_number(num.into());
         }
         self.db.write().revert(id)
+    }
+
+    /// Write all chain data to serialized bytes buffer
+    pub fn dump_state(&self) -> Result<Bytes, BlockchainError> {
+        self.db
+            .read()
+            .dump_state()
+            .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
+            .ok_or_else(|| {
+                RpcError::invalid_params(
+                    "Dumping state not supported with the current configuration",
+                )
+                .into()
+            })
+    }
+
+    /// Deserialize and add all chain data to the backend storage
+    pub fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
+        let state: SerializableState =
+            serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
+
+        if !self.db.write().load_state(state) {
+            Err(RpcError::invalid_params(
+                "Loading state not supported with the current configuration",
+            )
+            .into())
+        } else {
+            Ok(true)
+        }
     }
 
     /// Returns the environment for the next block

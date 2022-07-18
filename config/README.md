@@ -154,12 +154,6 @@ The alias `mainnet` references the environment variable `RPC_MAINNET` which hold
 Environment variables need to be wrapped in `${}`
 
 ```toml
-rpc_endpoints = { optimism = "https://optimism.alchemyapi.io/v2/...", mainnet = "${RPC_MAINNET}" }
-```
-
-Alternatively the following form is accepted, note the `profile` prefix:
-
-```toml
 [default.rpc_endpoints]
 optimism = "https://optimism.alchemyapi.io/v2/..."
 mainnet = "${RPC_MAINNET}"
