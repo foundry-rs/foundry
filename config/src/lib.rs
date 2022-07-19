@@ -3359,7 +3359,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.fmt,
-                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+                FormatterConfig {
+                    line_length: 100,
+                    tab_width: 2,
+                    bracket_spacing: true,
+                    ..Default::default()
+                }
             );
 
             Ok(())

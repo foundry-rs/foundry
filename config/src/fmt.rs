@@ -14,6 +14,9 @@ pub struct FormatterConfig {
     /// Style of uint/int256 types. Either "long" (int256), "short" (int) or "preserve (do not
     /// change where possible)
     pub int_types: IntTypes,
+    /// If function parameters are multiline then always put the function attributes on separate
+    /// lines
+    pub func_attrs_with_params_multiline: bool,
 }
 
 /// Style of uint/int256 types
@@ -35,6 +38,7 @@ impl Default for FormatterConfig {
             tab_width: 4,
             bracket_spacing: false,
             int_types: IntTypes::Long,
+            func_attrs_with_params_multiline: true,
         }
     }
 }

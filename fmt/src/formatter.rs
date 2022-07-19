@@ -2026,7 +2026,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         };
 
-        let attrs_multiline = params_multiline ||
+        let attrs_multiline = (self.config.func_attrs_with_params_multiline && params_multiline) ||
             !self.try_on_single_line(|fmt| {
                 write_attributes(fmt, false)?;
                 if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
