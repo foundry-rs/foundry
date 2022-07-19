@@ -298,9 +298,9 @@ fn git_checkout(
 
     let checkout = |tag: &str| {
         let args = if recurse {
-            vec!["checkout", "--recurse-submodules", &tag]
+            vec!["checkout", "--recurse-submodules", tag]
         } else {
-            vec!["checkout", &tag]
+            vec!["checkout", tag]
         };
         trace!(?tag, ?recurse, "git checkout");
         Command::new("git").args(args).current_dir(&libs.join(&target_dir)).output()
