@@ -99,11 +99,11 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 **Testing Benchmarks**
 
-| Project                         | Forge | DappTools | Speedup |
-| ------------------------------- | ----- | --------- | ------- |
-| [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
-| [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
-| [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
+| Project                            | Forge | DappTools | Speedup |
+| ---------------------------------- | ----- | --------- | ------- |
+| [transmissions11/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
+| [reflexer-labs/geb][geb]           | 0.4s  | 23s       | 57.5x   |
+| [Rari-Capital/vaults][vaults]      | 0.28s | 6.5s      | 23x     |
 
 _Note: In the above benchmarks, compilation was always skipped_
 
@@ -202,7 +202,7 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
-[solmate]: https://github.com/Rari-Capital/solmate/
+[solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [vaults]: https://github.com/rari-capital/vaults
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing

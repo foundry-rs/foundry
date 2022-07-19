@@ -50,7 +50,7 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
-mod fmt;
+pub mod fmt;
 pub use fmt::FormatterConfig;
 
 mod error;
@@ -618,6 +618,13 @@ impl Config {
             return false
         }
         self.auto_detect_solc
+    }
+
+    /// Whether caching should be enabled for the given chain id
+    pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
+        !self.no_storage_caching &&
+            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
+            self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
@@ -2296,6 +2303,20 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn test_caching() {
+        let mut config = Config::default();
+        let chain_id = ethers_core::types::Chain::Mainnet;
+        let url = "https://eth-mainnet.alchemyapi";
+        assert!(config.enable_caching(url, chain_id));
+
+        config.no_storage_caching = true;
+        assert!(!config.enable_caching(url, chain_id));
+
+        config.no_storage_caching = false;
+        assert!(!config.enable_caching(url, ethers_core::types::Chain::Dev));
+    }
+
+    #[test]
     fn test_install_dir() {
         figment::Jail::expect_with(|jail| {
             let config = Config::load();
@@ -3362,7 +3383,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.fmt,
-                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+                FormatterConfig {
+                    line_length: 100,
+                    tab_width: 2,
+                    bracket_spacing: true,
+                    ..Default::default()
+                }
             );
 
             Ok(())

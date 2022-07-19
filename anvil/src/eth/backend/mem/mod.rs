@@ -508,31 +508,34 @@ impl Backend {
             let _lock = self.executor_lock.write().await;
 
             let current_base_fee = self.base_fee();
-            // acquire all locks
-            let mut env = self.env.write();
-            let mut db = self.db.write();
-            let mut storage = self.blockchain.storage.write();
 
-            // store current state
-            self.states.write().insert(storage.best_hash, db.current_state());
-
+            let mut env = self.env.read().clone();
             // increase block number for this block
             env.block.number = env.block.number.saturating_add(U256::one());
             env.block.basefee = current_base_fee;
             env.block.timestamp = self.time.next_timestamp().into();
 
-            let executor = TransactionExecutor {
-                db: &mut *db,
-                validator: self,
-                pending: pool_transactions.into_iter(),
-                block_env: env.block.clone(),
-                cfg_env: env.cfg.clone(),
-                parent_hash: storage.best_hash,
-                gas_used: U256::zero(),
+            let best_hash = self.blockchain.storage.read().best_hash;
+
+            // store current state before executing all transactions
+            self.states.write().insert(best_hash, self.db.read().current_state());
+
+            let executed_tx = {
+                let mut db = self.db.write();
+                let executor = TransactionExecutor {
+                    db: &mut *db,
+                    validator: self,
+                    pending: pool_transactions.into_iter(),
+                    block_env: env.block.clone(),
+                    cfg_env: env.cfg.clone(),
+                    parent_hash: best_hash,
+                    gas_used: U256::zero(),
+                };
+                executor.execute()
             };
 
             // create the new block with the current timestamp
-            let ExecutedTransactions { block, included, invalid } = executor.execute();
+            let ExecutedTransactions { block, included, invalid } = executed_tx;
             let BlockInfo { block, transactions, receipts } = block;
 
             let header = block.header.clone();
@@ -548,6 +551,7 @@ impl Backend {
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
 
+            let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
             storage.best_hash = block_hash;
@@ -575,6 +579,10 @@ impl Backend {
                 };
                 storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
+
+            // update env with new values
+            *self.env.write() = env;
+
             let timestamp = utc_from_secs(header.timestamp);
 
             node_info!("    Block Number: {}", block_number);

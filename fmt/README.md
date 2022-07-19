@@ -110,6 +110,23 @@ See [YulExpression](https://github.com/hyperledger-labs/solang/blob/413841b5c759
 
 - [x] Comments
 
+## Configuration
+
+### Options
+
+- [x] Line Length
+- [x] Tab Width
+- [x] Bracket Spacing
+- [x] Explicit Int Types
+- [ ] Quote style
+- [x] Function Modifiers with Parameter multiline
+- [ ] Import Order
+
+### Other
+
+- [ ] Disable Formatter Range
+- [ ] Disable Formatter Next Line
+
 ## Architecture
 
 The formatter works in two steps:

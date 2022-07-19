@@ -417,7 +417,7 @@ mod tests {
         opts.fork_url = Some(rpc.to_string());
 
         let env = opts.evm_env_blocking();
-        let fork = opts.get_fork(env.clone());
+        let fork = opts.get_fork(&Default::default(), env.clone());
 
         base_runner()
             .with_fork(fork)

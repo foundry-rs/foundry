@@ -10,39 +10,6 @@ use crate::TestCommand;
 
 pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
-pub enum ScriptOutcome {
-    OkSimulation,
-    OkBroadcast,
-    WarnSpecifyDeployer,
-    MissingSender,
-    MissingWallet,
-    FailedScript,
-}
-
-impl ScriptOutcome {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
-            ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
-            ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
-            ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
-            ScriptOutcome::MissingWallet => "No associated wallet",
-            ScriptOutcome::FailedScript => "Script failed.",
-        }
-    }
-
-    pub fn is_err(&self) -> bool {
-        match self {
-            ScriptOutcome::OkSimulation => false,
-            ScriptOutcome::OkBroadcast => false,
-            ScriptOutcome::WarnSpecifyDeployer => false,
-            ScriptOutcome::MissingSender => true,
-            ScriptOutcome::MissingWallet => true,
-            ScriptOutcome::FailedScript => true,
-        }
-    }
-}
-
 /// A helper struct to test forge script scenarios
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
@@ -53,19 +20,23 @@ pub struct ScriptTester {
 }
 
 impl ScriptTester {
-    pub fn new(mut cmd: TestCommand, endpoint: &str, current_dir: &Path) -> Self {
-        ScriptTester::copy_testdata(current_dir).unwrap();
-        cmd.set_current_dir(current_dir);
-
-        let target_contract = current_dir.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
+    /// Creates a new instance of a Tester for the given contract
+    pub fn new(
+        mut cmd: TestCommand,
+        endpoint: &str,
+        project_root: &Path,
+        target_contract: &str,
+    ) -> Self {
+        ScriptTester::copy_testdata(project_root).unwrap();
+        cmd.set_current_dir(project_root);
 
         cmd.args([
             "script",
             "-r",
             "ds-test/=lib/",
-            target_contract.as_str(),
+            target_contract,
             "--root",
-            current_dir.to_str().unwrap(),
+            project_root.to_str().unwrap(),
             "--fork-url",
             endpoint,
             "-vvvvv",
@@ -88,13 +59,28 @@ impl ScriptTester {
         }
     }
 
+    /// Creates a new instance of a Tester for the `broadcast` test at the given `project_root` by
+    /// configuring the `TestCommand` with script
+    pub fn new_broadcast(cmd: TestCommand, endpoint: &str, project_root: &Path) -> Self {
+        let target_contract = project_root.join(BROADCAST_TEST_PATH).to_string_lossy().to_string();
+
+        // copy the broadcast test
+        let testdata = Self::testdata_path();
+        std::fs::copy(testdata + "/cheats/Broadcast.t.sol", project_root.join(BROADCAST_TEST_PATH))
+            .expect("Failed to initialize broadcast contract");
+
+        Self::new(cmd, endpoint, project_root, &target_contract)
+    }
+
+    /// Returns the path to the dir that contains testdata
+    fn testdata_path() -> String {
+        format!("{}/../../testdata", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Initialises the test contracts by copying them into the workspace
     fn copy_testdata(current_dir: &Path) -> eyre::Result<()> {
-        let testdata = format!("{}/../../testdata", env!("CARGO_MANIFEST_DIR"));
+        let testdata = Self::testdata_path();
         std::fs::copy(testdata.clone() + "/cheats/Cheats.sol", current_dir.join("src/Cheats.sol"))?;
-        std::fs::copy(
-            testdata.clone() + "/cheats/Broadcast.t.sol",
-            current_dir.join(BROADCAST_TEST_PATH),
-        )?;
         std::fs::copy(testdata + "/lib/ds-test/src/test.sol", current_dir.join("lib/test.sol"))?;
 
         Ok(())
@@ -174,5 +160,40 @@ impl ScriptTester {
     pub fn slow(&mut self) -> &mut Self {
         self.cmd.arg("--slow");
         self
+    }
+}
+
+/// Various `forge` script results
+#[derive(Debug)]
+pub enum ScriptOutcome {
+    OkSimulation,
+    OkBroadcast,
+    WarnSpecifyDeployer,
+    MissingSender,
+    MissingWallet,
+    FailedScript,
+}
+
+impl ScriptOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ScriptOutcome::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
+            ScriptOutcome::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
+            ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
+            ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
+            ScriptOutcome::MissingWallet => "No associated wallet",
+            ScriptOutcome::FailedScript => "Script failed.",
+        }
+    }
+
+    pub fn is_err(&self) -> bool {
+        match self {
+            ScriptOutcome::OkSimulation |
+            ScriptOutcome::OkBroadcast |
+            ScriptOutcome::WarnSpecifyDeployer => false,
+            ScriptOutcome::MissingSender |
+            ScriptOutcome::MissingWallet |
+            ScriptOutcome::FailedScript => true,
+        }
     }
 }
