@@ -71,9 +71,9 @@ impl GasReport {
                         let function_report = contract_report
                             .functions
                             .entry(func.clone())
-                            .or_insert_with(Default::default)
+                            .or_default()
                             .entry(sig.clone())
-                            .or_insert_with(Default::default);
+                            .or_default();
                         function_report.calls.push(trace.gas_cost.into());
                     }
                     _ => (),

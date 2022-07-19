@@ -223,8 +223,8 @@ pub enum RawOrDecodedCall {
     Raw(Vec<u8>),
     /// Decoded calldata.
     ///
-    /// The first element in the tuple is the function name, and the second element is a vector of
-    /// decoded parameters.
+    /// The first element in the tuple is the function name, second is the function signature and
+    /// the third element is a vector of decoded parameters.
     Decoded(String, String, Vec<String>),
 }
 
