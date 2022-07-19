@@ -1913,6 +1913,7 @@ dependencies = [
  "semver",
  "solang-parser",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

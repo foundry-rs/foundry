@@ -50,7 +50,7 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
-mod fmt;
+pub mod fmt;
 pub use fmt::FormatterConfig;
 
 mod error;
