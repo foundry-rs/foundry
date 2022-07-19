@@ -208,6 +208,7 @@ async fn main() -> eyre::Result<()> {
             if let Some(hash) = tx_hash {
                 let logs = Cast::new(&provider).receipt(hash, Some(String::from("logs")), 0, false, true).await?;
                 let logs = serde_json::json!(logs);
+                println!("{}", &logs);
 
                 match logs[0]["topics"][0] {
                     Value::String(t0) => {
