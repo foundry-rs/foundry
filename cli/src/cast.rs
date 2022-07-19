@@ -210,9 +210,9 @@ async fn main() -> eyre::Result<()> {
                 let logs = serde_json::json!(logs);
                 println!("{}", &logs);
 
-                match logs[0]["topics"][0] {
+                match &logs[0]["topics"][0] {
                     Value::String(t0) => {
-                        let sigs = decode_event_topic(&t0).await?;
+                        let sigs = decode_event_topic(t0).await?;
                         sigs.iter().for_each(|sig| println!("{}", sig));
                     },
                     _ => {}
