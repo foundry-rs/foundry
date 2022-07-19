@@ -1,4 +1,4 @@
-// config: bracket-spacing=true
+// config: bracket_spacing = true
 contract Contract {
     function test() {
         unchecked {

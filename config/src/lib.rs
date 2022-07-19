@@ -50,7 +50,7 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
-mod fmt;
+pub mod fmt;
 pub use fmt::FormatterConfig;
 
 mod error;
@@ -3359,7 +3359,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.fmt,
-                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+                FormatterConfig {
+                    line_length: 100,
+                    tab_width: 2,
+                    bracket_spacing: true,
+                    ..Default::default()
+                }
             );
 
             Ok(())

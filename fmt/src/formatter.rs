@@ -12,7 +12,7 @@ use crate::{
     macros::*,
     solang_ext::*,
     visit::{Visitable, Visitor},
-    FormatterConfig,
+    FormatterConfig, IntTypes,
 };
 
 /// A custom Error thrown by the Formatter
@@ -1560,11 +1560,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 Type::Payable => write_chunk!(self, loc.start(), "payable")?,
                 Type::Bool => write_chunk!(self, loc.start(), "bool")?,
                 Type::String => write_chunk!(self, loc.start(), "string")?,
-                Type::Int(n) => write_chunk!(self, loc.start(), "int{}", n)?,
-                Type::Uint(n) => write_chunk!(self, loc.start(), "uint{}", n)?,
                 Type::Bytes(n) => write_chunk!(self, loc.start(), "bytes{}", n)?,
                 Type::Rational => write_chunk!(self, loc.start(), "rational")?,
                 Type::DynamicBytes => write_chunk!(self, loc.start(), "bytes")?,
+                Type::Int(ref n) | Type::Uint(ref n) => {
+                    let int = if matches!(typ, Type::Int(_)) { "int" } else { "uint" };
+                    match n {
+                        256 => match self.config.int_types {
+                            IntTypes::Long => write_chunk!(self, loc.start(), "{int}{n}")?,
+                            IntTypes::Short => write_chunk!(self, loc.start(), "{int}")?,
+                            IntTypes::Preserve => self.visit_source(*loc)?,
+                        },
+                        _ => write_chunk!(self, loc.start(), "{int}{n}")?,
+                    }
+                }
                 Type::Mapping(loc, from, to) => {
                     write_chunk!(self, loc.start(), "mapping(")?;
                     from.visit(self)?;
@@ -2017,7 +2026,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         };
 
-        let attrs_multiline = params_multiline ||
+        let attrs_multiline = (self.config.func_attrs_with_params_multiline && params_multiline) ||
             !self.try_on_single_line(|fmt| {
                 write_attributes(fmt, false)?;
                 if !fmt.will_it_fit(if func.body.is_some() { " {" } else { ";" }) {
@@ -2893,31 +2902,29 @@ mod tests {
                     .map(|filename| filename.strip_suffix('.'))
                     .is_some()
                 {
-                    let mut config = FormatterConfig::default();
-
+                    let mut config = toml::Value::try_from(&FormatterConfig::default()).unwrap();
+                    let config_table = config.as_table_mut().unwrap();
                     let mut lines = source.split('\n').peekable();
+                    let mut line_num = 1;
                     while let Some(line) = lines.peek() {
                         let entry = line
                             .strip_prefix("//")
                             .and_then(|line| line.trim().strip_prefix("config:"))
                             .map(str::trim);
-                        if entry.is_none() {
-                            break
-                        }
+                        let entry = if let Some(entry) = entry { entry } else { break };
 
-                        if let Some((key, value)) = entry.unwrap().split_once('=') {
-                            match key {
-                                "line-length" => config.line_length = value.parse().unwrap(),
-                                "tab-width" => config.tab_width = value.parse().unwrap(),
-                                "bracket-spacing" => {
-                                    config.bracket_spacing = value.parse().unwrap()
-                                }
-                                _ => panic!("Unknown config key: {key}"),
-                            }
-                        }
+                        let values = match toml::from_str::<toml::Value>(entry) {
+                            Ok(toml::Value::Table(table)) => table,
+                            _ => panic!("Invalid config item in {filename} at {line_num}"),
+                        };
+                        config_table.extend(values);
 
+                        line_num += 1;
                         lines.next();
                     }
+                    let config = config
+                        .try_into()
+                        .unwrap_or_else(|err| panic!("Invalid config for {filename}: {err}"));
 
                     return Some((filename.to_string(), config, lines.join("\n")))
                 }
@@ -3046,4 +3053,5 @@ mod tests {
     test_directory! { ThisExpression }
     test_directory! { SimpleComments }
     test_directory! { LiteralExpression }
+    test_directory! { IntTypes }
 }

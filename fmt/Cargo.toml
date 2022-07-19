@@ -21,3 +21,4 @@ foundry-config = { path = "../config" }
 [dev-dependencies]
 pretty_assertions = "1.0.0"
 itertools = "0.10.3"
+toml = "0.5"
