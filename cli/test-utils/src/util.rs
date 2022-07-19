@@ -653,6 +653,7 @@ impl OutputExt for process::Output {
         let expected = fs::read_to_string(expected_path).unwrap();
         let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
         let stdout = String::from_utf8_lossy(&self.stdout);
+        dbg!(&stdout);
         let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
 
         pretty_assertions::assert_eq!(expected, out);

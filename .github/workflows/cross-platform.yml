@@ -1,6 +1,8 @@
 on:
-  workflow_dispatch:
-  workflow_call:
+  push:
+    branches:
+      - master
+  pull_request:
 
 name: cross-platform
 
@@ -71,19 +73,19 @@ jobs:
           wsl --install --distribution Ubuntu
         shell: pwsh
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: build
-          args: --verbose --locked --bins --tests
+#      - name: Build
+#        uses: actions-rs/cargo@v1
+#        with:
+#          use-cross: ${{ matrix.job.use-cross }}
+#          command: build
+#          args: --verbose --locked --bins --tests
 
-      - name: Run forge
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: run
-          args: --locked --bin forge -- --help
+#      - name: Run forge
+#        uses: actions-rs/cargo@v1
+#        with:
+#          use-cross: ${{ matrix.job.use-cross }}
+#          command: run
+#          args: --locked --bin forge -- --help
 
       - name: Run tests
         uses: actions-rs/cargo@v1
@@ -91,4 +93,4 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --locked --workspace -- --skip fork
+          args: --locked --workspace can_create_using_unlocked -- --nocapture

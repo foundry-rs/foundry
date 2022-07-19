@@ -180,6 +180,7 @@ forgetest_async!(can_create_using_unlocked, |prj: TestProject, mut cmd: TestComm
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let dev = handle.dev_accounts().next().unwrap();
+    println!("ACC {:?}", dev);
     cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
 
