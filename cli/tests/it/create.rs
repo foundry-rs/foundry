@@ -154,6 +154,9 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--unlocked",
             "./src/Contract.sol:Contract",
             "--use",
             "solc:0.8.15",
@@ -189,6 +192,9 @@ forgetest_async!(can_create_using_unlocked, |prj: TestProject, mut cmd: TestComm
 
     cmd.forge_fuse().args([
         "create",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--unlocked",
         "./src/Contract.sol:Contract",
         "--use",
         "solc:0.8.15",
@@ -196,7 +202,6 @@ forgetest_async!(can_create_using_unlocked, |prj: TestProject, mut cmd: TestComm
         rpc.as_str(),
         "--from",
         format!("{:?}", dev).as_str(),
-        "--unlocked",
     ]);
 
     cmd.unchecked_output().stdout_matches_path(
