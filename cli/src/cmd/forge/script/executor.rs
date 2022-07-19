@@ -152,7 +152,8 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = Backend::spawn(script_config.evm_opts.get_fork(env.clone()));
+        let db =
+            Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
 
         let executor = ExecutorBuilder::default()
             .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
