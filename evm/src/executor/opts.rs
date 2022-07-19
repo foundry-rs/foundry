@@ -127,7 +127,7 @@ impl EvmOpts {
     pub fn get_fork(&self, env: revm::Env) -> Option<CreateFork> {
         Some(CreateFork {
             url: self.fork_url.clone()?,
-            enable_caching: self.no_storage_caching,
+            enable_caching: !self.no_storage_caching,
             env,
             evm_opts: self.clone(),
         })
