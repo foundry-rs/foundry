@@ -304,6 +304,9 @@ Examples:
         #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256), value_name = "NONCE")]
         nonce: Option<U256>,
     },
+    Events {
+        rpc_url: Option<String>,
+    },
     #[clap(name = "namehash")]
     #[clap(visible_aliases = &["na", "nh"])]
     #[clap(about = "Calculate the ENS namehash of a name.")]
