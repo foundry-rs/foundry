@@ -81,30 +81,30 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
 
 See [YulStatement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L658-L670) enum in Solang
 
-- [ ] Assign
-- [ ] VariableDeclaration
-- [ ] If
-- [ ] For
-- [ ] Switch
-- [ ] Leave
-- [ ] Break
-- [ ] Continue
-- [ ] Block
-- [ ] FunctionDefinition
-- [ ] FunctionCall
+- [x] Assign
+- [x] VariableDeclaration
+- [x] If
+- [x] For
+- [x] Switch
+- [x] Leave
+- [x] Break
+- [x] Continue
+- [x] Block
+- [x] FunctionDefinition
+- [x] FunctionCall
 
 ### Yul Expressions
 
 See [YulExpression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L695-L704) enum in Solang
 
-- [ ] BoolLiteral
-- [ ] NumberLiteral
-- [ ] HexNumberLiteral
-- [ ] HexStringLiteral
-- [ ] StringLiteral
-- [ ] Variable
-- [ ] FunctionCall
-- [ ] Member
+- [x] BoolLiteral
+- [x] NumberLiteral
+- [x] HexNumberLiteral
+- [X] HexStringLiteral
+- [x] StringLiteral
+- [x] Variable
+- [x] FunctionCall
+- [x] SuffixAccess
 
 ### Other
 
