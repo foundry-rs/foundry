@@ -8,6 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::executor::fork::CreateFork;
 use foundry_common;
+use foundry_config::Config;
 
 use super::fork::environment;
 
@@ -124,13 +125,10 @@ impl EvmOpts {
     ///
     /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
     /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
-    pub fn get_fork(&self, env: revm::Env) -> Option<CreateFork> {
-        Some(CreateFork {
-            url: self.fork_url.clone()?,
-            enable_caching: self.no_storage_caching,
-            env,
-            evm_opts: self.clone(),
-        })
+    pub fn get_fork(&self, config: &Config, env: revm::Env) -> Option<CreateFork> {
+        let url = self.fork_url.clone()?;
+        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.as_u64());
+        Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
     }
 
     /// Returns the gas limit to use

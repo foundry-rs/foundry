@@ -75,7 +75,7 @@ impl RunArgs {
 
             // Set up the execution environment
             let env = evm_opts.evm_env().await;
-            let db = Backend::spawn(evm_opts.get_fork(env.clone()));
+            let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
             let builder = ExecutorBuilder::default()
                 .with_config(env)

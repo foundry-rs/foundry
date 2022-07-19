@@ -1,4 +1,4 @@
-//! Create command
+//! Install command
 use crate::{
     cmd::Cmd,
     opts::forge::Dependency,
