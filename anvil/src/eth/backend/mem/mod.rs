@@ -1427,6 +1427,7 @@ impl TransactionValidator for Backend {
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
+            warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
             return Err(InvalidTransactionError::FeeTooLow)
         }
 
