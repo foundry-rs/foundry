@@ -230,8 +230,8 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
 }
 
 fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
-    trace!("installing git submodule {:?} in {}", dep, target_dir);
-    let url = dep.url.as_ref().unwrap();
+    let url = dep.url.as_ref().ok_or_else(|| eyre::eyre!("No dependency url"))?;
+    trace!("installing git submodule {:?} in {} from `{}`", dep, target_dir, url);
 
     let output = Command::new("git")
         .args(&["submodule", "add", "--force", url, target_dir])
@@ -258,10 +258,15 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         eyre::bail!("{}", stderr.trim())
     }
 
-    Command::new("git")
+    trace!(?dep, "successfully installed");
+
+    let output = Command::new("git")
         .args(&["submodule", "update", "--init", "--recursive", target_dir])
         .current_dir(&libs)
-        .exec()?;
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, ?libs, "`git submodule update --init --recursive` {}", target_dir);
 
     Ok(())
 }
@@ -277,27 +282,35 @@ fn git_checkout(
         return Ok(String::new())
     }
 
-    let mut tag = dep.tag.as_ref().unwrap().clone();
+    let mut tag = dep.tag.clone().unwrap();
     let mut is_branch = false;
     // only try to match tag if current terminal is a tty
     if atty::is(Stream::Stdout) {
-        let branch = match_branch(&tag, libs, target_dir)?;
         if tag.is_empty() {
             tag = match_tag(&tag, libs, target_dir)?;
-        } else {
+        } else if let Some(branch) = match_branch(&tag, libs, target_dir)? {
+            trace!(?tag, ?branch, "selecting branch for given tag");
             tag = branch;
             is_branch = true;
         }
     }
     let url = dep.url.as_ref().unwrap();
 
-    let args = if recurse {
-        vec!["checkout", "--recurse-submodules", &tag]
-    } else {
-        vec!["checkout", &tag]
+    let checkout = |tag: &str| {
+        let args = if recurse {
+            vec!["checkout", "--recurse-submodules", tag]
+        } else {
+            vec!["checkout", tag]
+        };
+        trace!(?tag, ?recurse, "git checkout");
+        Command::new("git").args(args).current_dir(&libs.join(&target_dir)).output()
     };
-    let output = Command::new("git").args(args).current_dir(&libs.join(&target_dir)).output()?;
+
+    let output = checkout(&tag)?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, ?tag, "checked out");
+
     if !&output.status.success() {
         // remove dependency on failed checkout
         fs::remove_dir_all(libs.join(&target_dir))?;
@@ -402,29 +415,32 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     }
 }
 
-fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String> {
+fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option<String>> {
     // fetch remote branches and check for tag
     let output = Command::new("git")
         .args(&["branch", "-r"])
         .current_dir(&libs.join(&target_dir))
         .get_stdout_lossy()?;
-    let mut candidates: Vec<String> = output
+
+    let mut candidates = output
         .lines()
         .map(|x| x.trim().trim_start_matches("origin/"))
-        .filter(|x| x.starts_with(&tag.to_string()))
+        .filter(|x| x.starts_with(tag))
         .map(str::to_string)
         .rev()
-        .collect();
+        .collect::<Vec<_>>();
+
+    trace!(?candidates, ?tag, "found branch candidates");
 
     // no match found, fall back to the user-provided tag
     if candidates.is_empty() {
-        return Ok(String::new())
+        return Ok(None)
     }
 
     // have exact match
     for candidate in candidates.iter() {
-        if candidate == tag {
-            return Ok(tag.into())
+        if candidate.as_str() == tag {
+            return Ok(Some(tag.to_string()))
         }
     }
 
@@ -437,14 +453,14 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
         stdin().read_line(&mut input)?;
         input = input.trim().to_lowercase();
         return if input.is_empty() || input == "y" || input == "yes" {
-            Ok(matched_tag)
+            Ok(Some(matched_tag))
         } else {
-            Ok(String::new())
+            Ok(None)
         }
     }
 
     // multiple candidates, ask the user to choose one or skip
-    candidates.insert(0, tag.clone() + " (original branch)");
+    candidates.insert(0, format!("{} (original branch)", tag));
     println!("There are multiple matching branches:");
     for (i, candidate) in candidates.iter().enumerate() {
         println!("[{}] {}", i, candidate);
@@ -460,16 +476,16 @@ fn match_branch(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<Str
     // default selection, return first candidate
     if input.is_empty() {
         println!("cancel branch matching");
-        return Ok(String::new())
+        return Ok(None)
     }
 
     // match user input, 0 indicates skipping and use original tag
     match input.parse::<usize>() {
-        Ok(i) if i == 0 => Ok(tag.into()),
+        Ok(i) if i == 0 => Ok(Some(tag.to_string())),
         Ok(i) if (1..=n_candidates).contains(&i) => {
             println!("[{}] {} selected", i, candidates[i]);
-            Ok(candidates[i].clone())
+            Ok(Some(candidates.remove(i)))
         }
-        _ => Ok(String::new()),
+        _ => Ok(None),
     }
 }
