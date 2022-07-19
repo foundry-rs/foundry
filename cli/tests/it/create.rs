@@ -3,6 +3,7 @@
 use crate::utils::{self, EnvExternalities};
 use anvil::{spawn, NodeConfig};
 use ethers::{
+    signers::Signer,
     solc::{artifacts::BytecodeHash, remappings::Remapping},
     types::Address,
 };
@@ -179,8 +180,8 @@ forgetest_async!(
 forgetest_async!(can_create_using_unlocked, |prj: TestProject, mut cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
-    let dev = handle.dev_accounts().next().unwrap();
-    println!("ACC {:?}", dev);
+    let wallet = handle.dev_wallets().next().unwrap();
+    let dev = wallet.address();
     cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
 
