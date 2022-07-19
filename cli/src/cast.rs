@@ -201,7 +201,15 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-
+        Subcommands::Events { rpc_url, tx_hash } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = Provider::try_from(rpc_url)?;
+            if let Some(tx_hash) = tx_hash {
+                println!("{}", Cast::new(&provider).transaction(tx_hash, None, false).await?)
+            } else {
+                println!("No tx hash!");
+            }
+        }
         Subcommands::Call { address, sig, args, block, eth } => {
             let config = Config::from(&eth);
             let provider = Provider::try_from(
