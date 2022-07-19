@@ -20,6 +20,7 @@ use ethers::{
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
 };
+use serde_json::Value;
 use eyre::WrapErr;
 use foundry_common::fs;
 use foundry_config::Chain;
@@ -204,8 +205,18 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Events { rpc_url, tx_hash } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
-            if let Some(tx_hash) = tx_hash {
-                println!("{}", Cast::new(&provider).transaction(tx_hash, None, false).await?)
+            if let Some(hash) = tx_hash {
+                let logs = Cast::new(&provider).receipt(hash, Some(String::from("logs")), 0, false, true).await?;
+                let logs = serde_json::json!(logs);
+
+                match logs["topics"][0] {
+                    Value::String(t0) => {
+                        let sigs = decode_event_topic(&t0).await?;
+                        sigs.iter().for_each(|sig| println!("{}", sig));
+                    },
+                    _ => {}
+                }
+
             } else {
                 println!("No tx hash!");
             }
@@ -454,7 +465,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = format_tokens(&tokens);
+            let tokens format_tokens(&tokens);
             tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
