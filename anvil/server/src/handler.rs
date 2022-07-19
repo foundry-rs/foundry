@@ -40,7 +40,7 @@ pub async fn handle_request<Handler: RpcHandler>(
     /// processes batch calls
     fn responses_as_batch(outs: Vec<Option<RpcResponse>>) -> Option<Response> {
         let batch: Vec<_> = outs.into_iter().flatten().collect();
-        (!batch.is_empty()).then(|| Response::Batch(batch))
+        (!batch.is_empty()).then_some(Response::Batch(batch))
     }
 
     match req {
