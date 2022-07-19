@@ -626,7 +626,7 @@ mod tests {
 
         let db = BlockchainDb::new(
             meta,
-            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+            Some(Config::foundry_block_cache_file(Chain::Mainnet, block_num).unwrap()),
         );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
