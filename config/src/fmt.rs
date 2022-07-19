@@ -11,12 +11,13 @@ pub struct FormatterConfig {
     pub tab_width: usize,
     /// Print spaces between brackets
     pub bracket_spacing: bool,
-    /// Style of uint/int256 types. Either "long" (int256), "short" (int) or "preserve (do not
-    /// change where possible)
+    /// Style of uint/int256 types
     pub int_types: IntTypes,
     /// If function parameters are multiline then always put the function attributes on separate
     /// lines
     pub func_attrs_with_params_multiline: bool,
+    /// Style of quotation marks
+    pub quote_style: QuoteStyle,
 }
 
 /// Style of uint/int256 types
@@ -27,7 +28,19 @@ pub enum IntTypes {
     Long,
     /// Print the implicit uint or int
     Short,
-    /// Use the source code to decide
+    /// Use the type defined in the source code
+    Preserve,
+}
+
+/// Style of string quotes
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuoteStyle {
+    /// Use double quotes where possible
+    Double,
+    /// Use single quotes where possible
+    Single,
+    /// Use quotation mark defined in the source code
     Preserve,
 }
 
@@ -39,6 +52,7 @@ impl Default for FormatterConfig {
             bracket_spacing: false,
             int_types: IntTypes::Long,
             func_attrs_with_params_multiline: true,
+            quote_style: QuoteStyle::Double,
         }
     }
 }

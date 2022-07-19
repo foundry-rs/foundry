@@ -11,6 +11,7 @@ use crate::{
     comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
+    string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
     FormatterConfig, IntTypes,
 };
@@ -213,6 +214,17 @@ impl<W: Sized> FormatBuffer<W> {
     fn last_char(&self) -> Option<char> {
         self.last_char
     }
+
+    /// When writing a newline apply state changes
+    fn handle_newline(&mut self, mut comment_state: CommentState) {
+        if comment_state == CommentState::Line {
+            comment_state = CommentState::None;
+        }
+        self.current_line_len = 0;
+        self.set_last_indent_group_skipped(false);
+        self.last_char = Some('\n');
+        self.state = WriteState::LineStart(comment_state);
+    }
 }
 
 impl<W: Write> FormatBuffer<W> {
@@ -237,6 +249,8 @@ impl<W: Write> FormatBuffer<W> {
             let trimmed_line = &line[line_start..];
             if !trimmed_line.is_empty() {
                 self.w.write_str(trimmed_line)?;
+                self.current_line_len += trimmed_line.len();
+                self.last_char = trimmed_line.chars().next_back();
                 self.state = WriteState::WriteTokens(comment_state);
             }
             if lines.peek().is_some() {
@@ -244,10 +258,7 @@ impl<W: Write> FormatBuffer<W> {
                     return Err(std::fmt::Error)
                 }
                 self.w.write_char('\n')?;
-                if comment_state == CommentState::Line {
-                    comment_state = CommentState::None;
-                }
-                self.state = WriteState::LineStart(comment_state);
+                self.handle_newline(comment_state);
             }
         }
         Ok(())
@@ -271,12 +282,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                         None => {
                             if !s.is_empty() {
                                 self.w.write_str(s)?;
-                                self.current_line_len = 0;
-                                self.last_char = s.chars().next_back();
-                                self.set_last_indent_group_skipped(false);
-                                if comment_state == CommentState::Line {
-                                    self.state = WriteState::LineStart(CommentState::None);
-                                }
+                                self.handle_newline(comment_state);
                             }
                             break
                         }
@@ -341,30 +347,28 @@ impl<W: Write> Write for FormatBuffer<W> {
                     } else {
                         // A newline or string has been found. Write up to that character and
                         // continue on the tail
-                        let (head, tail) = s.split_at(len);
+                        let (head, tail) = s.split_at(len + 1);
                         self.w.write_str(head)?;
-                        self.current_line_len += head.len();
-                        self.last_char = head.chars().next_back();
                         s = tail;
-                        self.state = new_state;
+                        match new_state {
+                            WriteState::LineStart(comment_state) => {
+                                self.handle_newline(comment_state)
+                            }
+                            new_state => {
+                                self.current_line_len += head.len();
+                                self.last_char = head.chars().next_back();
+                                self.state = new_state;
+                            }
+                        }
                     }
                 }
                 WriteState::WriteString(quote) => {
-                    // find the end of the string
-                    let mut str_end = None;
-                    let mut chars = s.char_indices().skip(1).peekable();
-                    while let Some((idx, ch)) = chars.next() {
-                        if ch == '\\' {
-                            chars.next();
-                            continue
-                        }
-                        if ch == quote {
-                            str_end = Some(idx);
-                            break
-                        }
-                    }
-
-                    match str_end {
+                    match s
+                        .quote_state_char_indices()
+                        .with_state(QuoteState::String(quote))
+                        .into_ranges()
+                        .next()
+                    {
                         // No end found, write the rest of the string
                         None => {
                             self.w.write_str(s)?;
@@ -373,7 +377,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                             break
                         }
                         // String end found, write the string and continue to add tokens after
-                        Some(len) => {
+                        Some((_, _, len)) => {
                             let (head, tail) = s.split_at(len + 1);
                             self.w.write_str(head)?;
                             self.current_line_len += head.len();
