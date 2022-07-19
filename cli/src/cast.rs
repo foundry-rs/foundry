@@ -209,7 +209,7 @@ async fn main() -> eyre::Result<()> {
                 let logs = Cast::new(&provider).receipt(hash, Some(String::from("logs")), 0, false, true).await?;
                 let logs = serde_json::json!(logs);
 
-                match logs["topics"][0] {
+                match logs[0]["topics"][0] {
                     Value::String(t0) => {
                         let sigs = decode_event_topic(&t0).await?;
                         sigs.iter().for_each(|sig| println!("{}", sig));
