@@ -332,12 +332,15 @@ pub trait Visitor {
         self.visit_source(expr.loc())
     }
 
-    fn visit_yul_assignment(
+    fn visit_yul_assignment<T>(
         &mut self,
         loc: Loc,
-        _exprs: &mut Vec<YulExpression>,
-        _expr: &mut YulExpression,
-    ) -> Result<(), Self::Error> {
+        _exprs: &mut Vec<T>,
+        _expr: &mut Option<&mut YulExpression>,
+    ) -> Result<(), Self::Error>
+    where
+        T: Visitable + LineOfCode,
+    {
         self.visit_source(loc)
     }
 
@@ -577,7 +580,9 @@ impl Visitable for YulStatement {
         V: Visitor,
     {
         match self {
-            YulStatement::Assign(loc, exprs, expr) => v.visit_yul_assignment(*loc, exprs, expr),
+            YulStatement::Assign(loc, exprs, expr) => {
+                v.visit_yul_assignment(*loc, exprs, &mut Some(expr))
+            }
             YulStatement::Block(block) => {
                 v.visit_yul_block(block.loc, block.statements.as_mut(), false)
             }

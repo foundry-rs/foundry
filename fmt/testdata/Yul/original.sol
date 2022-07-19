@@ -135,5 +135,7 @@ contract Yul {
             let val1, val2, val3, val4, val5, val6, val7
             val1, val2, val3, val4, val5, val6, val7 := functionThatReturnsSevenValuesAndCanBeUsedInAssignment()
         }
+
+        assembly { a := 1 /* some really really really long comment that should not fit in one line */  }
     }
 }

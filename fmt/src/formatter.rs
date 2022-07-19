@@ -1225,6 +1225,8 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
+    /// Visit the block item surrounded by curly braces
+    /// where each line is indented.
     fn visit_block<T>(&mut self, loc: Loc, statements: &mut Vec<T>) -> Result<()>
     where
         T: Visitable + LineOfCode,
@@ -2900,9 +2902,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if attempt_single_line && statements.len() == 1 {
             let chunk = self.chunked(loc.start(), Some(loc.end()), |fmt| {
                 write!(fmt.buf(), "{{ ")?;
-                for stmt in statements.iter_mut() {
-                    stmt.visit(fmt)?;
-                }
+                statements.first_mut().unwrap().visit(fmt)?;
                 write!(fmt.buf(), " }}")?;
                 Ok(())
             })?;
@@ -2914,12 +2914,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.visit_block(loc, statements)
     }
 
-    fn visit_yul_assignment(
+    fn visit_yul_assignment<T>(
         &mut self,
         loc: Loc,
-        exprs: &mut Vec<YulExpression>,
-        expr: &mut YulExpression,
-    ) -> Result<(), Self::Error> {
+        exprs: &mut Vec<T>,
+        expr: &mut Option<&mut YulExpression>,
+    ) -> Result<(), Self::Error>
+    where
+        T: Visitable + LineOfCode,
+    {
         self.grouped(|fmt| {
             let chunks =
                 fmt.items_to_chunks(None, exprs.iter_mut().map(|expr| Ok((expr.loc(), expr))))?;
@@ -2927,12 +2930,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let multiline = fmt.are_chunks_separated_multiline("{} := ", &chunks, ",")?;
             fmt.write_chunks_separated(&chunks, ",", multiline)?;
 
-            write_chunk!(fmt, expr.loc().start(), ":=")?;
-            let chunk = fmt.visit_to_chunk(expr.loc().start(), Some(loc.end()), expr)?;
-            if !fmt.will_chunk_fit("{}", &chunk)? {
-                fmt.write_whitespace_separator(true)?;
+            if let Some(expr) = expr {
+                write_chunk!(fmt, expr.loc().start(), ":=")?;
+                let chunk = fmt.visit_to_chunk(expr.loc().start(), Some(loc.end()), expr)?;
+                if !fmt.will_chunk_fit("{}", &chunk)? {
+                    fmt.write_whitespace_separator(true)?;
+                }
+                fmt.write_chunk(&chunk)?;
             }
-            fmt.write_chunk(&chunk)?;
             Ok(())
         })?;
         Ok(())
@@ -3066,22 +3071,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), "let")?;
-            let chunks =
-                fmt.items_to_chunks(None, idents.iter_mut().map(|ident| Ok((ident.loc, ident))))?;
-
-            let format_string = if expr.is_some() { "{} := " } else { "{}" };
-            let multiline = fmt.are_chunks_separated_multiline(format_string, &chunks, ",")?;
-            fmt.write_chunks_separated(&chunks, ",", multiline)?;
-
-            if let Some(expr) = expr {
-                write_chunk!(fmt, expr.loc().start(), ":=")?;
-                let chunk = fmt.visit_to_chunk(expr.loc().start(), Some(loc.end()), expr)?;
-                if !fmt.will_chunk_fit("{}", &chunk)? {
-                    fmt.write_whitespace_separator(true)?;
-                }
-                fmt.write_chunk(&chunk)?;
-            }
-            Ok(())
+            fmt.visit_yul_assignment(loc, idents, &mut expr.as_mut())
         })?;
         Ok(())
     }
