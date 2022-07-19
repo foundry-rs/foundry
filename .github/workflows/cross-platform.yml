@@ -93,4 +93,4 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --locked --workspace can_create_using_unlocked -- --nocapture
+          args: --locked --workspace -- --nocapture
