@@ -585,6 +585,12 @@ impl Config {
                     let v = version.to_string();
                     let mut solc = Solc::find_svm_installed_version(&v)?;
                     if solc.is_none() {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solc {} in offline mode",
+                                version
+                            )))
+                        }
                         Solc::blocking_install(version)?;
                         solc = Solc::find_svm_installed_version(&v)?;
                     }
