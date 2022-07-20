@@ -500,7 +500,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         .initial_balance(evm_opts.initial_balance)
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
-        .with_fork(evm_opts.get_fork(env.clone()))
+        .with_fork(evm_opts.get_fork(&config, env.clone()))
         .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
         .build(project.paths.root, output, env, evm_opts)?;
 

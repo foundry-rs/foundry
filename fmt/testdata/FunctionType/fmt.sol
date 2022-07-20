@@ -1,4 +1,4 @@
-// config: line-length=90
+// config: line_length = 90
 library ArrayUtils {
     function map(uint256[] memory self, function (uint) pure returns (uint) f)
         internal

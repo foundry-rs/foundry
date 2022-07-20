@@ -17,7 +17,7 @@ pub struct GasReport {
 pub struct ContractInfo {
     pub gas: U256,
     pub size: U256,
-    pub functions: BTreeMap<String, GasInfo>,
+    pub functions: BTreeMap<String, BTreeMap<String, GasInfo>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -65,13 +65,15 @@ impl GasReport {
                         contract_report.size = bytes.len().into();
                     }
                     // TODO: More robust test contract filtering
-                    RawOrDecodedCall::Decoded(func, _)
+                    RawOrDecodedCall::Decoded(func, sig, _)
                         if !func.starts_with("test") && func != "setUp" =>
                     {
                         let function_report = contract_report
                             .functions
                             .entry(func.clone())
-                            .or_insert_with(Default::default);
+                            .or_default()
+                            .entry(sig.clone())
+                            .or_default();
                         function_report.calls.push(trace.gas_cost.into());
                     }
                     _ => (),
@@ -87,23 +89,25 @@ impl GasReport {
     #[must_use]
     pub fn finalize(mut self) -> Self {
         self.contracts.iter_mut().for_each(|(_, contract)| {
-            contract.functions.iter_mut().for_each(|(_, func)| {
-                func.calls.sort();
-                func.min = func.calls.first().cloned().unwrap_or_default();
-                func.max = func.calls.last().cloned().unwrap_or_default();
-                func.mean =
-                    func.calls.iter().fold(U256::zero(), |acc, x| acc + x) / func.calls.len();
+            contract.functions.iter_mut().for_each(|(_, sigs)| {
+                sigs.iter_mut().for_each(|(_, func)| {
+                    func.calls.sort();
+                    func.min = func.calls.first().cloned().unwrap_or_default();
+                    func.max = func.calls.last().cloned().unwrap_or_default();
+                    func.mean =
+                        func.calls.iter().fold(U256::zero(), |acc, x| acc + x) / func.calls.len();
 
-                let len = func.calls.len();
-                func.median = if len > 0 {
-                    if len % 2 == 0 {
-                        (func.calls[len / 2 - 1] + func.calls[len / 2]) / 2
+                    let len = func.calls.len();
+                    func.median = if len > 0 {
+                        if len % 2 == 0 {
+                            (func.calls[len / 2 - 1] + func.calls[len / 2]) / 2
+                        } else {
+                            func.calls[len / 2]
+                        }
                     } else {
-                        func.calls[len / 2]
-                    }
-                } else {
-                    0.into()
-                };
+                        0.into()
+                    };
+                });
             });
         });
         self
@@ -136,15 +140,21 @@ impl Display for GasReport {
                 Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
                 Cell::new("# calls").add_attribute(Attribute::Bold),
             ]);
-            contract.functions.iter().for_each(|(fname, function)| {
-                table.add_row(vec![
-                    Cell::new(fname.to_string()).add_attribute(Attribute::Bold),
-                    Cell::new(function.min.to_string()).fg(Color::Green),
-                    Cell::new(function.mean.to_string()).fg(Color::Yellow),
-                    Cell::new(function.median.to_string()).fg(Color::Yellow),
-                    Cell::new(function.max.to_string()).fg(Color::Red),
-                    Cell::new(function.calls.len().to_string()),
-                ]);
+            contract.functions.iter().for_each(|(fname, sigs)| {
+                sigs.iter().for_each(|(sig, function)| {
+                    // show function signature if overloaded else name
+                    let fn_display =
+                        if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
+
+                    table.add_row(vec![
+                        Cell::new(fn_display).add_attribute(Attribute::Bold),
+                        Cell::new(function.min.to_string()).fg(Color::Green),
+                        Cell::new(function.mean.to_string()).fg(Color::Yellow),
+                        Cell::new(function.median.to_string()).fg(Color::Yellow),
+                        Cell::new(function.max.to_string()).fg(Color::Red),
+                        Cell::new(function.calls.len().to_string()),
+                    ]);
+                })
             });
             writeln!(f, "{}", table)?
         }

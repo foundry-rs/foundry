@@ -123,7 +123,10 @@ impl CallTraceNode {
             } else {
                 Vec::new()
             };
-            self.trace.data = RawOrDecodedCall::Decoded(func.name.clone(), inputs);
+
+            // add signature to decoded calls for better calls filtering
+            self.trace.data =
+                RawOrDecodedCall::Decoded(func.name.clone(), func.signature(), inputs);
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
                 if !bytes.is_empty() {
@@ -164,6 +167,7 @@ impl CallTraceNode {
             self.trace.label = Some("PRECOMPILE".to_string());
             self.trace.data = RawOrDecodedCall::Decoded(
                 precompile_fn.name.clone(),
+                precompile_fn.signature(),
                 precompile_fn.decode_input(&bytes[..]).map_or_else(
                     |_| vec![hex::encode(&bytes)],
                     |tokens| tokens.iter().map(|token| utils::label(token, labels)).collect(),

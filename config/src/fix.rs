@@ -209,7 +209,8 @@ mod tests {
             $(#[$meta])*
             fn $name() {
                 Jail::expect_with(|jail| {
-                    // setup home directory
+                    // setup home directory,
+                    // **Note** this only has an effect on unix, as [`dirs_next::home_dir()`] on windows uses `FOLDERID_Profile`
                     jail.set_env("HOME", jail.directory().display().to_string());
                     std::fs::create_dir(jail.directory().join(".foundry")).unwrap();
 
@@ -281,36 +282,41 @@ mod tests {
         Ok(())
     });
 
-    fix_test!(test_gloabl_toml_is_edited, |jail| {
-        jail.create_file(
-            "foundry.toml",
-            r#"
+    // mocking the `$HOME` has no effect on windows, see [`dirs_next::home_dir()`]
+    fix_test!(
+        #[cfg(not(windows))]
+        test_gloabl_toml_is_edited,
+        |jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
                 [other]
                 src = "other-src"
             "#,
-        )?;
-        jail.create_file(
-            ".foundry/foundry.toml",
-            r#"
+            )?;
+            jail.create_file(
+                ".foundry/foundry.toml",
+                r#"
                 [default]
                 src = "src"
             "#,
-        )?;
-        fix_tomls();
-        assert_eq!(
-            fs::read_to_string("foundry.toml").unwrap(),
-            r#"
+            )?;
+            fix_tomls();
+            assert_eq!(
+                fs::read_to_string("foundry.toml").unwrap(),
+                r#"
                 [profile.other]
                 src = "other-src"
             "#
-        );
-        assert_eq!(
-            fs::read_to_string(".foundry/foundry.toml").unwrap(),
-            r#"
+            );
+            assert_eq!(
+                fs::read_to_string(".foundry/foundry.toml").unwrap(),
+                r#"
                 [profile.default]
                 src = "src"
             "#
-        );
-        Ok(())
-    });
+            );
+            Ok(())
+        }
+    );
 }
