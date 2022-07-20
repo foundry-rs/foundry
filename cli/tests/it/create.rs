@@ -139,6 +139,7 @@ forgetest!(can_create_oracle_on_goerli, |prj: TestProject, cmd: TestCommand| {
 
 // tests that we can deploy the template contract
 forgetest_async!(
+    #[serial_test::serial]
     can_create_template_contract,
     |prj: TestProject, mut cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -176,36 +177,40 @@ forgetest_async!(
 );
 
 // tests that we can deploy the template contract
-forgetest_async!(can_create_using_unlocked, |prj: TestProject, mut cmd: TestCommand| async move {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let rpc = handle.http_endpoint();
-    let dev = handle.dev_accounts().next().unwrap();
-    cmd.args(["init", "--force"]);
-    cmd.assert_non_empty_stdout();
+forgetest_async!(
+    #[serial_test::serial]
+    can_create_using_unlocked,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let rpc = handle.http_endpoint();
+        let dev = handle.dev_accounts().next().unwrap();
+        cmd.args(["init", "--force"]);
+        cmd.assert_non_empty_stdout();
 
-    // explicitly byte code hash for consistent checks
-    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-    prj.write_config(config);
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
 
-    cmd.forge_fuse().args([
-        "create",
-        "./src/Contract.sol:Contract",
-        "--use",
-        "solc:0.8.15",
-        "--rpc-url",
-        rpc.as_str(),
-        "--from",
-        format!("{:?}", dev).as_str(),
-        "--unlocked",
-    ]);
+        cmd.forge_fuse().args([
+            "create",
+            "./src/Contract.sol:Contract",
+            "--use",
+            "solc:0.8.15",
+            "--rpc-url",
+            rpc.as_str(),
+            "--from",
+            format!("{:?}", dev).as_str(),
+            "--unlocked",
+        ]);
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked.stdout"),
-    );
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_using_unlocked.stdout"),
+        );
 
-    cmd.unchecked_output().stdout_matches_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
-    );
-});
+        cmd.unchecked_output().stdout_matches_path(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/can_create_using_unlocked-2nd.stdout"),
+        );
+    }
+);
