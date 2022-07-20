@@ -41,9 +41,6 @@ impl<'a> QuoteStateCharIndices<'a> {
         self.state = state;
         self
     }
-    pub fn into_ranges(self) -> QuotedRanges<'a> {
-        QuotedRanges(self)
-    }
 }
 
 impl<'a> Iterator for QuoteStateCharIndices<'a> {
@@ -76,6 +73,13 @@ impl<'a> Iterator for QuoteStateCharIndices<'a> {
 /// An iterator over the the indices of quoted string locations
 pub struct QuotedRanges<'a>(QuoteStateCharIndices<'a>);
 
+impl<'a> QuotedRanges<'a> {
+    pub fn with_state(mut self, state: QuoteState) -> Self {
+        self.0 = self.0.with_state(state);
+        self
+    }
+}
+
 impl<'a> Iterator for QuotedRanges<'a> {
     type Item = (char, usize, usize);
     fn next(&mut self) -> Option<Self::Item> {
@@ -101,9 +105,25 @@ impl<'a> Iterator for QuotedRanges<'a> {
 
 /// Helpers for iterating over quoted strings
 pub trait QuotedStringExt {
+    /// Get an iterator of characters, indices and their quoted string state
     fn quote_state_char_indices(&self) -> QuoteStateCharIndices;
+    /// Get an iterator of quoted string ranges
     fn quoted_ranges(&self) -> QuotedRanges {
         QuotedRanges(self.quote_state_char_indices())
+    }
+    /// Check to see if a string is quoted. This will return true if the first character
+    /// is a quote and the last character is a quote with no non-quoted sections in between.
+    fn is_quoted(&self) -> bool {
+        let mut iter = self.quote_state_char_indices();
+        if !matches!(iter.next(), Some((QuoteState::Opening(_), _, _))) {
+            return false
+        }
+        while let Some((state, _, _)) = iter.next() {
+            if matches!(state, QuoteState::Closing(_)) {
+                return iter.next().is_none()
+            }
+        }
+        false
     }
 }
 

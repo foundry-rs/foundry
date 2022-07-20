@@ -21,7 +21,7 @@ pub struct FormatterConfig {
 }
 
 /// Style of uint/int256 types
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntTypes {
     /// Print the explicit uint256 or int256
@@ -33,7 +33,7 @@ pub enum IntTypes {
 }
 
 /// Style of string quotes
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuoteStyle {
     /// Use double quotes where possible
@@ -42,6 +42,17 @@ pub enum QuoteStyle {
     Single,
     /// Use quotation mark defined in the source code
     Preserve,
+}
+
+impl QuoteStyle {
+    /// Get associated quotation mark with option
+    pub fn quote(self) -> Option<char> {
+        match self {
+            QuoteStyle::Double => Some('"'),
+            QuoteStyle::Single => Some('\''),
+            QuoteStyle::Preserve => None,
+        }
+    }
 }
 
 impl Default for FormatterConfig {

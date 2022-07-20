@@ -1,3 +1,4 @@
+// config: quote_style = "preserve"
 contract LiteralExpressions {
     function test() external {
         // bool literals
@@ -41,14 +42,14 @@ some words"; /* comment10 */
         // quoted strings
         'hello "world"';
         "hello 'world'";
-        "hello \'world\'";
+        'hello \'world\'';
         "hello \"world\"";
-        "hello \"world\"";
+        'hello \"world\"';
         "hello \'world\'";
 
         // hex literals
         hex"001122FF";
-        hex"001122FF";
+        hex'001122FF';
         hex"00112233" hex"44556677";
 
         // address literals
