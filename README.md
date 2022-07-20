@@ -46,12 +46,12 @@ For people that want to install from source, you can do so like below:
 git clone https://github.com/foundry-rs/foundry
 cd foundry
 # install cast + forge
-cargo install --path ./cli --bins --locked --force
+cargo install --path ./cli --profile local --bins --locked --force
 # install anvil
-cargo install --path ./anvil --locked --force
+cargo install --path ./anvil --profile local --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`.
+Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil`.
 
 ### Installing for CI in Github Action
 
@@ -101,7 +101,6 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 | Project                         | Forge | DappTools | Speedup |
 | ------------------------------- | ----- | --------- | ------- |
-| [maple-labs/loan][loan]         | 800ms | 4m28s     | 335x    |
 | [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
 | [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
 | [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
@@ -110,7 +109,7 @@ _Note: In the above benchmarks, compilation was always skipped_
 
 **Compilation Benchmarks**
 
-<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" height="420px" />
+<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" width="693px" />
 
 **Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 
@@ -203,7 +202,6 @@ If you want to contribute, or follow along with contributor discussion, you can 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
-[loan]: https://github.com/maple-labs/loan
 [solmate]: https://github.com/Rari-Capital/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [vaults]: https://github.com/rari-capital/vaults

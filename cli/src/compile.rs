@@ -135,6 +135,12 @@ impl ProjectCompiler {
     {
         let ProjectCompiler { print_sizes, print_names } = self;
 
+        if !project.paths.has_input_files() {
+            println!("Nothing to compile");
+            // nothing to do here
+            std::process::exit(0);
+        }
+
         let now = std::time::Instant::now();
         tracing::trace!(target : "forge::compile", "start compiling project");
 
@@ -241,7 +247,9 @@ pub fn compile_files(
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
-    println!("{output}");
+    if !silent {
+        println!("{output}");
+    }
     Ok(output)
 }
 
@@ -250,6 +258,8 @@ pub fn compile_files(
 /// If `silent` no solc related output will be emitted to stdout.
 ///
 /// If `verify` and it's a standalone script, throw error. Only allowed for projects.
+///
+/// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target(
     target_path: &Path,
     project: &Project,

@@ -1,12 +1,12 @@
 //! Cast
 //!
-//! TODO
+//! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, HumanReadableParser, Token,
+        Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units, rlp},
@@ -17,14 +17,15 @@ use eyre::{Context, Result};
 use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr};
 use rustc_hex::{FromHexIter, ToHex};
-use serde_json::Value;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    ops::{Shl, Shr},
+    path::PathBuf,
+    str::FromStr,
+};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-mod print_utils;
 mod rlp_converter;
 mod tx;
 
@@ -141,9 +142,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list<'a>(
+    pub async fn access_list(
         &self,
-        builder_output: TxBuilderPeekOutput<'a>,
+        builder_output: TxBuilderPeekOutput<'_>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
@@ -268,7 +269,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate<'a>(&self, builder_output: TxBuilderPeekOutput<'a>) -> Result<U256> {
+    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
         let res = self.provider.estimate_gas(tx).await?;
@@ -304,7 +305,7 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                get_pretty_block_attr(block, field)
+                get_pretty_block_attr(&block, field)
                     .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -322,7 +323,7 @@ where
                 if field == "transactions" {
                     "use --full to view transactions".to_string()
                 } else {
-                    get_pretty_block_attr(block, field)
+                    get_pretty_block_attr(&block, field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
@@ -550,7 +551,7 @@ where
         };
 
         let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(transaction_result, field)
+            get_pretty_tx_attr(&transaction_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
@@ -617,7 +618,7 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(receipt_result, field)
+            get_pretty_tx_receipt_attr(&receipt_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
         } else if to_json {
             serde_json::to_string(&receipt)?
@@ -850,6 +851,26 @@ impl SimpleCast {
         Ok(U256::MAX)
     }
 
+    pub fn right_shift(value: &str) -> Result<U256> {
+        let value = if value.starts_with("0x") {
+            U256::from_str_radix(value, 16).expect("Unable to convert hex to U256")
+        } else {
+            U256::from_str_radix(value, 10).expect("Unable to convert decimal to U256")
+        };
+
+        Ok(value.shr(1))
+    }
+
+    pub fn left_shift(value: &str) -> Result<U256> {
+        let value = if value.starts_with("0x") {
+            U256::from_str_radix(value, 16).expect("Unable to convert hex to U256")
+        } else {
+            U256::from_str_radix(value, 10).expect("Unable to convert decimal to U256")
+        };
+
+        Ok(value.shl(1))
+    }
+
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// ```
@@ -921,11 +942,32 @@ impl SimpleCast {
     ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("constructor(uint a)", &["1"]).unwrap().as_str()
+    ///     );
     /// #    Ok(())
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = HumanReadableParser::parse_function(sig)?;
+        let func = match HumanReadableParser::parse_function(sig) {
+            Ok(func) => func,
+            Err(err) => {
+                if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                    #[allow(deprecated)]
+                    Function {
+                        name: "constructor".to_string(),
+                        inputs: constructor.inputs,
+                        outputs: vec![],
+                        constant: None,
+                        state_mutability: Default::default(),
+                    }
+                } else {
+                    // we return the `Function` parse error as this case is more likely
+                    return Err(err.into())
+                }
+            }
+        };
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
@@ -1122,7 +1164,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }

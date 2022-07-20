@@ -8,13 +8,12 @@ use ethers::{
     solc::{
         artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
+        info::ContractInfo,
+        Artifact, ProjectCompileOutput,
     },
 };
-
 use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
-
-use ethers::solc::{info::ContractInfo, AggregatedCompilerOutput, Artifact};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
@@ -28,18 +27,15 @@ pub trait Cmd: clap::Parser + Sized {
 /// Runtime Bytecode of the given contract.
 #[track_caller]
 pub fn remove_contract(
-    output: &mut AggregatedCompilerOutput,
+    output: &mut ProjectCompileOutput,
     info: &ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
         let mut err = format!("could not find artifact: `{}`", info.name);
-        if let Some(suggestion) = suggestions::did_you_mean(
-            &info.name,
-            output.contracts.contracts().map(|(name, _)| name),
-        )
-        .pop()
+        if let Some(suggestion) =
+            suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
         {
             err = format!(
                 r#"{}
@@ -116,7 +112,7 @@ pub fn get_cached_entry_by_name(
 pub struct RetryArgs {
     #[clap(
         long,
-        help = "Number of attempts for retrying",
+        help = "Number of attempts for retrying verification",
         default_value = "1",
         validator = u32_validator(1, 10),
         value_name = "RETRIES"
@@ -125,7 +121,7 @@ pub struct RetryArgs {
 
     #[clap(
         long,
-        help = "Optional timeout to apply inbetween attempts in seconds.",
+        help = "Optional delay to apply inbetween verification attempts in seconds.",
         validator = u32_validator(0, 30),
         value_name = "DELAY"
     )]

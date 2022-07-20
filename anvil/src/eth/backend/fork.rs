@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
-use anvil_core::eth::call::CallRequest;
+use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
     prelude::{BlockNumber, Http, Provider},
     providers::{Middleware, ProviderError, RetryClient},
@@ -57,7 +57,12 @@ impl ClientFork {
 
         if let Some(url) = url {
             self.config.write().update_url(url)?;
-            let chain_id = self.provider().get_chainid().await?;
+            let override_chain_id = self.config.read().override_chain_id;
+            let chain_id = if let Some(chain_id) = override_chain_id {
+                chain_id.into()
+            } else {
+                self.provider().get_chainid().await?
+            };
             self.config.write().chain_id = chain_id.as_u64();
         }
 
@@ -137,7 +142,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn call(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<Bytes, ProviderError> {
         let tx = ethers::utils::serialize(request);
@@ -148,7 +153,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn estimate_gas(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<U256, ProviderError> {
         let tx = ethers::utils::serialize(request);
@@ -159,7 +164,7 @@ impl ClientFork {
     /// Sends `eth_call`
     pub async fn create_access_list(
         &self,
-        request: &CallRequest,
+        request: &EthTransactionRequest,
         block: Option<BlockNumber>,
     ) -> Result<AccessListWithGasUsed, ProviderError> {
         let tx = ethers::utils::serialize(request);
@@ -393,6 +398,7 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<RetryClient<Http>>>,
     pub chain_id: u64,
+    pub override_chain_id: Option<u64>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

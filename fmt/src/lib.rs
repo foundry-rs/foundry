@@ -6,6 +6,8 @@ mod macros;
 pub mod solang_ext;
 mod visit;
 
+pub use foundry_config::FormatterConfig;
+
 pub use comments::Comments;
-pub use formatter::{Formatter, FormatterConfig, FormatterError};
+pub use formatter::{Formatter, FormatterError};
 pub use visit::{Visitable, Visitor};

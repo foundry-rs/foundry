@@ -98,7 +98,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten)]
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
     pub retry: RetryArgs,
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
@@ -199,6 +199,7 @@ impl VerifyArgs {
             revert_strings: None,
             silent: false,
             build_info: false,
+            build_info_path: None,
         };
 
         let project = build_args.project()?;
@@ -261,7 +262,7 @@ impl VerifyArgs {
     /// Parse the compiler version.
     /// The priority desc:
     ///     1. Through CLI arg `--compiler-version`
-    ///     2. `solc` defined in foundry.toml  
+    ///     2. `solc` defined in foundry.toml
     fn compiler_version(
         &self,
         config: &Config,

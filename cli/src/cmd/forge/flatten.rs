@@ -46,6 +46,7 @@ impl Cmd for FlattenArgs {
             revert_strings: None,
             silent: false,
             build_info: false,
+            build_info_path: None,
         };
 
         let config = Config::from(&build_args);

@@ -1,5 +1,5 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::cmd::forge::{create::RETRY_VERIFY_ON_CREATE, verify};
+use crate::cmd::forge::verify;
 use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use ethers::{
     abi::{Abi, Address},
@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::trace;
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -58,29 +59,26 @@ impl ScriptSequence {
         })
     }
 
+    /// Loads The sequence for the correspondng json file
     pub fn load(
         config: &Config,
         sig: &str,
         target: &ArtifactId,
         chain_id: u64,
     ) -> eyre::Result<Self> {
-        let file = fs::read_to_string(ScriptSequence::get_path(
-            &config.broadcast,
-            sig,
-            target,
-            chain_id,
-        )?)?;
-        serde_json::from_str(&file).map_err(|e| e.into())
+        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
+    /// Saves the transactions as files
     pub fn save(&mut self) -> eyre::Result<()> {
         if !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             let path = self.path.to_string_lossy();
             //../run-latest.json
-            serde_json::to_writer(BufWriter::new(fs::create_file(&self.path)?), &self)?;
+            serde_json::to_writer_pretty(BufWriter::new(fs::create_file(&self.path)?), &self)?;
             //../run-[timestamp].json
-            serde_json::to_writer(
+            serde_json::to_writer_pretty(
                 BufWriter::new(fs::create_file(
                     path.replace("latest.json", &format!("{}.json", self.timestamp)),
                 )?),
@@ -97,17 +95,9 @@ impl ScriptSequence {
         self.receipts.push(receipt);
     }
 
+    /// Sorts all receipts with ascending transaction index
     pub fn sort_receipts(&mut self) {
-        self.receipts.sort_by(|a, b| {
-            // Safe since `block_number` is present in receipts.
-            let ablock = a.block_number.unwrap();
-            let bblock = b.block_number.unwrap();
-            if ablock == bblock {
-                a.transaction_index.cmp(&b.transaction_index)
-            } else {
-                ablock.cmp(&bblock)
-            }
-        });
+        self.receipts.sort_unstable()
     }
 
     pub fn add_pending(&mut self, index: usize, tx_hash: TxHash) {
@@ -144,7 +134,7 @@ impl ScriptSequence {
 
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
-        out.push(format!("{chain_id}"));
+        out.push(chain_id.to_string());
 
         fs::create_dir_all(&out)?;
 
@@ -156,6 +146,7 @@ impl ScriptSequence {
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
+        trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
         if let Some(etherscan_key) = &verify.etherscan_key {
             let mut future_verifications = vec![];
 

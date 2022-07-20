@@ -2,7 +2,7 @@
 
 use crate::{
     cmd::{
-        forge::install::{install, DependencyInstallOpts},
+        forge::install::{ensure_git_status_clean, install, DependencyInstallOpts},
         Cmd,
     },
     opts::forge::Dependency,
@@ -94,6 +94,11 @@ impl Cmd for InitArgs {
                 std::process::exit(1);
             }
 
+            // ensure git status is clean before generating anything
+            if !no_git && !no_commit && is_git(&root)? {
+                ensure_git_status_clean(&root)?;
+            }
+
             p_println!(!quiet => "Initializing {}...", root.display());
 
             // make the dirs
@@ -150,8 +155,8 @@ impl Cmd for InitArgs {
     }
 }
 
-/// initializes the root dir
-fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
+/// Returns `true` if `root` is already in an existing git repository
+fn is_git(root: &Path) -> eyre::Result<bool> {
     let is_git = Command::new("git")
         .args(&["rev-parse", "--is-inside-work-tree"])
         .current_dir(&root)
@@ -160,7 +165,12 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         .spawn()?
         .wait()?;
 
-    if !is_git.success() {
+    Ok(is_git.success())
+}
+
+/// Initialises the `root` as git repository if it's not a git repository yet
+fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
+    if !is_git(root)? {
         let gitignore_path = root.join(".gitignore");
         fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
 

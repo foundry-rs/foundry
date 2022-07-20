@@ -141,6 +141,20 @@ The input can be:
         #[clap(value_name = "VALUE")]
         value: Option<String>,
     },
+    #[clap(name = ">>")]
+    #[clap(visible_aliases = &["right-shift", "r-shift", "rs"])]
+    #[clap(about = "Perform a right shift operation on a uint256")]
+    RightShift {
+        #[clap(value_name = "VALUE")]
+        value: Option<String>,
+    },
+    #[clap(name = "<<")]
+    #[clap(visible_aliases = &["left-shift", "l-shift", "ls"])]
+    #[clap(about = "Perform a left shift operation on a uint256")]
+    LeftShift {
+        #[clap(value_name = "VALUE")]
+        value: Option<String>,
+    },
     #[clap(name = "--to-unit")]
     #[clap(visible_aliases = &["to-unit", "tun", "2un"])]
     #[clap(
@@ -340,7 +354,13 @@ Examples:
             value_name = "CONFIRMATIONS"
         )]
         confirmations: usize,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Exit immediately if the transaction was not found."
+        )]
         cast_async: bool,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
@@ -361,7 +381,13 @@ Examples:
         sig: Option<String>,
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
+        )]
         cast_async: bool,
         #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
         tx: TransactionOpts,
@@ -390,7 +416,13 @@ Examples:
     PublishTx {
         #[clap(help = "The raw transaction", value_name = "RAW_TX")]
         raw_tx: String,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
+        )]
         cast_async: bool,
         // FIXME: We only need the RPC URL and `--flashbots` options from this.
         #[clap(flatten)]
