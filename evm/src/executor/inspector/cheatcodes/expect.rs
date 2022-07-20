@@ -146,30 +146,40 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
         // log that we expect
         let expected =
             next_expect.log.as_ref().expect("we should have a log to compare against here");
-        if expected.topics[0] == log.topics[0] {
-            // Topic 0 can match, but the amount of topics can differ.
-            if expected.topics.len() != log.topics.len() {
-                next_expect.found = false;
-            } else {
-                // Match topics
-                next_expect.found = log
-                    .topics
-                    .iter()
-                    .skip(1)
-                    .enumerate()
-                    .filter(|(i, _)| next_expect.checks[*i])
-                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
 
-                // Maybe match source address
-                if let Some(addr) = next_expect.address {
-                    next_expect.found &= addr == *address;
-                }
+        let expected_topic_0 = expected.topics.get(0);
+        let log_topic_0 = log.topics.get(0);
 
-                // Maybe match data
-                if next_expect.checks[3] {
-                    next_expect.found &= expected.data == log.data;
+        match (expected_topic_0, log_topic_0) {
+            (Some(expected_topic_0), Some(log_topic_0)) => {
+                if expected_topic_0 == log_topic_0 {
+                    // Topic 0 can match, but the amount of topics can differ.
+                    if expected.topics.len() != log.topics.len() {
+                        next_expect.found = false;
+                    } else {
+                        // Match topics
+                        next_expect.found = log
+                            .topics
+                            .iter()
+                            .skip(1)
+                            .enumerate()
+                            .filter(|(i, _)| next_expect.checks[*i])
+                            .all(|(i, topic)| topic == &expected.topics[i + 1]);
+
+                        // Maybe match source address
+                        if let Some(addr) = next_expect.address {
+                            next_expect.found &= addr == *address;
+                        }
+
+                        // Maybe match data
+                        if next_expect.checks[3] {
+                            next_expect.found &= expected.data == log.data;
+                        }
+                    }
                 }
             }
+            // handle anonymous events with no topics
+            _ => next_expect.found = false,
         }
     }
 }
