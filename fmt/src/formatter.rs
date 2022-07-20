@@ -1319,9 +1319,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Write a quoted string in the format `prefix"string"` where the quote character is handled
+    /// Format a quoted string as `prefix"string"` where the quote character is handled
     /// by the configuration `quote_style`
-    fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
+    fn quote_str(&self, loc: Loc, prefix: Option<&str>, string: &str) -> String {
         let get_og_quote = || {
             self.source[loc.start()..loc.end()]
                 .quote_state_char_indices()
@@ -1343,8 +1343,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             quoted = format!("{quote}{string}{quote}");
         }
         let prefix = prefix.unwrap_or("");
-        write_chunk!(self, loc.start(), loc.end(), "{prefix}{quoted}")?;
-        Ok(())
+        format!("{prefix}{quoted}")
+    }
+
+    /// Write a quoted string. See `Formatter::quote_str` for more information
+    fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "{}", self.quote_str(loc, prefix, string))
     }
 }
 
@@ -3007,16 +3011,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             YulExpression::HexNumberLiteral(loc, val, ident) => {
                 self.visit_yul_string_with_ident(*loc, val, ident)
             }
-            YulExpression::HexStringLiteral(val, ident) => {
-                self.visit_yul_string_with_ident(val.loc, &val.hex, ident)
-            }
+            YulExpression::HexStringLiteral(val, ident) => self.visit_yul_string_with_ident(
+                val.loc,
+                &self.quote_str(val.loc, Some("hex"), &val.hex),
+                ident,
+            ),
             YulExpression::NumberLiteral(loc, val, expr, ident) => {
                 let val = if expr.is_empty() { val.to_owned() } else { format!("{val}e{expr}") };
                 self.visit_yul_string_with_ident(*loc, &val, ident)
             }
-            YulExpression::StringLiteral(val, ident) => {
-                self.visit_yul_string_with_ident(val.loc, &val.string, ident)
-            }
+            YulExpression::StringLiteral(val, ident) => self.visit_yul_string_with_ident(
+                val.loc,
+                &self.quote_str(val.loc, None, &val.string),
+                ident,
+            ),
             YulExpression::SuffixAccess(_, expr, ident) => {
                 self.visit_member_access(expr, ident, |fmt, expr| match expr.as_mut() {
                     YulExpression::SuffixAccess(_, inner_expr, inner_ident) => {
@@ -3311,5 +3319,6 @@ mod tests {
     test_directory! { SimpleComments }
     test_directory! { LiteralExpression }
     test_directory! { Yul }
+    test_directory! { YulStrings }
     test_directory! { IntTypes }
 }
