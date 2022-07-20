@@ -140,8 +140,12 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_int256(&val)?);
         }
-        Subcommands::LeftShift { value, bits } => {}
-        Subcommands::RightShift { value, bits } => {}
+        Subcommands::LeftShift { value, bits } => {
+            println!("{}", SimpleCast::left_shift(&unwrap_or_stdin(value)?, &unwrap_or_stdin(bits)?)?);
+        }
+        Subcommands::RightShift { value, bits } => {
+            println!("{}", SimpleCast::right_shift(&unwrap_or_stdin(value)?, &unwrap_or_stdin(bits)?)?);
+        }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_unit(val, unit)?);
