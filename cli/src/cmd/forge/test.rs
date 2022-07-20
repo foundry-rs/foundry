@@ -452,12 +452,12 @@ fn short_test_result(name: &str, result: &TestResult) {
                 let mut inner_txt = "".to_string();
 
                 for checkpoint in sequence {
-                    inner_txt += format!("{checkpoint}\n").as_str();
+                    inner_txt += format!("\t\t{checkpoint}\n").as_str();
                 }
 
-                format!("[FAIL. Reason: {reason}]\n[Sequence]\n{inner_txt}\n")
+                format!("[FAIL. Reason: {reason}]\n\t[Sequence]\n{inner_txt}\n")
             }
-            _ => "[FAIL. Reason:".to_string(),
+            _ => "[FAIL. Reason: Undefined]".to_string(),
         };
 
         Paint::red(txt)
