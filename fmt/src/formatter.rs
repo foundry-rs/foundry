@@ -2311,22 +2311,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_event(&mut self, event: &mut EventDefinition) -> Result<()> {
         let mut name =
             self.visit_to_chunk(event.name.loc.start(), Some(event.loc.end()), &mut event.name)?;
-        name.content = format!("event {}", name.content);
+        name.content = format!("event {}(", name.content);
 
-        let formatted_name = self.chunk_to_string(&name)?;
-        write!(self.buf(), "{formatted_name}")?;
-        self.visit_list("", &mut event.fields, None, None, true)?;
+        let suffix = if event.anonymous { " anonymous" } else { "" };
+        if event.fields.is_empty() {
+            name.content.push(')');
+            self.write_chunk(&name)?;
+        } else {
+            let params_start = event.fields.first().unwrap().loc.start();
+            let formatted_name = self.chunk_to_string(&name)?;
+            self.surrounded(params_start, &formatted_name, ")", None, |fmt, _| {
+                let params = fmt
+                    .items_to_chunks(None, event.fields.iter_mut().map(|arg| Ok((arg.loc, arg))))?;
 
-        self.grouped(|fmt| {
-            write_chunk!(
-                fmt,
-                event.loc.start(),
-                event.loc.end(),
-                "{}",
-                if event.anonymous { "anonymous" } else { "" }
-            )
-        })?;
+                let multiline =
+                    fmt.are_chunks_separated_multiline(&format!("{{}}{}", suffix), &params, ",")?;
+                fmt.write_chunks_separated(&params, ",", multiline)?;
+                Ok(())
+            })?;
+        }
 
+        self.grouped(|fmt| write_chunk!(fmt, event.loc.start(), event.loc.end(), "{}", suffix))?;
         self.write_semicolon()?;
 
         Ok(())
