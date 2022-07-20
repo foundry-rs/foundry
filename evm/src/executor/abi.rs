@@ -822,10 +822,7 @@ fn console_log_format_n(
     }
 
     match num_v {
-        1 => match curr_value {
-            0 => write!(result, " {}", v0.pretty()).unwrap(),
-            _ => {}
-        },
+        1 => if curr_value == 0 { write!(result, " {}", v0.pretty()).unwrap() }
         2 => match curr_value {
             0 => write!(result, " {} {}", v0.pretty(), v1.pretty()).unwrap(),
             1 => write!(result, " {}", v1.pretty()).unwrap(),
