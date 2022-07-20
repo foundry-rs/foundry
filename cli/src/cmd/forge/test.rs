@@ -455,7 +455,7 @@ fn short_test_result(name: &str, result: &TestResult) {
                     inner_txt += format!("{checkpoint}\n").as_str();
                 }
 
-                format!("###\nFAIL. Reason: {reason}. | Sequence:\n{inner_txt}\n")
+                format!("[FAIL. Reason: {reason}]\n[Sequence]\n{inner_txt}\n")
             }
             _ => "[FAIL. Reason:".to_string(),
         };

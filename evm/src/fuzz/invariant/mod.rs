@@ -34,7 +34,7 @@ pub type BasicTxDetails = (Address, (Address, Bytes));
 pub struct InvariantTestOptions {
     /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
-    /// Fails the invariant fuzzing if a reversion occurs
+    /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
     /// Allows randomly overriding an external call when running invariant tests
     pub call_override: bool,

@@ -16,7 +16,7 @@ use proptest::{
 use revm::DatabaseCommit;
 
 use crate::{
-    executor::{Executor, RawCallResult},
+    executor::{inspector::Fuzzer, Executor, RawCallResult},
     fuzz::{
         strategies::{
             build_initial_state, collect_created_contracts, collect_state_from_call,
@@ -262,7 +262,9 @@ impl<'a> InvariantExecutor<'a> {
                 target_contract_ref,
             ));
         }
-        self.executor.set_fuzzer(call_generator, fuzz_state.clone());
+
+        self.executor.inspector_config_mut().fuzzer =
+            Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
 
         // Tracing should be off when running all runs. It will be turned on later for the failure
         // cases.

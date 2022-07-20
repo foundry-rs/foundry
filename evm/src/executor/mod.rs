@@ -1,4 +1,4 @@
-use self::inspector::{Fuzzer, InspectorData, InspectorStackConfig};
+use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
@@ -40,7 +40,6 @@ pub mod snapshot;
 use crate::{
     coverage::HitMaps,
     executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
-    fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
 };
 pub use builder::ExecutorBuilder;
 
@@ -163,16 +162,6 @@ impl Executor {
 
     pub fn set_gas_limit(&mut self, gas_limit: U256) -> &mut Self {
         self.gas_limit = gas_limit;
-        self
-    }
-
-    /// Sets the fuzzer inspector of the executor.
-    pub fn set_fuzzer(
-        &mut self,
-        call_generator: Option<RandomCallGenerator>,
-        fuzz_state: EvmFuzzState,
-    ) -> &mut Self {
-        self.inspector_config.fuzzer = Some(Fuzzer { call_generator, fuzz_state, collect: false });
         self
     }
 
