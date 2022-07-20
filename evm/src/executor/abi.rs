@@ -682,35 +682,117 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
 });
 
 enum FormatSpec {
-    String,
-    Number,
-    Integer,
-    Object,
+    String,  // %s
+    Number,  // %d
+    Integer, // %i
+    Object,  // %o
 }
 
-// Consumes a single format specifier for the given value
-// Returns the formatted fragment and the index of the unread spec
-// Formatting rules is similar to hardhat's, which follows nodejs' util.format
-fn format_fragment<F>(specstr: &str, f: F, default: &str) -> (String, usize)
-where
-    F: Fn(FormatSpec) -> String,
-{
+// FormatValue specifies how a value type is to be formatted
+trait FormatValue: UIfmt {
+    // Formats a value according to the FormatSpec
+    fn fmt(&self, spec: FormatSpec) -> String;
+}
+
+impl FormatValue for String {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::String => self.clone(),
+            FormatSpec::Object => format!("'{}'", self.clone()),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        }
+    }
+}
+
+impl FormatValue for bool {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
+            FormatSpec::Number => (*self as i32).to_string(),
+            FormatSpec::Integer => String::from("NaN"),
+        }
+    }
+}
+
+impl FormatValue for U256 {
+    fn fmt(&self, _spec: FormatSpec) -> String {
+        self.pretty()
+    }
+}
+
+impl FormatValue for I256 {
+    fn fmt(&self, _spec: FormatSpec) -> String {
+        self.pretty()
+    }
+}
+
+impl FormatValue for Address {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        }
+    }
+}
+
+impl FormatValue for Bytes {
+    fn fmt(&self, spec: FormatSpec) -> String {
+        match spec {
+            FormatSpec::String => self.pretty(),
+            FormatSpec::Object => format!("'{}'", self.pretty()),
+            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
+        }
+    }
+}
+
+// Formats a `specstr` using the input values, v1, v2 and v3.
+// For example:
+//   console_log_format_n("%s has %d characters", 2, "foo", 3) == "foo has 3 characters"
+// num_v determines the maximum number of values to be used for the formatting (since we don't have
+// variadics in Rust). For example: console_log_format_n("%s", 1, v1, v2, v3) will format the string
+// using v1 only, ignoring v2 and v2.
+//
+// Formatting rules are the same as hardhat. The supported format specifiers are as follows:
+// - %s: Converts the value using its String representation. This is equivalent to applying
+//   UIfmt::pretty() on the format string.
+// - %d, %i: Converts the value to an integer. If a non-numeric value, such as String or Address, is
+//   passed, then the spec is formatted as `NaN`.
+// - %o: Treats the format value as a javascript "object" and converts it to its string
+//   representation.
+// - %%: This is parsed as a single percent sign ('%') without consuming any input value.
+//
+// Unformatted values are appended to the end of the formatted output using UIfmt::pretty().
+// If there are more format specifiers than values, then the remaining unparsed format specifiers
+// appended to the formatted output as-is.
+fn console_log_format_n(
+    specstr: &str,
+    num_v: isize,
+    v0: &dyn FormatValue,
+    v1: &dyn FormatValue,
+    v2: &dyn FormatValue,
+) -> String {
+    assert!(num_v <= 3);
+
     let mut result = String::new();
     let spec = specstr.as_bytes();
     let mut expect_fmt = false;
+    let mut curr_value = 0;
     for (pos, c) in spec.iter().enumerate() {
-        if *c == b'%' {
-            if pos == 0 {
-                expect_fmt = true;
-            } else {
-                expect_fmt = spec[pos - 1] != b'%';
-                if !expect_fmt {
-                    result.push('%'); // escape observed %%
-                }
-            }
-            continue
+        if curr_value >= num_v {
+            let suffix = String::from_utf8_lossy(&spec[pos..]);
+            result.push_str(&suffix.replace("%%", "%"));
+            break
         }
+
+        result.push(*c as char);
+
         if expect_fmt && (*c == b's' || *c == b'd' || *c == b'i' || *c == b'o') {
+            expect_fmt = false;
+            // remove the 2 char fmt specifier
+            result.pop();
+            result.pop();
             let fspec = match *c {
                 b's' => FormatSpec::String,
                 b'd' => FormatSpec::Number,
@@ -718,300 +800,171 @@ where
                 b'o' => FormatSpec::Object,
                 _ => unreachable!(),
             };
-            let v = f(fspec);
-            result.push_str(&v);
-            return (result, pos + 1)
-        } else {
-            result.push(*c as char);
+            match curr_value {
+                0 => result.push_str(&v0.fmt(fspec)),
+                1 => result.push_str(&v1.fmt(fspec)),
+                2 => result.push_str(&v2.fmt(fspec)),
+                _ => {} // unreacheable
+            };
+            curr_value += 1;
+        }
+
+        if *c == b'%' {
+            if pos == 0 {
+                expect_fmt = true;
+            } else {
+                expect_fmt = spec[pos - 1] != b'%';
+                if !expect_fmt {
+                    result.pop(); // escape observed %%
+                }
+            }
         }
     }
-    write!(result, " {default}").unwrap();
-    (result, spec.len())
-}
 
-trait ConsoleLogFragment {
-    fn log_fragment(&self, spec: &str) -> (String, usize);
-}
-
-impl ConsoleLogFragment for String {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |spec| match spec {
-            FormatSpec::String => self.clone(),
-            FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
-        };
-        format_fragment(spec, formatter, self)
+    match num_v {
+        1 => match curr_value {
+            0 => write!(result, " {}", v0.pretty()).unwrap(),
+            _ => {}
+        },
+        2 => match curr_value {
+            0 => write!(result, " {} {}", v0.pretty(), v1.pretty()).unwrap(),
+            1 => write!(result, " {}", v1.pretty()).unwrap(),
+            _ => {}
+        },
+        3 => match curr_value {
+            0 => write!(result, " {} {} {}", v0.pretty(), v1.pretty(), v2.pretty()).unwrap(),
+            1 => write!(result, " {} {}", v1.pretty(), v2.pretty()).unwrap(),
+            2 => write!(result, " {}", v2.pretty()).unwrap(),
+            _ => {}
+        },
+        _ => {}
     }
+    result
 }
 
-impl ConsoleLogFragment for bool {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |spec| match spec {
-            FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number => (*self as i32).to_string(),
-            FormatSpec::Integer => String::from("NaN"),
-        };
-        format_fragment(spec, formatter, &self.pretty())
-    }
+fn console_log_format_1(specstr: &str, v0: &dyn FormatValue) -> String {
+    let placeholder = String::new();
+    console_log_format_n(specstr, 1, v0, &placeholder, &placeholder)
 }
 
-impl ConsoleLogFragment for U256 {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |_spec| self.pretty();
-        format_fragment(spec, formatter, &self.pretty())
-    }
+fn console_log_format_2(specstr: &str, v0: &dyn FormatValue, v1: &dyn FormatValue) -> String {
+    let placeholder = String::new();
+    console_log_format_n(specstr, 2, v0, v1, &placeholder)
 }
 
-impl ConsoleLogFragment for I256 {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |_spec| self.pretty();
-        format_fragment(spec, formatter, &self.pretty())
-    }
+fn console_log_format_3(
+    specstr: &str,
+    v0: &dyn FormatValue,
+    v1: &dyn FormatValue,
+    v2: &dyn FormatValue,
+) -> String {
+    console_log_format_n(specstr, 3, v0, v1, v2)
 }
 
-impl ConsoleLogFragment for Address {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |spec| match spec {
-            FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
-        };
-        format_fragment(spec, formatter, &self.pretty())
-    }
+macro_rules! logf1 {
+    ($a:ident) => {
+        console_log_format_1(&$a.p_0, &$a.p_1)
+    };
 }
-
-impl ConsoleLogFragment for Bytes {
-    fn log_fragment(&self, spec: &str) -> (String, usize) {
-        let formatter = |spec| match spec {
-            FormatSpec::String => self.pretty(),
-            FormatSpec::Object => format!("'{}'", self.pretty()),
-            FormatSpec::Number | FormatSpec::Integer => String::from("NaN"),
-        };
-        format_fragment(spec, formatter, &self.pretty())
-    }
+macro_rules! logf2 {
+    ($a:ident) => {
+        console_log_format_2(&$a.p_0, &$a.p_1, &$a.p_2)
+    };
 }
-
-pub trait HardhatConsoleLogf {
-    fn logf(&self) -> String;
+macro_rules! logf3 {
+    ($a:ident) => {
+        console_log_format_3(&$a.p_0, &$a.p_1, &$a.p_2, &$a.p_3)
+    };
 }
-
-macro_rules! impl_logf_2 {
-        ($($t:ty),+) => {
-        $(impl HardhatConsoleLogf for $t {
-            fn logf(&self) -> String {
-                let (mut res, pos) = self.p_1.log_fragment(&self.p_0);
-                let suffix = self.p_0[pos..].to_string().replace("%%", "%");
-                write!(res, "{suffix}").unwrap();
-                res
-            }
-        })+
-    }
-}
-
-macro_rules! impl_logf_3 {
-        ($($t:ty),+) => {
-        $(impl HardhatConsoleLogf for $t {
-            fn logf(&self) -> String {
-                let (mut res_1, pos_1) = self.p_1.log_fragment(&self.p_0);
-                let (res_2, pos_2) = self.p_2.log_fragment(&self.p_0[pos_1..]);
-                let suffix = self.p_0[pos_1+pos_2..].to_string().replace("%%", "%");
-                write!(res_1, "{res_2}{suffix}").unwrap();
-                res_1
-           }
-        })+
-    }
-}
-
-macro_rules! impl_logf_4 {
-        ($($t:ty),+) => {
-        $(impl HardhatConsoleLogf for $t {
-            fn logf(&self) -> String {
-                let (mut res_1, pos_1) = self.p_1.log_fragment(&self.p_0);
-                let (res_2, pos_2) = self.p_2.log_fragment(&self.p_0[pos_1..]);
-                let (res_3, pos_3) = self.p_3.log_fragment(&self.p_0[pos_1+pos_2..]);
-                let suffix = self.p_0[pos_1+pos_2+pos_3..].to_string().replace("%%", "%");
-                write!(res_1, "{res_2}{res_3}{suffix}").unwrap();
-                res_1
-           }
-        })+
-    }
-}
-
-// Implement printf for each LogXCAll struct that can accept a format string
-impl_logf_2!(Log7Call); // log(string,address)
-impl_logf_2!(Log9Call); // log(string,string)
-impl_logf_2!(Log17Call); // log(string,uint256)
-impl_logf_2!(Log18Call); // log(string,bool)
-
-impl_logf_3!(Log24Call); // log(string,address,uint256)
-impl_logf_3!(Log30Call); // log(string,uint256,address)
-impl_logf_3!(Log35Call); // log(string,string,string)
-impl_logf_3!(Log42Call); // log(string,string,uint256)
-impl_logf_3!(Log43Call); // log(string,uint256,string)
-impl_logf_3!(Log53Call); // log(string,bool,bool)
-impl_logf_3!(Log55Call); // log(string,bool,address)
-impl_logf_3!(Log57Call); // log(string,string,address)
-impl_logf_3!(Log62Call); // log(string,string,bool)
-impl_logf_3!(Log67Call); // log(string,address,bool)
-impl_logf_3!(Log68Call); // log(string,bool,uint256)
-impl_logf_3!(Log69Call); // log(string,uint256,uint256)
-impl_logf_3!(Log70Call); // log(string,uint256,bool)
-impl_logf_3!(Log76Call); // log(string,address,string)
-impl_logf_3!(Log77Call); // log(string,bool,string)
-impl_logf_3!(Log84Call); // log(string,address,address)
-
-impl_logf_4!(Log87Call);
-impl_logf_4!(Log100Call);
-impl_logf_4!(Log123Call);
-impl_logf_4!(Log125Call);
-impl_logf_4!(Log127Call);
-impl_logf_4!(Log133Call);
-impl_logf_4!(Log136Call);
-impl_logf_4!(Log138Call);
-impl_logf_4!(Log140Call);
-impl_logf_4!(Log149Call);
-impl_logf_4!(Log150Call);
-impl_logf_4!(Log151Call);
-impl_logf_4!(Log153Call);
-impl_logf_4!(Log165Call);
-impl_logf_4!(Log173Call);
-impl_logf_4!(Log174Call);
-impl_logf_4!(Log177Call);
-impl_logf_4!(Log179Call);
-impl_logf_4!(Log180Call);
-impl_logf_4!(Log182Call);
-impl_logf_4!(Log183Call);
-impl_logf_4!(Log184Call);
-impl_logf_4!(Log190Call);
-impl_logf_4!(Log191Call);
-impl_logf_4!(Log203Call);
-impl_logf_4!(Log208Call);
-impl_logf_4!(Log210Call);
-impl_logf_4!(Log212Call);
-impl_logf_4!(Log213Call);
-impl_logf_4!(Log217Call);
-impl_logf_4!(Log218Call);
-impl_logf_4!(Log219Call);
-impl_logf_4!(Log222Call);
-impl_logf_4!(Log224Call);
-impl_logf_4!(Log226Call);
-impl_logf_4!(Log230Call);
-impl_logf_4!(Log231Call);
-impl_logf_4!(Log235Call);
-impl_logf_4!(Log237Call);
-impl_logf_4!(Log238Call);
-impl_logf_4!(Log244Call);
-impl_logf_4!(Log245Call);
-impl_logf_4!(Log247Call);
-impl_logf_4!(Log254Call);
-impl_logf_4!(Log256Call);
-impl_logf_4!(Log267Call);
-impl_logf_4!(Log268Call);
-impl_logf_4!(Log270Call);
-impl_logf_4!(Log272Call);
-impl_logf_4!(Log278Call);
-impl_logf_4!(Log289Call);
-impl_logf_4!(Log290Call);
-impl_logf_4!(Log294Call);
-impl_logf_4!(Log306Call);
-impl_logf_4!(Log312Call);
-impl_logf_4!(Log314Call);
-impl_logf_4!(Log315Call);
-impl_logf_4!(Log316Call);
-impl_logf_4!(Log320Call);
-impl_logf_4!(Log323Call);
-impl_logf_4!(Log326Call);
-impl_logf_4!(Log330Call);
-impl_logf_4!(Log335Call);
-impl_logf_4!(Log338Call);
 
 pub fn format_hardhat_call(call: &HardhatConsoleCalls) -> String {
     match call {
-        HardhatConsoleCalls::Log7(c) => c.logf(),
-        HardhatConsoleCalls::Log9(c) => c.logf(),
-        HardhatConsoleCalls::Log17(c) => c.logf(),
-        HardhatConsoleCalls::Log18(c) => c.logf(),
-        HardhatConsoleCalls::Log24(c) => c.logf(),
-        HardhatConsoleCalls::Log30(c) => c.logf(),
-        HardhatConsoleCalls::Log35(c) => c.logf(),
-        HardhatConsoleCalls::Log42(c) => c.logf(),
-        HardhatConsoleCalls::Log43(c) => c.logf(),
-        HardhatConsoleCalls::Log53(c) => c.logf(),
-        HardhatConsoleCalls::Log55(c) => c.logf(),
-        HardhatConsoleCalls::Log57(c) => c.logf(),
-        HardhatConsoleCalls::Log62(c) => c.logf(),
-        HardhatConsoleCalls::Log67(c) => c.logf(),
-        HardhatConsoleCalls::Log68(c) => c.logf(),
-        HardhatConsoleCalls::Log69(c) => c.logf(),
-        HardhatConsoleCalls::Log70(c) => c.logf(),
-        HardhatConsoleCalls::Log76(c) => c.logf(),
-        HardhatConsoleCalls::Log77(c) => c.logf(),
-        HardhatConsoleCalls::Log84(c) => c.logf(),
-        HardhatConsoleCalls::Log87(c) => c.logf(),
-        HardhatConsoleCalls::Log100(c) => c.logf(),
-        HardhatConsoleCalls::Log123(c) => c.logf(),
-        HardhatConsoleCalls::Log125(c) => c.logf(),
-        HardhatConsoleCalls::Log127(c) => c.logf(),
-        HardhatConsoleCalls::Log133(c) => c.logf(),
-        HardhatConsoleCalls::Log136(c) => c.logf(),
-        HardhatConsoleCalls::Log138(c) => c.logf(),
-        HardhatConsoleCalls::Log140(c) => c.logf(),
-        HardhatConsoleCalls::Log149(c) => c.logf(),
-        HardhatConsoleCalls::Log150(c) => c.logf(),
-        HardhatConsoleCalls::Log151(c) => c.logf(),
-        HardhatConsoleCalls::Log153(c) => c.logf(),
-        HardhatConsoleCalls::Log165(c) => c.logf(),
-        HardhatConsoleCalls::Log173(c) => c.logf(),
-        HardhatConsoleCalls::Log174(c) => c.logf(),
-        HardhatConsoleCalls::Log177(c) => c.logf(),
-        HardhatConsoleCalls::Log179(c) => c.logf(),
-        HardhatConsoleCalls::Log180(c) => c.logf(),
-        HardhatConsoleCalls::Log182(c) => c.logf(),
-        HardhatConsoleCalls::Log183(c) => c.logf(),
-        HardhatConsoleCalls::Log184(c) => c.logf(),
-        HardhatConsoleCalls::Log190(c) => c.logf(),
-        HardhatConsoleCalls::Log191(c) => c.logf(),
-        HardhatConsoleCalls::Log203(c) => c.logf(),
-        HardhatConsoleCalls::Log208(c) => c.logf(),
-        HardhatConsoleCalls::Log210(c) => c.logf(),
-        HardhatConsoleCalls::Log212(c) => c.logf(),
-        HardhatConsoleCalls::Log213(c) => c.logf(),
-        HardhatConsoleCalls::Log217(c) => c.logf(),
-        HardhatConsoleCalls::Log218(c) => c.logf(),
-        HardhatConsoleCalls::Log219(c) => c.logf(),
-        HardhatConsoleCalls::Log222(c) => c.logf(),
-        HardhatConsoleCalls::Log224(c) => c.logf(),
-        HardhatConsoleCalls::Log226(c) => c.logf(),
-        HardhatConsoleCalls::Log230(c) => c.logf(),
-        HardhatConsoleCalls::Log231(c) => c.logf(),
-        HardhatConsoleCalls::Log235(c) => c.logf(),
-        HardhatConsoleCalls::Log237(c) => c.logf(),
-        HardhatConsoleCalls::Log238(c) => c.logf(),
-        HardhatConsoleCalls::Log244(c) => c.logf(),
-        HardhatConsoleCalls::Log245(c) => c.logf(),
-        HardhatConsoleCalls::Log247(c) => c.logf(),
-        HardhatConsoleCalls::Log254(c) => c.logf(),
-        HardhatConsoleCalls::Log256(c) => c.logf(),
-        HardhatConsoleCalls::Log267(c) => c.logf(),
-        HardhatConsoleCalls::Log268(c) => c.logf(),
-        HardhatConsoleCalls::Log270(c) => c.logf(),
-        HardhatConsoleCalls::Log272(c) => c.logf(),
-        HardhatConsoleCalls::Log278(c) => c.logf(),
-        HardhatConsoleCalls::Log289(c) => c.logf(),
-        HardhatConsoleCalls::Log290(c) => c.logf(),
-        HardhatConsoleCalls::Log294(c) => c.logf(),
-        HardhatConsoleCalls::Log306(c) => c.logf(),
-        HardhatConsoleCalls::Log312(c) => c.logf(),
-        HardhatConsoleCalls::Log314(c) => c.logf(),
-        HardhatConsoleCalls::Log315(c) => c.logf(),
-        HardhatConsoleCalls::Log316(c) => c.logf(),
-        HardhatConsoleCalls::Log320(c) => c.logf(),
-        HardhatConsoleCalls::Log323(c) => c.logf(),
-        HardhatConsoleCalls::Log326(c) => c.logf(),
-        HardhatConsoleCalls::Log330(c) => c.logf(),
-        HardhatConsoleCalls::Log335(c) => c.logf(),
-        HardhatConsoleCalls::Log338(c) => c.logf(),
+        HardhatConsoleCalls::Log7(c) => logf1!(c),
+        HardhatConsoleCalls::Log9(c) => logf1!(c),
+        HardhatConsoleCalls::Log17(c) => logf1!(c),
+        HardhatConsoleCalls::Log18(c) => logf1!(c),
+
+        HardhatConsoleCalls::Log24(c) => logf2!(c),
+        HardhatConsoleCalls::Log30(c) => logf2!(c),
+        HardhatConsoleCalls::Log35(c) => logf2!(c),
+        HardhatConsoleCalls::Log42(c) => logf2!(c),
+        HardhatConsoleCalls::Log43(c) => logf2!(c),
+        HardhatConsoleCalls::Log53(c) => logf2!(c),
+        HardhatConsoleCalls::Log55(c) => logf2!(c),
+        HardhatConsoleCalls::Log57(c) => logf2!(c),
+        HardhatConsoleCalls::Log62(c) => logf2!(c),
+        HardhatConsoleCalls::Log67(c) => logf2!(c),
+        HardhatConsoleCalls::Log68(c) => logf2!(c),
+        HardhatConsoleCalls::Log69(c) => logf2!(c),
+        HardhatConsoleCalls::Log70(c) => logf2!(c),
+        HardhatConsoleCalls::Log76(c) => logf2!(c),
+        HardhatConsoleCalls::Log77(c) => logf2!(c),
+        HardhatConsoleCalls::Log84(c) => logf2!(c),
+
+        HardhatConsoleCalls::Log87(c) => logf3!(c),
+        HardhatConsoleCalls::Log100(c) => logf3!(c),
+        HardhatConsoleCalls::Log123(c) => logf3!(c),
+        HardhatConsoleCalls::Log125(c) => logf3!(c),
+        HardhatConsoleCalls::Log127(c) => logf3!(c),
+        HardhatConsoleCalls::Log133(c) => logf3!(c),
+        HardhatConsoleCalls::Log136(c) => logf3!(c),
+        HardhatConsoleCalls::Log138(c) => logf3!(c),
+        HardhatConsoleCalls::Log140(c) => logf3!(c),
+        HardhatConsoleCalls::Log149(c) => logf3!(c),
+        HardhatConsoleCalls::Log150(c) => logf3!(c),
+        HardhatConsoleCalls::Log151(c) => logf3!(c),
+        HardhatConsoleCalls::Log153(c) => logf3!(c),
+        HardhatConsoleCalls::Log165(c) => logf3!(c),
+        HardhatConsoleCalls::Log173(c) => logf3!(c),
+        HardhatConsoleCalls::Log174(c) => logf3!(c),
+        HardhatConsoleCalls::Log177(c) => logf3!(c),
+        HardhatConsoleCalls::Log179(c) => logf3!(c),
+        HardhatConsoleCalls::Log180(c) => logf3!(c),
+        HardhatConsoleCalls::Log182(c) => logf3!(c),
+        HardhatConsoleCalls::Log183(c) => logf3!(c),
+        HardhatConsoleCalls::Log184(c) => logf3!(c),
+        HardhatConsoleCalls::Log190(c) => logf3!(c),
+        HardhatConsoleCalls::Log191(c) => logf3!(c),
+        HardhatConsoleCalls::Log203(c) => logf3!(c),
+        HardhatConsoleCalls::Log208(c) => logf3!(c),
+        HardhatConsoleCalls::Log210(c) => logf3!(c),
+        HardhatConsoleCalls::Log212(c) => logf3!(c),
+        HardhatConsoleCalls::Log213(c) => logf3!(c),
+        HardhatConsoleCalls::Log217(c) => logf3!(c),
+        HardhatConsoleCalls::Log218(c) => logf3!(c),
+        HardhatConsoleCalls::Log219(c) => logf3!(c),
+        HardhatConsoleCalls::Log222(c) => logf3!(c),
+        HardhatConsoleCalls::Log224(c) => logf3!(c),
+        HardhatConsoleCalls::Log226(c) => logf3!(c),
+        HardhatConsoleCalls::Log230(c) => logf3!(c),
+        HardhatConsoleCalls::Log231(c) => logf3!(c),
+        HardhatConsoleCalls::Log235(c) => logf3!(c),
+        HardhatConsoleCalls::Log237(c) => logf3!(c),
+        HardhatConsoleCalls::Log238(c) => logf3!(c),
+        HardhatConsoleCalls::Log244(c) => logf3!(c),
+        HardhatConsoleCalls::Log245(c) => logf3!(c),
+        HardhatConsoleCalls::Log247(c) => logf3!(c),
+        HardhatConsoleCalls::Log254(c) => logf3!(c),
+        HardhatConsoleCalls::Log256(c) => logf3!(c),
+        HardhatConsoleCalls::Log267(c) => logf3!(c),
+        HardhatConsoleCalls::Log268(c) => logf3!(c),
+        HardhatConsoleCalls::Log270(c) => logf3!(c),
+        HardhatConsoleCalls::Log272(c) => logf3!(c),
+        HardhatConsoleCalls::Log278(c) => logf3!(c),
+        HardhatConsoleCalls::Log289(c) => logf3!(c),
+        HardhatConsoleCalls::Log290(c) => logf3!(c),
+        HardhatConsoleCalls::Log294(c) => logf3!(c),
+        HardhatConsoleCalls::Log306(c) => logf3!(c),
+        HardhatConsoleCalls::Log312(c) => logf3!(c),
+        HardhatConsoleCalls::Log314(c) => logf3!(c),
+        HardhatConsoleCalls::Log315(c) => logf3!(c),
+        HardhatConsoleCalls::Log316(c) => logf3!(c),
+        HardhatConsoleCalls::Log320(c) => logf3!(c),
+        HardhatConsoleCalls::Log323(c) => logf3!(c),
+        HardhatConsoleCalls::Log326(c) => logf3!(c),
+        HardhatConsoleCalls::Log330(c) => logf3!(c),
+        HardhatConsoleCalls::Log335(c) => logf3!(c),
+        HardhatConsoleCalls::Log338(c) => logf3!(c),
         _ => call.to_string(),
     }
 }
@@ -1029,72 +982,76 @@ mod tests {
     }
 
     #[test]
-    fn test_log_fragment() {
+    fn test_console_log_format_specifiers() {
         use std::str::FromStr;
 
-        assert_eq!("foo", String::from("foo").log_fragment("%s").0);
-        assert_eq!("NaN", String::from("foo").log_fragment("%d").0);
-        assert_eq!("NaN", String::from("foo").log_fragment("%i").0);
-        assert_eq!("'foo'", String::from("foo").log_fragment("%o").0);
+        assert_eq!("foo", console_log_format_1("%s", &String::from("foo")));
+        assert_eq!("NaN", console_log_format_1("%i", &String::from("foo")));
+        assert_eq!("'foo'", console_log_format_1("%o", &String::from("foo")));
+        assert_eq!("%s foo", console_log_format_1("%%s", &String::from("foo")));
+        assert_eq!("% foo", console_log_format_1("%", &String::from("foo")));
+        assert_eq!("% foo", console_log_format_1("%%", &String::from("foo")));
 
-        assert_eq!("true", true.log_fragment("%s").0);
-        assert_eq!("1", true.log_fragment("%d").0);
-        assert_eq!("0", false.log_fragment("%d").0);
-        assert_eq!("NaN", true.log_fragment("%i").0);
-        assert_eq!("'true'", true.log_fragment("%o").0);
+        assert_eq!("true", console_log_format_1("%s", &true));
+        assert_eq!("1", console_log_format_1("%d", &true));
+        assert_eq!("0", console_log_format_1("%d", &false));
+        assert_eq!("NaN", console_log_format_1("%i", &true));
+        assert_eq!("'true'", console_log_format_1("%o", &true));
 
         let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
-        assert_eq!("0xdEADBEeF00000000000000000000000000000000", addr.log_fragment("%s").0);
-        assert_eq!("NaN", addr.log_fragment("%d").0);
-        assert_eq!("NaN", addr.log_fragment("%i").0);
-        assert_eq!("'0xdEADBEeF00000000000000000000000000000000'", addr.log_fragment("%o").0);
+        assert_eq!("0xdEADBEeF00000000000000000000000000000000", console_log_format_1("%s", &addr));
+        assert_eq!("NaN", console_log_format_1("%d", &addr));
+        assert_eq!("NaN", console_log_format_1("%i", &addr));
+        assert_eq!(
+            "'0xdEADBEeF00000000000000000000000000000000'",
+            console_log_format_1("%o", &addr)
+        );
 
         let bytes = Bytes::from_str("0xdeadbeef").unwrap();
-        assert_eq!("0xdeadbeef", bytes.log_fragment("%s").0);
-        assert_eq!("NaN", bytes.log_fragment("%d").0);
-        assert_eq!("NaN", bytes.log_fragment("%i").0);
-        assert_eq!("'0xdeadbeef'", bytes.log_fragment("%o").0);
+        assert_eq!("0xdeadbeef", console_log_format_1("%s", &bytes));
+        assert_eq!("NaN", console_log_format_1("%d", &bytes));
+        assert_eq!("NaN", console_log_format_1("%i", &bytes));
+        assert_eq!("'0xdeadbeef'", console_log_format_1("%o", &bytes));
 
-        assert_eq!("100", U256::from(100).log_fragment("%s").0);
-        assert_eq!("100", U256::from(100).log_fragment("%d").0);
-        assert_eq!("100", U256::from(100).log_fragment("%i").0);
+        assert_eq!("100", console_log_format_1("%s", &U256::from(100)));
+        assert_eq!("100", console_log_format_1("%d", &U256::from(100)));
+        assert_eq!("100", console_log_format_1("%i", &U256::from(100)));
+        assert_eq!("100", console_log_format_1("%o", &U256::from(100)));
 
-        assert_eq!("100", I256::from(100).log_fragment("%s").0);
-        assert_eq!("100", I256::from(100).log_fragment("%d").0);
-        assert_eq!("100", I256::from(100).log_fragment("%i").0);
+        assert_eq!("100", console_log_format_1("%s", &I256::from(100)));
+        assert_eq!("100", console_log_format_1("%d", &I256::from(100)));
+        assert_eq!("100", console_log_format_1("%i", &I256::from(100)));
+        assert_eq!("100", console_log_format_1("%o", &I256::from(100)));
     }
 
     #[test]
     fn test_console_log_format() {
         use std::str::FromStr;
 
-        assert_eq!("foo 100", Log17Call { p_0: "foo %s".to_string(), p_1: U256::from(100) }.logf());
-        assert_eq!("foo 100", Log17Call { p_0: "foo".to_string(), p_1: U256::from(100) }.logf());
-        assert_eq!("100 foo", Log17Call { p_0: "%s foo".to_string(), p_1: U256::from(100) }.logf());
+        let mut log17call = Log17Call { p_0: "foo %s".to_string(), p_1: U256::from(100) };
+        assert_eq!("foo 100", logf1!(log17call));
+        log17call.p_0 = String::from("foo");
+        assert_eq!("foo 100", logf1!(log17call));
+        log17call.p_0 = String::from("%s foo");
+        assert_eq!("100 foo", logf1!(log17call));
 
-        assert_eq!(
-            "foo true 100",
-            Log68Call { p_0: "foo %s %s".to_string(), p_1: true, p_2: U256::from(100) }.logf()
-        );
-        assert_eq!(
-            "foo true 100",
-            Log68Call { p_0: "foo".to_string(), p_1: true, p_2: U256::from(100) }.logf()
-        );
-        assert_eq!(
-            "true 100 foo",
-            Log68Call { p_0: "%s %s foo".to_string(), p_1: true, p_2: U256::from(100) }.logf()
-        );
+        let mut log68call =
+            Log68Call { p_0: "foo %s %s".to_string(), p_1: true, p_2: U256::from(100) };
+        assert_eq!("foo true 100", logf2!(log68call));
+        log68call.p_0 = String::from("foo");
+        assert_eq!("foo true 100", logf2!(log68call));
+        log68call.p_0 = String::from("%s %s foo");
+        assert_eq!("true 100 foo", logf2!(log68call));
 
-        // Log87Call: (string, Address, bool, String)
+        let log149call = Log149Call {
+            p_0: String::from("foo %s %%s %s and %d foo %%"),
+            p_1: Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap(),
+            p_2: true,
+            p_3: U256::from(21),
+        };
         assert_eq!(
-            "foo 0xdEADBEeF00000000000000000000000000000000 %s true bar foo %",
-            Log87Call {
-                p_0: "foo %s %%s %s %s foo %%".to_string(),
-                p_1: Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap(),
-                p_2: true,
-                p_3: "bar".to_string()
-            }
-            .logf()
+            "foo 0xdEADBEeF00000000000000000000000000000000 %s true and 21 foo %",
+            logf3!(log149call)
         );
     }
 }
