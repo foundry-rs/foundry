@@ -7,7 +7,7 @@ use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
 };
-use hashbrown::HashMap as Map;
+use hashbrown::{HashMap as Map, HashSet};
 use revm::{
     db::{CacheDB, DatabaseRef},
     Account, AccountInfo, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log, Return,
@@ -37,6 +37,10 @@ pub type LocalForkId = U256;
 /// Represents the index of a fork in the created forks vector
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
+
+/// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
+const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
+    [CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -213,7 +217,10 @@ impl Backend {
             forks,
             mem_db: InMemoryDB::default(),
             active_fork_ids: None,
-            inner: Default::default(),
+            inner: BackendInner {
+                persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
+                ..Default::default()
+            },
         };
 
         if let Some(fork) = fork {
@@ -251,15 +258,66 @@ impl Backend {
     }
 
     /// Sets the address of the `DSTest` contract that is being executed
-    pub fn set_test_contract(&mut self, addr: Address) -> &mut Self {
-        self.inner.test_contract_address = Some(addr);
+    ///
+    /// This will also mark the caller as persistent and remove the persistent status from the
+    /// previous test contract address
+    pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
+        trace!(?acc, "setting test account");
+        // toggle the previous sender
+        if let Some(current) = self.inner.test_contract_address.take() {
+            self.remove_persistent_account(&current);
+        }
+
+        self.add_persistent_account(acc);
+        self.inner.test_contract_address = Some(acc);
         self
     }
 
     /// Sets the caller address
-    pub fn set_caller(&mut self, addr: Address) -> &mut Self {
-        self.inner.caller = Some(addr);
+    ///
+    /// This will also mark the caller as persistent and remove the persistent status from the
+    /// previous caller
+    pub fn set_caller(&mut self, acc: Address) -> &mut Self {
+        trace!(?acc, "setting caller account");
+        // toggle the previous sender
+        if let Some(current) = self.inner.caller.take() {
+            if current != CALLER {
+                self.remove_persistent_account(&current);
+            }
+        }
+
+        self.add_persistent_account(acc);
+        self.inner.caller = Some(acc);
         self
+    }
+
+    /// Returns true if the given account is currently marked as persistent.
+    pub fn is_persistent(&self, acc: &Address) -> bool {
+        self.inner.persistent_accounts.contains(acc)
+    }
+
+    /// Marks the given account as persistent.
+    pub fn add_persistent_account(&mut self, account: Address) -> bool {
+        trace!(?account, "add persistent account");
+        self.inner.persistent_accounts.insert(account)
+    }
+
+    /// Revokes persistent status from the given account.
+    pub fn remove_persistent_account(&mut self, account: &Address) -> bool {
+        trace!(?account, "remove persistent account");
+        self.inner.persistent_accounts.remove(&account)
+    }
+
+    /// Extends the persistent accounts with the accounts the iterator yields.
+    pub fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+        for acc in accounts {
+            self.add_persistent_account(acc);
+        }
+    }
+
+    /// Returns all accounts that are marked as persistent
+    pub fn persistent_accounts(&self) -> &HashSet<Address> {
+        &self.inner.persistent_accounts
     }
 
     /// Returns the address of the set `DSTest` contract
@@ -309,20 +367,17 @@ impl Backend {
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
         );
-        let test_addr = self.inner.test_contract_address.expect("Test contract address is set");
-        let accs = vec![
-            test_addr,
-            self.inner.caller.unwrap_or(CALLER),
-            CHEATCODE_ADDRESS,
-            DEFAULT_CREATE2_DEPLOYER,
-        ];
-        self.update_fork_db_contracts(accs, subroutine, fork)
+        self.update_fork_db_contracts(
+            self.inner.persistent_accounts.iter().cloned(),
+            subroutine,
+            fork,
+        )
     }
 
     /// Copies the state of the `addr` from the currently active db into the given `fork`
     pub(crate) fn update_fork_db_contracts(
         &self,
-        accounts: Vec<Address>,
+        accounts: impl IntoIterator<Item = Address>,
         subroutine: &mut SubRoutine,
         fork: &mut Fork,
     ) {
@@ -407,9 +462,9 @@ impl Backend {
     where
         INSP: Inspector<Self>,
     {
-        self.inner.caller = Some(env.tx.caller);
+        self.set_caller(env.tx.caller);
         if let TransactTo::Call(to) = env.tx.transact_to {
-            self.inner.test_contract_address = Some(to);
+            self.set_test_contract(to);
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
@@ -731,6 +786,12 @@ pub struct BackendInner {
     pub caller: Option<Address>,
     /// Tracks numeric identifiers for forks
     pub next_fork_id: LocalForkId,
+    /// All accounts that should be kept persistent when switching forks.
+    /// This means all accounts stored here _don't_ use a separate storage section on each fork
+    /// instead the use only one that's persistent across fork swaps.
+    ///
+    /// See also [`clone_data()`]
+    pub persistent_accounts: HashSet<Address>,
 }
 
 // === impl BackendInner ===
@@ -863,14 +924,15 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
     current.cfg = fork.cfg;
 }
 
-// clones the data of the given address from the `active` database into the `fork_db`
+/// Clones the data of the given addresses from the `active` database into the `fork_db`
+/// This includes the data held in storage (`CacheDB`) and kept in the `Subroutine`
 pub(crate) fn clone_data<ExtDB: DatabaseRef>(
-    accounts: Vec<Address>,
+    accounts: impl IntoIterator<Item = Address>,
     active: &CacheDB<ExtDB>,
     active_subroutine: &mut SubRoutine,
     fork: &mut Fork,
 ) {
-    for addr in accounts {
+    for addr in accounts.into_iter() {
         trace!(?addr, "cloning data");
         let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
         if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
