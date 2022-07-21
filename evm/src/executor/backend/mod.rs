@@ -3,7 +3,6 @@ use crate::executor::{
     snapshot::Snapshots,
 };
 use bytes::Bytes;
-use diagnostic::RevertDiagnostic;
 use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
@@ -21,6 +20,7 @@ mod fuzz;
 mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+pub use diagnostic::RevertDiagnostic;
 mod in_memory_db;
 
 use crate::{
@@ -352,6 +352,11 @@ impl Backend {
         self.inner.test_contract_address
     }
 
+    /// Returns the set caller address
+    pub fn caller_address(&self) -> Option<Address> {
+        self.inner.caller
+    }
+
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
@@ -640,13 +645,11 @@ impl DatabaseExt for Backend {
     fn diagnose_revert(
         &self,
         callee: Address,
-        subroutine: &SubRoutine,
+        _subroutine: &SubRoutine,
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
-        if !active_fork.is_contract(callee) &&
-            subroutine.account(callee).info.code_hash == KECCAK_EMPTY
-        {
+        if !active_fork.is_contract(callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
@@ -667,7 +670,6 @@ impl DatabaseExt for Backend {
                 })
             }
         }
-
         None
     }
 
@@ -820,7 +822,11 @@ impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
         self.db.basic(acc).code_hash != KECCAK_EMPTY ||
-            self.subroutine.account(acc).info.code_hash != KECCAK_EMPTY
+            self.subroutine
+                .state
+                .get(&acc)
+                .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
+                .unwrap_or_default()
     }
 }
 

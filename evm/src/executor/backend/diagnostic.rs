@@ -5,7 +5,7 @@ use crate::{
 use foundry_common::fmt::UIfmt;
 
 /// Represents possible diagnostic cases on revert
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RevertDiagnostic {
     /// The `contract` does not exist on the `active` fork but exist on other fork(s)
     ContractExistsOnOtherForks {

@@ -142,7 +142,21 @@ contract ForkTest is DSTest {
         // the account is now marked as persistent and the contract is persistent across swaps
         dummy.hello();
         assertEq(dummy.val(), expectedValue);
+    }
 
+    // checks diagnostic
+    function testNonExistingContractDiagnostic() public {
+        cheats.selectFork(mainnetFork);
+        DummyContract dummy = new DummyContract();
+        dummy.hello();
+
+        address dummyAddress = address(dummy);
+
+        cheats.selectFork(optimismFork);
+        assertEq(dummyAddress, address(dummy));
+
+        // TODO properly provide diagnostics
+//        dummy.hello();
     }
 
 }
