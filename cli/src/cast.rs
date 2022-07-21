@@ -24,6 +24,8 @@ use ethers::{
 // ZACH ADDITIONS
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Display;
+use std::fmt::Formatter;
 // END
 
 use eyre::WrapErr;
@@ -217,8 +219,6 @@ async fn main() -> eyre::Result<()> {
                 let receipt = Cast::new(&provider).receipt(hash, None, 0, false, true).await?;
                 let receipt: serde_json::Value = serde_json::from_str(&receipt)?;
                 let logs = &receipt["logs"];
-                
-
                 let mut event_abis: HashMap<String, Vec<String>> = HashMap::new();
 
                 // For each event in the logs...
@@ -230,7 +230,6 @@ async fn main() -> eyre::Result<()> {
                         // First, check whether the we already have the cached event abi from a previous event.
                         if let Some(cached_abi) = event_abis.get(address) {
                             abi = cached_abi.clone();
-                            println!("Pulled cached event abi for {}", &address);
                         } 
                         // Otherwise, try to get the interface from etherscan & save to cache.
                         else {
@@ -257,95 +256,85 @@ async fn main() -> eyre::Result<()> {
                         }
 
                         // If we get the event abi... (FILL IN THE "NO" CASE LATER, OR MERGE THEM)
-                        let topics = &event["topics"];
-                        let data = &event["data"];
-                        if let serde_json::Value::Array(topics) = topics {
-                            
-                            // Compare topic[0] to the event abi to find the winner.
-                            let winning_sig: String;
-                            if let serde_json::Value::String(t0) = &topics[0] {
-                                winning_sig = abi
-                                    .iter()
-                                    .map(|event_string| (translate_event_string_to_hash(event_string).unwrap(), event_string))
-                                    .filter(|(hashed_sig, _)| hashed_sig == t0)
-                                    .map(|(_, sig)| sig.to_string())
-                                    .collect::<Vec<String>>()
-                                    .get(0)
-                                    .unwrap_or(&"NO WINNING SIG".to_string())
-                                    .to_string();
+                        if &abi.len() > &0 {
+                            let topics = &event["topics"];
+                            let data = &event["data"];
+                            if let serde_json::Value::Array(topics) = topics {
                                 
-                                println!("Contract: {} emits:", &address);
-                                println!("{}", winning_sig);
-                            
-                                let mut sig_chunks: Vec<String> = get_sig_chunks(&winning_sig).unwrap();
-                                sig_chunks.retain(|chunk| !chunk.starts_with("event"));
-                                let mut args: Vec<EventArg> = sig_chunks.iter().map(|chunk| chunk.into()).collect();
-
-                                let indexed_args: Vec<&EventArg> = args
-                                    .iter()
-                                    .filter(|arg| arg.indexed)
+                                // Compare topic[0] to the event abi to find the winner.
+                                let winning_sig: String;
+                                if let serde_json::Value::String(t0) = &topics[0] {
+                                    winning_sig = abi
+                                        .iter()
+                                        .map(|event_string| (translate_event_string_to_hash(event_string).unwrap(), event_string))
+                                        .filter(|(hashed_sig, _)| hashed_sig == t0)
+                                        .map(|(_, sig)| sig.to_string())
+                                        .collect::<Vec<String>>()
+                                        .get(0)
+                                        .unwrap_or(&"NO WINNING SIG".to_string())
+                                        .to_string();
                                     
-                                    // WHAT IF THERE ARE NO TOPICS?
-                                    .zip(&topics[1..])
-                                    .map(|(arg, topic)| {
-                                        if let serde_json::Value::String(t) = topic { 
-                                            &arg.clone().with_value(t.to_string())
-                                        } else {
-                                            arg
-                                        }
-                                    })
-                                    .collect();
+                                    println!("Contract: {} emits:", &address);
+                                    println!("{}", winning_sig);
                                 
-                                for arg in indexed_args {
-                                    println!("{}, {}, {}", arg.name, arg.indexed, arg.value);
+                                    // Break the winning signature into its component substrings, and convert to EventArgs.
+                                    let mut sig_chunks: Vec<String> = get_sig_chunks(&winning_sig).unwrap();
+                                    sig_chunks.retain(|chunk| !chunk.starts_with("event"));
+                                    let args: Vec<EventArg> = sig_chunks.iter().map(|chunk| chunk.into()).collect();
+
+                                    // assert topics.len() == args.filter(indexed).len() + 1;
+                                    // Add values and positions to indexed args.
+                                    let indexed_args: Vec<EventArg> = args
+                                        .iter()
+                                        .filter(|arg| arg.indexed)
+                                        .zip(&topics[1..])
+                                        .zip(1..(topics.len()))
+                                        .map(|((arg, topic), count)| {
+                                            if let serde_json::Value::String(t) = topic { 
+                                                EventArg {
+                                                    name: arg.name.clone(),
+                                                    type_: arg.type_.clone(),
+                                                    indexed: arg.indexed,
+                                                    value: Some(convert_and_set_value(&arg.type_, t.clone())),
+                                                    position: Some(count),
+                                                }
+                                            } else {
+                                                EventArg {
+                                                    name: arg.name.clone(),
+                                                    type_: arg.type_.clone(),
+                                                    indexed: arg.indexed,
+                                                    value: None,
+                                                    position: Some(count),
+                                                }
+                                            }
+                                        })
+                                        .collect();
+                                    
+                                    for arg in &indexed_args {
+                                        println!("({}) {}: {}", arg.position.clone().unwrap(), arg.name, arg.value.clone().unwrap());
+                                    }
+
+                                    // assert data.len() == args.filter(!indexed).len() * 32 + 2;
+                                    // are smaller data types packed in events or not?
+                                    // DO NON-INDEXED NEXT, but need to split data into array first...?
+                                    // if let serde_json::Value::String(d) = data {
+                                    //     println!("Data: {}", d);
+                                    // }
                                 }
-                                
-
-
-                                // let non_indexed_args: Vec<EventArg> = args.iter().filter(|arg| !arg.indexed).collect();
-
-
-                                // let mut count = 0;
-                                // for topic in &topics[1..] {
-                                //     if let serde_json::Value::String(t) = topic {
-                                //         match args.get(count) {
-                                //             Some(arg) => println!("({}) {}: {}", count + 1, arg.name, t),
-                                //             None => println!("Topic {}: {}", count, t),
-                                //         };
-                                //     }
-                                //     count += 1;
-                                // }
-
-
                             }
-
-                            // Split winner to get arg details and map them to topics in event log.
-                            // let args: Vec<EventArgs> = sig_chunks
-
-                                
-                                // let mut args: Vec<String> = vec![];
-
-
-                                // let args: Vec<String> = event.split(&[',', '(', ')'][..]).map(|arg| arg.to_string()).collect(); 
-                                // for arg in args[1..].iter().enumerate() {
-                                
-                                // let sigs = decode_event_topic(&t0).await?;
-                                // match sigs.len() {
-                                //     0 => println!("Unknown Event: {}", &t0),
-                                //     _ => {
-                                //         let sig = sigs.get(0).unwrap();
-                                //         println!("{}", sig);
-                                //         args = sig.split(&[',', '(', ')'][..]).map(|arg| arg.to_string()).collect();
-                                //     }
-                                // };
+                        } 
+                        // If the contract wasn't Etherscan verified, try 4byte...
+                        else {
+                            // let sigs = decode_event_topic(&t0).await?;
+                            // match sigs.len() {
+                            //     0 => println!("Unknown Event: {}", &t0),
+                            //     _ => {
+                            //         let sig = sigs.get(0).unwrap();
+                            //         println!("{}", sig);
+                            //         args = sig.split(&[',', '(', ')'][..]).map(|arg| arg.to_string()).collect();
+                            //     }
+                            // };
                         }
-                                        
-
-                        
-                        
-                        // if let serde_json::Value::String(d) = data {
-                        //     println!("Data: {}", d);
-                        // }
                         println!("");
                     }
                 } else {
@@ -942,19 +931,30 @@ struct EventArg {
     type_: EventArgType,
     indexed: bool,
     value: Option<String>,
+    position: Option<usize>,
 }
 enum EventArgType {
     Address,
     Uint256,
 }
 
-impl EventArg {
-    fn with_value(&self, value: String) -> Self {
-        EventArg {
-            name: self.name,
-            type_: self.type_,
-            indexed: self.indexed,
-            value: Some(value),
+fn convert_hex_to_address(hex: &str) -> String {
+    format!("0x{}", hex[hex.len() - 40..].to_string())
+}
+
+fn convert_and_set_value(event_type: &EventArgType, value: String) -> String {
+    match event_type {
+        EventArgType::Address => convert_hex_to_address(&value),
+        EventArgType::Uint256 => SimpleCast::to_dec(&value).unwrap().to_string(),
+    }
+    
+}
+
+impl Clone for EventArgType {
+    fn clone(&self) -> Self {
+        match self {
+            EventArgType::Address => EventArgType::Address,
+            EventArgType::Uint256 => EventArgType::Uint256,
         }
     }
 }
@@ -972,6 +972,7 @@ impl From<&String> for EventArg {
             type_: arg_type,
             indexed: arg_parsed.len() == 3,
             value: None,
+            position: None,
         }
     }
 }
