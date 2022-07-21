@@ -61,6 +61,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_getBlockByNumber")]
     EthGetBlockByNumber(#[serde(deserialize_with = "lenient_block_number")] BlockNumber, bool),
 
+    #[serde(rename = "eth_getBlocksByArray")]
+    EthGetBlocksByArray(#[serde(deserialize_with = "lenient_block_number_array")] Vec<BlockNumber>),
+
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockId>),
 
