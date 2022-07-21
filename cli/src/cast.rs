@@ -20,7 +20,12 @@ use ethers::{
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
 };
+
+// ZACH ADDITIONS
 use serde_json::Value;
+use std::collections::HashMap;
+// END
+
 use eyre::WrapErr;
 use foundry_common::fs;
 use foundry_config::Chain;
@@ -202,25 +207,153 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Events { rpc_url, tx_hash } => {
+        Subcommands::Events { rpc_url, tx_hash, chain, etherscan_api_key } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             if let Some(hash) = tx_hash {
-                let logs = Cast::new(&provider).receipt(hash, Some(String::from("logs")), 0, false, true).await?;
-                let logs = serde_json::json!(logs);
-                println!("{}", &logs);
+                println!("Printing events for tx hash: {}\n", &hash);
 
-                match &logs[0]["topics"][0] {
-                    Value::String(t0) => {
-                        let sigs = decode_event_topic(t0).await?;
-                        sigs.iter().for_each(|sig| println!("{}", sig));
-                    },
-                    _ => {}
+                // Get the receipt from the tx hash and pull the logs.
+                let receipt = Cast::new(&provider).receipt(hash, None, 0, false, true).await?;
+                let receipt: serde_json::Value = serde_json::from_str(&receipt)?;
+                let logs = &receipt["logs"];
+                
+
+                let mut event_abis: HashMap<String, Vec<String>> = HashMap::new();
+
+                // For each event in the logs...
+                if let serde_json::Value::Array(logs) = logs {
+                    for event in logs {
+                        let address: &str = &event["address"].as_str().unwrap();
+                        let abi: Vec<String>;
+                        
+                        // First, check whether the we already have the cached event abi from a previous event.
+                        if let Some(cached_abi) = event_abis.get(address) {
+                            abi = cached_abi.clone();
+                            println!("Pulled cached event abi for {}", &address);
+                        } 
+                        // Otherwise, try to get the interface from etherscan & save to cache.
+                        else {
+                            let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
+                                chain: chain.inner,
+                                api_key: "H71C8DZPZ82QRFM7MP714T8MIIGJP4PZRZ".to_string(),
+                                address: address
+                                    .parse::<Address>()
+                                    .wrap_err("Invalid address provided. Did you make a typo?")?,
+                            })
+                            .await?;
+            
+                            abi = interfaces
+                                .iter()
+                                .map(|iface| iface.source.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                                .split("\n")
+                                .map(|line| line.trim().to_string())
+                                .filter(|line| line.starts_with("event"))
+                                .collect::<Vec<_>>();
+                            
+                            event_abis.insert(address.to_string(), abi.clone());
+                        }
+
+                        // If we get the event abi... (FILL IN THE "NO" CASE LATER, OR MERGE THEM)
+                        let topics = &event["topics"];
+                        let data = &event["data"];
+                        if let serde_json::Value::Array(topics) = topics {
+                            
+                            // Compare topic[0] to the event abi to find the winner.
+                            let winning_sig: String;
+                            if let serde_json::Value::String(t0) = &topics[0] {
+                                winning_sig = abi
+                                    .iter()
+                                    .map(|event_string| (translate_event_string_to_hash(event_string).unwrap(), event_string))
+                                    .filter(|(hashed_sig, _)| hashed_sig == t0)
+                                    .map(|(_, sig)| sig.to_string())
+                                    .collect::<Vec<String>>()
+                                    .get(0)
+                                    .unwrap_or(&"NO WINNING SIG".to_string())
+                                    .to_string();
+                                
+                                println!("Contract: {} emits:", &address);
+                                println!("{}", winning_sig);
+                            
+                                let mut sig_chunks: Vec<String> = get_sig_chunks(&winning_sig).unwrap();
+                                sig_chunks.retain(|chunk| !chunk.starts_with("event"));
+                                let mut args: Vec<EventArg> = sig_chunks.iter().map(|chunk| chunk.into()).collect();
+
+                                let indexed_args: Vec<&EventArg> = args
+                                    .iter()
+                                    .filter(|arg| arg.indexed)
+                                    
+                                    // WHAT IF THERE ARE NO TOPICS?
+                                    .zip(&topics[1..])
+                                    .map(|(arg, topic)| {
+                                        if let serde_json::Value::String(t) = topic { 
+                                            &arg.clone().with_value(t.to_string())
+                                        } else {
+                                            arg
+                                        }
+                                    })
+                                    .collect();
+                                
+                                for arg in indexed_args {
+                                    println!("{}, {}, {}", arg.name, arg.indexed, arg.value);
+                                }
+                                
+
+
+                                // let non_indexed_args: Vec<EventArg> = args.iter().filter(|arg| !arg.indexed).collect();
+
+
+                                // let mut count = 0;
+                                // for topic in &topics[1..] {
+                                //     if let serde_json::Value::String(t) = topic {
+                                //         match args.get(count) {
+                                //             Some(arg) => println!("({}) {}: {}", count + 1, arg.name, t),
+                                //             None => println!("Topic {}: {}", count, t),
+                                //         };
+                                //     }
+                                //     count += 1;
+                                // }
+
+
+                            }
+
+                            // Split winner to get arg details and map them to topics in event log.
+                            // let args: Vec<EventArgs> = sig_chunks
+
+                                
+                                // let mut args: Vec<String> = vec![];
+
+
+                                // let args: Vec<String> = event.split(&[',', '(', ')'][..]).map(|arg| arg.to_string()).collect(); 
+                                // for arg in args[1..].iter().enumerate() {
+                                
+                                // let sigs = decode_event_topic(&t0).await?;
+                                // match sigs.len() {
+                                //     0 => println!("Unknown Event: {}", &t0),
+                                //     _ => {
+                                //         let sig = sigs.get(0).unwrap();
+                                //         println!("{}", sig);
+                                //         args = sig.split(&[',', '(', ')'][..]).map(|arg| arg.to_string()).collect();
+                                //     }
+                                // };
+                        }
+                                        
+
+                        
+                        
+                        // if let serde_json::Value::String(d) = data {
+                        //     println!("Data: {}", d);
+                        // }
+                        println!("");
+                    }
+                } else {
+                    println!("JSON is not an array? (should never happen): {}", logs)
                 }
-
             } else {
                 println!("No tx hash!");
-            }
+            };
         }
         Subcommands::Call { address, sig, args, block, eth } => {
             let config = Config::from(&eth);
@@ -779,4 +912,66 @@ where
     }
 
     Ok(())
+}
+
+fn translate_event_string_to_hash(event: &str) -> Result<String, eyre::Error> {
+    let sig_chunks: Vec<String> = get_sig_chunks(event).unwrap();
+
+    let sig = format!("{}({})", 
+        sig_chunks[0].split_whitespace().nth(1).unwrap().to_string(), 
+        sig_chunks[1..].iter().map(|chunk| chunk.split_whitespace().nth(0).unwrap().to_string()).collect::<Vec<String>>().join(","));
+
+    match SimpleCast::keccak(&sig) {
+        Ok(hash) => Ok(hash),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn get_sig_chunks(event: &str) -> Result<Vec<String>, eyre::Error> {
+    let mut sig_chunks: Vec<String> = event
+        .split(&[',', '(', ')'][..])
+        .map(|arg| arg.trim().to_string())
+        .collect(); // vec["event Transfer", "address indexed from", "address indexed to", "uint256 value", ";"]
+    
+    sig_chunks.retain(|arg| arg != ";");
+    Ok(sig_chunks)
+}
+
+struct EventArg {
+    name: String,
+    type_: EventArgType,
+    indexed: bool,
+    value: Option<String>,
+}
+enum EventArgType {
+    Address,
+    Uint256,
+}
+
+impl EventArg {
+    fn with_value(&self, value: String) -> Self {
+        EventArg {
+            name: self.name,
+            type_: self.type_,
+            indexed: self.indexed,
+            value: Some(value),
+        }
+    }
+}
+
+impl From<&String> for EventArg {
+    fn from(arg: &String) -> Self {
+        let arg_parsed = arg.split_whitespace().collect::<Vec<&str>>();
+        let arg_type = match arg_parsed[0] {
+            "address" => EventArgType::Address,
+            "uint256" => EventArgType::Uint256,
+            _ => panic!("Unsupported event arg type: {}", arg_parsed[0]),
+        };
+        Self {
+            name: arg_parsed.last().unwrap().to_string(),
+            type_: arg_type,
+            indexed: arg_parsed.len() == 3,
+            value: None,
+        }
+    }
 }

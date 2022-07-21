@@ -314,6 +314,10 @@ Examples:
         rpc_url: Option<String>,
         #[clap(value_name = "HASH")]
         tx_hash: Option<String>,
+        #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
+        etherscan_api_key: Option<String>,
+        #[clap(flatten)]
+        chain: ClapChain,
     },
     
     
