@@ -1927,6 +1927,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry"
+version = "0.1.0"
+dependencies = [
+ "anvil",
+ "anvil-core",
+]
+
+[[package]]
 name = "foundry-binder"
 version = "0.1.0"
 dependencies = [

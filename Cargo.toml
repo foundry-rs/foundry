@@ -1,3 +1,8 @@
+[package]
+name = "foundry"
+version = "0.1.0"
+edition = "2021"
+
 [workspace]
 members = [
     "anvil",
@@ -16,6 +21,10 @@ members = [
     "ui",
     "utils",
 ]
+
+[dependencies]
+anvil = { path = "./anvil" }
+anvil-core = { path = "./anvil/core" }
 
 [profile.dev]
 # Disabling debug info speeds up builds a bunch,
