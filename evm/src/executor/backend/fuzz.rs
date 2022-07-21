@@ -115,6 +115,18 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.backend.ensure_fork_id(id)
     }
+
+    fn is_persistent(&self, acc: &Address) -> bool {
+        self.backend.is_persistent(acc)
+    }
+
+    fn remove_persistent_account(&mut self, account: &Address) -> bool {
+        self.backend.to_mut().remove_persistent_account(account)
+    }
+
+    fn add_persistent_account(&mut self, account: Address) -> bool {
+        self.backend.to_mut().add_persistent_account(account)
+    }
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {

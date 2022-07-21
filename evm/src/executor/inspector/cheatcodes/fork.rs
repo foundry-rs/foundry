@@ -29,6 +29,37 @@ pub fn apply<DB: DatabaseExt>(
                 .map(|id| id.encode().into())
         }
         HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::MakePersistent0(acc) => {
+            data.db.add_persistent_account(acc.0);
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent1(acc) => {
+            data.db.extend_persistent_accounts(acc.0.clone());
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent2(acc) => {
+            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(acc.1);
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent3(acc) => {
+            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(acc.1);
+            data.db.add_persistent_account(acc.2);
+            Ok(Default::default())
+        }
+        HEVMCalls::IsPersistent(acc) => {
+            data.db.is_persistent(&acc.0);
+            Ok(Default::default())
+        }
+        HEVMCalls::RevokePersistent0(acc) => {
+            data.db.remove_persistent_account(&acc.0);
+            Ok(Default::default())
+        }
+        HEVMCalls::RevokePersistent1(acc) => {
+            data.db.remove_persistent_accounts(acc.0.clone());
+            Ok(Default::default())
+        }
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork_id()

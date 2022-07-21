@@ -7,13 +7,13 @@ use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
 };
-use hashbrown::{HashMap as Map, HashSet};
+use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef},
     Account, AccountInfo, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log, Return,
     SubRoutine, TransactOut, TransactTo,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
 mod fuzz;
 mod snapshot;
@@ -131,6 +131,29 @@ pub trait DatabaseExt: Database {
 
     /// Ensures that a corresponding `ForkId` exists for the given local `id`
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId>;
+
+    /// Returns true if the given account is currently marked as persistent.
+    fn is_persistent(&self, acc: &Address) -> bool;
+
+    /// Revokes persistent status from the given account.
+    fn remove_persistent_account(&mut self, account: &Address) -> bool;
+
+    /// Marks the given account as persistent.
+    fn add_persistent_account(&mut self, account: Address) -> bool;
+
+    /// Removes persistent status from all given accounts
+    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+        for acc in accounts {
+            self.remove_persistent_account(&acc);
+        }
+    }
+
+    /// Extends the persistent accounts with the accounts the iterator yields.
+    fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
+        for acc in accounts {
+            self.add_persistent_account(acc);
+        }
+    }
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -289,35 +312,6 @@ impl Backend {
         self.add_persistent_account(acc);
         self.inner.caller = Some(acc);
         self
-    }
-
-    /// Returns true if the given account is currently marked as persistent.
-    pub fn is_persistent(&self, acc: &Address) -> bool {
-        self.inner.persistent_accounts.contains(acc)
-    }
-
-    /// Marks the given account as persistent.
-    pub fn add_persistent_account(&mut self, account: Address) -> bool {
-        trace!(?account, "add persistent account");
-        self.inner.persistent_accounts.insert(account)
-    }
-
-    /// Revokes persistent status from the given account.
-    pub fn remove_persistent_account(&mut self, account: &Address) -> bool {
-        trace!(?account, "remove persistent account");
-        self.inner.persistent_accounts.remove(&account)
-    }
-
-    /// Extends the persistent accounts with the accounts the iterator yields.
-    pub fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>) {
-        for acc in accounts {
-            self.add_persistent_account(acc);
-        }
-    }
-
-    /// Returns all accounts that are marked as persistent
-    pub fn persistent_accounts(&self) -> &HashSet<Address> {
-        &self.inner.persistent_accounts
     }
 
     /// Returns the address of the set `DSTest` contract
@@ -608,6 +602,20 @@ impl DatabaseExt for Backend {
 
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.inner.ensure_fork_id(id)
+    }
+
+    fn is_persistent(&self, acc: &Address) -> bool {
+        self.inner.persistent_accounts.contains(acc)
+    }
+
+    fn remove_persistent_account(&mut self, account: &Address) -> bool {
+        trace!(?account, "remove persistent account");
+        self.inner.persistent_accounts.remove(account)
+    }
+
+    fn add_persistent_account(&mut self, account: Address) -> bool {
+        trace!(?account, "add persistent account");
+        self.inner.persistent_accounts.insert(account)
     }
 }
 
