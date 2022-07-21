@@ -4,9 +4,9 @@ pragma solidity >=0.8.0;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-struct MyStruct {
-    uint256 value;
-}
+    struct MyStruct {
+        uint256 value;
+    }
 
 contract MyContract {
     uint256 forkId;
@@ -114,10 +114,15 @@ contract ForkTest is DSTest {
         dummy.hello();
     }
 
+    function testMarkPersistent() public {
+        assert(cheats.isPersistent(msg.sender));
+        assert(cheats.isPersistent(address(this)));
+    }
+
 }
 
 contract DummyContract {
 
-    function hello() external { }
+    function hello() external {}
 
 }
