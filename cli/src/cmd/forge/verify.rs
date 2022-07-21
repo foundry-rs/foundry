@@ -4,6 +4,7 @@ use crate::cmd::{
     forge::build::{CoreBuildArgs, ProjectPathsArgs},
     RetryArgs,
 };
+use cast::SimpleCast;
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -98,7 +99,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten)]
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
     pub retry: RetryArgs,
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
@@ -127,7 +128,7 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await

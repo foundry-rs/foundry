@@ -1,4 +1,4 @@
-[default]
+[profile.default]
 auto_detect_solc = true
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
@@ -39,7 +39,7 @@ tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 verbosity = 0
 via_ir = false
 
-[default.rpc_storage_caching]
+[profile.default.rpc_storage_caching]
 chains = 'all'
 endpoints = 'all'
 

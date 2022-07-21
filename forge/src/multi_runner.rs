@@ -372,6 +372,7 @@ mod tests {
         decode::decode_console_logs,
         test_helpers::{
             filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+            RE_PATH_SEPARATOR,
         },
     };
     use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
@@ -416,7 +417,7 @@ mod tests {
         opts.fork_url = Some(rpc.to_string());
 
         let env = opts.evm_env_blocking();
-        let fork = opts.get_fork(env.clone());
+        let fork = opts.get_fork(&Default::default(), env.clone());
 
         base_runner()
             .with_fork(fork)
@@ -434,7 +435,7 @@ mod tests {
                         .to_string(),
                 ),
             ),
-            ("rpcEnvAlias", RpcEndpoint::Env("RPC_ENV_ALIAS".to_string())),
+            ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
         ])
     }
 
@@ -1145,7 +1146,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         let mut runner = runner();
         let suite_result = runner
             .test(
-                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", std::path::MAIN_SEPARATOR)),
+                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR)),
                 None,
                 true,
             )
@@ -1172,7 +1173,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         let mut runner = runner();
         let suite_result = runner
             .test(
-                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", std::path::MAIN_SEPARATOR)),
+                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)),
                 None,
                 true,
             )

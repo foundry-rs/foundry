@@ -34,8 +34,8 @@ pub struct WatchArgs {
     ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(short = 'd', long = "delay", forbid_empty_values = true, value_name = "DELAY")]
-    pub delay: Option<String>,
+    #[clap(long = "watch-delay", forbid_empty_values = true, value_name = "DELAY")]
+    pub watch_delay: Option<String>,
 
     #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
     pub no_restart: bool,
@@ -401,7 +401,7 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
 
     config.pathset(args.watch.clone().unwrap_or_default());
 
-    if let Some(delay) = &args.delay {
+    if let Some(delay) = &args.watch_delay {
         config.action_throttle(utils::parse_delay(delay)?);
     }
 
