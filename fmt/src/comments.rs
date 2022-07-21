@@ -26,70 +26,106 @@ pub struct CommentWithMetadata {
     pub ty: CommentType,
     pub loc: Loc,
     pub has_newline_before: bool,
+    pub indent_len: usize,
     pub comment: String,
     pub position: CommentPosition,
 }
 
 impl CommentWithMetadata {
-    fn new(comment: Comment, position: CommentPosition, has_newline_before: bool) -> Self {
+    fn new(
+        comment: Comment,
+        position: CommentPosition,
+        has_newline_before: bool,
+        indent_len: usize,
+    ) -> Self {
         let (ty, loc, comment) = match comment {
             Comment::Line(loc, comment) => (CommentType::Line, loc, comment),
             Comment::Block(loc, comment) => (CommentType::Block, loc, comment),
         };
-        Self { comment: comment.trim_end().to_string(), ty, loc, position, has_newline_before }
+        Self {
+            comment: comment.trim_end().to_string(),
+            ty,
+            loc,
+            position,
+            has_newline_before,
+            indent_len,
+        }
     }
 
     /// Construct a comment with metadata by analyzing its surrounding source code
-    fn from_comment_and_src(comment: Comment, src: &str) -> Self {
+    fn from_comment_and_src(
+        comment: Comment,
+        src: &str,
+        last_comment: Option<&CommentWithMetadata>,
+    ) -> Self {
+        let src_before = &src[..comment.loc().start()];
+        let mut lines_before = src_before.lines().rev();
+        let this_line =
+            if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or("") };
+        let indent_len = this_line.chars().take_while(|c| c.is_whitespace()).count();
+
         let (position, has_newline_before) = {
-            let src_before = &src[..comment.loc().start()];
             if src_before.is_empty() {
                 // beginning of code
                 (CommentPosition::Prefix, false)
-            } else {
-                let mut lines_before = src_before.lines().rev();
-                let this_line =
-                    if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap() };
-                if this_line.trim_start().is_empty() {
-                    // comment sits on a new line
-                    if let Some(last_line) = lines_before.next() {
-                        if last_line.trim_start().is_empty() {
-                            // line before is empty
-                            (CommentPosition::Prefix, true)
-                        } else {
-                            // line has something
-                            let this_indent = this_line.len();
-                            let mut this_indent_larger = this_indent > 0;
-                            let mut next_indent = this_indent;
-                            for ch in src[comment.loc().end()..].non_comment_chars() {
-                                if ch == '\n' {
-                                    next_indent = 0;
-                                } else if ch.is_whitespace() {
-                                    next_indent += 1;
+            } else if this_line.trim_start().is_empty() {
+                // comment sits on a new line
+                if let Some(last_line) = lines_before.next() {
+                    if last_line.trim_start().is_empty() {
+                        // line before is empty
+                        (CommentPosition::Prefix, true)
+                    } else {
+                        // line has something
+                        let code_end = src_before
+                            .comment_state_char_indices()
+                            .filter_map(|(state, idx, ch)| {
+                                if matches!(state, CommentState::None) && !ch.is_whitespace() {
+                                    Some(idx)
                                 } else {
-                                    this_indent_larger = this_indent > next_indent;
-                                    break
+                                    None
                                 }
-                            }
-                            if this_indent_larger {
-                                // next line has a smaller indent
+                            })
+                            .last()
+                            .unwrap_or(0);
+                        // check if the last comment after code was a postfix comment
+                        if last_comment
+                            .filter(|last_comment| {
+                                last_comment.loc.end() > code_end && !last_comment.is_prefix()
+                            })
+                            .is_some()
+                        {
+                            // get the indent size of the next item of code
+                            let next_indent_len = src[comment.loc().end()..]
+                                .non_comment_chars()
+                                .take_while(|ch| ch.is_whitespace())
+                                .fold(
+                                    indent_len,
+                                    |indent, ch| if ch == '\n' { 0 } else { indent + 1 },
+                                );
+                            if indent_len > next_indent_len {
+                                // the comment indent is bigger than the next code indent
                                 (CommentPosition::Postfix, false)
                             } else {
-                                // next line has same or equal indent
+                                // the comment indent is equal to or less than the next code
+                                // indent
                                 (CommentPosition::Prefix, false)
                             }
+                        } else {
+                            // if there is no postfix comment after the piece of code
+                            (CommentPosition::Prefix, false)
                         }
-                    } else {
-                        // beginning of file
-                        (CommentPosition::Prefix, false)
                     }
                 } else {
-                    // comment is after some code
-                    (CommentPosition::Postfix, false)
+                    // beginning of file
+                    (CommentPosition::Prefix, false)
                 }
+            } else {
+                // comment is after some code
+                (CommentPosition::Postfix, false)
             }
         };
-        Self::new(comment, position, has_newline_before)
+
+        Self::new(comment, position, has_newline_before, indent_len)
     }
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line)
@@ -111,18 +147,26 @@ pub struct Comments {
 }
 
 impl Comments {
-    pub fn new(comments: Vec<Comment>, src: &str) -> Self {
+    pub fn new(mut comments: Vec<Comment>, src: &str) -> Self {
         let mut prefixes = Vec::new();
         let mut postfixes = Vec::new();
+        let mut last_comment = None;
 
-        for comment in comments.into_iter().rev() {
-            let comment = CommentWithMetadata::from_comment_and_src(comment, src);
+        comments.sort_by_key(|comment| comment.loc());
+        for comment in comments {
+            let comment =
+                CommentWithMetadata::from_comment_and_src(comment, src, last_comment.as_ref());
+            last_comment = Some(comment.clone());
             if comment.is_prefix() {
                 prefixes.push(comment)
             } else {
                 postfixes.push(comment)
             }
         }
+
+        prefixes.reverse();
+        postfixes.reverse();
+
         Self { prefixes, postfixes }
     }
 
