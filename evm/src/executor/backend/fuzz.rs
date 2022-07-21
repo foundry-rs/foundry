@@ -1,6 +1,6 @@
 use crate::{
     executor::{
-        backend::{Backend, DatabaseExt, LocalForkId},
+        backend::{diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId},
         fork::{CreateFork, ForkId},
     },
     Address,
@@ -114,6 +114,14 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.backend.ensure_fork_id(id)
+    }
+
+    fn diagnose_revert(
+        &self,
+        callee: Address,
+        subroutine: &SubRoutine,
+    ) -> Option<RevertDiagnostic> {
+        self.backend.diagnose_revert(callee, subroutine)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

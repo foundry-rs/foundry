@@ -3,6 +3,7 @@ use crate::executor::{
     snapshot::Snapshots,
 };
 use bytes::Bytes;
+use diagnostic::RevertDiagnostic;
 use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
@@ -11,14 +12,17 @@ use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef},
     Account, AccountInfo, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log, Return,
-    SubRoutine, TransactOut, TransactTo,
+    SubRoutine, TransactOut, TransactTo, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
+
 mod fuzz;
 mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
+mod diagnostic;
 mod in_memory_db;
+
 use crate::{
     abi::CHEATCODE_ADDRESS,
     executor::{backend::snapshot::BackendSnapshot, inspector::DEFAULT_CREATE2_DEPLOYER},
@@ -131,6 +135,35 @@ pub trait DatabaseExt: Database {
 
     /// Ensures that a corresponding `ForkId` exists for the given local `id`
     fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId>;
+
+    /// Handling multiple accounts/new contracts in a multifork environment can be challenging since
+    /// every fork has its own standalone storage section. So this can be a common error to run
+    /// into:
+    ///
+    /// ```solidity
+    /// function testCanDeploy() public {
+    ///    cheats.selectFork(mainnetFork);
+    ///    // contract created while on `mainnetFork`
+    ///    DummyContract dummy = new DummyContract();
+    ///    // this will succeed
+    ///    dummy.hello();
+    ///
+    ///    cheats.selectFork(optimismFork);
+    ///
+    ///    cheats.expectRevert();
+    ///    // this will revert since `dummy` contract only exists on `mainnetFork`
+    ///    dummy.hello();
+    /// }
+    /// ```
+    ///
+    /// If this happens (`dummy.hello()`), or more general, a call on an address that's not a
+    /// contract, revm will revert without useful context. This call will check in this context if
+    /// `address(dummy)` belongs to an existing contract and if not will check all other forks if
+    /// the contract is deployed there.
+    ///
+    /// Returns a more useful error message if that's the case
+    fn diagnose_revert(&self, callee: Address, subroutine: &SubRoutine)
+        -> Option<RevertDiagnostic>;
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
@@ -604,6 +637,40 @@ impl DatabaseExt for Backend {
         self.inner.ensure_fork_id(id)
     }
 
+    fn diagnose_revert(
+        &self,
+        callee: Address,
+        subroutine: &SubRoutine,
+    ) -> Option<RevertDiagnostic> {
+        let active_id = self.active_fork_id()?;
+        let active_fork = self.active_fork()?;
+        if !active_fork.is_contract(callee) &&
+            subroutine.account(callee).info.code_hash == KECCAK_EMPTY
+        {
+            // no contract for `callee` available on current fork, check if available on other forks
+            let mut available_on = Vec::new();
+            for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
+                if fork.is_contract(callee) {
+                    available_on.push(id);
+                }
+            }
+
+            return if available_on.is_empty() {
+                Some(RevertDiagnostic::ContractDoesNotExist { contract: callee, active: active_id })
+            } else {
+                // likely user error: called a contract that's not available on active fork but is
+                // present other forks
+                Some(RevertDiagnostic::ContractExistsOnOtherForks {
+                    contract: callee,
+                    active: active_id,
+                    available_on,
+                })
+            }
+        }
+
+        None
+    }
+
     fn is_persistent(&self, acc: &Address) -> bool {
         self.inner.persistent_accounts.contains(acc)
     }
@@ -747,6 +814,16 @@ pub struct Fork {
     subroutine: SubRoutine,
 }
 
+// === impl Fork ===
+
+impl Fork {
+    /// Returns true if the account is a contract
+    pub fn is_contract(&self, acc: Address) -> bool {
+        self.db.basic(acc).code_hash != KECCAK_EMPTY ||
+            self.subroutine.account(acc).info.code_hash != KECCAK_EMPTY
+    }
+}
+
 /// Container type for various Backend related data
 #[derive(Debug, Clone, Default)]
 pub struct BackendInner {
@@ -840,6 +917,13 @@ impl BackendInner {
 
     fn set_fork(&mut self, idx: ForkLookupIndex, fork: Fork) {
         self.forks[idx] = Some(fork)
+    }
+
+    /// Returns an iterator over Forks
+    pub fn forks_iter(&self) -> impl Iterator<Item = (LocalForkId, &Fork)> + '_ {
+        self.issued_local_fork_ids
+            .iter()
+            .map(|(id, fork_id)| (*id, self.get_fork(self.created_forks[fork_id])))
     }
 
     /// Reverts the entire fork database

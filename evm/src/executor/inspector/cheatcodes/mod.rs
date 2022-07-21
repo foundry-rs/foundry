@@ -19,7 +19,8 @@ use ethers::{
     },
 };
 use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
+    opcode, return_revert, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector,
+    Interpreter, Return, TransactTo,
 };
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -428,6 +429,15 @@ where
                         .encode()
                         .into(),
                 )
+            }
+        }
+
+        // handle reverts in multi-fork mode where a call is made to an address that does not exist
+        if let TransactTo::Call(to) = data.env.tx.transact_to {
+            if matches!(status, return_revert!()) {
+                if let Some(diagnostic) = data.db.diagnose_revert(to, &data.subroutine) {
+                    return (status, remaining_gas, diagnostic.to_error_msg(self).encode().into())
+                }
             }
         }
 
