@@ -99,7 +99,8 @@ contract ForkTest is DSTest {
         assertEq(block.number, mainBlock + 1);
     }
 
-
+    // checks that a new created contract's storage is only available on the fork it was created from,
+    // but the address is available across swap points
     function testCanDeploy() public {
         cheats.selectFork(mainnetFork);
         DummyContract dummy = new DummyContract();
@@ -114,15 +115,45 @@ contract ForkTest is DSTest {
         dummy.hello();
     }
 
+    /// checks that marking as persistent works
     function testMarkPersistent() public {
         assert(cheats.isPersistent(msg.sender));
         assert(cheats.isPersistent(address(this)));
+
+        cheats.selectFork(mainnetFork);
+
+        DummyContract dummy = new DummyContract();
+        assert(!cheats.isPersistent(address(dummy)));
+
+        uint256 expectedValue = 99;
+        dummy.set(expectedValue);
+
+        cheats.selectFork(optimismFork);
+        // this doesn't work yet because `dummy` is only available on `mainnetFork`
+        cheats.expectRevert();
+        dummy.hello();
+
+        cheats.selectFork(mainnetFork);
+        assertEq(dummy.val(), expectedValue);
+        cheats.makePersistent(address(dummy));
+        assert(cheats.isPersistent(address(dummy)));
+
+        cheats.selectFork(optimismFork);
+        // the account is now marked as persistent and the contract is persistent across swaps
+        dummy.hello();
+        assertEq(dummy.val(), expectedValue);
+
     }
 
 }
 
 contract DummyContract {
+     uint256 public val;
 
     function hello() external {}
+
+    function set(uint256 _val) public {
+        val = _val;
+    }
 
 }

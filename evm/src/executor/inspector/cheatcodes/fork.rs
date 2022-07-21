@@ -48,10 +48,7 @@ pub fn apply<DB: DatabaseExt>(
             data.db.add_persistent_account(acc.2);
             Ok(Default::default())
         }
-        HEVMCalls::IsPersistent(acc) => {
-            data.db.is_persistent(&acc.0);
-            Ok(Default::default())
-        }
+        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&acc.0).encode().into()),
         HEVMCalls::RevokePersistent0(acc) => {
             data.db.remove_persistent_account(&acc.0);
             Ok(Default::default())
