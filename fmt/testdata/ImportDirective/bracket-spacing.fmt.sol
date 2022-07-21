@@ -1,4 +1,4 @@
-// config: bracket-spacing=true
+// config: bracket_spacing = true
 import "SomeFile.sol";
 import "SomeFile.sol" as SomeOtherFile;
 import "AnotherFile.sol" as SomeSymbol;

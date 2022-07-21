@@ -173,11 +173,11 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_break(&mut self, loc: Loc) -> Result<(), Self::Error> {
+    fn visit_break(&mut self, loc: Loc, _semicolon: bool) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
-    fn visit_continue(&mut self, loc: Loc) -> Result<(), Self::Error> {
+    fn visit_continue(&mut self, loc: Loc, _semicolon: bool) -> Result<(), Self::Error> {
         self.visit_source(loc)
     }
 
@@ -318,6 +318,73 @@ pub trait Visitor {
 
         Ok(())
     }
+
+    fn visit_yul_block(
+        &mut self,
+        loc: Loc,
+        _stmts: &mut Vec<YulStatement>,
+        _attempt_single_line: bool,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc)
+    }
+
+    fn visit_yul_expr(&mut self, expr: &mut YulExpression) -> Result<(), Self::Error> {
+        self.visit_source(expr.loc())
+    }
+
+    fn visit_yul_assignment<T>(
+        &mut self,
+        loc: Loc,
+        _exprs: &mut Vec<T>,
+        _expr: &mut Option<&mut YulExpression>,
+    ) -> Result<(), Self::Error>
+    where
+        T: Visitable + LineOfCode,
+    {
+        self.visit_source(loc)
+    }
+
+    fn visit_yul_for(&mut self, stmt: &mut YulFor) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc)
+    }
+
+    fn visit_yul_function_call(&mut self, stmt: &mut YulFunctionCall) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc)
+    }
+
+    fn visit_yul_fun_def(&mut self, stmt: &mut YulFunctionDefinition) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc)
+    }
+
+    fn visit_yul_if(
+        &mut self,
+        loc: Loc,
+        _expr: &mut YulExpression,
+        _block: &mut YulBlock,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc)
+    }
+
+    fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
+        self.visit_source(loc)
+    }
+
+    fn visit_yul_switch(&mut self, stmt: &mut YulSwitch) -> Result<(), Self::Error> {
+        self.visit_source(stmt.loc)
+    }
+
+    fn visit_yul_var_declaration(
+        &mut self,
+        loc: Loc,
+        _idents: &mut Vec<YulTypedIdentifier>,
+        _expr: &mut Option<YulExpression>,
+    ) -> Result<(), Self::Error> {
+        self.visit_source(loc)
+    }
+
+    fn visit_yul_typed_ident(&mut self, ident: &mut YulTypedIdentifier) -> Result<(), Self::Error> {
+        self.visit_source(ident.loc)
+    }
 }
 
 /// All `solang::pt::*` types, such as [Statement](solang::pt::Statement) should implement the
@@ -446,8 +513,8 @@ impl Visitable for Statement {
                 v.visit_for(*loc, init, cond, update, body)
             }
             Statement::DoWhile(loc, body, cond) => v.visit_do_while(*loc, body, cond),
-            Statement::Continue(loc) => v.visit_continue(*loc),
-            Statement::Break(loc) => v.visit_break(*loc),
+            Statement::Continue(loc) => v.visit_continue(*loc, true),
+            Statement::Break(loc) => v.visit_break(*loc, true),
             Statement::Return(loc, expr) => v.visit_return(*loc, expr),
             Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
             Statement::RevertNamedArgs(loc, error, args) => {
@@ -498,6 +565,42 @@ impl Visitable for VariableDeclaration {
     }
 }
 
+impl Visitable for YulBlock {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        v.visit_yul_block(self.loc, self.statements.as_mut(), false)
+    }
+}
+
+impl Visitable for YulStatement {
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        match self {
+            YulStatement::Assign(loc, exprs, expr) => {
+                v.visit_yul_assignment(*loc, exprs, &mut Some(expr))
+            }
+            YulStatement::Block(block) => {
+                v.visit_yul_block(block.loc, block.statements.as_mut(), false)
+            }
+            YulStatement::Break(loc) => v.visit_break(*loc, false),
+            YulStatement::Continue(loc) => v.visit_continue(*loc, false),
+            YulStatement::For(stmt) => v.visit_yul_for(stmt),
+            YulStatement::FunctionCall(stmt) => v.visit_yul_function_call(stmt),
+            YulStatement::FunctionDefinition(stmt) => v.visit_yul_fun_def(stmt),
+            YulStatement::If(loc, expr, block) => v.visit_yul_if(*loc, expr, block),
+            YulStatement::Leave(loc) => v.visit_yul_leave(*loc),
+            YulStatement::Switch(stmt) => v.visit_yul_switch(stmt),
+            YulStatement::VariableDeclaration(loc, idents, expr) => {
+                v.visit_yul_var_declaration(*loc, idents, expr)
+            }
+        }
+    }
+}
+
 macro_rules! impl_visitable {
     ($type:ty, $func:ident) => {
         impl Visitable for $type {
@@ -520,3 +623,5 @@ impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
 impl_visitable!(ErrorParameter, visit_error_parameter);
 impl_visitable!(IdentifierPath, visit_ident_path);
+impl_visitable!(YulExpression, visit_yul_expr);
+impl_visitable!(YulTypedIdentifier, visit_yul_typed_ident);

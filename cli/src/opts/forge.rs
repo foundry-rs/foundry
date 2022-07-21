@@ -474,4 +474,25 @@ mod tests {
         assert_eq!(dep.tag, Some("v1".to_string()));
         assert_eq!(dep.alias, None);
     }
+
+    #[test]
+    fn can_parse_oz_with_tag() {
+        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@v4.7.0").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
+        );
+        assert_eq!(dep.tag, Some("v4.7.0".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@4.7.0").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
+        );
+        assert_eq!(dep.tag, Some("4.7.0".to_string()));
+        assert_eq!(dep.alias, None);
+    }
 }

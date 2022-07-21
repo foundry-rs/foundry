@@ -106,6 +106,10 @@ impl Executor {
             create2_deployer_account.code.as_ref().unwrap().is_empty()
         {
             let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+
+            // Probably 0, but just in case.
+            let initial_balance = self.get_balance(creator);
+
             self.set_balance(creator, U256::MAX);
             self.deploy(
                 creator,
@@ -113,6 +117,7 @@ impl Executor {
                 U256::zero(),
                 None
             )?;
+            self.set_balance(creator, initial_balance);
         }
         Ok(())
     }
