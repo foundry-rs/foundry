@@ -146,6 +146,9 @@ pub use console_mod::{ConsoleEvents, CONSOLE_ABI};
 ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
 pub use hardhatconsole_mod::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
 
+mod fmt;
+pub use fmt::format_hardhat_call;
+
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.
 pub fn patch_hardhat_console_selector(mut input: Vec<u8>) -> Vec<u8> {

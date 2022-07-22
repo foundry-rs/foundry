@@ -23,6 +23,12 @@ pub trait UIfmt {
     fn pretty(&self) -> String;
 }
 
+impl UIfmt for String {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl UIfmt for bool {
     fn pretty(&self) -> String {
         self.to_string()
