@@ -1,5 +1,5 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, trace::CallTraceArena, utils, CALLER};
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -218,7 +218,7 @@ impl Executor {
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi, Some(status))
+                let reason = utils::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -415,7 +415,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi,Some(status))
+                let reason = utils::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 return Err(EvmError::Execution {
                     reverted: true,
@@ -723,7 +723,7 @@ fn convert_call_result<D: Detokenize>(
             })
         }
         _ => {
-            let reason = foundry_utils::decode_revert(result.as_ref(), abi, Some(status))
+            let reason = utils::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution {
                 reverted,
