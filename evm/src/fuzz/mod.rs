@@ -1,4 +1,5 @@
 use crate::{
+    decode,
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
@@ -107,7 +108,7 @@ impl<'a> FuzzedExecutor<'a> {
                 // case to find a minimal failure case.
                 *counterexample.borrow_mut() = (calldata, call);
                 Err(TestCaseError::fail(
-                    match foundry_utils::decode_revert(
+                    match decode::decode_revert(
                         counterexample.borrow().1.result.as_ref(),
                         errors,
                         Some(status),

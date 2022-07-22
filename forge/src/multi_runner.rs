@@ -581,7 +581,13 @@ mod tests {
                         std::path::MAIN_SEPARATOR
                     )
                     .as_str(),
-                    vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
+                    vec![(
+                        "testCantPay()",
+                        false,
+                        Some("EvmError: Revert".to_string()),
+                        None,
+                        None,
+                    )],
                 ),
                 (
                     format!(
