@@ -75,12 +75,9 @@ impl FormatValue for Bytes {
     }
 }
 
-/// Formats a `specstr` using the input values, v1, v2 and v3.
+/// Formats a `specstr` using the input values.
 /// For example:
-///   console_log_format_n("%s has %d characters", 2, "foo", 3) == "foo has 3 characters"
-/// num_v determines the maximum number of values to be used for the formatting (since we don't have
-/// variadics in Rust). For example: console_log_format_n("%s", 1, v1, v2, v3) will format the
-/// string using v1 only, ignoring v2 and v2.
+///   console_log_format("%s has %d characters", ["foo", 3]) == "foo has 3 characters"
 ///
 /// Formatting rules are the same as hardhat. The supported format specifiers are as follows:
 /// - %s: Converts the value using its String representation. This is equivalent to applying
@@ -94,21 +91,19 @@ impl FormatValue for Bytes {
 /// Unformatted values are appended to the end of the formatted output using UIfmt::pretty().
 /// If there are more format specifiers than values, then the remaining unparsed format specifiers
 /// appended to the formatted output as-is.
-fn console_log_format_n(
+fn console_log_format<'a>(
     specstr: &str,
-    num_v: isize,
-    v0: &dyn FormatValue,
-    v1: &dyn FormatValue,
-    v2: &dyn FormatValue,
+    values: impl IntoIterator<Item = &'a dyn FormatValue>,
 ) -> String {
-    assert!(num_v <= 3);
-
     let mut result = String::new();
     let spec = specstr.as_bytes();
     let mut expect_fmt = false;
-    let mut curr_value = 0;
+
+    let mut values_iter = values.into_iter();
+    let mut current_value = values_iter.next();
+
     for (pos, c) in spec.iter().enumerate() {
-        if curr_value >= num_v {
+        if current_value.is_none() {
             let suffix = String::from_utf8_lossy(&spec[pos..]);
             result.push_str(&suffix.replace("%%", "%"));
             break
@@ -128,13 +123,8 @@ fn console_log_format_n(
                 b'o' => FormatSpec::Object,
                 _ => unreachable!(),
             };
-            match curr_value {
-                0 => result.push_str(&v0.fmt(fspec)),
-                1 => result.push_str(&v1.fmt(fspec)),
-                2 => result.push_str(&v2.fmt(fspec)),
-                _ => {} // unreacheable
-            };
-            curr_value += 1;
+            result.push_str(&current_value.unwrap().fmt(fspec));
+            current_value = values_iter.next();
         }
 
         if *c == b'%' {
@@ -149,64 +139,35 @@ fn console_log_format_n(
         }
     }
 
-    match num_v {
-        1 => {
-            if curr_value == 0 {
-                write!(result, " {}", v0.pretty()).unwrap()
-            }
+    if let Some(v) = current_value {
+        write!(result, " {}", v.pretty()).unwrap();
+        for v in values_iter {
+            write!(result, " {}", v.pretty()).unwrap();
         }
-        2 => match curr_value {
-            0 => write!(result, " {} {}", v0.pretty(), v1.pretty()).unwrap(),
-            1 => write!(result, " {}", v1.pretty()).unwrap(),
-            _ => {}
-        },
-        3 => match curr_value {
-            0 => write!(result, " {} {} {}", v0.pretty(), v1.pretty(), v2.pretty()).unwrap(),
-            1 => write!(result, " {} {}", v1.pretty(), v2.pretty()).unwrap(),
-            2 => write!(result, " {}", v2.pretty()).unwrap(),
-            _ => {}
-        },
-        _ => {}
     }
     result
 }
 
-fn console_log_format_1(specstr: &str, v0: &dyn FormatValue) -> String {
-    let placeholder = String::new();
-    console_log_format_n(specstr, 1, v0, &placeholder, &placeholder)
-}
-
-fn console_log_format_2(specstr: &str, v0: &dyn FormatValue, v1: &dyn FormatValue) -> String {
-    let placeholder = String::new();
-    console_log_format_n(specstr, 2, v0, v1, &placeholder)
-}
-
-fn console_log_format_3(
-    specstr: &str,
-    v0: &dyn FormatValue,
-    v1: &dyn FormatValue,
-    v2: &dyn FormatValue,
-) -> String {
-    console_log_format_n(specstr, 3, v0, v1, v2)
-}
-
 macro_rules! logf1 {
-    ($a:ident) => {
-        console_log_format_1(&$a.p_0, &$a.p_1)
-    };
+    ($a:ident) => {{
+        let args: [&dyn FormatValue; 1] = [&$a.p_1];
+        console_log_format(&$a.p_0, args)
+    }};
 }
 macro_rules! logf2 {
-    ($a:ident) => {
-        console_log_format_2(&$a.p_0, &$a.p_1, &$a.p_2)
-    };
+    ($a:ident) => {{
+        let args: [&dyn FormatValue; 2] = [&$a.p_1, &$a.p_2];
+        console_log_format(&$a.p_0, args)
+    }};
 }
 macro_rules! logf3 {
-    ($a:ident) => {
-        console_log_format_3(&$a.p_0, &$a.p_1, &$a.p_2, &$a.p_3)
-    };
+    ($a:ident) => {{
+        let args: [&dyn FormatValue; 3] = [&$a.p_1, &$a.p_2, &$a.p_3];
+        console_log_format(&$a.p_0, args)
+    }};
 }
 
-/// Formats a console.log call into a String. See [`console_log_format_n`] for details on the
+/// Formats a console.log call into a String. See [`console_log_format`] for details on the
 /// formatting rules
 pub fn format_hardhat_call(call: &HardhatConsoleCalls) -> String {
     match call {
@@ -308,6 +269,11 @@ mod tests {
     #[test]
     fn test_console_log_format_specifiers() {
         use std::str::FromStr;
+
+        let console_log_format_1 = |spec: &str, arg: &dyn FormatValue| {
+            let args: [&dyn FormatValue; 1] = [arg];
+            console_log_format(spec, args)
+        };
 
         assert_eq!("foo", console_log_format_1("%s", &String::from("foo")));
         assert_eq!("NaN", console_log_format_1("%i", &String::from("foo")));
