@@ -20,6 +20,7 @@ contract Contract {
         int256 int256_expl
     )
         public
-    { // do something
+    {
+        // do something
     }
 }
