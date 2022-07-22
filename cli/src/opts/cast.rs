@@ -141,6 +141,24 @@ The input can be:
         #[clap(value_name = "VALUE")]
         value: Option<String>,
     },
+    #[clap(name = "<<")]
+    #[clap(visible_aliases = &["left-shift", "ls"])]
+    #[clap(about = "Perform a left shifting operation")]
+    LeftShift {
+        #[clap(value_name = "VALUE")]
+        value: Option<String>,
+        #[clap(value_name = "BITS")]
+        bits: Option<String>,
+    },
+    #[clap(name = ">>")]
+    #[clap(visible_aliases = &["right-shift", "rs"])]
+    #[clap(about = "Perform a right shifting operation")]
+    RightShift {
+        #[clap(value_name = "VALUE")]
+        value: Option<String>,
+        #[clap(value_name = "BITS")]
+        bits: Option<String>,
+    },
     #[clap(name = "--to-unit")]
     #[clap(visible_aliases = &["to-unit", "tun", "2un"])]
     #[clap(

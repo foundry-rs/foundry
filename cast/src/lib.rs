@@ -18,7 +18,7 @@ use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, ops::{Shl, Shr}};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -1048,6 +1048,28 @@ impl SimpleCast {
         }
         let num_hex = format!("{:x}", num);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
+    pub fn left_shift(value: &str, bits: &str) -> Result<U256> {
+        let value = Self::get_hex_or_dec(value);
+        let bits = Self::get_hex_or_dec(bits);
+
+        Ok(value.shl(bits))
+    }
+
+    pub fn right_shift(value: &str, bits: &str) -> Result<U256> {
+        let value = Self::get_hex_or_dec(value);
+        let bits = Self::get_hex_or_dec(bits);
+
+        Ok(value.shr(bits))
+    }
+
+    fn get_hex_or_dec(value: &str) -> U256 {
+        if value.starts_with("0x") {
+            U256::from_str_radix(value, 16).expect("Unable to convert hex to U256")
+        } else {
+            U256::from_str_radix(value, 10).expect("Unable to convert decimal to U256")
+        }
     }
 
     /// Converts an eth amount into a specified unit
