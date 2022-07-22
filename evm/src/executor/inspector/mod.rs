@@ -23,6 +23,9 @@ use ethers::types::U256;
 
 use revm::BlockEnv;
 
+mod fuzzer;
+pub use fuzzer::Fuzzer;
+
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
     /// The cheatcode inspector and its state, if cheatcodes are enabled.
@@ -42,6 +45,8 @@ pub struct InspectorStackConfig {
     pub tracing: bool,
     /// Whether or not the debugger is enabled
     pub debugger: bool,
+    /// The fuzzer inspector and its state, if it exists.
+    pub fuzzer: Option<Fuzzer>,
     /// Whether or not coverage info should be collected
     pub coverage: bool,
 }
@@ -63,6 +68,8 @@ impl InspectorStackConfig {
         if self.debugger {
             stack.debugger = Some(Debugger::default());
         }
+        stack.fuzzer = self.fuzzer.clone();
+
         if self.coverage {
             stack.coverage = Some(CoverageCollector::default());
         }

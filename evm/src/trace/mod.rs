@@ -9,16 +9,17 @@ mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
-use crate::{abi::CHEATCODE_ADDRESS, CallKind};
+use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
 use ethers::{
-    abi::{Address, RawLog},
+    abi::{Abi, Address, RawLog},
+    prelude::ArtifactId,
     types::U256,
 };
 use node::CallTraceNode;
 use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fmt::{self, Write},
 };
 use yansi::{Color, Paint};
@@ -434,5 +435,36 @@ fn trace_color(trace: &CallTrace) -> Color {
         Color::Green
     } else {
         Color::Red
+    }
+}
+
+/// Given a list of traces and artifacts, it returns a map connecting address to abi
+pub fn load_contracts(
+    traces: Vec<(TraceKind, CallTraceArena)>,
+    known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+) -> BTreeMap<Address, (String, Abi)> {
+    if let Some(contracts) = known_contracts {
+        let local_identifier = LocalTraceIdentifier::new(contracts);
+        let mut decoder = CallTraceDecoderBuilder::new().build();
+        for (_, trace) in &traces {
+            decoder.identify(trace, &local_identifier);
+        }
+
+        decoder
+            .contracts
+            .iter()
+            .map(|(addr, name)| {
+                let (_, (abi, _)) = contracts
+                    .iter()
+                    .find(|(artifact, _)| {
+                        artifact.name ==
+                            *name.split(':').last().expect("invalid contract").to_string()
+                    })
+                    .expect("no contract");
+                (*addr, (name.clone(), abi.clone()))
+            })
+            .collect()
+    } else {
+        BTreeMap::new()
     }
 }

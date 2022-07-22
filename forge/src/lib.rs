@@ -6,7 +6,7 @@ pub mod coverage;
 
 /// The Forge test runner
 mod runner;
-pub use runner::ContractRunner;
+pub use runner::{ContractRunner, TestOptions};
 
 /// Forge test runners for multiple contracts
 mod multi_runner;

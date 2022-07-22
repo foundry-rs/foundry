@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
 
 /// Results and duration for a set of tests included in the same test contract
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,
@@ -54,6 +54,9 @@ pub struct TestResult {
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
 
+    /// Minimal reproduction sequence for failing invariant test
+    pub counterexample_sequence: Option<Vec<CounterExample>>,
+
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     pub logs: Vec<Log>,
@@ -79,33 +82,39 @@ impl TestResult {
     }
 }
 
-/// Used gas by a test
+/// Data report by a test.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum TestKindGas {
-    Standard(u64),
-    Fuzz { runs: usize, mean: u64, median: u64 },
+pub enum TestKindReport {
+    Standard { gas: u64 },
+    Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
+    Invariant { runs: usize, calls: usize, reverts: usize },
 }
 
-impl fmt::Display for TestKindGas {
+impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestKindGas::Standard(gas) => {
+            TestKindReport::Standard { gas } => {
                 write!(f, "(gas: {})", gas)
             }
-            TestKindGas::Fuzz { runs, mean, median } => {
-                write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean, median)
+            TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
+                write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean_gas, median_gas)
+            }
+            TestKindReport::Invariant { runs, calls, reverts } => {
+                write!(f, "(runs: {}, calls: {}, reverts: {})", runs, calls, reverts)
             }
         }
     }
 }
 
-impl TestKindGas {
+impl TestKindReport {
     /// Returns the main gas value to compare against
     pub fn gas(&self) -> u64 {
         match self {
-            TestKindGas::Standard(gas) => *gas,
+            TestKindReport::Standard { gas } => *gas,
             // We use the median for comparisons
-            TestKindGas::Fuzz { median, .. } => *median,
+            TestKindReport::Fuzz { median_gas, .. } => *median_gas,
+            // We return 0 since it's not applicable
+            TestKindReport::Invariant { .. } => 0,
         }
     }
 }
@@ -119,17 +128,24 @@ pub enum TestKind {
     Standard(u64),
     /// A solidity fuzz test, that stores all test cases
     Fuzz(FuzzedCases),
+    /// A solidity invariant test, that stores all test cases
+    Invariant(Vec<FuzzedCases>, usize),
 }
 
 impl TestKind {
     /// The gas consumed by this test
-    pub fn gas_used(&self) -> TestKindGas {
+    pub fn report(&self) -> TestKindReport {
         match self {
-            TestKind::Standard(gas) => TestKindGas::Standard(*gas),
-            TestKind::Fuzz(fuzzed) => TestKindGas::Fuzz {
+            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
+            TestKind::Fuzz(fuzzed) => TestKindReport::Fuzz {
                 runs: fuzzed.cases().len(),
-                median: fuzzed.median_gas(false),
-                mean: fuzzed.mean_gas(false),
+                median_gas: fuzzed.median_gas(false),
+                mean_gas: fuzzed.mean_gas(false),
+            },
+            TestKind::Invariant(fuzzed, reverts) => TestKindReport::Invariant {
+                runs: fuzzed.len(),
+                calls: fuzzed.iter().map(|sequence| sequence.cases().len()).sum(),
+                reverts: *reverts,
             },
         }
     }

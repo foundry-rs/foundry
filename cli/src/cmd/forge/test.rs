@@ -20,7 +20,7 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
@@ -339,7 +339,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used().gas()
+        self.result.kind.report().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -438,28 +438,44 @@ fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
-        let txt = match (&result.reason, &result.counterexample) {
-            (Some(ref reason), Some(ref counterexample)) => {
+        let txt = match (&result.reason, &result.counterexample, &result.counterexample_sequence) {
+            (Some(ref reason), Some(ref counterexample), None) => {
                 format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
             }
-            (None, Some(ref counterexample)) => {
+            (None, Some(ref counterexample), None) => {
                 format!("[FAIL. Counterexample: {counterexample}]")
             }
-            (Some(ref reason), None) => {
+            (Some(ref reason), None, None) => {
                 format!("[FAIL. Reason: {reason}]")
             }
-            (None, None) => "[FAIL]".to_string(),
+            (Some(ref reason), None, Some(sequence)) => {
+                let mut inner_txt = "".to_string();
+
+                for checkpoint in sequence {
+                    inner_txt += format!("\t\t{checkpoint}\n").as_str();
+                }
+
+                format!("[FAIL. Reason: {reason}]\n\t[Sequence]\n{inner_txt}\n")
+            }
+            _ => "[FAIL. Reason: Undefined]".to_string(),
         };
 
         Paint::red(txt)
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used());
+    println!("{} {} {}", status, name, result.kind.report());
 }
 
 pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
+
+    let mut test_options = TestOptions {
+        include_fuzz_tests,
+        invariant_depth: config.invariant_depth,
+        invariant_fail_on_revert: config.invariant_fail_on_revert,
+        invariant_call_override: config.invariant_call_override,
+    };
 
     // Setup the fuzzer
     // TODO: Add CLI Options to modify the persistence
@@ -506,10 +522,12 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
 
     if args.debug.is_some() {
         filter.test_pattern = args.debug;
+        test_options.include_fuzz_tests = true;
+
         match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, true)?;
+                    let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -560,7 +578,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             filter,
             args.json,
             args.allow_failure,
-            include_fuzz_tests,
+            test_options,
             args.gas_report,
         )
     }
@@ -593,7 +611,7 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    include_fuzz_tests: bool,
+    test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
@@ -618,7 +636,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, include_fuzz_tests)?;
+        let results = runner.test(&filter, None, test_options)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -639,8 +657,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle =
-            thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports);

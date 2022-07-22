@@ -15,8 +15,8 @@ use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
-
-mod strategies;
+pub mod invariant;
+pub mod strategies;
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
@@ -139,7 +139,14 @@ impl<'a> FuzzedExecutor<'a> {
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
                     .expect("could not decode fuzzer inputs");
-                result.counterexample = Some(CounterExample { calldata, args });
+                result.counterexample = Some(CounterExample {
+                    sender: None,
+                    addr: None,
+                    signature: None,
+                    contract_name: None,
+                    calldata,
+                    args,
+                });
             }
             _ => (),
         }
@@ -150,16 +157,74 @@ impl<'a> FuzzedExecutor<'a> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CounterExample {
+    /// Address which makes the call
+    pub sender: Option<Address>,
+    /// Address to which to call to
+    pub addr: Option<Address>,
+    /// The data to provide
     pub calldata: Bytes,
-
+    /// Function signature if it exists
+    pub signature: Option<String>,
+    /// Contract name if it exists
+    pub contract_name: Option<String>,
+    // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
+}
+
+impl CounterExample {
+    pub fn create(
+        sender: Address,
+        addr: Address,
+        bytes: &Bytes,
+        contracts: &BTreeMap<Address, (String, Abi)>,
+    ) -> Self {
+        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
+
+        let func = abi
+            .functions()
+            .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
+            .expect("Couldnt find function");
+
+        // skip the function selector when decoding
+        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+
+        CounterExample {
+            sender: Some(sender),
+            addr: Some(addr),
+            calldata: bytes.clone(),
+            signature: Some(func.signature()),
+            contract_name: Some(name.clone()),
+            args,
+        }
+    }
 }
 
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
+
+        let mut msg = "".to_string();
+
+        if let Some(sender) = self.sender {
+            msg += format!("sender={:?} addr=", sender).as_str();
+        }
+
+        if let Some(name) = &self.contract_name {
+            msg += format!("[{}]", name).as_str();
+        }
+
+        if let Some(addr) = &self.addr {
+            msg += format!("{:?} ", addr).as_str();
+        }
+
+        if let Some(sig) = &self.signature {
+            msg += format!("calldata={}", &sig).as_str();
+        } else {
+            msg += format!("calldata=0x{}", hex::encode(&self.calldata)).as_str();
+        }
+
+        write!(f, "{msg}, args=[{}]", args)
     }
 }
 
