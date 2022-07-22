@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::executor::fork::BlockchainDb;
+use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -14,8 +14,6 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-
-use crate::executor::fork::cache::FlushJsonBlockCacheDB;
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -372,7 +370,7 @@ pub struct SharedBackend {
     ///
     /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
     /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
-    _cache: Arc<FlushJsonBlockCacheDB>,
+    cache: Arc<FlushJsonBlockCacheDB>,
 }
 
 impl SharedBackend {
@@ -434,9 +432,9 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
-        let _cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
+        let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend, _cache }, handler)
+        (Self { backend, cache }, handler)
     }
 
     /// Updates the pinned block to fetch data from
@@ -472,6 +470,11 @@ impl SharedBackend {
             self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
             Ok(rx.recv()?)
         })
+    }
+
+    /// Flushes the DB to disk if caching is enabled
+    pub(crate) fn flush_cache(&self) {
+        self.cache.0.flush();
     }
 }
 
@@ -514,7 +517,8 @@ impl DatabaseRef for SharedBackend {
 mod tests {
     use crate::executor::{
         fork::{BlockchainDbMeta, JsonBlockCacheDB},
-        Fork,
+        opts::EvmOpts,
+        Backend,
     };
     use ethers::{
         providers::{Http, Provider},
@@ -522,6 +526,9 @@ mod tests {
         types::Address,
     };
 
+    use crate::executor::fork::CreateFork;
+    use ethers::types::Chain;
+    use foundry_config::Config;
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
@@ -579,25 +586,26 @@ mod tests {
         assert!(!json.db().accounts.read().is_empty());
     }
 
-    #[test]
-    fn can_read_write_cache() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
         let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
-        let tmpdir = tempfile::tempdir().unwrap();
-        let cache_path = tmpdir.path().join("storage.json");
-        let runtime = RuntimeOrHandle::new();
 
-        let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
-        let env = revm::Env::default();
+        let block_num = provider.get_block_number().await.unwrap().as_u64();
 
-        let fork = Fork {
-            cache_path: Some(cache_path.clone()),
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_block_number = Some(block_num);
+
+        let env = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
+
+        let fork = CreateFork {
+            enable_caching: true,
             url: ENDPOINT.to_string(),
-            pin_block: Some(block_num),
-            chain_id: 1,
-            initial_backoff: 50,
+            env: env.clone(),
+            evm_opts,
         };
 
-        let backend = runtime.block_on(fork.spawn_backend(&env));
+        let backend = Backend::spawn(Some(fork));
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
@@ -612,15 +620,14 @@ mod tests {
             let _ = backend.storage(address, idx.into());
         }
         drop(backend);
-        drop(runtime);
 
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
-            hosts: Default::default(),
-        };
+        let meta =
+            BlockchainDbMeta { cfg_env: env.cfg, block_env: env.block, hosts: Default::default() };
 
-        let db = BlockchainDb::new(meta, Some(cache_path));
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+        );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);

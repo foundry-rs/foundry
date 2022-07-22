@@ -223,6 +223,12 @@ impl TestProject {
         self.inner().add_source("test.sol", s).unwrap()
     }
 
+    /// Adds `console.sol` as a source under "console.sol"
+    pub fn insert_console(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/logs/console.sol");
+        self.inner().add_source("console.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
@@ -690,21 +696,6 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
-}
-
-/// Creates a cross-platform remapping string for use in tests
-///
-/// NOTE: This probably should be unnecessary, and remappings should probably
-/// be canonicalized.
-pub fn remapping_str(src: &str, dest: &str) -> String {
-    // NOTE(onbjerg): The `trim_end_matches` is because the path itself on Windows is normalized
-    // except for the last character which is still a /...
-    format!(
-        "{}={}/",
-        src,
-        dest.trim_end_matches('/')
-            .replace('/', std::str::from_utf8(&[std::path::MAIN_SEPARATOR as u8]).unwrap())
-    )
 }
 
 #[cfg(test)]

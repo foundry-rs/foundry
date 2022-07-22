@@ -1,19 +1,19 @@
+use super::*;
 use crate::{
-    cmd::{
-        forge::script::{sequence::TransactionWithMetadata, *},
-        needs_setup,
-    },
+    cmd::{forge::script::sequence::TransactionWithMetadata, needs_setup},
     utils,
 };
+use cast::executor::inspector::CheatsConfig;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{builder::Backend, inspector::CheatsConfig, ExecutorBuilder},
+    executor::{Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
+use tracing::trace;
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -25,6 +25,7 @@ impl ScriptArgs {
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
+        trace!("start executing script");
         let CompactContractBytecode { abi, bytecode, .. } = contract;
 
         let abi = abi.expect("no ABI for contract");
@@ -146,24 +147,18 @@ impl ScriptArgs {
     }
 
     /// Creates the Runner that drives script execution
-    async fn prepare_runner(
-        &self,
-        script_config: &ScriptConfig,
-        sender: Address,
-    ) -> ScriptRunner<Backend> {
+    async fn prepare_runner(&self, script_config: &ScriptConfig, sender: Address) -> ScriptRunner {
+        trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
 
         // the db backend that serves all the data
-        let db = Backend::new(
-            utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
-            &env,
-        )
-        .await;
+        let db =
+            Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
 
         let executor = ExecutorBuilder::default()
             .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts))
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
+            .with_spec(utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
             .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug)
             .set_debugger(self.debug)

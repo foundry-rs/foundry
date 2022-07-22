@@ -3,7 +3,7 @@
 use crate::cmd::{forge::build::BuildArgs, utils::Cmd};
 use clap::Parser;
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{figment::Figment, fix::fix_tomls, Config};
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
@@ -14,6 +14,8 @@ pub struct ConfigArgs {
     json: bool,
     #[clap(help = "prints basic set of currently set config values", long)]
     basic: bool,
+    #[clap(help = "attempts to fix any configuration warnings", long)]
+    fix: bool,
     // support nested build arguments
     #[clap(flatten)]
     opts: BuildArgs,
@@ -25,6 +27,10 @@ impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        if self.fix {
+            fix_tomls();
+            return Ok(())
+        }
         let figment: Figment = From::from(&self);
         let config = Config::from_provider(figment);
         let s = if self.basic {

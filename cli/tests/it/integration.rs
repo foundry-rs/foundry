@@ -1,12 +1,10 @@
 use foundry_cli_test_utils::forgetest_external;
 
-forgetest_external!(solmate, "Rari-Capital/solmate");
+forgetest_external!(solmate, "transmissions11/solmate");
 forgetest_external!(geb, "reflexer-labs/geb", &["--chain-id", "99"]);
 forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
-// forgetest_external!(vaults, "Rari-Capital/vaults");
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
-forgetest_external!(maple_loan, "maple-labs/loan");
 
 /// Forking tests
 mod fork_integration {

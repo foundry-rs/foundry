@@ -36,6 +36,14 @@ contract LiteralExpressions {
 some words" /* comment10 */;
         unicode"Hello 😃";
 
+        // quoted strings
+        'hello "world"';
+        "hello 'world'";
+        'hello \'world\'';
+        "hello \"world\"";
+        'hello \"world\"';
+        "hello \'world\'";
+
 
         // hex literals
         hex"001122FF";
@@ -44,5 +52,7 @@ some words" /* comment10 */;
 
         // address literals
         0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+        // non checksummed address
+        0xc02aaa39b223Fe8D0A0e5C4F27ead9083c756Cc2;
     }
 }

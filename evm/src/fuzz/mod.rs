@@ -1,7 +1,3 @@
-mod strategies;
-
-pub use proptest::test_runner::{Config as FuzzConfig, Reason};
-
 use crate::{
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
@@ -10,14 +6,17 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-use revm::db::DatabaseRef;
+
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
+
+mod strategies;
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
@@ -27,21 +26,18 @@ pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct FuzzedExecutor<'a, DB: DatabaseRef> {
+pub struct FuzzedExecutor<'a> {
     /// The VM
-    executor: &'a Executor<DB>,
+    executor: &'a Executor,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests
     sender: Address,
 }
 
-impl<'a, DB> FuzzedExecutor<'a, DB>
-where
-    DB: DatabaseRef,
-{
+impl<'a> FuzzedExecutor<'a> {
     /// Instantiates a fuzzed executor given a testrunner
-    pub fn new(executor: &'a Executor<DB>, runner: TestRunner, sender: Address) -> Self {
+    pub fn new(executor: &'a Executor, runner: TestRunner, sender: Address) -> Self {
         Self { executor, runner, sender }
     }
 
@@ -64,7 +60,7 @@ where
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
-        let state: EvmFuzzState = build_initial_state(&self.executor.db);
+        let state: EvmFuzzState = build_initial_state(&self.executor.backend().db);
 
         // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
         // have that, we should add a way to configure strategy weights

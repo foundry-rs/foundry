@@ -14,4 +14,4 @@ eyre = "0.6.5"
 hex = "0.4.3"
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 forge = { path = "../forge" }
-revm = { version = "1.6", default-features = false, features = ["std", "k256", "with-serde"] }
+revm = { version = "1.7", default-features = false, features = ["std", "k256", "with-serde"] }

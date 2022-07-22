@@ -2,6 +2,8 @@ use ethers::{
     providers::Middleware,
     types::{Address, U256},
 };
+use eyre::WrapErr;
+use futures::TryFutureExt;
 use revm::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
@@ -20,12 +22,18 @@ where
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
     } else {
-        provider.get_block_number().await?.as_u64()
+        provider.get_block_number().await.wrap_err("Failed to get latest block number")?.as_u64()
     };
     let (fork_gas_price, rpc_chain_id, block) = tokio::try_join!(
-        provider.get_gas_price(),
-        provider.get_chainid(),
-        provider.get_block(block_number)
+        provider
+            .get_gas_price()
+            .map_err(|err| { eyre::Error::new(err).wrap_err("Failed to get gas price") }),
+        provider
+            .get_chainid()
+            .map_err(|err| { eyre::Error::new(err).wrap_err("Failed to get chain id") }),
+        provider.get_block(block_number).map_err(|err| {
+            eyre::Error::new(err).wrap_err(format!("Failed to get block {block_number}"))
+        })
     )?;
     let block = if let Some(block) = block {
         block

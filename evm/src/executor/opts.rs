@@ -6,7 +6,9 @@ use ethers::{
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::executor::fork::CreateFork;
 use foundry_common;
+use foundry_config::Config;
 
 use super::fork::environment;
 
@@ -51,7 +53,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await
+            self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
         } else {
             self.local_evm_env()
         }
@@ -62,16 +64,17 @@ impl EvmOpts {
     /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
     pub fn evm_env_blocking(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
+            RuntimeOrHandle::new().block_on(async {
+                self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
+            })
         } else {
             self.local_evm_env()
         }
     }
 
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
-    async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> revm::Env {
-        let provider =
-            Provider::try_from(fork_url.as_ref()).expect("could not instantiated provider");
+    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
+        let provider = Provider::try_from(fork_url.as_ref())?;
         environment(
             &provider,
             self.memory_limit,
@@ -81,7 +84,6 @@ impl EvmOpts {
             self.sender,
         )
         .await
-        .expect("could not instantiate forked environment")
     }
 
     /// Returns the `revm::Env` configured with only local settings
@@ -108,6 +110,25 @@ impl EvmOpts {
                 ..Default::default()
             },
         }
+    }
+
+    /// Helper function that returns the [CreateFork] to use, if any.
+    ///
+    /// storage caching for the [CreateFork] will be enabled if
+    ///   - `fork_url` is present
+    ///   - `fork_block_number` is present
+    ///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+    ///   - storage is allowed (`no_storage_caching = false`)
+    ///
+    /// If all these criteria are met, then storage caching is enabled and storage info will be
+    /// written to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
+    ///
+    /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
+    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
+    pub fn get_fork(&self, config: &Config, env: revm::Env) -> Option<CreateFork> {
+        let url = self.fork_url.clone()?;
+        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.as_u64());
+        Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
     }
 
     /// Returns the gas limit to use
