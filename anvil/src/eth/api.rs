@@ -162,6 +162,9 @@ impl EthApi {
                     self.block_by_number(num).await.to_rpc_result()
                 }
             }
+            EthRequest::EthGetBlocksByArray(nums) => {
+                self.blocks_by_array(nums).await.to_rpc_result()
+            }
             EthRequest::EthGetTransactionCount(addr, block) => {
                 self.transaction_count(addr, block).await.to_rpc_result()
             }
@@ -488,6 +491,25 @@ impl EthApi {
             return Ok(self.pending_block_full())
         }
         self.backend.block_by_number_full(number).await
+    }
+
+    /// Returns blocks with given numbers array.
+    ///
+    /// Handler for ETH RPC call: `eth_getBlocksByArray`
+    pub async fn blocks_by_array(
+        &self,
+        numbers: Vec<BlockNumber>,
+    ) -> Result<Option<Vec<Block<Transaction>>>> {
+        node_info!("eth_getBlocksByArray");
+
+        let mut blocks: Vec<Block<Transaction>> = Vec::new();
+        for number in numbers {
+            if let Some(block) = self.block_by_number_full(number).await? {
+                blocks.push(block);
+            }
+        }
+
+        Ok(Some(blocks))
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).

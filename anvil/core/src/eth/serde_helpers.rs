@@ -115,6 +115,15 @@ where
     Ok(num)
 }
 
+pub fn lenient_block_number_array<'de, D>(deserializer: D) -> Result<Vec<BlockNumber>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let num =
+        <[Vec<LenientBlockNumber>; 1]>::deserialize(deserializer)?.into_iter().next().unwrap().into_iter().map(Into::into).collect();
+    Ok(num)
+}
+
 /// Wrapper type that ensures the type is named `params`
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Params<T: Default> {
