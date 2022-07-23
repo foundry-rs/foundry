@@ -1,19 +1,7 @@
-use ethers::{
-    abi::{Abi, Address, Function},
-    prelude::{ArtifactId, U256},
+use super::{
+    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantExecutor,
+    InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
 };
-use parking_lot::RwLock;
-use proptest::{
-    strategy::{SBoxedStrategy, Strategy, ValueTree},
-    test_runner::{TestCaseError, TestRunner},
-};
-use revm::DatabaseCommit;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    sync::Arc,
-};
-
 use crate::{
     executor::{inspector::Fuzzer, Executor, RawCallResult},
     fuzz::{
@@ -24,11 +12,17 @@ use crate::{
         FuzzCase, FuzzedCases,
     },
 };
-
-use super::{
-    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantExecutor,
-    InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
+use ethers::{
+    abi::{Abi, Address, Function},
+    prelude::{ArtifactId, U256},
 };
+use parking_lot::RwLock;
+use proptest::{
+    strategy::{SBoxedStrategy, Strategy, ValueTree},
+    test_runner::{TestCaseError, TestRunner},
+};
+use revm::DatabaseCommit;
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
@@ -56,13 +50,8 @@ impl<'a> InvariantExecutor<'a> {
         // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
 
-        // Stores the latest reason coming from a test call.  If the runner fails, it will hold the
-        // return reason of the failed test.
-        let revert_reason = RefCell::new(None);
-        let reverts = Cell::new(0);
-        let broken_invariants_count = Cell::new(0);
-        let failed_invariants =
-            RefCell::new(invariants.iter().map(|f| (f.name.to_string(), None)).collect());
+        // Stores data related to reverts or failed assertions of the test.
+        let failures = RefCell::new(InvariantFailures::new(&invariants));
 
         let clean_db = self.executor.backend().db.clone();
         let executor = RefCell::new(&mut self.executor);
@@ -76,11 +65,11 @@ impl<'a> InvariantExecutor<'a> {
             .run(&strat, |mut inputs| {
                 // Scenarios where we want to fail as soon as possible.
                 {
-                    if test_options.fail_on_revert && reverts.get() == 1 {
+                    if test_options.fail_on_revert && failures.borrow().reverts == 1 {
                         return Err(TestCaseError::fail("Revert occurred."))
                     }
 
-                    if broken_invariants_count.get() == invariants.len() {
+                    if failures.borrow().broken_invariants_count == invariants.len() {
                         return Err(TestCaseError::fail("All invariants have been broken."))
                     }
                 }
@@ -128,21 +117,14 @@ impl<'a> InvariantExecutor<'a> {
                             invariant_address,
                             &invariants,
                             &inputs,
-                            failed_invariants.borrow_mut(),
+                            failures.borrow_mut(),
                         )
                         .is_err()
                         {
-                            broken_invariants_count.set(
-                                failed_invariants
-                                    .borrow()
-                                    .iter()
-                                    .filter_map(|case| case.1.as_ref())
-                                    .count(),
-                            );
                             break 'fuzz_run
                         }
                     } else {
-                        reverts.set(reverts.get() + 1);
+                        failures.borrow_mut().reverts += 1;
 
                         // The user might want to stop all execution if a revert happens to better
                         // bound their testing space.
@@ -155,12 +137,14 @@ impl<'a> InvariantExecutor<'a> {
                                 &inputs,
                                 &[],
                             );
-                            *revert_reason.borrow_mut() = Some(error.revert_reason.clone());
+
+                            failures.borrow_mut().revert_reason = Some(error.revert_reason.clone());
 
                             // Hacky to provide the full error to the user.
                             for invariant in invariants.iter() {
-                                failed_invariants
+                                failures
                                     .borrow_mut()
+                                    .failed_invariants
                                     .insert(invariant.name.clone(), Some(error.clone()));
                             }
 
@@ -205,11 +189,8 @@ impl<'a> InvariantExecutor<'a> {
             });
 
         // TODO: only saving one sequence case per invariant failure. Do we want more?
-        Ok(Some(InvariantFuzzTestResult {
-            invariants: failed_invariants.into_inner(),
-            cases: fuzz_cases.into_inner(),
-            reverts: reverts.get(),
-        }))
+        let (reverts, invariants) = failures.into_inner().into_inner();
+        Ok(Some(InvariantFuzzTestResult { invariants, cases: fuzz_cases.into_inner(), reverts }))
     }
 
     /// Prepares certain structures to execute the invariant tests:
@@ -270,5 +251,33 @@ impl<'a> InvariantExecutor<'a> {
         self.executor.set_tracing(false);
 
         Ok((fuzz_state, targeted_contracts, strat))
+    }
+}
+
+/// Stores information about failures and reverts of the invariant tests.
+pub struct InvariantFailures {
+    /// The latest revert reason of a run.
+    pub revert_reason: Option<String>,
+    /// Total number of reverts.
+    pub reverts: usize,
+    /// How many different invariants have been broken.
+    pub broken_invariants_count: usize,
+    /// Maps a broken invariant to its specific error.
+    pub failed_invariants: BTreeMap<String, Option<InvariantFuzzError>>,
+}
+
+impl InvariantFailures {
+    fn new(invariants: &[&Function]) -> Self {
+        InvariantFailures {
+            reverts: 0,
+            broken_invariants_count: 0,
+            failed_invariants: invariants.iter().map(|f| (f.name.to_string(), None)).collect(),
+            revert_reason: None,
+        }
+    }
+
+    /// Moves `reverts` and `failed_invariants` out of the struct.
+    fn into_inner(self) -> (usize, BTreeMap<String, Option<InvariantFuzzError>>) {
+        (self.reverts, self.failed_invariants)
     }
 }

@@ -1,9 +1,9 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::{fuzz::*, CALLER};
-
 mod executor;
 mod filters;
-
+use self::executor::InvariantFailures;
+use crate::executor::{Executor, RawCallResult};
 use ethers::{
     abi::{Abi, Function},
     prelude::ArtifactId,
@@ -13,15 +13,10 @@ use parking_lot::RwLock;
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
     option::weighted,
-    strategy::SBoxedStrategy,
+    strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::{TestError, TestRunner},
 };
-
-use std::{borrow::BorrowMut, cell::RefMut, collections::BTreeMap, sync::Arc};
-
-use crate::executor::{Executor, RawCallResult};
-
-use proptest::strategy::{Strategy, ValueTree};
+use std::{cell::RefMut, collections::BTreeMap, sync::Arc};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
 pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
@@ -64,7 +59,7 @@ pub fn assert_invariants<'a>(
     invariant_address: Address,
     invariants: &'a [&Function],
     calldata: &[BasicTxDetails],
-    mut failed_invariant: RefMut<BTreeMap<String, Option<InvariantFuzzError>>>,
+    mut invariant_failures: RefMut<InvariantFailures>,
 ) -> eyre::Result<()> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
@@ -103,7 +98,7 @@ pub fn assert_invariants<'a>(
         };
 
         if let Some((func, result)) = err {
-            failed_invariant.borrow_mut().insert(
+            invariant_failures.failed_invariants.insert(
                 func.name.clone(),
                 Some(InvariantFuzzError::new(
                     invariant_address,
@@ -119,7 +114,10 @@ pub fn assert_invariants<'a>(
     }
 
     if found_case {
-        eyre::bail!("");
+        invariant_failures.broken_invariants_count =
+            invariant_failures.failed_invariants.iter().filter_map(|case| case.1.as_ref()).count();
+
+        eyre::bail!("Invariants have been broken.");
     }
     Ok(())
 }
