@@ -55,20 +55,12 @@ impl<'a> InvariantExecutor<'a> {
         let selectors =
             self.get_list::<(Address, Vec<FixedBytes>)>(address, abi, "targetSelectors");
 
-        fn add_function(
-            name: &str,
-            selector: FixedBytes,
-            abi: &Abi,
-            funcs: &mut Vec<Function>,
-        ) -> eyre::Result<()> {
-            let func = abi
-                .functions()
+        fn get_function(name: &str, selector: FixedBytes, abi: &Abi) -> eyre::Result<Function> {
+            abi.functions()
                 .into_iter()
                 .find(|func| func.short_signature().as_slice() == selector.as_slice())
-                .wrap_err(format!("{name} does not have the selector {:?}", selector))?;
-
-            funcs.push(func.clone());
-            Ok(())
+                .cloned()
+                .wrap_err(format!("{name} does not have the selector {:?}", selector))
         }
 
         for (address, bytes4_array) in selectors.into_iter() {
@@ -76,7 +68,7 @@ impl<'a> InvariantExecutor<'a> {
                 // The contract is already part of our filter, and all we do is specify that we're
                 // only looking at specific functions coming from `bytes4_array`.
                 for selector in bytes4_array {
-                    add_function(name, selector, abi, address_selectors)?;
+                    address_selectors.push(get_function(name, selector, abi)?);
                 }
             } else {
                 let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
@@ -85,7 +77,7 @@ impl<'a> InvariantExecutor<'a> {
                 ))?;
                 let mut functions = vec![];
                 for selector in bytes4_array {
-                    add_function(name, selector, abi, &mut functions)?;
+                    functions.push(get_function(name, selector, abi)?);
                 }
 
                 targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
