@@ -18,7 +18,11 @@ use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
-use std::{path::PathBuf, str::FromStr, ops::{Shl, Shr}};
+use std::{
+    ops::{Shl, Shr},
+    path::PathBuf,
+    str::FromStr,
+};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
