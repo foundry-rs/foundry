@@ -81,7 +81,7 @@ impl Executor {
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        backend.db.insert_account_info(
+        backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
@@ -166,10 +166,11 @@ impl Executor {
     pub fn setup(
         &mut self,
         from: Option<Address>,
-        address: Address,
+        to: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
         let from = from.unwrap_or(CALLER);
-        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
+        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -322,6 +323,9 @@ impl Executor {
         let (status, out, gas, state_changeset, logs) =
             self.backend_mut().inspect_ref(env, &mut inspector);
 
+        // if there are multiple forks we need to merge them
+        let logs = self.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         let call_result = convert_executed_call(inspector, executed_call)?;
 
@@ -364,6 +368,9 @@ impl Executor {
         let env = self.build_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+
+        let logs = db.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         convert_executed_call(inspector, executed_call)
     }

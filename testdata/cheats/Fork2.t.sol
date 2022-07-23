@@ -4,9 +4,9 @@ pragma solidity >=0.8.0;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-struct MyStruct {
-    uint256 value;
-}
+    struct MyStruct {
+        uint256 value;
+    }
 
 contract MyContract {
     uint256 forkId;
@@ -76,24 +76,6 @@ contract ForkTest is DSTest {
         assert(mainHash != optimismHash);
     }
 
-    function testCanSwitchContracts() public {
-        cheats.selectFork(mainnetFork);
-        MyContract contract1 = new MyContract(mainnetFork);
-
-        contract1.ensureForkId(mainnetFork); // Valid
-        contract1.ensureBlockHash(); // Valid
-
-        cheats.selectFork(optimismFork);
-
-        cheats.expectRevert("ForkId does not match");
-        contract1.ensureForkId(optimismFork);
-
-        contract1.ensureForkId(mainnetFork); // Valid
-
-        cheats.expectRevert("Block Hash does not match");
-        contract1.ensureBlockHash();
-    }
-
     // test that we can switch between forks, and "roll" blocks
     function testCanRollFork() public {
         cheats.selectFork(mainnetFork);
@@ -116,4 +98,76 @@ contract ForkTest is DSTest {
         cheats.selectFork(otherMain);
         assertEq(block.number, mainBlock + 1);
     }
+
+    // checks that a new created contract's storage is only available on the fork it was created from,
+    // but the address is available across swap points
+    function testCanDeploy() public {
+        cheats.selectFork(mainnetFork);
+        DummyContract dummy = new DummyContract();
+        dummy.hello();
+
+        address dummyAddress = address(dummy);
+
+        cheats.selectFork(optimismFork);
+        assertEq(dummyAddress, address(dummy));
+
+        cheats.expectRevert();
+        dummy.hello();
+    }
+
+    /// checks that marking as persistent works
+    function testMarkPersistent() public {
+        assert(cheats.isPersistent(msg.sender));
+        assert(cheats.isPersistent(address(this)));
+
+        cheats.selectFork(mainnetFork);
+
+        DummyContract dummy = new DummyContract();
+        assert(!cheats.isPersistent(address(dummy)));
+
+        uint256 expectedValue = 99;
+        dummy.set(expectedValue);
+
+        cheats.selectFork(optimismFork);
+        // this doesn't work yet because `dummy` is only available on `mainnetFork`
+        cheats.expectRevert();
+        dummy.hello();
+
+        cheats.selectFork(mainnetFork);
+        assertEq(dummy.val(), expectedValue);
+        cheats.makePersistent(address(dummy));
+        assert(cheats.isPersistent(address(dummy)));
+
+        cheats.selectFork(optimismFork);
+        // the account is now marked as persistent and the contract is persistent across swaps
+        dummy.hello();
+        assertEq(dummy.val(), expectedValue);
+    }
+
+    // checks diagnostic
+    function testNonExistingContractDiagnostic() public {
+        cheats.selectFork(mainnetFork);
+        DummyContract dummy = new DummyContract();
+        dummy.hello();
+
+        address dummyAddress = address(dummy);
+
+        cheats.selectFork(optimismFork);
+        assertEq(dummyAddress, address(dummy));
+
+        // TODO properly provide diagnostics
+//        dummy.hello();
+    }
+
+}
+
+contract DummyContract {
+     uint256 public val;
+
+    function hello() external {}
+
+    function set(uint256 _val) public {
+        val = _val;
+    }
+
 }
