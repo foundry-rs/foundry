@@ -6,7 +6,10 @@ use eyre::ContextCompat;
 
 use tracing::warn;
 
-use crate::CALLER;
+use crate::{
+    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    CALLER,
+};
 
 use super::{InvariantExecutor, TargetedContracts};
 
@@ -28,14 +31,8 @@ impl<'a> InvariantExecutor<'a> {
             .into_iter()
             .filter(|(addr, _)| {
                 *addr != invariant_address &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
-                        ) &&
-                    *addr !=
-                        Address::from_slice(
-                            &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
-                        ) &&
+                    *addr != CHEATCODE_ADDRESS &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
                     (excluded.is_empty() || !excluded.contains(addr))
             })
@@ -102,8 +99,6 @@ impl<'a> InvariantExecutor<'a> {
     where
         T: Tokenizable + Detokenize + TokenizableItem,
     {
-        let mut list: Vec<T> = vec![];
-
         if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
             if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
                 CALLER,
@@ -113,7 +108,7 @@ impl<'a> InvariantExecutor<'a> {
                 U256::zero(),
                 Some(abi),
             ) {
-                list = call_result.result;
+                return call_result.result
             } else {
                 warn!(
                     "The function {} was found but there was an error querying its data.",
@@ -122,6 +117,6 @@ impl<'a> InvariantExecutor<'a> {
             }
         };
 
-        list
+        Vec::new()
     }
 }

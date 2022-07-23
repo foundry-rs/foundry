@@ -204,7 +204,7 @@ impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 
-        let mut msg = "".to_string();
+        let mut msg = String::new();
 
         if let Some(sender) = self.sender {
             msg += format!("sender={:?} addr=", sender).as_str();

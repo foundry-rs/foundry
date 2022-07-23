@@ -1,19 +1,18 @@
-use parking_lot::RwLock;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    sync::Arc,
-};
-
 use ethers::{
     abi::{Abi, Address, Function},
     prelude::{ArtifactId, U256},
 };
+use parking_lot::RwLock;
 use proptest::{
     strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::DatabaseCommit;
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    sync::Arc,
+};
 
 use crate::{
     executor::{inspector::Fuzzer, Executor, RawCallResult},
@@ -229,7 +228,7 @@ impl<'a> InvariantExecutor<'a> {
             self.select_contracts_and_senders(invariant_address, test_contract_abi)?;
 
         if targeted_contracts.is_empty() {
-            eyre::bail!("No contracts to fuzz!");
+            eyre::bail!("No contracts to fuzz.");
         }
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].

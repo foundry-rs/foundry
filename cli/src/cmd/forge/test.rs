@@ -449,7 +449,7 @@ fn short_test_result(name: &str, result: &TestResult) {
                 format!("[FAIL. Reason: {reason}]")
             }
             (Some(ref reason), None, Some(sequence)) => {
-                let mut inner_txt = "".to_string();
+                let mut inner_txt = String::new();
 
                 for checkpoint in sequence {
                     inner_txt += format!("\t\t{checkpoint}\n").as_str();
