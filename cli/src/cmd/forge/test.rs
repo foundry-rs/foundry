@@ -9,6 +9,7 @@ use crate::{
     suggestions, utils,
     utils::FoundryPathExt,
 };
+use cast::fuzz::CounterExample;
 use clap::{AppSettings, Parser};
 use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
 use forge::{
@@ -438,29 +439,29 @@ fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
-        let txt = match (&result.reason, &result.counterexample, &result.counterexample_sequence) {
-            (Some(ref reason), Some(ref counterexample), None) => {
-                format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
-            }
-            (None, Some(ref counterexample), None) => {
-                format!("[FAIL. Counterexample: {counterexample}]")
-            }
-            (Some(ref reason), None, None) => {
-                format!("[FAIL. Reason: {reason}]")
-            }
-            (Some(ref reason), None, Some(sequence)) => {
-                let mut inner_txt = String::new();
+        let reason = result
+            .reason
+            .as_ref()
+            .map(|reason| format!("Reason: {reason}"))
+            .unwrap_or_else(|| "Reason: Undefined.".to_string());
 
-                for checkpoint in sequence {
-                    inner_txt += format!("\t\t{checkpoint}\n").as_str();
+        let counterexample = result
+            .counterexample
+            .as_ref()
+            .map(|example| match example {
+                CounterExample::Single(eg) => format!(" Counterexample: {eg}]"),
+                CounterExample::Sequence(sequence) => {
+                    let mut inner_txt = String::new();
+
+                    for checkpoint in sequence {
+                        inner_txt += format!("\t\t{checkpoint}\n").as_str();
+                    }
+                    format!("]\n\t[Sequence]\n{inner_txt}\n")
                 }
+            })
+            .unwrap_or_else(|| "]".to_string());
 
-                format!("[FAIL. Reason: {reason}]\n\t[Sequence]\n{inner_txt}\n")
-            }
-            _ => "[FAIL. Reason: Undefined]".to_string(),
-        };
-
-        Paint::red(txt)
+        Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
     println!("{} {} {}", status, name, result.kind.report());
@@ -533,7 +534,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                     // Build debugger args if this is a fuzz test
                     let sig = match test_kind {
                         TestKind::Fuzz(cases) => {
-                            if let Some(counterexample) = counterexample {
+                            if let Some(CounterExample::Single(counterexample)) = counterexample {
                                 counterexample.calldata.to_string()
                             } else {
                                 cases.cases().first().expect("no fuzz cases run").calldata.to_string()

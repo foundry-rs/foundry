@@ -51,11 +51,8 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// Minimal reproduction test case for failing fuzz tests
+    /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
-
-    /// Minimal reproduction sequence for failing invariant test
-    pub counterexample_sequence: Option<Vec<CounterExample>>,
 
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.

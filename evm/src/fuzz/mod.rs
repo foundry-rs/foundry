@@ -139,14 +139,15 @@ impl<'a> FuzzedExecutor<'a> {
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
                     .expect("could not decode fuzzer inputs");
-                result.counterexample = Some(CounterExample {
+
+                result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
                     addr: None,
                     signature: None,
                     contract_name: None,
                     calldata,
                     args,
-                });
+                }));
             }
             _ => (),
         }
@@ -156,7 +157,15 @@ impl<'a> FuzzedExecutor<'a> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CounterExample {
+pub enum CounterExample {
+    /// Call used as a counter example for fuzz tests.
+    Single(BaseCounterExample),
+    /// Sequence of calls used as a counter example for invariant tests.
+    Sequence(Vec<BaseCounterExample>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BaseCounterExample {
     /// Address which makes the call
     pub sender: Option<Address>,
     /// Address to which to call to
@@ -172,7 +181,7 @@ pub struct CounterExample {
     pub args: Vec<Token>,
 }
 
-impl CounterExample {
+impl BaseCounterExample {
     pub fn create(
         sender: Address,
         addr: Address,
@@ -189,7 +198,7 @@ impl CounterExample {
         // skip the function selector when decoding
         let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
 
-        CounterExample {
+        BaseCounterExample {
             sender: Some(sender),
             addr: Some(addr),
             calldata: bytes.clone(),
@@ -200,7 +209,7 @@ impl CounterExample {
     }
 }
 
-impl fmt::Display for CounterExample {
+impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 

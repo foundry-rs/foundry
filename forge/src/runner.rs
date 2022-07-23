@@ -12,7 +12,7 @@ use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
         invariant::{InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions},
-        CounterExample, FuzzedExecutor,
+        BaseCounterExample, CounterExample, FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
     CALLER,
@@ -208,7 +208,6 @@ impl<'a> ContractRunner<'a> {
                         success: false,
                         reason: Some("Multiple setUp functions".to_string()),
                         counterexample: None,
-                        counterexample_sequence: None,
                         logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
@@ -241,7 +240,6 @@ impl<'a> ContractRunner<'a> {
                         success: false,
                         reason: setup.reason,
                         counterexample: None,
-                        counterexample_sequence: None,
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
@@ -428,7 +426,6 @@ impl<'a> ContractRunner<'a> {
             success,
             reason,
             counterexample: None,
-            counterexample_sequence: None,
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
@@ -512,7 +509,7 @@ impl<'a> ContractRunner<'a> {
                                     vec![(TraceKind::Execution, call_result.traces.unwrap())],
                                     known_contracts,
                                 ));
-                                counterexample_sequence.push(CounterExample::create(
+                                counterexample_sequence.push(BaseCounterExample::create(
                                     *sender,
                                     *addr,
                                     bytes,
@@ -550,17 +547,15 @@ impl<'a> ContractRunner<'a> {
                     let duration = Instant::now().duration_since(start);
                     tracing::debug!(?duration, %success);
 
-                    let sequence = if !counterexample_sequence.is_empty() {
-                        Some(counterexample_sequence)
-                    } else {
-                        None
+                    let mut sequence = None;
+                    if !counterexample_sequence.is_empty() {
+                        sequence = Some(CounterExample::Sequence(counterexample_sequence));
                     };
 
                     TestResult {
                         success,
                         reason,
-                        counterexample: None,
-                        counterexample_sequence: sequence,
+                        counterexample: sequence,
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         coverage: None, // todo?
@@ -613,7 +608,6 @@ impl<'a> ContractRunner<'a> {
             success: result.success,
             reason: result.reason,
             counterexample: result.counterexample,
-            counterexample_sequence: None,
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
