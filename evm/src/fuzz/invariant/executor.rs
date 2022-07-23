@@ -190,6 +190,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // TODO: only saving one sequence case per invariant failure. Do we want more?
         let (reverts, invariants) = failures.into_inner().into_inner();
+
         Ok(Some(InvariantFuzzTestResult { invariants, cases: fuzz_cases.into_inner(), reverts }))
     }
 

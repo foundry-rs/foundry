@@ -17,9 +17,10 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
+use parking_lot::RwLock;
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::BTreeMap, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
@@ -486,7 +487,8 @@ impl<'a> ContractRunner<'a> {
                             {
                                 if let Some(ref mut call_generator) = fuzzer.call_generator {
                                     call_generator.set_replay(true);
-                                    call_generator.last_sequence = error.inner_sequence.clone();
+                                    call_generator.last_sequence =
+                                        Arc::new(RwLock::new(error.inner_sequence.clone()));
                                 }
                             }
 
