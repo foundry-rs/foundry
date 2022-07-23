@@ -11,6 +11,7 @@ use crate::{
     comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
+    string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
     FormatterConfig, IntTypes,
 };
@@ -213,6 +214,17 @@ impl<W: Sized> FormatBuffer<W> {
     fn last_char(&self) -> Option<char> {
         self.last_char
     }
+
+    /// When writing a newline apply state changes
+    fn handle_newline(&mut self, mut comment_state: CommentState) {
+        if comment_state == CommentState::Line {
+            comment_state = CommentState::None;
+        }
+        self.current_line_len = 0;
+        self.set_last_indent_group_skipped(false);
+        self.last_char = Some('\n');
+        self.state = WriteState::LineStart(comment_state);
+    }
 }
 
 impl<W: Write> FormatBuffer<W> {
@@ -237,6 +249,8 @@ impl<W: Write> FormatBuffer<W> {
             let trimmed_line = &line[line_start..];
             if !trimmed_line.is_empty() {
                 self.w.write_str(trimmed_line)?;
+                self.current_line_len += trimmed_line.len();
+                self.last_char = trimmed_line.chars().next_back();
                 self.state = WriteState::WriteTokens(comment_state);
             }
             if lines.peek().is_some() {
@@ -244,10 +258,7 @@ impl<W: Write> FormatBuffer<W> {
                     return Err(std::fmt::Error)
                 }
                 self.w.write_char('\n')?;
-                if comment_state == CommentState::Line {
-                    comment_state = CommentState::None;
-                }
-                self.state = WriteState::LineStart(comment_state);
+                self.handle_newline(comment_state);
             }
         }
         Ok(())
@@ -271,12 +282,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                         None => {
                             if !s.is_empty() {
                                 self.w.write_str(s)?;
-                                self.current_line_len = 0;
-                                self.last_char = s.chars().next_back();
-                                self.set_last_indent_group_skipped(false);
-                                if comment_state == CommentState::Line {
-                                    self.state = WriteState::LineStart(CommentState::None);
-                                }
+                                self.handle_newline(comment_state);
                             }
                             break
                         }
@@ -341,30 +347,23 @@ impl<W: Write> Write for FormatBuffer<W> {
                     } else {
                         // A newline or string has been found. Write up to that character and
                         // continue on the tail
-                        let (head, tail) = s.split_at(len);
+                        let (head, tail) = s.split_at(len + 1);
                         self.w.write_str(head)?;
-                        self.current_line_len += head.len();
-                        self.last_char = head.chars().next_back();
                         s = tail;
-                        self.state = new_state;
+                        match new_state {
+                            WriteState::LineStart(comment_state) => {
+                                self.handle_newline(comment_state)
+                            }
+                            new_state => {
+                                self.current_line_len += head.len();
+                                self.last_char = head.chars().next_back();
+                                self.state = new_state;
+                            }
+                        }
                     }
                 }
                 WriteState::WriteString(quote) => {
-                    // find the end of the string
-                    let mut str_end = None;
-                    let mut chars = s.char_indices().skip(1).peekable();
-                    while let Some((idx, ch)) = chars.next() {
-                        if ch == '\\' {
-                            chars.next();
-                            continue
-                        }
-                        if ch == quote {
-                            str_end = Some(idx);
-                            break
-                        }
-                    }
-
-                    match str_end {
+                    match s.quoted_ranges().with_state(QuoteState::String(quote)).next() {
                         // No end found, write the rest of the string
                         None => {
                             self.w.write_str(s)?;
@@ -373,10 +372,16 @@ impl<W: Write> Write for FormatBuffer<W> {
                             break
                         }
                         // String end found, write the string and continue to add tokens after
-                        Some(len) => {
+                        Some((_, _, len)) => {
                             let (head, tail) = s.split_at(len + 1);
                             self.w.write_str(head)?;
-                            self.current_line_len += head.len();
+                            if let Some((_, last)) = head.rsplit_once('\n') {
+                                self.set_last_indent_group_skipped(false);
+                                self.last_indent = String::new();
+                                self.current_line_len = last.len();
+                            } else {
+                                self.current_line_len += head.len();
+                            }
                             self.last_char = Some(quote);
                             s = tail;
                             self.state = WriteState::WriteTokens(CommentState::None);
@@ -1313,6 +1318,38 @@ impl<'a, W: Write> Formatter<'a, W> {
         write_chunk!(self, loc.start(), loc.end(), "{val}{ident}")?;
         Ok(())
     }
+
+    /// Format a quoted string as `prefix"string"` where the quote character is handled
+    /// by the configuration `quote_style`
+    fn quote_str(&self, loc: Loc, prefix: Option<&str>, string: &str) -> String {
+        let get_og_quote = || {
+            self.source[loc.start()..loc.end()]
+                .quote_state_char_indices()
+                .find_map(
+                    |(state, _, ch)| {
+                        if matches!(state, QuoteState::Opening(_)) {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .expect("Could not find quote character for quoted string")
+        };
+        let mut quote = self.config.quote_style.quote().unwrap_or_else(get_og_quote);
+        let mut quoted = format!("{quote}{string}{quote}");
+        if !quoted.is_quoted() {
+            quote = get_og_quote();
+            quoted = format!("{quote}{string}{quote}");
+        }
+        let prefix = prefix.unwrap_or("");
+        format!("{prefix}{quoted}")
+    }
+
+    /// Write a quoted string. See `Formatter::quote_str` for more information
+    fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
+        write_chunk!(self, loc.start(), loc.end(), "{}", self.quote_str(loc, prefix, string))
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1539,7 +1576,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_import_plain(&mut self, loc: Loc, import: &mut StringLiteral) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), import.loc.start(), "import")?;
-            write_chunk!(fmt, import.loc.start(), import.loc.end(), "\"{}\"", &import.string)?;
+            fmt.write_quoted_str(import.loc, None, &import.string)?;
             fmt.write_semicolon()?;
             Ok(())
         })?;
@@ -1554,7 +1591,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<()> {
         self.grouped(|fmt| {
             write_chunk!(fmt, loc.start(), global.loc.start(), "import")?;
-            write_chunk!(fmt, global.loc.start(), global.loc.end(), "\"{}\"", &global.string)?;
+            fmt.write_quoted_str(global.loc, None, &global.string)?;
             write_chunk!(fmt, loc.start(), alias.loc.start(), "as")?;
             alias.visit(fmt)?;
             fmt.write_semicolon()?;
@@ -1574,7 +1611,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(fmt, loc.start(), "import")?;
                 fmt.write_empty_brackets()?;
                 write_chunk!(fmt, loc.start(), from.loc.start(), "from")?;
-                write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+                fmt.write_quoted_str(from.loc, None, &from.string)?;
                 fmt.write_semicolon()?;
                 Ok(())
             })?;
@@ -1617,7 +1654,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         self.grouped(|fmt| {
             write_chunk!(fmt, imports_start, from.loc.start(), "from")?;
-            write_chunk!(fmt, from.loc.start(), from.loc.end(), "\"{}\"", &from.string)?;
+            fmt.write_quoted_str(from.loc, None, &from.string)?;
             fmt.write_semicolon()?;
             Ok(())
         })?;
@@ -1710,18 +1747,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
-                    let prefix = if *unicode { "unicode" } else { "" };
-                    write_chunk!(self, loc.start(), loc.end(), "{prefix}\"{string}\"")?;
+                    let prefix = if *unicode { Some("unicode") } else { None };
+                    self.write_quoted_str(*loc, prefix, string)?;
                 }
             }
             Expression::HexLiteral(vals) => {
                 for HexLiteral { loc, hex } in vals {
-                    write_chunk!(self, loc.start(), loc.end(), "hex\"{hex}\"")?;
+                    self.write_quoted_str(*loc, Some("hex"), hex)?;
                 }
             }
             Expression::AddressLiteral(loc, val) => {
                 // support of solana/substrate address literals
-                write_chunk!(self, loc.start(), loc.end(), "address\"{val}\"")?;
+                self.write_quoted_str(*loc, Some("address"), val)?;
             }
             Expression::Unit(_, expr, unit) => {
                 expr.visit(self)?;
@@ -2974,16 +3011,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             YulExpression::HexNumberLiteral(loc, val, ident) => {
                 self.visit_yul_string_with_ident(*loc, val, ident)
             }
-            YulExpression::HexStringLiteral(val, ident) => {
-                self.visit_yul_string_with_ident(val.loc, &val.hex, ident)
-            }
+            YulExpression::HexStringLiteral(val, ident) => self.visit_yul_string_with_ident(
+                val.loc,
+                &self.quote_str(val.loc, Some("hex"), &val.hex),
+                ident,
+            ),
             YulExpression::NumberLiteral(loc, val, expr, ident) => {
                 let val = if expr.is_empty() { val.to_owned() } else { format!("{val}e{expr}") };
                 self.visit_yul_string_with_ident(*loc, &val, ident)
             }
-            YulExpression::StringLiteral(val, ident) => {
-                self.visit_yul_string_with_ident(val.loc, &val.string, ident)
-            }
+            YulExpression::StringLiteral(val, ident) => self.visit_yul_string_with_ident(
+                val.loc,
+                &self.quote_str(val.loc, None, &val.string),
+                ident,
+            ),
             YulExpression::SuffixAccess(_, expr, ident) => {
                 self.visit_member_access(expr, ident, |fmt, expr| match expr.as_mut() {
                     YulExpression::SuffixAccess(_, inner_expr, inner_ident) => {
@@ -3278,5 +3319,6 @@ mod tests {
     test_directory! { SimpleComments }
     test_directory! { LiteralExpression }
     test_directory! { Yul }
+    test_directory! { YulStrings }
     test_directory! { IntTypes }
 }
