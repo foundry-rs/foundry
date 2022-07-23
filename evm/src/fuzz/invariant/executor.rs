@@ -54,7 +54,7 @@ impl<'a> InvariantExecutor<'a> {
         let failures = RefCell::new(InvariantFailures::new(&invariants));
 
         let clean_db = self.executor.backend().db.clone();
-        let executor = RefCell::new(&mut self.executor);
+        let executor = RefCell::new(&mut *self.executor);
 
         // The strategy only comes with the first `input`. We fill the rest of the `inputs` until
         // the desired `depth` so we can use the evolving fuzz dictionary during the
@@ -113,11 +113,11 @@ impl<'a> InvariantExecutor<'a> {
                     if !reverted {
                         if assert_invariants(
                             test_contract_abi,
-                            &executor,
+                            &executor.borrow(),
                             invariant_address,
                             &invariants,
                             &inputs,
-                            failures.borrow_mut(),
+                            &mut failures.borrow_mut(),
                         )
                         .is_err()
                         {

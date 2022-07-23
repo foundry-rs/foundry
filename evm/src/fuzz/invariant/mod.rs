@@ -16,7 +16,7 @@ use proptest::{
     strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::{TestError, TestRunner},
 };
-use std::{cell::RefMut, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
 pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
@@ -52,19 +52,19 @@ pub struct InvariantExecutor<'a> {
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
-/// external `failed_invariant` map and returns a generic error.
-pub fn assert_invariants<'a>(
+/// external `invariant_failures.failed_invariant` map and returns a generic error.
+pub fn assert_invariants(
     test_contract_abi: &Abi,
-    executor: &'a RefCell<&mut &mut Executor>,
+    executor: &Executor,
     invariant_address: Address,
-    invariants: &'a [&Function],
+    invariants: &[&Function],
     calldata: &[BasicTxDetails],
-    mut invariant_failures: RefMut<InvariantFailures>,
+    invariant_failures: &mut InvariantFailures,
 ) -> eyre::Result<()> {
     let mut found_case = false;
     let mut inner_sequence = vec![];
 
-    if let Some(ref fuzzer) = executor.borrow().inspector_config().fuzzer {
+    if let Some(ref fuzzer) = executor.inspector_config().fuzzer {
         if let Some(ref call_generator) = fuzzer.call_generator {
             inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
         }
@@ -72,7 +72,6 @@ pub fn assert_invariants<'a>(
 
     for func in invariants {
         let RawCallResult { reverted, state_changeset, result, .. } = executor
-            .borrow()
             .call_raw(
                 CALLER,
                 invariant_address,
@@ -85,7 +84,7 @@ pub fn assert_invariants<'a>(
             Some((*func, result))
         } else {
             // This will panic and get caught by the executor
-            if !executor.borrow().is_success(
+            if !executor.is_success(
                 invariant_address,
                 reverted,
                 state_changeset.expect("we should have a state changeset"),
