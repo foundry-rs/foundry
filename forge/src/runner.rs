@@ -1,6 +1,6 @@
 use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup},
-    TestFilter,
+    TestFilter, TestOptions,
 };
 use ethers::{
     abi::{Abi, Function},
@@ -22,18 +22,6 @@ use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tracing::{error, trace};
-/// Metadata on how to run fuzz/invariant tests
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TestOptions {
-    /// Whether fuzz tests should be run
-    pub include_fuzz_tests: bool,
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub invariant_depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub invariant_fail_on_revert: bool,
-    /// Allows randomly overriding an external call when running invariant tests
-    pub invariant_call_override: bool,
-}
 
 /// A type that executes all tests of a contract
 #[derive(Debug, Clone)]
@@ -188,7 +176,6 @@ impl<'a> ContractRunner<'a> {
     pub fn run_tests(
         mut self,
         filter: &impl TestFilter,
-        fuzzer: Option<TestRunner>,
         test_options: TestOptions,
         known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
     ) -> Result<SuiteResult> {
@@ -280,22 +267,43 @@ impl<'a> ContractRunner<'a> {
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
 
-        let mut test_results = tests
-            .par_iter()
-            .filter_map(|(func, should_fail)| {
-                let result = if func.inputs.is_empty() {
-                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
-                } else {
-                    fuzzer.as_ref().map(|fuzzer| {
-                        self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+        let mut test_results = BTreeMap::new();
+        if !tests.is_empty() {
+            // TODO: Add Options to modify the persistence
+            let fuzzer = TestRunner::new(proptest::test_runner::Config {
+                failure_persistence: None,
+                cases: test_options.fuzz_runs,
+                max_local_rejects: test_options.fuzz_max_local_rejects,
+                max_global_rejects: test_options.fuzz_max_global_rejects,
+                ..Default::default()
+            });
+
+            test_results.extend(
+                tests
+                    .par_iter()
+                    .flat_map(|(func, should_fail)| {
+                        let result = if func.inputs.is_empty() {
+                            self.clone().run_test(func, *should_fail, setup.clone())
+                        } else {
+                            self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+                        };
+
+                        result.map(|result| Ok((func.signature(), result)))
                     })
-                };
+                    .collect::<Result<BTreeMap<_, _>>>()?,
+            );
+        }
 
-                result.map(|result| Ok((func.signature(), result?)))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+        if has_invariants && test_options.include_fuzz_tests {
+            // TODO: Add Options to modify the persistence
+            let fuzzer = TestRunner::new(proptest::test_runner::Config {
+                failure_persistence: None,
+                cases: test_options.invariant_runs,
+                max_local_rejects: test_options.fuzz_max_local_rejects,
+                max_global_rejects: test_options.fuzz_max_global_rejects,
+                ..Default::default()
+            });
 
-        if has_invariants && test_options.include_fuzz_tests && fuzzer.is_some() {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let functions: Vec<&Function> = self
                 .contract
@@ -307,7 +315,7 @@ impl<'a> ContractRunner<'a> {
                 .collect();
 
             let results = self.run_invariant_test(
-                fuzzer.expect("no fuzzer"),
+                fuzzer,
                 setup,
                 test_options,
                 functions.clone(),

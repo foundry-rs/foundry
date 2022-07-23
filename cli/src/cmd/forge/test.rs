@@ -472,21 +472,15 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
 
     let mut test_options = TestOptions {
         include_fuzz_tests,
+        fuzz_runs: config.fuzz_runs,
+        fuzz_max_local_rejects: config.fuzz_max_local_rejects,
+        fuzz_max_global_rejects: config.fuzz_max_global_rejects,
+        invariant_runs: config.invariant_runs,
         invariant_depth: config.invariant_depth,
         invariant_fail_on_revert: config.invariant_fail_on_revert,
         invariant_call_override: config.invariant_call_override,
     };
 
-    // Setup the fuzzer
-    // TODO: Add CLI Options to modify the persistence
-    let cfg = proptest::test_runner::Config {
-        failure_persistence: None,
-        cases: config.fuzz_runs,
-        max_local_rejects: config.fuzz_max_local_rejects,
-        max_global_rejects: config.fuzz_max_global_rejects,
-        ..Default::default()
-    };
-    let fuzzer = proptest::test_runner::TestRunner::new(cfg);
     let mut filter = args.filter(&config);
 
     // Set up the project
@@ -512,12 +506,12 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     let evm_spec = utils::evm_spec(&config.evm_version);
 
     let mut runner = MultiContractRunnerBuilder::default()
-        .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(evm_opts.get_fork(env.clone()))
         .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+        .with_test_options(test_options)
         .build(project.paths.root, output, env, evm_opts)?;
 
     if args.debug.is_some() {

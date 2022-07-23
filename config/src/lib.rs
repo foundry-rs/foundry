@@ -187,6 +187,8 @@ pub struct Config {
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
+    /// The number of runs that must execute for each invariant test group.
+    pub invariant_runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a revert occurs
@@ -1433,6 +1435,7 @@ impl Default for Config {
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
+            invariant_runs: 256,
             invariant_depth: 15,
             invariant_fail_on_revert: false,
             invariant_call_override: false,
@@ -2749,6 +2752,7 @@ mod tests {
                 fuzz_max_global_rejects = 65536
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
+                invariant_runs = 256
                 invariant_depth = 15
                 invariant_fail_on_revert = false
                 invariant_call_override = false

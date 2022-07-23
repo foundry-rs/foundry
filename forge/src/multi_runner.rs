@@ -1,4 +1,4 @@
-use crate::{result::SuiteResult, runner::TestOptions, ContractRunner, TestFilter};
+use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -14,7 +14,6 @@ use foundry_evm::{
     revm,
 };
 use foundry_utils::PostLinkInput;
-use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
@@ -36,8 +35,6 @@ pub struct MultiContractRunner {
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
     pub errors: Option<Abi>,
-    /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
-    fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
@@ -48,6 +45,8 @@ pub struct MultiContractRunner {
     pub cheats_config: CheatsConfig,
     /// Whether to collect coverage info
     pub coverage: bool,
+    /// Settings related to fuzz and/or invariant tests
+    pub test_options: TestOptions,
 }
 
 impl MultiContractRunner {
@@ -199,15 +198,13 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone(), test_options, Some(&self.known_contracts))
+        runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
 }
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
 pub struct MultiContractRunnerBuilder {
-    /// The fuzzer to be used for running fuzz tests
-    pub fuzzer: Option<TestRunner>,
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions
     pub sender: Option<Address>,
@@ -221,6 +218,8 @@ pub struct MultiContractRunnerBuilder {
     pub cheats_config: Option<CheatsConfig>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
+    /// Settings related to fuzz and/or invariant tests
+    pub test_options: Option<TestOptions>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -315,12 +314,12 @@ impl MultiContractRunnerBuilder {
             env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
-            fuzzer: self.fuzzer,
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default(),
             coverage: self.coverage,
+            test_options: self.test_options.unwrap_or_default(),
         })
     }
 
@@ -333,12 +332,6 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
-        self
-    }
-
-    #[must_use]
-    pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
-        self.fuzzer = Some(fuzzer);
         self
     }
 
@@ -357,6 +350,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
         self.cheats_config = Some(cheats_config);
+        self
+    }
+
+    #[must_use]
+    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
+        self.test_options = Some(test_options);
         self
     }
 
@@ -383,6 +382,10 @@ mod tests {
 
     static TEST_OPTS: TestOptions = TestOptions {
         include_fuzz_tests: true,
+        fuzz_runs: 256,
+        fuzz_max_local_rejects: 1024,
+        fuzz_max_global_rejects: 65536,
+        invariant_runs: 256,
         invariant_depth: 15,
         invariant_fail_on_revert: false,
         invariant_call_override: false,
@@ -1318,10 +1321,10 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_invariant() {
         let mut runner = runner();
-        runner.fuzzer = Some(TestRunner::new(proptest::test_runner::Config::default()));
 
         let mut opts = TEST_OPTS;
         opts.invariant_call_override = true;
+        runner.test_options = opts;
 
         let results =
             runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, opts).unwrap();
