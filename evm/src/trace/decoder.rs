@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
 };
@@ -274,9 +275,11 @@ impl CallTraceDecoder {
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) =
-                                foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                            {
+                            if let Ok(decoded_error) = decode::decode_revert(
+                                &bytes[..],
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
                                     r#""{}""#,
                                     decoded_error

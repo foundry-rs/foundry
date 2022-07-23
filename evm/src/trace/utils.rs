@@ -1,5 +1,6 @@
 //! utilities used within tracing
 
+use crate::decode;
 use ethers::abi::{Abi, Address, Function, Token};
 use foundry_utils::format_token;
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ pub(crate) fn decode_cheatcode_inputs(
 ) -> Option<Vec<String>> {
     match func.name.as_str() {
         "expectRevert" => {
-            foundry_utils::decode_revert(data, Some(errors)).ok().map(|decoded| vec![decoded])
+            decode::decode_revert(data, Some(errors), None).ok().map(|decoded| vec![decoded])
         }
         _ => None,
     }
