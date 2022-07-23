@@ -1,8 +1,8 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
-    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
+    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
+    CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 use backend::FuzzBackendWrapper;
 use bytes::Bytes;
