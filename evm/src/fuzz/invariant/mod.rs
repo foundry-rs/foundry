@@ -98,26 +98,37 @@ pub fn assert_invariants<'a>(
         };
 
         if let Some((func, result)) = err {
-            invariant_failures.failed_invariants.insert(
-                func.name.clone(),
-                Some(InvariantFuzzError::new(
-                    invariant_address,
-                    Some(func),
-                    test_contract_abi,
-                    &result,
-                    calldata,
-                    &inner_sequence,
-                )),
-            );
-            found_case = true;
+            // We only care about invariants which we haven't broken yet.
+            if !invariant_failures.failed_invariants.contains_key(&func.name) {
+                invariant_failures.failed_invariants.insert(
+                    func.name.clone(),
+                    Some(InvariantFuzzError::new(
+                        invariant_address,
+                        Some(func),
+                        test_contract_abi,
+                        &result,
+                        calldata,
+                        &inner_sequence,
+                    )),
+                );
+                found_case = true;
+            }
         }
     }
 
     if found_case {
-        invariant_failures.broken_invariants_count =
-            invariant_failures.failed_invariants.iter().filter_map(|case| case.1.as_ref()).count();
+        let before = invariant_failures.broken_invariants_count;
 
-        eyre::bail!("Invariants have been broken.");
+        invariant_failures.broken_invariants_count = invariant_failures
+            .failed_invariants
+            .iter()
+            .filter(|(_function, error)| error.is_some())
+            .count();
+
+        eyre::bail!(
+            "{} new invariants have been broken.",
+            invariant_failures.broken_invariants_count - before
+        );
     }
     Ok(())
 }
