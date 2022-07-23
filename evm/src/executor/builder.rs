@@ -2,10 +2,11 @@ use super::{
     inspector::{Cheatcodes, Fuzzer, InspectorStackConfig},
     Executor,
 };
-use crate::executor::{backend::Backend, inspector::CheatsConfig};
+use crate::{
+    executor::{backend::Backend, inspector::CheatsConfig},
+    fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
+};
 use ethers::types::U256;
-
-use crate::fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use revm::{Env, SpecId};
 
 #[derive(Default, Debug)]

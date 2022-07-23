@@ -66,7 +66,7 @@ pub fn assert_invariants(
 
     if let Some(ref fuzzer) = executor.inspector_config().fuzzer {
         if let Some(ref call_generator) = fuzzer.call_generator {
-            inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
+            inner_sequence.extend(call_generator.last_sequence.iter().cloned());
         }
     }
 
@@ -206,7 +206,7 @@ impl InvariantFuzzError {
 #[derive(Debug, Clone)]
 pub struct RandomCallGenerator {
     /// Runner that will generate the call from the strategy.
-    pub runner: Arc<RwLock<TestRunner>>,
+    pub runner: TestRunner,
     /// Strategy to be used to generate calls from `target_reference`.
     pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
     /// Reference to which contract we want a fuzzed calldata from.
@@ -217,7 +217,7 @@ pub struct RandomCallGenerator {
     /// the strategy.
     pub replay: bool,
     /// Saves the sequence of generated calls that can be replayed later on.
-    pub last_sequence: Arc<RwLock<Vec<Option<BasicTxDetails>>>>,
+    pub last_sequence: Vec<Option<BasicTxDetails>>,
 }
 
 impl RandomCallGenerator {
@@ -229,10 +229,10 @@ impl RandomCallGenerator {
         let strategy = weighted(0.3, strategy).sboxed();
 
         RandomCallGenerator {
-            runner: Arc::new(RwLock::new(runner)),
+            runner,
             strategy,
             target_reference,
-            last_sequence: Arc::new(RwLock::new(vec![])),
+            last_sequence: vec![],
             replay: false,
             used: false,
         }
@@ -244,7 +244,7 @@ impl RandomCallGenerator {
         self.replay = status;
         if status {
             // So it can later be popped.
-            self.last_sequence.write().reverse()
+            self.last_sequence.reverse()
         }
     }
 
@@ -255,7 +255,7 @@ impl RandomCallGenerator {
         original_target: Address,
     ) -> Option<BasicTxDetails> {
         if self.replay {
-            self.last_sequence.write().pop().unwrap()
+            self.last_sequence.pop().unwrap()
         } else {
             // TODO: Do we want it to be 80% chance only too ?
             let new_caller = original_target;
@@ -266,12 +266,12 @@ impl RandomCallGenerator {
             // `original_caller` has a 80% chance of being the `new_target`.
             let choice = self
                 .strategy
-                .new_tree(&mut self.runner.write())
+                .new_tree(&mut self.runner)
                 .unwrap()
                 .current()
                 .map(|(new_target, calldata)| (new_caller, (new_target, calldata)));
 
-            self.last_sequence.write().push(choice.clone());
+            self.last_sequence.push(choice.clone());
             choice
         }
     }

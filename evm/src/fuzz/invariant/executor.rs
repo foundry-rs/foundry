@@ -18,7 +18,7 @@ use ethers::{
 };
 use parking_lot::RwLock;
 use proptest::{
-    strategy::{SBoxedStrategy, Strategy, ValueTree},
+    strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
 use revm::DatabaseCommit;
@@ -202,7 +202,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_address: Address,
         test_contract_abi: &Abi,
         test_options: InvariantTestOptions,
-    ) -> eyre::Result<(EvmFuzzState, FuzzRunIdentifiedContracts, SBoxedStrategy<Vec<BasicTxDetails>>)>
+    ) -> eyre::Result<(EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>)>
     {
         // Finds out the chosen deployed contracts and/or senders.
         let (targeted_senders, targeted_contracts) =
@@ -224,7 +224,7 @@ impl<'a> InvariantExecutor<'a> {
         let strat =
             invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone())
                 .no_shrink()
-                .sboxed();
+                .boxed();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.

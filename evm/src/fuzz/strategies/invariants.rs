@@ -57,10 +57,10 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
-) -> SBoxedStrategy<Vec<BasicTxDetails>> {
+) -> BoxedStrategy<Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    vec![generate_call(fuzz_state, senders, contracts); 1].sboxed()
+    vec![generate_call(fuzz_state, senders, contracts); 1].boxed()
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
@@ -69,7 +69,7 @@ fn generate_call(
     fuzz_state: EvmFuzzState,
     senders: Vec<Address>,
     contracts: FuzzRunIdentifiedContracts,
-) -> SBoxedStrategy<BasicTxDetails> {
+) -> BoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
     random_contract
         .prop_flat_map(move |(contract, abi, functions)| {
@@ -81,7 +81,7 @@ fn generate_call(
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
-        .sboxed()
+        .boxed()
 }
 
 /// Strategy to select a sender address:
@@ -90,13 +90,13 @@ fn generate_call(
 ///   remaining 20% will be random.
 fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
     let fuzz_strategy =
-        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).sboxed();
+        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
 
     if !senders.is_empty() {
         let selector =
             any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&*senders));
-        proptest::strategy::Union::new_weighted(vec![(80, selector.sboxed()), (20, fuzz_strategy)])
-            .sboxed()
+        proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
+            .boxed()
     } else {
         fuzz_strategy
     }
@@ -144,15 +144,15 @@ fn select_random_function(
         let selector = any::<prop::sample::Selector>()
             .prop_map(move |selector| selector.select(targeted_functions.clone()));
 
-        selector.sboxed()
+        selector.boxed()
         // todo make it an union too?
         // proptest::strategy::Union::new_weighted(vec![
-        //     (100, selector.sboxed()),
-        //     (0, total_random.sboxed()),
+        //     (100, selector.boxed()),
+        //     (0, total_random.boxed()),
         // ])
-        // .sboxed()
+        // .boxed()
     } else {
-        total_random.sboxed()
+        total_random.boxed()
     }
 }
 
