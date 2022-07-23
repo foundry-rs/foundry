@@ -486,9 +486,9 @@ impl<'a> ContractRunner<'a> {
                                 self.executor.inspector_config_mut().fuzzer
                             {
                                 if let Some(ref mut call_generator) = fuzzer.call_generator {
-                                    call_generator.set_replay(true);
                                     call_generator.last_sequence =
                                         Arc::new(RwLock::new(error.inner_sequence.clone()));
+                                    call_generator.set_replay(true);
                                 }
                             }
 
