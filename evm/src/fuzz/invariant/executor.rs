@@ -234,6 +234,7 @@ impl<'a> InvariantExecutor<'a> {
             let target_contract_ref = Arc::new(RwLock::new(Address::zero()));
 
             call_generator = Some(RandomCallGenerator::new(
+                invariant_address,
                 self.runner.clone(),
                 override_call_strat(
                     fuzz_state.clone(),

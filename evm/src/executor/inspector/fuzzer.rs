@@ -1,6 +1,6 @@
 use crate::{
     fuzz::{invariant::RandomCallGenerator, strategies::EvmFuzzState},
-    utils, TEST_CONTRACT_ADDRESS,
+    utils,
 };
 use bytes::Bytes;
 use revm::{db::Database, CallInputs, CallScheme, EVMData, Gas, Inspector, Interpreter, Return};
@@ -94,7 +94,7 @@ impl Fuzzer {
     fn override_call(&mut self, call: &mut CallInputs) {
         if let Some(ref mut call_generator) = self.call_generator {
             // We only override external calls which are not coming from the test contract.
-            if call.context.caller != TEST_CONTRACT_ADDRESS &&
+            if call.context.caller != call_generator.test_address &&
                 call.context.scheme == CallScheme::Call &&
                 !call_generator.used
             {

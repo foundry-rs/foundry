@@ -210,6 +210,8 @@ impl InvariantFuzzError {
 /// override external calls to test for potential reentrancy vulnerabilities..
 #[derive(Debug, Clone)]
 pub struct RandomCallGenerator {
+    /// Address of the test contract.
+    pub test_address: Address,
     /// Runner that will generate the call from the strategy.
     pub runner: Arc<RwLock<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
@@ -227,13 +229,15 @@ pub struct RandomCallGenerator {
 
 impl RandomCallGenerator {
     pub fn new(
+        test_address: Address,
         runner: TestRunner,
         strategy: SBoxedStrategy<(Address, Bytes)>,
         target_reference: Arc<RwLock<Address>>,
     ) -> Self {
-        let strategy = weighted(0.3, strategy).sboxed();
+        let strategy = weighted(0.9, strategy).sboxed();
 
         RandomCallGenerator {
+            test_address,
             runner: Arc::new(RwLock::new(runner)),
             strategy,
             target_reference,
@@ -249,7 +253,7 @@ impl RandomCallGenerator {
         self.replay = status;
         if status {
             // So it can later be popped.
-            self.last_sequence.write().reverse()
+            self.last_sequence.write().reverse();
         }
     }
 
@@ -260,7 +264,9 @@ impl RandomCallGenerator {
         original_target: Address,
     ) -> Option<BasicTxDetails> {
         if self.replay {
-            self.last_sequence.write().pop().unwrap()
+            self.last_sequence.write().pop().expect(
+                "to have same size as the number of (unsafe) external calls of the sequence.",
+            )
         } else {
             // TODO: Do we want it to be 80% chance only too ?
             let new_caller = original_target;
