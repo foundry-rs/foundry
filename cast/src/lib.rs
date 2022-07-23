@@ -1050,26 +1050,19 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
-    pub fn left_shift(value: &str, bits: &str) -> Result<U256> {
-        let value = Self::get_hex_or_dec(value);
-        let bits = Self::get_hex_or_dec(bits);
+    pub fn left_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        dbg!(&base_in);
+        let value = U256::from_str_radix(value, base_in).unwrap();
+        let bits = U256::from_str_radix(bits, base_in).unwrap();
 
         Ok(value.shl(bits))
     }
 
-    pub fn right_shift(value: &str, bits: &str) -> Result<U256> {
-        let value = Self::get_hex_or_dec(value);
-        let bits = Self::get_hex_or_dec(bits);
+    pub fn right_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        let value = U256::from_str_radix(value, base_in).unwrap();
+        let bits = U256::from_str_radix(bits, base_in).unwrap();
 
         Ok(value.shr(bits))
-    }
-
-    fn get_hex_or_dec(value: &str) -> U256 {
-        if value.starts_with("0x") {
-            U256::from_str_radix(value, 16).expect("Unable to convert hex to U256")
-        } else {
-            U256::from_str_radix(value, 10).expect("Unable to convert decimal to U256")
-        }
     }
 
     /// Converts an eth amount into a specified unit

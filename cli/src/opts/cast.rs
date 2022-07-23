@@ -141,23 +141,39 @@ The input can be:
         #[clap(value_name = "VALUE")]
         value: Option<String>,
     },
-    #[clap(name = "<<")]
-    #[clap(visible_aliases = &["left-shift", "ls"])]
+    #[clap(name = "shl")]
     #[clap(about = "Perform a left shifting operation")]
     LeftShift {
         #[clap(value_name = "VALUE")]
-        value: Option<String>,
+        value: String,
         #[clap(value_name = "BITS")]
-        bits: Option<String>,
+        bits: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+        #[clap(
+            long = "--base-out",
+            help = "The output base",
+            default_value = "16",
+            parse(try_from_str = parse_base)
+        )]
+        base_out: String,
     },
-    #[clap(name = ">>")]
-    #[clap(visible_aliases = &["right-shift", "rs"])]
+    #[clap(name = "shr")]
     #[clap(about = "Perform a right shifting operation")]
     RightShift {
         #[clap(value_name = "VALUE")]
-        value: Option<String>,
+        value: String,
         #[clap(value_name = "BITS")]
-        bits: Option<String>,
+        bits: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+        #[clap(
+            long = "--base-out",
+            help = "The output base",
+            default_value = "16",
+            parse(try_from_str = parse_base)
+        )]
+        base_out: String,
     },
     #[clap(name = "--to-unit")]
     #[clap(visible_aliases = &["to-unit", "tun", "2un"])]
@@ -854,5 +870,12 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
+    })
+}
+
+fn parse_base(s: &str) -> eyre::Result<String> {
+    Ok(match s {
+        "10" | "dec" => "10".to_string(),
+        "16" | "hex" | _ => "16".to_string(),
     })
 }

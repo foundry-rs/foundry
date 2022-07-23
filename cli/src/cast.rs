@@ -15,7 +15,7 @@ use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
-    abi::HumanReadableParser,
+    abi::{HumanReadableParser, AbiEncode},
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
@@ -140,11 +140,11 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_int256(&val)?);
         }
-        Subcommands::LeftShift { value, bits } => {
-            println!("{}", SimpleCast::left_shift(&unwrap_or_stdin(value)?, &unwrap_or_stdin(bits)?)?);
+        Subcommands::LeftShift { value, bits, base_in, base_out } => {
+            println!("{}", format_uint(SimpleCast::left_shift(&value, &bits, det_base_in(&value, base_in)?)?, det_base_out(&base_out))?);
         }
-        Subcommands::RightShift { value, bits } => {
-            println!("{}", SimpleCast::right_shift(&unwrap_or_stdin(value)?, &unwrap_or_stdin(bits)?)?);
+        Subcommands::RightShift { value, bits, base_in, base_out } => {
+            println!("{}", format_uint(SimpleCast::right_shift(&value, &bits, det_base_in(&value, base_in)?)?, det_base_out(&base_out))?);
         }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -714,6 +714,58 @@ where
             T::from_str(&what.replace('\n', ""))?
         }
     })
+}
+
+fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
+    match base_in {
+        Some(base_in) => {
+            match base_in.as_str() {
+                "10" | "dec" => Ok(10),
+                "16" | "hex" => Ok(16),
+                _ => Err(eyre::eyre!("could not parse hex base in"))
+            }
+        },
+        None => {
+            if value.starts_with("0x") {
+                U256::from_str_radix(value, 16).expect("could not parse hex base in");
+
+                Ok(16)
+            } else {
+                match U256::from_str_radix(value, 10) {
+                    Ok(_) => {
+                        U256::from_str_radix(value, 16).expect("could not parse base in, please prepend with 0x if hex.");
+
+                        Ok(10)
+                    },
+                    Err(_) => {
+                        U256::from_str_radix(value, 16).expect("couldn't parse base in from hex");
+                        Ok(16)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn det_base_out(base_out: &str) -> u32 {
+    match base_out {
+        "10" | "dec" => 10,
+        "16" | "hex" | _ => 16,
+    }
+}
+
+fn format_uint(val: U256, base_out: u32) -> eyre::Result<String> {
+    match base_out {
+        10 => {
+            Ok(val.to_string())
+        }
+        16 => {
+            Ok(AbiEncode::encode_hex(val))
+        }
+        _ => {
+            Err(eyre::eyre!("could not parse base out"))
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
