@@ -45,6 +45,6 @@ async fn geth_txpool() {
     let content = content.pending.get(&account).unwrap();
 
     for nonce in 0..10 {
-        assert!(content.contains(&nonce.to_string()));
+        assert!(content.contains_key(&nonce.to_string()));
     }
 }
