@@ -2103,7 +2103,6 @@ dependencies = [
  "once_cell",
  "rand 0.8.5",
  "reqwest",
- "revm",
  "rlp",
  "rustc-hex",
  "serde",

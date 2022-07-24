@@ -175,7 +175,7 @@ macro_rules! derive_ast_eq {
                     }
                     )*
                     $(
-                    $name::$tuple_variant($($tuple_field),*) =>  {
+                    $name::$tuple_variant($($tuple_field),*) => {
                         let left = ($($tuple_field),*);
                         if let $name::$tuple_variant($($tuple_field),*) = other {
                             let right = ($($tuple_field),*);
