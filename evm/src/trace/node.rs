@@ -1,4 +1,5 @@
 use crate::{
+    decode,
     executor::CHEATCODE_ADDRESS,
     trace::{
         utils, CallTrace, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
@@ -9,6 +10,7 @@ use ethers::{
     abi::{Abi, Function},
     types::{Action, Address, Call, CallResult, Create, CreateResult, Res, Suicide},
 };
+use foundry_common::SELECTOR_LEN;
 use revm::Return;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -104,18 +106,18 @@ impl CallTraceNode {
         let func = &funcs[0];
 
         if let RawOrDecodedCall::Raw(ref bytes) = self.trace.data {
-            let inputs = if !bytes[4..].is_empty() {
+            let inputs = if bytes.len() >= SELECTOR_LEN {
                 if self.trace.address == CHEATCODE_ADDRESS {
                     // Try to decode cheatcode inputs in a more custom way
                     utils::decode_cheatcode_inputs(func, bytes, errors).unwrap_or_else(|| {
-                        func.decode_input(&bytes[4..])
+                        func.decode_input(&bytes[SELECTOR_LEN..])
                             .expect("bad function input decode")
                             .iter()
                             .map(|token| utils::label(token, labels))
                             .collect()
                     })
                 } else {
-                    match func.decode_input(&bytes[4..]) {
+                    match func.decode_input(&bytes[SELECTOR_LEN..]) {
                         Ok(v) => v.iter().map(|token| utils::label(token, labels)).collect(),
                         Err(_) => Vec::new(),
                     }
@@ -129,29 +131,27 @@ impl CallTraceNode {
                 RawOrDecodedCall::Decoded(func.name.clone(), func.signature(), inputs);
 
             if let RawOrDecodedReturnData::Raw(bytes) = &self.trace.output {
-                if !bytes.is_empty() {
-                    if self.trace.success {
-                        if let Some(tokens) =
-                            funcs.iter().find_map(|func| func.decode_output(&bytes[..]).ok())
-                        {
-                            // Functions coming from an external database do not have any outputs
-                            // specified, and will lead to returning an empty list of tokens.
-                            if !tokens.is_empty() {
-                                self.trace.output = RawOrDecodedReturnData::Decoded(
-                                    tokens
-                                        .iter()
-                                        .map(|token| utils::label(token, labels))
-                                        .collect::<Vec<_>>()
-                                        .join(", "),
-                                );
-                            }
-                        }
-                    } else if let Ok(decoded_error) =
-                        foundry_utils::decode_revert(&bytes[..], Some(errors))
+                if !bytes.is_empty() && self.trace.success {
+                    if let Some(tokens) =
+                        funcs.iter().find_map(|func| func.decode_output(bytes).ok())
                     {
-                        self.trace.output =
-                            RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
+                        // Functions coming from an external database do not have any outputs
+                        // specified, and will lead to returning an empty list of tokens.
+                        if !tokens.is_empty() {
+                            self.trace.output = RawOrDecodedReturnData::Decoded(
+                                tokens
+                                    .iter()
+                                    .map(|token| utils::label(token, labels))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            );
+                        }
                     }
+                } else if let Ok(decoded_error) =
+                    decode::decode_revert(bytes, Some(errors), Some(self.trace.status))
+                {
+                    self.trace.output =
+                        RawOrDecodedReturnData::Decoded(format!(r#""{}""#, decoded_error));
                 }
             }
         }
@@ -168,7 +168,7 @@ impl CallTraceNode {
             self.trace.data = RawOrDecodedCall::Decoded(
                 precompile_fn.name.clone(),
                 precompile_fn.signature(),
-                precompile_fn.decode_input(&bytes[..]).map_or_else(
+                precompile_fn.decode_input(bytes).map_or_else(
                     |_| vec![hex::encode(&bytes)],
                     |tokens| tokens.iter().map(|token| utils::label(token, labels)).collect(),
                 ),
@@ -176,8 +176,8 @@ impl CallTraceNode {
 
             if let RawOrDecodedReturnData::Raw(ref bytes) = self.trace.output {
                 self.trace.output = RawOrDecodedReturnData::Decoded(
-                    precompile_fn.decode_output(&bytes[..]).map_or_else(
-                        |_| hex::encode(&bytes),
+                    precompile_fn.decode_output(bytes).map_or_else(
+                        |_| hex::encode(bytes),
                         |tokens| {
                             tokens
                                 .iter()

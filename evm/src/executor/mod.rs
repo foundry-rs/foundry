@@ -1,5 +1,5 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
     format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
     CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -218,7 +218,7 @@ impl Executor {
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -415,7 +415,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 return Err(EvmError::Execution {
                     reverted: true,
@@ -580,7 +580,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    status: Return,
+    pub status: Return,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -723,7 +723,7 @@ fn convert_call_result<D: Detokenize>(
             })
         }
         _ => {
-            let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+            let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution {
                 reverted,
