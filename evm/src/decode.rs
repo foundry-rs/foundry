@@ -195,7 +195,6 @@ pub fn decode_revert(
                         .ok()
                 })
                 .ok_or_else(|| eyre::eyre!("Non-native error and not string"))
-
         }
     }
 }
