@@ -161,16 +161,26 @@ impl Comments {
     }
 }
 
+/// The state of a character in a string with possible comments
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CommentState {
+    /// character not in a comment
     None,
+    /// First `/` in line comment start `"//"`
     LineStart1,
+    /// Second `/` in  line comment start `"//"`
     LineStart2,
+    /// Character in a line comment
     Line,
+    /// `/` in block comment start `"/*"`
     BlockStart1,
+    /// `*` in block comment start `"/*"`
     BlockStart2,
+    /// Character in a block comment
     Block,
+    /// `*` in block comment end `"*/"`
     BlockEnd1,
+    /// `/` in block comment end `"*/"`
     BlockEnd2,
 }
 
@@ -180,7 +190,7 @@ impl Default for CommentState {
     }
 }
 
-/// An Iterator over characters and indexes in a string slice with information about the state of
+/// An Iterator over characters and indices in a string slice with information about the state of
 /// comments
 pub struct CommentStateCharIndices<'a> {
     iter: std::iter::Peekable<std::str::CharIndices<'a>>,
@@ -265,7 +275,7 @@ impl<'a> Iterator for NonCommentChars<'a> {
     }
 }
 
-/// Helpers for iterating over non-comment characters
+/// Helpers for iterating over comment containing strings
 pub trait CommentStringExt {
     fn comment_state_char_indices(&self) -> CommentStateCharIndices;
     fn non_comment_chars(&self) -> NonCommentChars {

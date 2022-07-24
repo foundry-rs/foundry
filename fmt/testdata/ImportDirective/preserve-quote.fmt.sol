@@ -1,12 +1,12 @@
-// config: bracket_spacing = true
+// config: quote_style = "preserve"
 import "SomeFile.sol";
-import "SomeFile.sol";
+import 'SomeFile.sol';
 import "SomeFile.sol" as SomeOtherFile;
-import "SomeFile.sol" as SomeOtherFile;
+import 'SomeFile.sol' as SomeOtherFile;
 import "AnotherFile.sol" as SomeSymbol;
-import "AnotherFile.sol" as SomeSymbol;
-import { symbol1 as alias, symbol2 } from "File.sol";
-import { symbol1 as alias, symbol2 } from "File.sol";
+import 'AnotherFile.sol' as SomeSymbol;
+import {symbol1 as alias, symbol2} from "File.sol";
+import {symbol1 as alias, symbol2} from 'File.sol';
 import {
     symbol1 as alias1,
     symbol2 as alias2,
@@ -18,4 +18,4 @@ import {
     symbol2 as alias2,
     symbol3 as alias3,
     symbol4
-} from "File2.sol";
+} from 'File2.sol';

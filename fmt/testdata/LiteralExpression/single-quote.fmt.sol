@@ -1,3 +1,4 @@
+// config: quote_style = "single"
 contract LiteralExpressions {
     function test() external {
         // bool literals
@@ -29,27 +30,27 @@ contract LiteralExpressions {
         2.5e1;
 
         // string literals
-        "";
-        "foobar";
-        "foo" // comment8
-        " bar";
+        '';
+        'foobar';
+        'foo' // comment8
+        ' bar';
         // comment9
-        "\
-some words"; /* comment10 */
-        unicode"Hello 😃";
+        '\
+some words'; /* comment10 */
+        unicode'Hello 😃';
 
         // quoted strings
         'hello "world"';
         "hello 'world'";
-        "hello \'world\'";
-        "hello \"world\"";
-        "hello \"world\"";
-        "hello \'world\'";
+        'hello \'world\'';
+        'hello \"world\"';
+        'hello \"world\"';
+        'hello \'world\'';
 
         // hex literals
-        hex"001122FF";
-        hex"001122FF";
-        hex"00112233" hex"44556677";
+        hex'001122FF';
+        hex'001122FF';
+        hex'00112233' hex'44556677';
 
         // address literals
         0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
