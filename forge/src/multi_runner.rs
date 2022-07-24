@@ -1245,14 +1245,21 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
+
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();
+
+        assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
 
                 match test_name.as_ref() {
-                    "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
+                    "testPositive(uint256)" |
+                    "testSuccessfulFuzz(uint128,uint128)" |
+                    "testToStringFuzz(bytes32)" => assert!(
                         result.success,
                         "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                         test_name,
