@@ -46,7 +46,7 @@ mod fuzz;
 /// Snapshot related cheatcodes
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
-mod util;
+pub mod util;
 pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
 mod config;

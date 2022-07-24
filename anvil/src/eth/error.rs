@@ -11,6 +11,7 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
+use foundry_common::SELECTOR_LEN;
 use foundry_evm::revm::Return;
 use serde::Serialize;
 use tracing::error;
@@ -133,10 +134,10 @@ pub enum InvalidTransactionError {
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
 fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
-    if out.len() < 4 {
+    if out.len() < SELECTOR_LEN {
         return None
     }
-    String::decode(&out[4..]).ok()
+    String::decode(&out[SELECTOR_LEN..]).ok()
 }
 
 /// Helper trait to easily convert results to rpc results
