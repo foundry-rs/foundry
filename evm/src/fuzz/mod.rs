@@ -1,4 +1,5 @@
 use crate::{
+    decode,
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
@@ -100,15 +101,17 @@ impl<'a> FuzzedExecutor<'a> {
                 });
                 Ok(())
             } else {
+                let status = call.status;
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
                 // case to find a minimal failure case.
                 *counterexample.borrow_mut() = (calldata, call);
                 Err(TestCaseError::fail(
-                    match foundry_utils::decode_revert(
+                    match decode::decode_revert(
                         counterexample.borrow().1.result.as_ref(),
                         errors,
+                        Some(status),
                     ) {
                         Ok(e) => e,
                         Err(_) => "".to_string(),

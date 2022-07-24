@@ -16,7 +16,7 @@ ENV GLIBC_KEY=https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
 ENV GLIBC_KEY_FILE=/etc/apk/keys/sgerrand.rsa.pub
 ENV GLIBC_RELEASE=https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.35-r0/glibc-2.35-r0.apk
 
-RUN apk add linux-headers gcompat
+RUN apk add linux-headers gcompat git
 RUN wget -q -O ${GLIBC_KEY_FILE} ${GLIBC_KEY} \
     && wget -O glibc.apk ${GLIBC_RELEASE} \
     && apk add glibc.apk --force

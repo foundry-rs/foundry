@@ -173,6 +173,9 @@ pub enum EthRequest {
         #[serde(default)] Vec<f64>,
     ),
 
+    #[serde(rename = "eth_syncing", with = "empty_params")]
+    EthSyncing(()),
+
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction")]
     DebugTraceTransaction(H256, #[serde(default)] GethDebugTracingOptions),
@@ -238,8 +241,8 @@ pub enum EthRequest {
     DropTransaction(H256),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    #[serde(rename = "anvil_reset", alias = "hardhat_reset", with = "sequence")]
-    Reset(#[serde(default)] Option<Forking>),
+    #[serde(rename = "anvil_reset", alias = "hardhat_reset")]
+    Reset(#[serde(default)] Option<Params<Option<Forking>>>),
 
     /// Sets the backend rpc url
     #[serde(rename = "anvil_setRpcUrl", with = "sequence")]
@@ -451,6 +454,13 @@ mod tests {
     }
 
     #[test]
+    fn test_eth_syncing() {
+        let s = r#"{"method": "eth_syncing", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
     fn test_custom_impersonate_account() {
         let s = r#"{"method": "anvil_impersonateAccount", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
@@ -543,6 +553,7 @@ mod tests {
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {
             EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
                 assert_eq!(
                     forking,
                     Some(Forking {
@@ -563,6 +574,7 @@ mod tests {
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {
             EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
                 assert_eq!(
                     forking,
                     Some(Forking {
@@ -581,6 +593,7 @@ mod tests {
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {
             EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
                 assert_eq!(
                     forking,
                     Some(Forking {
@@ -597,6 +610,7 @@ mod tests {
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {
             EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
                 assert_eq!(
                     forking,
                     Some(Forking { json_rpc_url: None, block_number: Some(14000000) })
@@ -610,6 +624,7 @@ mod tests {
         let req = serde_json::from_value::<EthRequest>(value).unwrap();
         match req {
             EthRequest::Reset(forking) => {
+                let forking = forking.and_then(|f| f.params);
                 assert_eq!(
                     forking,
                     Some(Forking {
@@ -617,6 +632,16 @@ mod tests {
                         block_number: None
                     })
                 )
+            }
+            _ => unreachable!(),
+        }
+
+        let s = r#"{"method": "anvil_reset"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value).unwrap();
+        match req {
+            EthRequest::Reset(forking) => {
+                assert!(forking.is_none())
             }
             _ => unreachable!(),
         }

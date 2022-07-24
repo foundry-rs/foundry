@@ -429,7 +429,7 @@ mod tests {
         opts.fork_url = Some(rpc.to_string());
 
         let env = opts.evm_env_blocking();
-        let fork = opts.get_fork(env.clone());
+        let fork = opts.get_fork(&Default::default(), env.clone());
 
         base_runner()
             .with_fork(fork)
@@ -447,7 +447,7 @@ mod tests {
                         .to_string(),
                 ),
             ),
-            ("rpcEnvAlias", RpcEndpoint::Env("RPC_ENV_ALIAS".to_string())),
+            ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
         ])
     }
 
@@ -510,8 +510,8 @@ mod tests {
                         logs.iter().eq(expected_logs.iter()),
                         "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                         test_name,
-                        logs.join("\n"),
-                        expected_logs.join("\n")
+                        expected_logs.join("\n"),
+                        logs.join("\n")
                     );
                 }
 
@@ -519,7 +519,7 @@ mod tests {
                     assert_eq!(
                         warnings_count, expected_warning_count,
                         "Test {} did not pass as expected. Expected:\n{}Got:\n{}",
-                        test_name, warnings_count, expected_warning_count
+                        test_name, expected_warning_count, warnings_count
                     );
                 }
             }
@@ -593,7 +593,13 @@ mod tests {
                         std::path::MAIN_SEPARATOR
                     )
                     .as_str(),
-                    vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
+                    vec![(
+                        "testCantPay()",
+                        false,
+                        Some("EvmError: Revert".to_string()),
+                        None,
+                        None,
+                    )],
                 ),
                 (
                     format!(
@@ -814,8 +820,8 @@ mod tests {
                             None,
                             Some(vec![
                                 "constructor".into(),
-                                "testMisc, 0x0000000000000000000000000000000000000001".into(),
-                                "testMisc, 42".into(),
+                                "testMisc 0x0000000000000000000000000000000000000001".into(),
+                                "testMisc 42".into(),
                             ]),
                             None,
                         ),
@@ -1127,6 +1133,48 @@ mod tests {
                             Some(vec!["constructor".into(), "0x0000000000000000000000000000000000000001".into()]),
                             None,
                         ),
+                        (
+                            "testConsoleLogFormatString()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatUint()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatAddress()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log addr=0x0000000000000000000000000000000000000001".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatMulti()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatEscape()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log % test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatSpill()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log test 1".into()]),
+                            None,
+                        ),
                     ],
                 ),
             ]),
@@ -1209,15 +1257,20 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
+
         let suite_result =
-            runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, TEST_OPTS).unwrap();
+            runner.test(&Filter::new(".*", ".*", ".*fuzz/[^invariant]"), None, TEST_OPTS).unwrap();
+
+        assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
 
                 match test_name.as_ref() {
-                    "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
+                    "testPositive(uint256)" |
+                    "testSuccessfulFuzz(uint128,uint128)" |
+                    "testToStringFuzz(bytes32)" => assert!(
                         result.success,
                         "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                         test_name,

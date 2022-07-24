@@ -135,6 +135,12 @@ impl ProjectCompiler {
     {
         let ProjectCompiler { print_sizes, print_names } = self;
 
+        if !project.paths.has_input_files() {
+            println!("Nothing to compile");
+            // nothing to do here
+            std::process::exit(0);
+        }
+
         let now = std::time::Instant::now();
         tracing::trace!(target : "forge::compile", "start compiling project");
 

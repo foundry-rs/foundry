@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    decode,
     executor::inspector::DEFAULT_CREATE2_DEPLOYER,
     trace::{node::CallTraceNode, utils},
 };
@@ -256,7 +257,8 @@ impl CallTraceDecoder {
                     if let Some(funcs) = self.functions.get(&bytes[0..4]) {
                         node.decode_function(funcs, &self.labels, &self.errors);
                     } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
-                        node.trace.data = RawOrDecodedCall::Decoded("create2".to_string(), vec![]);
+                        node.trace.data =
+                            RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
                     } else if let Some(identifier) = &self.signature_identifier {
                         if let Some(function) =
                             identifier.write().await.identify_function(&bytes[0..4]).await
@@ -265,13 +267,19 @@ impl CallTraceDecoder {
                         }
                     }
                 } else {
-                    node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
+                    node.trace.data = RawOrDecodedCall::Decoded(
+                        "fallback".to_string(),
+                        String::new(),
+                        Vec::new(),
+                    );
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) =
-                                foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                            {
+                            if let Ok(decoded_error) = decode::decode_revert(
+                                &bytes[..],
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
                                     r#""{}""#,
                                     decoded_error
@@ -295,6 +303,11 @@ impl CallTraceDecoder {
 
     async fn decode_event(&self, log: &mut RawOrDecodedLog) {
         if let RawOrDecodedLog::Raw(raw_log) = log {
+            // do not attempt decoding if no topics
+            if raw_log.topics.is_empty() {
+                return
+            }
+
             let mut events = vec![];
             if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
                 events = evs.clone();

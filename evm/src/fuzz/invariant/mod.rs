@@ -3,7 +3,10 @@ use crate::{fuzz::*, CALLER};
 mod executor;
 mod filters;
 use self::executor::InvariantFailures;
-use crate::executor::{Executor, RawCallResult};
+use crate::{
+    decode::decode_revert,
+    executor::{Executor, RawCallResult},
+};
 use ethers::{
     abi::{Abi, Function},
     prelude::ArtifactId,
@@ -187,7 +190,8 @@ impl InvariantFuzzError {
                 format!(
                     "{}, reason: '{}'",
                     origin,
-                    match foundry_utils::decode_revert(result.as_ref(), Some(abi)) {
+                    // TODO: status
+                    match decode_revert(result.as_ref(), Some(abi), None) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
                     }
@@ -197,8 +201,8 @@ impl InvariantFuzzError {
             ),
             return_reason: "".into(),
             // return_reason: status,
-            revert_reason: foundry_utils::decode_revert(result.as_ref(), Some(abi))
-                .unwrap_or_default(),
+            // TODO: status
+            revert_reason: decode_revert(result.as_ref(), Some(abi), None).unwrap_or_default(),
             addr: invariant_address,
             func,
             inner_sequence: inner_sequence.to_vec(),

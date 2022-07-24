@@ -1,5 +1,7 @@
 use super::AttrSortKeyIteratorExt;
+use ethers_core::types::H160;
 use solang_parser::pt::*;
+use std::str::FromStr;
 
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
 /// not matter
@@ -117,6 +119,15 @@ where
     }
 }
 
+impl AstEq for String {
+    fn ast_eq(&self, other: &Self) -> bool {
+        match (H160::from_str(self), H160::from_str(other)) {
+            (Ok(left), Ok(right)) => left.eq(&right),
+            _ => self == other,
+        }
+    }
+}
+
 macro_rules! derive_ast_eq {
     ($name:ident) => {
         impl AstEq for $name {
@@ -196,7 +207,6 @@ derive_ast_eq! { (0 A, 1 B) }
 derive_ast_eq! { (0 A, 1 B, 2 C) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
-derive_ast_eq! { String }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }

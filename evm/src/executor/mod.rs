@@ -1,8 +1,8 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
-    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
+    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
+    CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 use backend::FuzzBackendWrapper;
 use bytes::Bytes;
@@ -116,6 +116,10 @@ impl Executor {
             create2_deployer_account.code.as_ref().unwrap().is_empty()
         {
             let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
+
+            // Probably 0, but just in case.
+            let initial_balance = self.get_balance(creator);
+
             self.set_balance(creator, U256::MAX);
             self.deploy(
                 creator,
@@ -123,6 +127,7 @@ impl Executor {
                 U256::zero(),
                 None
             )?;
+            self.set_balance(creator, initial_balance);
         }
         Ok(())
     }
@@ -223,7 +228,7 @@ impl Executor {
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -420,7 +425,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 return Err(EvmError::Execution {
                     reverted: true,
@@ -585,7 +590,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    status: Return,
+    pub status: Return,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -728,7 +733,7 @@ fn convert_call_result<D: Detokenize>(
             })
         }
         _ => {
-            let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+            let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution {
                 reverted,

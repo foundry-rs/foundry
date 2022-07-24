@@ -50,7 +50,7 @@ use cache::{Cache, ChainCache};
 mod chain;
 pub use chain::Chain;
 
-mod fmt;
+pub mod fmt;
 pub use fmt::FormatterConfig;
 
 mod error;
@@ -583,7 +583,7 @@ impl Config {
     /// Ensures that the configured version is installed if explicitly set
     ///
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
-    /// it's missing.
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
@@ -593,6 +593,12 @@ impl Config {
                     let v = version.to_string();
                     let mut solc = Solc::find_svm_installed_version(&v)?;
                     if solc.is_none() {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solc {} in offline mode",
+                                version
+                            )))
+                        }
                         Solc::blocking_install(version)?;
                         solc = Solc::find_svm_installed_version(&v)?;
                     }
@@ -623,6 +629,13 @@ impl Config {
             return false
         }
         self.auto_detect_solc
+    }
+
+    /// Whether caching should be enabled for the given chain id
+    pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
+        !self.no_storage_caching &&
+            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
+            self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
@@ -1204,6 +1217,14 @@ impl Config {
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
+        // provide warnings for unknown sections in toml provider
+        for unknown_key in toml_provider.data().unwrap_or_default().keys().filter(|k| {
+            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+        }) {
+            let src =
+                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
+            config_warn!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead or run `forge config --fix`.");
+        }
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -2172,11 +2193,6 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     }
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut figment = Figment::from(&self.provider);
-        if let Some(profile) = figment.profiles().find(|p| self.profiles.contains(p)) {
-            let src =
-                self.provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            config_warn!("Implied profile [{profile}] found{src}. This notation has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead.");
-        }
         for profile in &self.profiles {
             figment = figment.merge(UnwrapProfileProvider::new(
                 &self.provider,
@@ -2300,6 +2316,20 @@ mod tests {
     use crate::rpc::RpcEndpoint;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_caching() {
+        let mut config = Config::default();
+        let chain_id = ethers_core::types::Chain::Mainnet;
+        let url = "https://eth-mainnet.alchemyapi";
+        assert!(config.enable_caching(url, chain_id));
+
+        config.no_storage_caching = true;
+        assert!(!config.enable_caching(url, chain_id));
+
+        config.no_storage_caching = false;
+        assert!(!config.enable_caching(url, ethers_core::types::Chain::Dev));
+    }
 
     #[test]
     fn test_install_dir() {
@@ -2647,6 +2677,59 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_endpoints() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${_CONFIG_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${_CONFIG_API_KEY1}"
+                mainnet_3 = "https://eth-mainnet.alchemyapi.io/v2/${_CONFIG_API_KEY1}/${_CONFIG_API_KEY2}"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
+
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+            jail.set_env("_CONFIG_API_KEY1", "123456");
+            jail.set_env("_CONFIG_API_KEY2", "98765");
+
+            let endpoints = config.rpc_endpoints.resolved();
+
+            assert!(!endpoints.has_unresolved());
+
+            assert_eq!(
+                endpoints,
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    (
+                        "mainnet",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                    ),
+                    (
+                        "mainnet_2",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                    ),
+                    (
+                        "mainnet_3",
+                        RpcEndpoint::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
+                        )
+                    ),
+                ])
+                .resolved()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2669,6 +2752,8 @@ mod tests {
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
+                mainnet_3 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
             "#,
             )?;
 
@@ -2696,7 +2781,20 @@ mod tests {
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
                     rpc_endpoints: RpcEndpoints::new([
                         ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                        ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                        ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                        (
+                            "mainnet_2",
+                            RpcEndpoint::Env(
+                                "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
+                            )
+                        ),
+                        (
+                            "mainnet_3",
+                            RpcEndpoint::Env(
+                                "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
+                                    .to_string()
+                            )
+                        ),
                     ]),
                     build_info_path: Some("build-info".into()),
                     ..Config::default()
@@ -2787,6 +2885,7 @@ mod tests {
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${RPC_MAINNET}"
+                mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
 
             "#,
             )?;
@@ -2801,7 +2900,13 @@ mod tests {
                 config.rpc_endpoints,
                 RpcEndpoints::new([
                     ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                    ("mainnet", RpcEndpoint::Env("RPC_MAINNET".to_string()))
+                    ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                    (
+                        "mainnet_2",
+                        RpcEndpoint::Env(
+                            "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
+                        )
+                    ),
                 ]),
             );
 
@@ -3297,7 +3402,12 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(
                 loaded.fmt,
-                FormatterConfig { line_length: 100, tab_width: 2, bracket_spacing: true }
+                FormatterConfig {
+                    line_length: 100,
+                    tab_width: 2,
+                    bracket_spacing: true,
+                    ..Default::default()
+                }
             );
 
             Ok(())
@@ -3327,6 +3437,25 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn test_implicit_profile_loads() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = 'my-src'
+                out = 'my-out'
+            "#,
+            )?;
+            let loaded = Config::load().sanitized();
+            assert_eq!(loaded.src.file_name().unwrap(), "my-src");
+            assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+
+            Ok(())
+        });
     }
 
     // a test to print the config, mainly used to update the example config in the README

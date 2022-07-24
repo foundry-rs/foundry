@@ -29,8 +29,10 @@ impl ScriptRunner {
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
         if !is_broadcast {
-            // We max out their balance so that they can deploy and make calls.
-            self.executor.set_balance(self.sender, U256::MAX);
+            if self.sender == Config::DEFAULT_SENDER {
+                // We max out their balance so that they can deploy and make calls.
+                self.executor.set_balance(self.sender, U256::MAX);
+            }
 
             if need_create2_deployer {
                 self.executor.deploy_create2_deployer()?;

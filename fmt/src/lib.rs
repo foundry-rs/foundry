@@ -4,9 +4,10 @@ mod comments;
 mod formatter;
 mod macros;
 pub mod solang_ext;
+mod string;
 mod visit;
 
-pub use foundry_config::FormatterConfig;
+pub use foundry_config::fmt::*;
 
 pub use comments::Comments;
 pub use formatter::{Formatter, FormatterError};

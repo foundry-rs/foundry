@@ -101,7 +101,7 @@ impl EthereumOpts {
                 .or_else(|| self.wallet.mnemonic().transpose())
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
-                .ok_or_else(|| eyre::eyre!("error accessing local wallet, did you set a private key, mnemonic or keystore? Run `cast send --help` or `forge create --help` and use the corresponding CLI flag to set your key via --private-key, --mnemonic-path, --interactive, --trezor or --ledger. Alternatively, if you're using a local node with unlocked accounts, set the `ETH_FROM` environment variable to the address of the account you want to use"))?;
+                .ok_or_else(|| eyre::eyre!("error accessing local wallet, did you set a private key, mnemonic or keystore? Run `cast send --help` or `forge create --help` and use the corresponding CLI flag to set your key via --private-key, --mnemonic-path, --interactive, --trezor or --ledger. Alternatively, if you're using a local node with unlocked accounts, use the --unlocked flag and set the `ETH_FROM` environment variable to the address of the unlocked account you want to use"))?;
 
             let local = local.with_chain_id(chain_id.as_u64());
 
