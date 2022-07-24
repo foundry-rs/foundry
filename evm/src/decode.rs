@@ -196,8 +196,6 @@ pub fn decode_revert(
                 })
                 .ok_or_else(|| eyre::eyre!("Non-native error and not string"))
 
-            // evm_error will sometimes not include the function selector for the error,
-            // optimistically try to decode
         }
     }
 }
