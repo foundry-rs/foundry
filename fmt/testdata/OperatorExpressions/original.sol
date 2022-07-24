@@ -14,12 +14,6 @@ function test() {
     bool expr013 = ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
     if (++batch.movesPerformed == drivers.length) createNewBatch();
-    sum +=
-        getPrice(
-            ACCELERATE_STARTING_PRICE,
-            ACCELERATE_PER_PERIOD_DECREASE,
-            idleTicks,
-            actionsSold[ActionType.ACCELERATE] + i,
-            ACCELERATE_SELL_PER_TICK
-        ) / 1e18;
+    sum += getPrice(ACCELERATE_STARTING_PRICE, ACCELERATE_PER_PERIOD_DECREASE, idleTicks, actionsSold[ActionType.ACCELERATE] + i, ACCELERATE_SELL_PER_TICK) / 1e18;
+    other += 1e18 / getPrice(ACCELERATE_STARTING_PRICE, ACCELERATE_PER_PERIOD_DECREASE, idleTicks, actionsSold[ActionType.ACCELERATE] + i, ACCELERATE_SELL_PER_TICK);
 }

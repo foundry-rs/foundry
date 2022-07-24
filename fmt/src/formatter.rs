@@ -1062,63 +1062,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Visit a flattened expression. The function will try to be applied to a single line and
-    /// otherwise will be grouped into the next line
-    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
-            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
-        }
-        Ok(())
-    }
-
-    /// Visit a flattened expression. The function takes a `multiline` hint as a second argument
-    /// If multiline the function will split every spaced operator onto a separate line
-    fn visit_flattened_expr_multiline<E>(
-        &mut self,
-        flattened: &mut [FlatExpression<&mut E>],
-        multiline: bool,
-    ) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        let mut flattened = flattened.iter_mut().peekable();
-        let mut prefix_ops = String::new();
-        while let Some(item) = flattened.next() {
-            match item {
-                FlatExpression::Expression(expr) => {
-                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
-
-                    chunk.content.insert_str(0, &prefix_ops);
-                    prefix_ops.clear();
-
-                    while let Some(FlatExpression::Operator(op, spaced)) = flattened.peek() {
-                        if *spaced {
-                            break
-                        }
-                        chunk.content.push_str(op);
-                        flattened.next();
-                    }
-
-                    self.write_chunk(&chunk)?;
-                    if multiline && flattened.peek().is_some() {
-                        self.write_whitespace_separator(true)?;
-                    }
-                }
-                FlatExpression::Operator(op, spaced) => {
-                    if *spaced {
-                        write_chunk!(self, "{op}")?;
-                    } else {
-                        prefix_ops.push_str(op);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Visit the right side of an assignment. The function will try to write the assignment on a
     /// single line or indented on the next line. If it can't do this it resorts to letting the
     /// expression decide how to split iself on multiple lines
@@ -1150,10 +1093,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         })?;
 
         if !fit_on_next_line {
-            self.indented_if(expr.unsplittable(), 1, |fmt| expr.visit(fmt))
-        } else {
-            Ok(())
+            self.indented_if(expr.unsplittable(), 1, |fmt| expr.visit(fmt))?;
         }
+
+        Ok(())
     }
 
     /// Visit the list of comma separated items.
@@ -1789,7 +1732,35 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Or(..) |
             Expression::Equal(..) |
             Expression::NotEqual(..) => {
-                self.visit_flattened_expr(&mut expr.flatten())?;
+                let spaced = expr.has_space_around();
+                let op = expr.operator().unwrap();
+
+                match expr.into_components() {
+                    (Some(left), Some(right)) => {
+                        left.visit(self)?;
+
+                        let right_chunk =
+                            self.chunked(left.loc().end(), Some(loc.end()), |fmt| {
+                                write_chunk!(fmt, left.loc().end(), right.loc().start(), "{op}")?;
+                                right.visit(fmt)?;
+                                Ok(())
+                            })?;
+
+                        self.grouped(|fmt| fmt.write_chunk(&right_chunk))?;
+                    }
+                    (Some(left), None) => {
+                        left.visit(self)?;
+                        write_chunk_spaced!(self, left.loc().end(), Some(spaced), "{op}")?;
+                    }
+                    (None, Some(right)) => {
+                        write_chunk!(self, right.loc().start(), "{op}")?;
+                        let mut right_chunk =
+                            self.visit_to_chunk(right.loc().end(), None, right)?;
+                        right_chunk.needs_space = Some(spaced);
+                        self.write_chunk(&right_chunk)?;
+                    }
+                    (None, None) => {}
+                }
             }
             Expression::Assign(..) |
             Expression::AssignOr(..) |
@@ -3207,7 +3178,7 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
-    test_directory! { ExpressionPrecedence }
+    test_directory! { OperatorExpressions }
     test_directory! { WhileStatement }
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }

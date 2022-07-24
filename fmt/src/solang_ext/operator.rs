@@ -1,48 +1,11 @@
 use solang_parser::pt::*;
 
-use super::{LineOfCode, OptionalLineOfCode};
-
-/// A simplified list of expressions grouped by operation precedence.
-/// All expressions with groups will be evaluated first and then from left to right
-pub enum FlatExpression<Expr> {
-    Expression(Expr),
-    Operator(&'static str, bool),
-}
-
-impl<Expr> OptionalLineOfCode for FlatExpression<Expr>
-where
-    Expr: LineOfCode,
-{
-    fn loc(&self) -> Option<Loc> {
-        match self {
-            Self::Expression(expr) => Some(expr.loc()),
-            Self::Operator(_, _) => None,
-        }
-    }
-}
-
 /// Describes the precedence and the operator token of an Expression if it has one
 pub trait Operator: Sized {
     fn unsplittable(&self) -> bool;
     fn operator(&self) -> Option<&'static str>;
     fn has_space_around(&self) -> bool;
     fn into_components(self) -> (Option<Self>, Option<Self>);
-    fn flatten(self) -> Vec<FlatExpression<Self>> {
-        let op = self.operator();
-        if op.is_none() {
-            return vec![FlatExpression::Expression(self)]
-        }
-
-        let spaced = self.has_space_around();
-        let (left, right) = self.into_components();
-
-        let mut out = Vec::new();
-        left.map(|left| out.append(&mut left.flatten()));
-        out.push(FlatExpression::Operator(op.unwrap(), spaced));
-        right.map(|right| out.append(&mut right.flatten()));
-
-        out
-    }
 }
 
 impl Operator for &mut Expression {
