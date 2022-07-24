@@ -34,7 +34,8 @@ pub struct InvariantTestOptions {
     pub depth: u32,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
-    /// Allows randomly overriding an external call when running invariant tests
+    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
+    /// checks
     pub call_override: bool,
 }
 

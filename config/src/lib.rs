@@ -193,7 +193,8 @@ pub struct Config {
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a revert occurs
     pub invariant_fail_on_revert: bool,
-    /// Allows randomly overriding an external call when running invariant tests
+    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
+    /// checks
     pub invariant_call_override: bool,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
