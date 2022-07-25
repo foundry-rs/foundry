@@ -1182,7 +1182,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Visit statement as `Statement::Block`.
-    fn visit_stmt_to_block(&mut self, stmt: &mut Statement) -> Result<()> {
+    fn visit_stmt_as_block(&mut self, stmt: &mut Statement) -> Result<()> {
         match stmt {
             Statement::Block { .. } => stmt.visit(self),
             _ => self.visit_block(stmt.loc(), &mut vec![stmt]),
@@ -2559,7 +2559,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Ok(())
         })?;
         match body {
-            Some(body) => self.visit_stmt_to_block(body),
+            Some(body) => self.visit_stmt_as_block(body),
             None => self.write_empty_brackets(),
         }
     }
@@ -2573,7 +2573,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.surrounded(loc.start(), "while (", ") ", Some(cond.loc().end()), |fmt, _| {
             cond.visit(fmt)
         })?;
-        self.visit_stmt_to_block(body)
+        self.visit_stmt_as_block(body)
     }
 
     fn visit_do_while(
@@ -2583,7 +2583,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         cond: &mut Expression,
     ) -> Result<(), Self::Error> {
         write_chunk!(self, loc.start(), "do ")?;
-        self.visit_stmt_to_block(body)?;
+        self.visit_stmt_as_block(body)?;
         self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
             cond.visit(fmt)
         })
@@ -2599,14 +2599,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         self.surrounded(loc.start(), "if (", ")", Some(cond.loc().end()), |fmt, _| {
             cond.visit(fmt)
         })?;
-        self.visit_stmt_to_block(if_branch)?;
+        self.visit_stmt_as_block(if_branch)?;
         if let Some(else_branch) = else_branch {
             self.write_postfix_comments_before(else_branch.loc().start())?;
             write_chunk!(self, else_branch.loc().start(), "else")?;
             if matches!(**else_branch, Statement::If(..)) {
                 else_branch.visit(self)?;
             } else {
-                self.visit_stmt_to_block(else_branch)?;
+                self.visit_stmt_as_block(else_branch)?;
             }
         }
         Ok(())
