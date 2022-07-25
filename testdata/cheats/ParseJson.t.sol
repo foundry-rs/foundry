@@ -59,5 +59,16 @@ contract ParseJson is DSTest {
         assertEq(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, decodedData[1]);
     }
 
+    struct Nested{
+        uint256 number;
+        string str;
+    }
+
+    function test_nestedObject() public {
+        bytes memory data = cheats.parseJson(json, ".nestedObject");
+        Nested memory nested = abi.decode(data, (Nested));
+        assertEq(nested.number,13);
+        assertEq(nested.str,"NEST");
+    }
 
 }
