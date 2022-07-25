@@ -302,7 +302,6 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
 }
 
 fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-    // let v: Value = serde_json::from_str(json).map_err(util::encode_error)?;
     let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
     // values is an array of serde_json Value
     let res = values
@@ -319,7 +318,6 @@ fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, By
     let encoded = abi::encode(&res);
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(encoded.clone())]);
-    println!("Token: {:?}\nEncoded: {:?}\nAbi-Encoded: {:?}", res, encoded, abi_encoded);
     Ok(abi_encoded.into())
 }
 
@@ -360,7 +358,8 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
-        HEVMCalls::ParseJson(inner) => parse_json(state, &inner.0, &inner.1),
+        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }

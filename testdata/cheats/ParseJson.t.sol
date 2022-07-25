@@ -71,4 +71,22 @@ contract ParseJson is DSTest {
         assertEq(nested.str,"NEST");
     }
 
+    struct Whole{
+        string str;
+        string[] strArray;
+        uint256[] uintArray;
+    }
+
+    function test_wholeObject() public {
+        string memory path = "../testdata/fixtures/ParseJson/wholeJson.json";
+        json = cheats.readFile(path);
+        bytes memory data = cheats.parseJson(json);
+        Whole memory whole = abi.decode(data, (Whole));
+        assertEq(whole.str,"hai");
+        assertEq(whole.uintArray[0], 42);
+        assertEq(whole.uintArray[1], 43);
+        assertEq(whole.strArray[0], "hai");
+        assertEq(whole.strArray[1], "there");
+    }
+
 }
