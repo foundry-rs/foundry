@@ -40,7 +40,10 @@ use ethers::{
     prelude::TxpoolInspect,
     providers::{Http, ProviderError, RetryClient},
     types::{
-        transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
+        transaction::{
+            eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
+            eip712::TypedData,
+        },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
         Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
         TxpoolStatus, TxpoolTransaction, H256, U256, U64,
@@ -180,6 +183,15 @@ impl EthApi {
                 self.get_code(addr, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
+            EthRequest::EthSignTypedData(addr, data) => {
+                self.sign_typed_data(addr, data).await.to_rpc_result()
+            }
+            EthRequest::EthSignTypedDataV3(addr, data) => {
+                self.sign_typed_data_v3(addr, data).await.to_rpc_result()
+            }
+            EthRequest::EthSignTypedDataV4(addr, data) => {
+                self.sign_typed_data_v4(addr, &data).await.to_rpc_result()
+            }
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
             EthRequest::EthCall(call, block) => self.call(call, block).await.to_rpc_result(),
             EthRequest::EthCreateAccessList(call, block) => {
@@ -543,6 +555,40 @@ impl EthApi {
         node_info!("eth_getCode");
         let number = self.backend.ensure_block_number(block_number)?;
         self.backend.get_code(address, Some(number.into())).await
+    }
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
+    ///
+    /// Handler for ETH RPC call: `eth_signTypedData`
+    pub async fn sign_typed_data(
+        &self,
+        _address: Address,
+        _data: serde_json::Value,
+    ) -> Result<String> {
+        node_info!("eth_signTypedData");
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
+    ///
+    /// Handler for ETH RPC call: `eth_signTypedData_v3`
+    pub async fn sign_typed_data_v3(
+        &self,
+        _address: Address,
+        _data: serde_json::Value,
+    ) -> Result<String> {
+        node_info!("eth_signTypedData_v3");
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
+    ///
+    /// Handler for ETH RPC call: `eth_signTypedData_v4`
+    pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
+        node_info!("eth_signTypedData_v4");
+        let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
+        let signature = signer.sign_typed_data(address, data).await?;
+        Ok(format!("0x{}", signature))
     }
 
     /// The sign method calculates an Ethereum specific signature
