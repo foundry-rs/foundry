@@ -303,21 +303,20 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
 
 fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
     let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
-    // values is an array of serde_json Value
+    // values is an array of items. Depending on the JsonPath key, they
+    // can be many or a single item. An item can be a single value or
+    // an entire Json object.
     let res = values
         .as_array()
         .unwrap()
         .iter()
         .map(|inner| {
             let val = inner;
-            let token = value_to_token(val).unwrap();
-            token
+            value_to_token(val).unwrap()
         })
         .collect::<Vec<Token>>();
-    // encode the token into bytes
-    let encoded = abi::encode(&res);
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = abi::encode(&[Token::Bytes(encoded.clone())]);
+    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res))]);
     Ok(abi_encoded.into())
 }
 
