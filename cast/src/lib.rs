@@ -1055,16 +1055,19 @@ impl SimpleCast {
     }
 
     pub fn left_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
-        dbg!(&base_in);
-        let value = U256::from_str_radix(value, base_in).unwrap();
-        let bits = U256::from_str_radix(bits, base_in).unwrap();
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input with provided base_in")?;
+        let bits = U256::from_str_radix(bits, base_in)
+            .wrap_err("Cannot parse shift with provided base_in")?;
 
         Ok(value.shl(bits))
     }
 
     pub fn right_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
-        let value = U256::from_str_radix(value, base_in).unwrap();
-        let bits = U256::from_str_radix(bits, base_in).unwrap();
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input with provided base_in")?;
+        let bits = U256::from_str_radix(bits, base_in)
+            .wrap_err("Cannot parse shift with provided base_in")?;
 
         Ok(value.shr(bits))
     }

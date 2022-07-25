@@ -733,28 +733,21 @@ fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
         Some(base_in) => match base_in.as_str() {
             "10" | "dec" => Ok(10),
             "16" | "hex" => Ok(16),
-            _ => Err(eyre::eyre!("could not parse hex base in")),
+            _ => eyre::bail!("Unknown input base: {base_in}"),
         },
-        None => {
-            if value.starts_with("0x") {
-                U256::from_str_radix(value, 16).expect("could not parse hex base in");
+        None if value.starts_with("0x") => Ok(16),
+        None => match U256::from_str_radix(value, 10) {
+            Ok(_) => {
+                U256::from_str_radix(value, 16)
+                    .expect("could not parse base in, please prepend with 0x if hex.");
 
-                Ok(16)
-            } else {
-                match U256::from_str_radix(value, 10) {
-                    Ok(_) => {
-                        U256::from_str_radix(value, 16)
-                            .expect("could not parse base in, please prepend with 0x if hex.");
-
-                        Ok(10)
-                    }
-                    Err(_) => {
-                        U256::from_str_radix(value, 16).expect("couldn't parse base in from hex");
-                        Ok(16)
-                    }
-                }
+                Ok(10)
             }
-        }
+            Err(_) => {
+                U256::from_str_radix(value, 16).expect("couldn't parse base in from hex");
+                Ok(16)
+            }
+        },
     }
 }
 
@@ -768,8 +761,8 @@ fn det_base_out(base_out: &str) -> u32 {
 fn format_uint(val: U256, base_out: u32) -> eyre::Result<String> {
     match base_out {
         10 => Ok(val.to_string()),
-        16 => Ok(AbiEncode::encode_hex(val)),
-        _ => Err(eyre::eyre!("could not parse base out")),
+        16 => Ok(format!("0x{:x}", val)),
+        _ => Err(eyre::eyre!("Unknown output base: {base_out}")),
     }
 }
 
