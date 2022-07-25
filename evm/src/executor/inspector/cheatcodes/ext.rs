@@ -7,9 +7,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, Error, ParamType, Token},
+    abi::{self, encode, AbiEncode, Error, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
-    types::{Address, I256, U256},
+    types::*,
     utils::hex::FromHex,
 };
 use foundry_common::fs;
@@ -132,7 +132,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
         Ok(Bytes::new())
     }
 }
-fn value_to_abi(val: Vec<&str>, r#type: ParamType, is_array: bool) -> Result<Bytes, Bytes> {
+fn value_to_abi(val: Vec<String>, r#type: ParamType, is_array: bool) -> Result<Bytes, Bytes> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -181,9 +181,9 @@ fn value_to_abi(val: Vec<&str>, r#type: ParamType, is_array: bool) -> Result<Byt
 fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
     let val = if let Some(d) = delim {
-        val.split(d).map(|v| v.trim()).collect()
+        val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
-        vec![val.as_str()]
+        vec![val.to_string()]
     };
     let is_array: bool = if delim.is_some() { true } else { false };
     value_to_abi(val, r#type, is_array)
@@ -270,88 +270,58 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
-/// Find the ABI type of a JSON Value
-fn value_to_type(value: &Value) -> Option<ParamType> {
+fn value_to_token(value: &Value) -> Result<Token, Token> {
     if value.is_boolean() {
-        Some(ParamType::Bool)
+        Ok(Token::Bool(value.as_bool().unwrap()))
     } else if value.is_string() {
-        // TODO: Address this
-        Some(ParamType::String)
+        let val = value.as_str().unwrap();
+        // If it can decoded as an address, it's an address
+        if let Ok(addr) = H160::from_str(val) {
+            Ok(Token::Address(addr))
+        } else {
+            Ok(Token::String(val.to_owned()))
+        }
     } else if value.is_u64() {
-        Some(ParamType::Uint(256))
+        Ok(Token::Uint(value.as_u64().unwrap().into()))
     } else if value.is_i64() {
-        Some(ParamType::Int(256))
+        Ok(Token::Int(value.as_i64().unwrap().into()))
     } else if value.is_array() {
-        value_to_type(&value[0])
+        let arr = value.as_array().unwrap();
+        Ok(Token::Array(arr.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>()))
     } else if value.is_object() {
-        None
+        let values = value
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|val| value_to_token(val).unwrap())
+            .collect::<Vec<Token>>();
+        Ok(Token::Tuple(values))
     } else {
-        None
+        Err(Token::String("Could not decode field".to_owned()))
     }
 }
 
-/// Flattens an arbitrary json to a serialised vector of serde_json::&Value
-/// The serialised vector is ordered based on the alphabetical order of the keys
-/// of the respective values.
-fn json_to_vector(value: &Value) -> Option<Vec<AbiValues>> {
-    match value.as_object() {
-        // If it's an object
-        Some(val) => {
-            // We iterate over it's elements. If an element is an object, we call the
-            // function recursively.If the value is an object, it will return a vector
-            // of Values, if it's not an object, it will return a vector with a single value.
-            // In both cases, the vector will be flattened so that we only keep it's values
-            let values = val
-                .values()
-                .flat_map(|json_value| {
-                    if json_value.is_object() {
-                        json_to_vector(json_value).unwrap()
-                    } else {
-                        let abi_type = value_to_type(json_value).unwrap();
-                        vec![AbiValues { value: json_value.clone(), abi_type }]
-                    }
-                })
-                .collect::<Vec<AbiValues>>();
-            Some(values)
-        }
-        // If it's not an object, it's just a a Value
-        None => {
-            Some(vec![AbiValues { value: value.clone(), abi_type: value_to_type(&value).unwrap() }])
-        }
-    }
+fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
+    // let v: Value = serde_json::from_str(json).map_err(util::encode_error)?;
+    let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
+    // values is an array of serde_json Value
+    let res = values
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|inner| {
+            let val = inner;
+            let token = value_to_token(val).unwrap();
+            token
+        })
+        .collect::<Vec<Token>>();
+    // encode the token into bytes
+    let encoded = abi::encode(&res);
+    // encode the bytes as the 'bytes' solidity type
+    let abi_encoded = abi::encode(&[Token::Bytes(encoded.clone())]);
+    println!("Token: {:?}\nEncoded: {:?}\nAbi-Encoded: {:?}", res, encoded, abi_encoded);
+    Ok(abi_encoded.into())
 }
-#[derive(Debug, PartialEq)]
-struct AbiValues {
-    value: Value,
-    abi_type: ParamType,
-}
-
-// fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-//     // let v: Value = serde_json::from_str(json).map_err(util::encode_error)?;
-//     let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
-//     // Assumes that the jsonpath key will return a single object (value/array)
-//     let inner = &values.as_array().unwrap()[0];
-//     let values_types = value_to_type(&inner).unwrap();
-//     if inner.is_object(){
-//         inner.as_object().unwrap().values().flat_map(|val| val)
-//     }
-//     let abi = values_types.map(|abi_type| {
-
-//     })
-//     let abi_value = if inner.is_array() {
-//         let string_values: Vec<String> = inner
-//             .as_array()
-//             .unwrap()
-//             .into_iter()
-//             .map(|val| val.to_string().replace(&['\'', '"'], ""))
-//             .collect();
-//         let str_values = string_values.iter().map(|s| &**s).collect::<Vec<&str>>();
-//         value_to_abi(str_values, value_type, true)
-//     } else {
-//         value_to_abi(vec![&inner.to_string().replace(&['\'', '"'], "")], value_type, false)
-//     };
-//     abi_value.map(|val| abi::encode(&[Token::Bytes(val.to_vec())]).into())
-// }
 
 pub fn apply(
     state: &mut Cheatcodes,
@@ -390,11 +360,12 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
-        // HEVMCalls::ParseJson(inner) => parse_json(state, &inner.0, &inner.1),
+        HEVMCalls::ParseJson(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }
 
+<<<<<<< HEAD
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,4 +417,45 @@ mod tests {
         let parsed_json = json_to_vector(&json).unwrap();
         assert_eq!(json_vector, parsed_json);
     }
+    #[test]
+    fn test_json_to_values() {
+        let json =
+            json!({ "a": { "nested": { "double_nest": 123}}, "b": ["an", "array"] , "c": true});
+        let json_vector = vec![
+            AbiValues { value: to_value::<u32>(123).unwrap(), abi_type: ParamType::Uint(256) },
+            AbiValues {
+                value: to_value(vec![to_value("an").unwrap(), to_value("array").unwrap()]).unwrap(),
+                abi_type: ParamType::String,
+            },
+            AbiValues { value: to_value(true).unwrap(), abi_type: ParamType::Bool },
+        ];
+        let parsed_json = json_to_vector(&json).unwrap();
+        assert_eq!(json_vector, parsed_json);
+    }
 }
+//     #[test]
+//     fn test_nested_json_to_values() {
+//         let json =
+//             json!({ "a": { "nested": { "double_nest": 123}}, "b": ["an", "array"] , "c": true});
+//         let json_vector = vec![
+//             AbiValues { value: to_value::<u32>(123).unwrap(), abi_type: ParamType::Uint(256) },
+//             AbiValues {
+//                 value: to_value(vec![to_value("an").unwrap(),
+// to_value("array").unwrap()]).unwrap(),                 abi_type: ParamType::String,
+//             },
+//             AbiValues { value: to_value(true).unwrap(), abi_type: ParamType::Bool },
+//         ];
+//         let parsed_json = json_to_vector(&json).unwrap();
+//         assert_eq!(json_vector, parsed_json);
+//     }
+
+//     #[test]
+//     fn test_json_value_to_value() {
+//         let json = json!({ "a": 123});
+//         let json_vector = vec![AbiValues {
+//             value: to_value::<u32>(123).unwrap(),
+//             abi_type: ParamType::Uint(256),
+//         }];
+//         let parsed_json = json_to_vector(&json).unwrap();
+//         assert_eq!(json_vector, parsed_json);
+//     }
