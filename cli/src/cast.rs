@@ -15,7 +15,7 @@ use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
-    abi::{AbiEncode, HumanReadableParser},
+    abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::{Middleware, Provider},
     types::{Address, NameOrAddress, U256},
@@ -738,13 +738,10 @@ fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
         None if value.starts_with("0x") => Ok(16),
         None => match U256::from_str_radix(value, 10) {
             Ok(_) => {
-                U256::from_str_radix(value, 16)
-                    .expect("could not parse base in, please prepend with 0x if hex.");
-
-                Ok(10)
+                eyre::bail!("Could not autodetect input base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter.");
             }
             Err(_) => {
-                U256::from_str_radix(value, 16).expect("couldn't parse base in from hex");
+                U256::from_str_radix(value, 16).expect("Could not autodetect input base.");
                 Ok(16)
             }
         },
