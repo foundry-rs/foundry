@@ -270,6 +270,10 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Converts a serde_json::Value to an abi::Token
+/// The function is designed to run recursively, so that in case of an object
+/// it will call itself to convert each of it's value and encode the whole as a
+/// Tuple
 fn value_to_token(value: &Value) -> Result<Token, Token> {
     if value.is_boolean() {
         Ok(Token::Bool(value.as_bool().unwrap()))
@@ -300,12 +304,15 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
         Err(Token::String("Could not decode field".to_owned()))
     }
 }
-
+/// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
+/// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
+/// deserialized in the same order. That means that the solidity `struct` should order it's fields
+/// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
     let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
-    // an entire Json object.
+    // an entire JSON object.
     let res = values
         .as_array()
         .unwrap()
@@ -357,6 +364,8 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        // If no key argument is passed, return the whole JSON object.
+        // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
         HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
