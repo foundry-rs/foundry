@@ -155,9 +155,7 @@ impl ScriptArgs {
         let env = script_config.evm_opts.evm_env().await;
 
         // The db backend that serves all the data.
-        // We only call this function twice: when executing locally and when executing the
-        // broadcastable transactions.
-        let db = script_config.backend.take().unwrap_or_else(|| {
+        let db = script_config.backend.as_ref().cloned().unwrap_or_else(|| {
             let backend =
                 Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
             script_config.backend = Some(backend.clone());
