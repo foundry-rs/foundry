@@ -19,7 +19,7 @@ use ethers::{
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
-    executor::opts::EvmOpts,
+    executor::{opts::EvmOpts, Backend},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
@@ -429,6 +429,7 @@ pub struct ScriptConfig {
     pub config: foundry_config::Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
+    pub backend: Option<Backend>,
     pub called_function: Option<Function>,
 }
 
