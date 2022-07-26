@@ -406,7 +406,7 @@ impl Backend {
         )
     }
 
-    /// Copies the state of the `addr` from the currently active db into the given `fork`
+    /// Copies the state of all `accounts` from the currently active db into the given `fork`
     pub(crate) fn update_fork_db_contracts(
         &self,
         accounts: impl IntoIterator<Item = Address>,
@@ -1022,7 +1022,7 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
     current.cfg = fork.cfg;
 }
 
-/// Clones the data of the given addresses from the `active` database into the `fork_db`
+/// Clones the data of the given `accounts` from the `active` database into the `fork_db`
 /// This includes the data held in storage (`CacheDB`) and kept in the `Subroutine`
 pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     accounts: impl IntoIterator<Item = Address>,
