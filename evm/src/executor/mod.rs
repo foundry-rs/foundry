@@ -89,6 +89,11 @@ impl Executor {
         Executor { backend, env, inspector_config, gas_limit }
     }
 
+    /// Returns a mutable reference to the Env
+    pub fn env_mut(&mut self) -> &mut Env {
+        &mut self.env
+    }
+
     /// Returns a mutable reference to the Backend
     pub fn backend_mut(&mut self) -> &mut Backend {
         &mut self.backend
