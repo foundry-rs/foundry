@@ -127,10 +127,11 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             }
             Err(err) => {
                 let err = err.to_string();
-                error!(target: "rpc", ?method, ?err, "failed to deserialize method");
                 if err.contains("unknown variant") {
+                    error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
                     RpcResponse::new(id, RpcError::method_not_found())
                 } else {
+                    error!(target: "rpc", ?method, ?err, "failed to deserialize method");
                     RpcResponse::new(id, RpcError::invalid_params(err))
                 }
             }
