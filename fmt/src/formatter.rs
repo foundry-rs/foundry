@@ -1067,81 +1067,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Visit a flattened expression. The function will try to be applied to a single line and
-    /// otherwise will be grouped into the next line
-    fn visit_flattened_expr<E>(&mut self, flattened: &mut [FlatExpression<&mut E>]) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        if !self.try_on_single_line(|fmt| fmt.visit_flattened_expr_multiline(flattened, false))? {
-            self.grouped(|fmt| fmt.visit_flattened_expr_multiline(flattened, true))?;
-        }
-        Ok(())
-    }
-
-    /// Visit a flattened expression. The function takes a `multiline` hint as a second argument
-    /// If multiline the function will split every spaced operator onto a separate line
-    fn visit_flattened_expr_multiline<E>(
-        &mut self,
-        flattened: &mut [FlatExpression<&mut E>],
-        multiline: bool,
-    ) -> Result<()>
-    where
-        E: Visitable + LineOfCode,
-    {
-        let mut flattened = flattened.iter_mut().peekable();
-        let mut prefix_ops = String::new();
-        while let Some(item) = flattened.next() {
-            let loc = item.loc();
-            match item {
-                FlatExpression::Expression(expr) => {
-                    let mut chunk = self.visit_to_chunk(expr.loc().end(), None, *expr)?;
-
-                    chunk.content.insert_str(0, &prefix_ops);
-                    prefix_ops.clear();
-                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
-                        chunk.content.push_str(op);
-                        flattened.next();
-                    }
-
-                    self.write_chunk(&chunk)?;
-                    if multiline && flattened.peek().is_some() {
-                        self.write_whitespace_separator(true)?;
-                    }
-                }
-                FlatExpression::SpacedOp(op) => {
-                    write_chunk!(self, "{op}")?;
-                }
-                FlatExpression::UnspacedOp(op) => {
-                    prefix_ops.push_str(op);
-                }
-                FlatExpression::Group(group) => {
-                    let mut prefix = std::mem::take(&mut prefix_ops);
-                    prefix.push('(');
-                    let mut suffix = ")".to_string();
-                    while let Some(FlatExpression::UnspacedOp(op)) = flattened.peek() {
-                        suffix.push_str(op);
-                        flattened.next();
-                    }
-                    self.surrounded(
-                        loc.map(|loc| loc.start()).unwrap_or(0),
-                        prefix,
-                        suffix,
-                        loc.map(|loc| loc.end()),
-                        |fmt, _multiline| fmt.visit_flattened_expr(group),
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Visit the right side of an assignment. The function will try to write the assignment on a
     /// single line or indented on the next line. If it can't do this it resorts to letting the
     /// expression decide how to split iself on multiple lines
     fn visit_assignment(&mut self, expr: &mut Expression) -> Result<()> {
-        use Expression::*;
-
         if self.try_on_single_line(|fmt| expr.visit(fmt))? {
             return Ok(())
         }
@@ -1149,47 +1078,28 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_postfix_comments_before(expr.loc().start())?;
         self.write_prefix_comments_before(expr.loc().start())?;
 
-        if self.is_beginning_of_line() &&
-            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?
-        {
+        let fits_on_single_line =
+            self.try_on_single_line(|fmt| fmt.indented(1, |fmt| expr.visit(fmt)))?;
+        if self.is_beginning_of_line() && fits_on_single_line {
             return Ok(())
-        } else {
-            let mut fit_on_next_line = false;
-            self.indented(1, |fmt| {
-                let tx = fmt.transact(|fmt| {
-                    writeln!(fmt.buf())?;
-                    fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
-                    Ok(())
-                })?;
-                if fit_on_next_line {
-                    tx.commit()?;
-                }
+        }
+
+        let mut fit_on_next_line = false;
+        self.indented(1, |fmt| {
+            let tx = fmt.transact(|fmt| {
+                writeln!(fmt.buf())?;
+                fit_on_next_line = fmt.try_on_single_line(|fmt| expr.visit(fmt))?;
                 Ok(())
             })?;
             if fit_on_next_line {
-                return Ok(())
+                tx.commit()?;
             }
-        }
+            Ok(())
+        })?;
 
-        let unsplittable = matches!(
-            expr,
-            BoolLiteral(..) |
-                NumberLiteral(..) |
-                RationalNumberLiteral(..) |
-                HexNumberLiteral(..) |
-                StringLiteral(..) |
-                HexLiteral(..) |
-                AddressLiteral(..) |
-                Variable(..) |
-                Unit(..) |
-                This(..)
-        );
-        if unsplittable {
-            self.indented(1, |fmt| expr.visit(fmt))?;
-            return Ok(())
+        if !fit_on_next_line {
+            self.indented_if(expr.unsplittable(), 1, |fmt| expr.visit(fmt))?;
         }
-
-        expr.visit(self)?;
 
         Ok(())
     }
@@ -1223,7 +1133,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     end_offset,
                     items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
                 )?;
-                let multiline = fmt.are_chunks_separated_multiline("{})", &args, ",")?;
+                let multiline = fmt.are_chunks_separated_multiline("{})", &args, ", ")?;
                 fmt.write_chunks_separated(&args, ",", multiline)?;
                 Ok(())
             })?;
@@ -1859,7 +1769,35 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::Or(..) |
             Expression::Equal(..) |
             Expression::NotEqual(..) => {
-                self.visit_flattened_expr(&mut expr.flatten())?;
+                let spaced = expr.has_space_around();
+                let op = expr.operator().unwrap();
+
+                match expr.into_components() {
+                    (Some(left), Some(right)) => {
+                        left.visit(self)?;
+
+                        let right_chunk =
+                            self.chunked(left.loc().end(), Some(loc.end()), |fmt| {
+                                write_chunk!(fmt, left.loc().end(), right.loc().start(), "{op}")?;
+                                right.visit(fmt)?;
+                                Ok(())
+                            })?;
+
+                        self.grouped(|fmt| fmt.write_chunk(&right_chunk))?;
+                    }
+                    (Some(left), None) => {
+                        left.visit(self)?;
+                        write_chunk_spaced!(self, left.loc().end(), Some(spaced), "{op}")?;
+                    }
+                    (None, Some(right)) => {
+                        write_chunk!(self, right.loc().start(), "{op}")?;
+                        let mut right_chunk =
+                            self.visit_to_chunk(right.loc().end(), None, right)?;
+                        right_chunk.needs_space = Some(spaced);
+                        self.write_chunk(&right_chunk)?;
+                    }
+                    (None, None) => {}
+                }
             }
             Expression::Assign(..) |
             Expression::AssignOr(..) |
@@ -1872,32 +1810,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::AssignMultiply(..) |
             Expression::AssignDivide(..) |
             Expression::AssignModulo(..) => {
-                let precedence = expr.precedence();
                 let op = expr.operator().unwrap();
                 let (left, right) = expr.into_components();
-                let left = left.unwrap();
-                let right = right.unwrap();
+                let (left, right) = (left.unwrap(), right.unwrap());
 
-                // we shouldn't need parentheses on the left as assignment should always have the
-                // lowest priority
-                let left_chunked = self.chunked(left.loc().start(), None, |fmt| left.visit(fmt))?;
-                // TODO we use the operator presence as a short hand for whether and indent was
-                // introduced if multiline, but this may not always be the case
-                let left_is_indented =
-                    left_chunked.content.contains('\n') && left.operator().is_some();
-                self.write_chunk(&left_chunked)?;
-
-                self.indented_if(left_is_indented || !self.will_it_fit(op), 1, |fmt| {
-                    write_chunk!(fmt, "{}", op)?;
-                    if precedence.is_evaluated_first(right.precedence()) {
-                        fmt.surrounded(right.loc().start(), "(", ")", None, |fmt, _multiline| {
-                            right.visit(fmt)
-                        })?;
-                    } else {
-                        fmt.visit_assignment(right)?;
-                    }
-                    Ok(())
-                })?;
+                left.visit(self)?;
+                write_chunk!(self, "{op}")?;
+                self.visit_assignment(right)?;
             }
             Expression::Ternary(loc, cond, first_expr, second_expr) => {
                 let mut chunks = vec![];
@@ -3300,7 +3219,7 @@ mod tests {
     test_directory! { TypeDefinition }
     test_directory! { UsingDirective }
     test_directory! { VariableDefinition }
-    test_directory! { ExpressionPrecedence }
+    test_directory! { OperatorExpressions }
     test_directory! { WhileStatement }
     test_directory! { DoWhileStatement }
     test_directory! { ForStatement }
