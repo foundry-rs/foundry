@@ -6,13 +6,12 @@ use crate::{
     },
     utils,
 };
-use cast::executor::inspector::CheatsConfig;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{Backend, ExecutorBuilder},
+    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
 use std::collections::VecDeque;
@@ -75,7 +74,7 @@ impl ScriptArgs {
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<TypedTransaction>,
-        script_config: &ScriptConfig,
+        script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
@@ -159,16 +158,20 @@ impl ScriptArgs {
     /// Creates the Runner that drives script execution
     async fn prepare_runner(
         &self,
-        script_config: &ScriptConfig,
+        script_config: &mut ScriptConfig,
         sender: Address,
         stage: SimulationStage,
     ) -> ScriptRunner {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
 
-        // the db backend that serves all the data
-        let db =
-            Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
+        // The db backend that serves all the data.
+        let db = script_config.backend.clone().unwrap_or_else(|| {
+            let backend =
+                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
+            script_config.backend = Some(backend.clone());
+            backend
+        });
 
         let mut builder = ExecutorBuilder::default()
             .with_config(env)
