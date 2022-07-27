@@ -148,7 +148,7 @@ impl InspectArgs {
                         table.set_header(header);
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
-                            let mut rows = vec![
+                            let mut row = vec![
                                 slot.label.clone(),
                                 storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
                                 slot.slot.clone(),
@@ -162,9 +162,9 @@ impl InspectArgs {
                                 let location = TxHash::from_low_u64_be(slot.slot.parse::<u64>()?);
                                 let value =
                                     provider.get_storage_at(contract_addr, location, None).await?;
-                                rows.push(format!("{:?}", value));
+                                row.push(format!("{:?}", value));
                             }
-                            table.add_row(rows);
+                            table.add_row(row);
                         }
                         println!("{table}");
                     }
