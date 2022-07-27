@@ -53,13 +53,12 @@ impl<'a> InvariantExecutor<'a> {
         // Stores data related to reverts or failed assertions of the test.
         let failures = RefCell::new(InvariantFailures::new(&invariants));
 
-        let clean_db = self.executor.backend().db.clone();
-        let executor = RefCell::new(&mut *self.executor);
+        let blank_executor = RefCell::new(&mut *self.executor);
 
         // Make sure invariants are sound even before starting to fuzz
         if assert_invariants(
             test_contract_abi,
-            &executor.borrow(),
+            &blank_executor.borrow(),
             invariant_address,
             &invariants,
             &[],
@@ -88,6 +87,9 @@ impl<'a> InvariantExecutor<'a> {
                     }
                 }
 
+                // Before each run, we must reset the backend state.
+                let mut executor = blank_executor.borrow().clone();
+
                 // Used for stat reports (eg. gas usage).
                 let mut fuzz_runs = vec![];
 
@@ -102,7 +104,6 @@ impl<'a> InvariantExecutor<'a> {
                     let RawCallResult {
                         result, reverted, gas, stipend, state_changeset, logs, ..
                     } = executor
-                        .borrow()
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
@@ -120,14 +121,14 @@ impl<'a> InvariantExecutor<'a> {
                     );
 
                     // Commit changes to the database.
-                    executor.borrow_mut().backend_mut().db.commit(state_changeset);
+                    executor.backend_mut().db.commit(state_changeset);
 
                     fuzz_runs.push(FuzzCase { calldata: calldata.clone(), gas, stipend });
 
                     if !reverted {
                         if assert_invariants(
                             test_contract_abi,
-                            &executor.borrow(),
+                            &executor,
                             invariant_address,
                             &invariants,
                             &inputs,
@@ -175,9 +176,6 @@ impl<'a> InvariantExecutor<'a> {
                             .current(),
                     );
                 }
-
-                // Before each run, we must reset the database state.
-                executor.borrow_mut().backend_mut().db = clean_db.clone();
 
                 // We clear all the targeted contracts created during this run.
                 if !created_contracts.is_empty() {
