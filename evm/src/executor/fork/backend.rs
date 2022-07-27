@@ -22,7 +22,7 @@ use std::{
         Arc,
     },
 };
-use tracing::{trace, warn};
+use tracing::trace;
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
@@ -482,8 +482,7 @@ impl DatabaseRef for SharedBackend {
     fn basic(&self, address: H160) -> AccountInfo {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(address).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
-            Default::default()
+            panic!("Failed to send/recv `basic` for {address}");
         })
     }
 
@@ -493,10 +492,8 @@ impl DatabaseRef for SharedBackend {
 
     fn storage(&self, address: H160, index: U256) -> U256 {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index)
-            .unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
-            Default::default()
+        self.do_get_storage(address, index).unwrap_or_else(|_| {
+            panic!("Failed to send/recv `storage` for {address} at {index}");
         })
     }
 
@@ -507,8 +504,7 @@ impl DatabaseRef for SharedBackend {
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         self.do_get_block_hash(number).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
-            Default::default()
+            panic!("Failed to send/recv `block_hash` for {number}");
         })
     }
 }

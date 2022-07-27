@@ -89,6 +89,11 @@ impl Executor {
         Executor { backend, env, inspector_config, gas_limit }
     }
 
+    /// Returns a mutable reference to the Env
+    pub fn env_mut(&mut self) -> &mut Env {
+        &mut self.env
+    }
+
     /// Returns a mutable reference to the Backend
     pub fn backend_mut(&mut self) -> &mut Backend {
         &mut self.backend
@@ -481,6 +486,9 @@ impl Executor {
     }
 
     /// Creates the environment to use when executing the transaction
+    ///
+    /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
+    /// the cheatcode state inbetween calls.
     fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
         Env {
             cfg: self.env.cfg.clone(),

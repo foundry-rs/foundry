@@ -6,6 +6,12 @@ use forge::{
     CALLER,
 };
 
+/// Represents which simulation stage is the script execution at.
+pub enum SimulationStage {
+    Local,
+    OnChain,
+}
+
 /// Drives script execution
 pub struct ScriptRunner {
     pub executor: Executor,
