@@ -54,7 +54,7 @@ use foundry_evm::{
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
-use tracing::trace;
+use tracing::{trace, warn};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -125,7 +125,7 @@ impl EthApi {
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
-        trace!(target: "rpc::api", "executing eth request {:?}", request);
+        trace!(target: "rpc::api", "executing eth request");
         match request {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
@@ -573,7 +573,7 @@ impl EthApi {
         let pending_transaction = if self.is_impersonated(from) {
             let bypass_signature = self.backend.cheats().bypass_signature();
             let transaction = sign::build_typed_transaction(request, bypass_signature)?;
-            trace!(target : "node", "eth_sendTransaction: impersonating {:?}", from);
+            trace!(target : "node", ?from, "eth_sendTransaction: impersonating");
             PendingTransaction::with_sender(transaction, from)
         } else {
             let transaction = self.sign_request(&from, request)?;
@@ -1621,7 +1621,7 @@ impl EthApi {
                                 .into())
                         }
                         reason => {
-                            trace!(target: "node", "estimation failed due to {:?}", reason);
+                            warn!(target: "node", "estimation failed due to {:?}", reason);
                             Err(BlockchainError::EvmError(reason))
                         }
                     }
@@ -1631,7 +1631,7 @@ impl EthApi {
                 }
             }
             reason => {
-                trace!(target: "node", "estimation failed due to {:?}", reason);
+                warn!(target: "node", "estimation failed due to {:?}", reason);
                 return Err(BlockchainError::EvmError(reason))
             }
         }
@@ -1672,7 +1672,7 @@ impl EthApi {
                     lowest_gas_limit = mid_gas_limit;
                 }
                 reason => {
-                    trace!(target: "node", "estimation failed due to {:?}", reason);
+                    warn!(target: "node", "estimation failed due to {:?}", reason);
                     return Err(BlockchainError::EvmError(reason))
                 }
             }
@@ -1735,7 +1735,7 @@ impl EthApi {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let outcome = self.backend.mine_block(transactions).await;
 
-        trace!(target: "node", "mined block {}", outcome.block_number);
+        trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);
     }
 

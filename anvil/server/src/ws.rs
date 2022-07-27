@@ -70,14 +70,13 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
         id: Handler::SubscriptionId,
         subscription: Handler::Subscription,
     ) -> Option<Handler::Subscription> {
-        trace!(target: "rpc::ws", "adding subscription id {:?}", id);
         let mut subscriptions = self.subscriptions.lock();
         let mut removed = None;
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == *i) {
-            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
+            trace!(target: "rpc::ws", ?id,  "removed subscription");
             removed = Some(subscriptions.swap_remove(idx).1);
         }
-        trace!(target: "rpc::ws", "added subscription id {:?}", id);
+        trace!(target: "rpc::ws", ?id,  "added subscription");
         subscriptions.push((id, subscription));
         removed
     }
@@ -89,7 +88,7 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
     ) -> Option<Handler::Subscription> {
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
-            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
+            trace!(target: "rpc::ws", ?id,  "removed subscription");
             return Some(subscriptions.swap_remove(idx).1)
         }
         None
@@ -166,7 +165,6 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
     fn on_message(&mut self, msg: Message) -> bool {
         match msg {
             Message::Text(text) => {
-                trace!(target: "rpc::ws", "received: {:?}", text);
                 let handler = self.compat_helper();
                 self.processing.push(Box::pin(async move {
                     match serde_json::from_str::<Request>(&text) {
@@ -174,7 +172,7 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
                             .await
                             .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
                         Err(err) => {
-                            warn!("invalid request={:?}", err);
+                            error!(target: "rpc::ws", ?err, "invalid request");
                             Response::error(RpcError::invalid_request())
                         }
                     }
@@ -189,7 +187,6 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
                 return true
             }
             Message::Ping(ping) => {
-                trace!(target: "rpc::ws", "received ping");
                 self.pending.push_back(Message::Pong(ping));
             }
             _ => {}
@@ -208,9 +205,8 @@ impl<Handler: WsRpcHandler> Future for WsConnection<Handler> {
             while let Poll::Ready(Ok(())) = pin.socket.poll_ready_unpin(cx) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
-                    trace!(target: "rpc::ws", "sending ws message");
                     if let Err(err) = pin.socket.start_send_unpin(msg) {
-                        error!(target: "rpc::ws", "Failed to send message {:?}", err);
+                        error!(target: "rpc::ws", ?err, "Failed to send message");
                     }
                 } else {
                     break
