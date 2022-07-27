@@ -790,6 +790,12 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         sig: String,
     },
     #[clap(
+        name = "create2",
+        visible_alias = "c2",
+        about = "Generate a deterministic contract address using CREATE2"
+    )]
+    Create2 {},
+    #[clap(
         name = "find-block",
         visible_alias = "f",
         about = "Get the block number closest to the provided timestamp."
