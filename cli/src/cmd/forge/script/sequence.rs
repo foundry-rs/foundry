@@ -239,17 +239,29 @@ impl Drop for ScriptSequence {
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
-    #[serde(rename = "type")]
+    #[serde(rename = "transactionType")]
     pub opcode: String,
-    #[serde(default)]
+    #[serde(default = "default_string")]
     pub contract_name: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_address")]
     pub contract_address: Option<Address>,
-    #[serde(default)]
+    #[serde(default = "default_string")]
     pub function: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     pub transaction: TypedTransaction,
+}
+
+fn default_string() -> String {
+    "".to_owned()
+}
+
+fn default_address() -> Address {
+    Address::from_low_u64_be(0)
+}
+
+fn default_vec_of_strings() -> Vec<String> {
+    vec![]
 }
 
 impl TransactionWithMetadata {
