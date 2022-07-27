@@ -148,7 +148,6 @@ impl InspectArgs {
                         table.set_header(header);
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
-
                             let mut rows = vec![
                                 slot.label.clone(),
                                 storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
