@@ -24,6 +24,10 @@ use proptest::{
 use revm::DatabaseCommit;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
+/// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
+type InvariantPreparation =
+    (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>);
+
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
@@ -206,8 +210,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_address: Address,
         test_contract_abi: &Abi,
         test_options: InvariantTestOptions,
-    ) -> eyre::Result<(EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>)>
-    {
+    ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_address, test_contract_abi)?;
