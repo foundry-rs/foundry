@@ -42,9 +42,8 @@ use ethers::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
-        Trace, Transaction, TransactionReceipt, TransactionRequest as EthersTransactionRequest,
-        TransactionRequest, TxHash, TxpoolContent, TxpoolInspectSummary, TxpoolStatus, H256, U256,
-        U64,
+        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
+        TxpoolStatus, TxpoolTransaction, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -1490,27 +1489,22 @@ impl EthApi {
     pub async fn txpool_content(&self) -> Result<TxpoolContent> {
         node_info!("txpool_content");
         let mut content = TxpoolContent::default();
-        fn convert(tx: Arc<PoolTransaction>) -> EthersTransactionRequest {
+        fn convert(tx: Arc<PoolTransaction>) -> TxpoolTransaction {
             let from = *tx.pending_transaction.sender();
             let tx = &tx.pending_transaction.transaction;
-            let to = tx.to().copied();
-            let gas = tx.gas_limit();
-            let value = tx.value();
-            let data = tx.data();
-            let data = if data.as_ref().is_empty() { None } else { Some(data.clone()) };
-            let nonce = *tx.nonce();
-            let chain_id = tx.chain_id();
-            let gas_price = tx.gas_price();
 
-            TransactionRequest {
+            TxpoolTransaction {
+                block_hash: None,
+                block_number: None,
                 from: Some(from),
-                to: to.map(Into::into),
-                gas: Some(gas),
-                gas_price: Some(gas_price),
-                value: Some(value),
-                data,
-                nonce: Some(nonce),
-                chain_id: chain_id.map(Into::into),
+                to: tx.to().copied(),
+                gas: Some(tx.gas_limit()),
+                gas_price: Some(tx.gas_price()),
+                value: tx.value(),
+                hash: tx.hash(),
+                input: tx.data().clone(),
+                nonce: *tx.nonce(),
+                transaction_index: None,
             }
         }
 

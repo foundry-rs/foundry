@@ -101,7 +101,7 @@ ethers::contract::abigen!(
             rpcUrls()(string[2][])
     ]"#,
 );
-pub use hevm_mod::{HEVMCalls, HEVM_ABI};
+pub use hevm::{HEVMCalls, HEVM_ABI};
 
 /// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
 ///
@@ -140,11 +140,11 @@ ethers::contract::abigen!(
             event log_named_array        (string key, address[] val)
     ]"#
 );
-pub use console_mod::{ConsoleEvents, CONSOLE_ABI};
+pub use console::{ConsoleEvents, CONSOLE_ABI};
 
 // Bindings for Hardhat console
 ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
-pub use hardhatconsole_mod::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
+pub use hardhat_console::HARDHATCONSOLE_ABI as HARDHAT_CONSOLE_ABI;
 
 mod fmt;
 pub use fmt::format_hardhat_call;
