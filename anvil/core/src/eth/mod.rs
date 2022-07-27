@@ -7,14 +7,17 @@ use crate::{
 };
 use ethers_core::{
     abi::ethereum_types::H64,
-    types::{Address, BlockId, BlockNumber, Bytes, Filter, TxHash, H256, U256},
+    types::{
+        serde_helpers::*, transaction::eip712::TypedData, Address, BlockId, BlockNumber, Bytes,
+        Filter, TxHash, H256, U256,
+    },
 };
 use serde::Deserialize;
 use serde_helpers::Params;
 
 pub mod block;
 pub mod receipt;
-mod serde_helpers;
+pub mod serde_helpers;
 pub mod subscription;
 pub mod transaction;
 pub mod trie;
@@ -88,6 +91,18 @@ pub enum EthRequest {
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
     EthSign(Address, Bytes),
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
+    #[serde(rename = "eth_signTypedData")]
+    EthSignTypedData(Address, serde_json::Value),
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
+    #[serde(rename = "eth_signTypedData_v3")]
+    EthSignTypedDataV3(Address, serde_json::Value),
+
+    /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md), and includes full support of arrays and recursive data structures.
+    #[serde(rename = "eth_signTypedData_v4")]
+    EthSignTypedDataV4(Address, TypedData),
 
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<EthTransactionRequest>),
@@ -957,6 +972,13 @@ mod tests {
 
         // this case deviates from the spec, but we're supporting this for legacy reasons: <https://github.com/foundry-rs/foundry/issues/1868>
         let s = r#"{"method": "eth_getBlockByNumber", "params": [0, true]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_sign_typed_data() {
+        let s = r#"{"method":"eth_signTypedData_v4","params":["0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826", {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Person":[{"name":"name","type":"string"},{"name":"wallet","type":"address"}],"Mail":[{"name":"from","type":"Person"},{"name":"to","type":"Person"},{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Ether Mail","version":"1","chainId":1,"verifyingContract":"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"},"message":{"from":{"name":"Cow","wallet":"0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},"to":{"name":"Bob","wallet":"0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"},"contents":"Hello, Bob!"}}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

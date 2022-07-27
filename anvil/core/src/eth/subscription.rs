@@ -69,7 +69,7 @@ pub enum SubscriptionKind {
 }
 
 /// Unique subscription id
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum SubscriptionId {
     /// numerical sub id
@@ -89,6 +89,15 @@ impl SubscriptionId {
 
 impl fmt::Display for SubscriptionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SubscriptionId::Number(num) => num.fmt(f),
+            SubscriptionId::String(s) => s.fmt(f),
+        }
+    }
+}
+
+impl fmt::Debug for SubscriptionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SubscriptionId::Number(num) => num.fmt(f),
             SubscriptionId::String(s) => s.fmt(f),
