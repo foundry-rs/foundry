@@ -671,7 +671,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, debug, cheatcodes, coverage, .. } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {

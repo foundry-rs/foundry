@@ -212,9 +212,10 @@ where
                     is_static,
                 );
 
-                // If the inspector returns a different status we assume it wants to tell us
-                // something
-                if new_status != status {
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                {
                     return (new_status, new_gas, new_retdata)
                 }
             }

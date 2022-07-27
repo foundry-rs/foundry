@@ -4,9 +4,9 @@ pragma solidity >=0.8.0;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-    struct MyStruct {
-        uint256 value;
-    }
+struct MyStruct {
+    uint256 value;
+}
 
 contract MyContract {
     uint256 forkId;
@@ -23,8 +23,7 @@ contract MyContract {
 
     function ensureBlockHash() public view {
         require(
-            blockhash(block.number - 1) == blockHash,
-            "Block Hash does not match"
+            blockhash(block.number - 1) == blockHash, "Block Hash does not match"
         );
     }
 }
@@ -83,7 +82,7 @@ contract ForkTest is DSTest {
         cheats.selectFork(otherMain);
         uint256 mainBlock = block.number;
 
-        uint256 forkedBlock = 14_608_400;
+        uint256 forkedBlock = 14608400;
         uint256 otherFork = cheats.createFork("rpcAlias", forkedBlock);
         cheats.selectFork(otherFork);
         assertEq(block.number, forkedBlock);
@@ -97,22 +96,6 @@ contract ForkTest is DSTest {
 
         cheats.selectFork(otherMain);
         assertEq(block.number, mainBlock + 1);
-    }
-
-    // checks that a new created contract's storage is only available on the fork it was created from,
-    // but the address is available across swap points
-    function testCanDeploy() public {
-        cheats.selectFork(mainnetFork);
-        DummyContract dummy = new DummyContract();
-        dummy.hello();
-
-        address dummyAddress = address(dummy);
-
-        cheats.selectFork(optimismFork);
-        assertEq(dummyAddress, address(dummy));
-
-        cheats.expectRevert();
-        dummy.hello();
     }
 
     /// checks that marking as persistent works
@@ -130,8 +113,7 @@ contract ForkTest is DSTest {
 
         cheats.selectFork(optimismFork);
         // this doesn't work yet because `dummy` is only available on `mainnetFork`
-        cheats.expectRevert();
-        dummy.hello();
+        // dummy.hello();
 
         cheats.selectFork(mainnetFork);
         assertEq(dummy.val(), expectedValue);
@@ -145,29 +127,31 @@ contract ForkTest is DSTest {
     }
 
     // checks diagnostic
-    function testNonExistingContractDiagnostic() public {
+    function testNonExistingContractRevert() public {
         cheats.selectFork(mainnetFork);
         DummyContract dummy = new DummyContract();
-        dummy.hello();
+
+        // this will succeed since `dummy` is deployed on the currently active fork
+        string memory msg = dummy.hello();
 
         address dummyAddress = address(dummy);
 
         cheats.selectFork(optimismFork);
         assertEq(dummyAddress, address(dummy));
 
-        // TODO properly provide diagnostics
-//        dummy.hello();
+        // this will revert since `dummy` does not exists on the currently active fork
+        string memory msg2 = dummy.hello();
     }
-
 }
 
 contract DummyContract {
-     uint256 public val;
+    uint256 public val;
 
-    function hello() external {}
+    function hello() external view returns (string memory) {
+        return "hello";
+    }
 
     function set(uint256 _val) public {
         val = _val;
     }
-
 }

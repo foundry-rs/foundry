@@ -121,6 +121,11 @@ pub trait DatabaseExt: Database {
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
 
+    /// Whether the database is currently in forked
+    fn is_forked_mode(&self) -> bool {
+        self.active_fork_id().is_some()
+    }
+
     /// Ensures that an appropriate fork exits
     ///
     /// If `id` contains a requested `Fork` this will ensure it exits.

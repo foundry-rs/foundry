@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
@@ -11,6 +9,7 @@ use ethers::{
     types::{Address, H160, U256},
 };
 use revm::{return_ok, Database, EVMData, Return};
+use std::cmp::Ordering;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -72,37 +71,39 @@ pub fn handle_expect_revert(
         _ => None,
     };
 
-    let (err, actual_revert): (_, Bytes) = match string_data {
-        Some(data) => {
-            // It's a revert string, so we do some conversion to perform the check
-            let decoded_data = ethers::prelude::Bytes::decode(data)
-                .expect("String error code, but data can't be decoded as bytes");
+    let stringify = |data: &[u8]| {
+        String::decode(data)
+            .ok()
+            .or_else(|| String::from_utf8(data.to_vec()).ok())
+            .unwrap_or_else(|| format!("0x{}", hex::encode(data)))
+    };
 
-            (
-                format!(
-                    "Error != expected error: '{}' != '{}'",
-                    String::from_utf8(decoded_data.to_vec())
-                        .ok()
-                        .unwrap_or_else(|| hex::encode(&decoded_data)),
-                    String::from_utf8(expected_revert.to_vec())
-                        .ok()
-                        .unwrap_or_else(|| hex::encode(&expected_revert))
-                )
-                .encode()
-                .into(),
-                decoded_data.0,
-            )
-        }
-        _ => (
+    let (err, actual_revert): (_, Bytes) = if let Some(data) = string_data {
+        // It's a revert string, so we do some conversion to perform the check
+        let decoded_data = ethers::prelude::Bytes::decode(data)
+            .expect("String error code, but data can't be decoded as bytes");
+
+        (
             format!(
-                "Error != expected error: 0x{} != 0x{}",
-                hex::encode(&retdata),
-                hex::encode(&expected_revert)
+                "Error != expected error: '{}' != '{}'",
+                stringify(&decoded_data),
+                stringify(expected_revert),
+            )
+            .encode()
+            .into(),
+            decoded_data.0,
+        )
+    } else {
+        (
+            format!(
+                "Error != expected error: {} != {}",
+                stringify(&retdata),
+                stringify(expected_revert),
             )
             .encode()
             .into(),
             retdata,
-        ),
+        )
     };
 
     if actual_revert == expected_revert {
