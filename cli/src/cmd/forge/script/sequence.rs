@@ -252,16 +252,16 @@ pub struct TransactionWithMetadata {
     pub transaction: TypedTransaction,
 }
 
-fn default_string() -> String {
-    "".to_owned()
+fn default_string() -> Option<String> {
+    Some("".to_owned())
 }
 
-fn default_address() -> Address {
-    Address::from_low_u64_be(0)
+fn default_address() -> Option<Address> {
+    Some(Address::from_low_u64_be(0))
 }
 
-fn default_vec_of_strings() -> Vec<String> {
-    vec![]
+fn default_vec_of_strings() -> Option<Vec<String>> {
+    Some(vec![])
 }
 
 impl TransactionWithMetadata {
