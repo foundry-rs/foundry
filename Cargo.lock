@@ -81,6 +81,7 @@ dependencies = [
  "bytes",
  "chrono 0.4.19",
  "clap",
+ "clap_complete",
  "ctrlc",
  "ethers",
  "ethers-solc",
