@@ -132,19 +132,17 @@ impl InspectArgs {
             ContractArtifactFields::StorageLayout => {
                 if pretty {
                     if let Some(storage_layout) = &artifact.storage_layout {
-                        let provider = get_http_provider(
-                            rpc_url.as_deref().unwrap_or("http://localhost:8545"),
-                            false,
-                        );
                         let mut table = Table::new();
                         let mut header =
                             vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"];
-                        let (use_addr, contract_addr) = if let Some(addr) = address {
-                            header.push("Value");
-                            (true, addr.parse()?)
-                        } else {
-                            (false, Address::default())
-                        };
+                        let (provider, contract_addr) =
+                            if let (Some(rpc_url), Some(addr)) = (rpc_url, address) {
+                                header.push("Value");
+                                (Some(get_http_provider(&rpc_url, false)), addr.parse()?)
+                            } else {
+                                (None, Address::default())
+                            };
+
                         table.set_header(header);
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
@@ -158,7 +156,7 @@ impl InspectArgs {
                                     .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
                                 slot.contract.clone(),
                             ];
-                            if use_addr {
+                            if let Some(ref provider) = provider {
                                 let location = TxHash::from_low_u64_be(slot.slot.parse::<u64>()?);
                                 let value =
                                     provider.get_storage_at(contract_addr, location, None).await?;
