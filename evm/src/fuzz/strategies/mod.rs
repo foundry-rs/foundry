@@ -1,5 +1,7 @@
 mod uint;
+mod int;
 pub use uint::UintStrategy;
+pub use int::IntStrategy;
 
 mod param;
 pub use param::{fuzz_param, fuzz_param_from_state};
