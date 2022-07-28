@@ -5,9 +5,9 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract ParseJson is DSTest {
-
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     string json;
+
     function setUp() public {
         string memory path = "../testdata/fixtures/ParseJson/test.json";
         json = cheats.readFile(path);
@@ -15,7 +15,7 @@ contract ParseJson is DSTest {
 
     function test_uintArray() public {
         bytes memory data = cheats.parseJson(json, ".uintArray");
-        uint[] memory decodedData = abi.decode(data, (uint[]));
+        uint256[] memory decodedData = abi.decode(data, (uint256[]));
         assertEq(42, decodedData[0]);
         assertEq(43, decodedData[1]);
     }
@@ -59,7 +59,7 @@ contract ParseJson is DSTest {
         assertEq(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, decodedData[1]);
     }
 
-    struct Nested{
+    struct Nested {
         uint256 number;
         string str;
     }
@@ -67,11 +67,11 @@ contract ParseJson is DSTest {
     function test_nestedObject() public {
         bytes memory data = cheats.parseJson(json, ".nestedObject");
         Nested memory nested = abi.decode(data, (Nested));
-        assertEq(nested.number,13);
-        assertEq(nested.str,"NEST");
+        assertEq(nested.number, 13);
+        assertEq(nested.str, "NEST");
     }
 
-    struct Whole{
+    struct Whole {
         string str;
         string[] strArray;
         uint256[] uintArray;
@@ -82,11 +82,10 @@ contract ParseJson is DSTest {
         json = cheats.readFile(path);
         bytes memory data = cheats.parseJson(json);
         Whole memory whole = abi.decode(data, (Whole));
-        assertEq(whole.str,"hai");
+        assertEq(whole.str, "hai");
         assertEq(whole.uintArray[0], 42);
         assertEq(whole.uintArray[1], 43);
         assertEq(whole.strArray[0], "hai");
         assertEq(whole.strArray[1], "there");
     }
-
 }
