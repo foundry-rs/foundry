@@ -17,7 +17,7 @@ use hyper::server::conn::AddrIncoming;
 use serde::de::DeserializeOwned;
 use std::{fmt, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{trace, warn};
+use tracing::{error, trace};
 
 mod config;
 /// handlers for axum server
@@ -111,30 +111,28 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// **Note**: override this function if the expected `Request` deviates from `{ "method" :
     /// "<name>", "params": "<params>" }`
     async fn on_call(&self, call: RpcMethodCall) -> RpcResponse {
-        trace!(target: "rpc", "received method call {:?}", call);
+        trace!(target: "rpc",  id = ?call.id , method = ?call.method, "received method call");
         let RpcMethodCall { method, params, id, .. } = call;
 
         let params: serde_json::Value = params.into();
-        let m = method.clone();
         let call = serde_json::json!({
-            "method": method,
+            "method": &method,
             "params": params
         });
 
         match serde_json::from_value::<Self::Request>(call) {
             Ok(req) => {
-                trace!(target: "rpc", "received handler request {:?}", req);
                 let result = self.on_request(req).await;
-                trace!(target: "rpc", "prepared rpc result {:?}", result);
                 RpcResponse::new(id, result)
             }
             Err(err) => {
-                let msg = err.to_string();
-                warn!(target: "rpc", "failed to deserialize method `{}`: {}", m, msg);
-                if msg.contains("unknown variant") {
+                let err = err.to_string();
+                if err.contains("unknown variant") {
+                    error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
                     RpcResponse::new(id, RpcError::method_not_found())
                 } else {
-                    RpcResponse::new(id, RpcError::invalid_params(msg))
+                    error!(target: "rpc", ?method, ?err, "failed to deserialize method");
+                    RpcResponse::new(id, RpcError::invalid_params(err))
                 }
             }
         }

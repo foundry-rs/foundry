@@ -13,7 +13,9 @@ function test() {
     uint256 expr012 = ++expr011 + 1;
     bool expr013 = ++expr012 == expr011 - 1;
     bool expr014 = ++(++expr013)--;
-    if (++batch.movesPerformed == drivers.length) createNewBatch();
+    if (++batch.movesPerformed == drivers.length) {
+        createNewBatch();
+    }
     sum += getPrice(
         ACCELERATE_STARTING_PRICE,
         ACCELERATE_PER_PERIOD_DECREASE,

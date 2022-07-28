@@ -50,6 +50,7 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
+    /// Returns the number of matching tests
     pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
         self.contracts
             .iter()

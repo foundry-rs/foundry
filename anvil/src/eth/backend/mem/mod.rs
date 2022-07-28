@@ -619,8 +619,6 @@ impl Backend {
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
-        trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
-
         let _lock = self.executor_lock.read().await;
 
         let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
@@ -647,13 +645,11 @@ impl Backend {
                 None => TransactTo::Create(CreateScheme::Create),
             },
             value: value.unwrap_or_default(),
-            data: data.unwrap_or_else(|| vec![].into()).to_vec().into(),
+            data: data.unwrap_or_default().to_vec().into(),
             chain_id: None,
             nonce: nonce.map(|n| n.as_u64()),
             access_list: to_access_list(access_list.unwrap_or_default()),
         };
-
-        trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);
 
         let block_number =
             U256::from(self.convert_block_number(block_number)).min(env.block.number);

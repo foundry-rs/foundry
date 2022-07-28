@@ -9,6 +9,7 @@ mod geth;
 mod logs;
 mod pubsub;
 mod revert;
+mod sign;
 mod traces;
 mod transaction;
 mod txpool;

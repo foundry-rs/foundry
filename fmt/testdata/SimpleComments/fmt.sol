@@ -8,4 +8,25 @@ contract SimpleComments {
         // or maybe
         // smth else
     }
+
+    function test() public view {
+        // do smth here
+
+        // then here
+
+        // cleanup
+    }
+
+    function test2() public pure {
+        uint256 a = 1;
+        // comment 1
+        // comment 2
+        uint256 b = 2;
+    }
+
+    function test3() public view {
+        uint256 a = 1; // comment
+
+        // line comment
+    }
 }

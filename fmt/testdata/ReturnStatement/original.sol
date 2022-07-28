@@ -13,8 +13,7 @@ contract ReturnStatement {
     return /* return empty 2 */ ; // return empty 3
         }
 
-        /* return empty 4 */ return 
-            // return empty 5
+        /* return empty 4 */ return // return empty 5
         ;
     }
 
