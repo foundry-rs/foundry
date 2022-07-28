@@ -4,7 +4,7 @@ use proptest::{
     test_runner::TestRunner,
 };
 
-use ethers::types::{U256, I256};
+use ethers::types::{I256, U256};
 
 /// Value tree for signed ints (up to int256).
 /// This is very similar to [proptest::BinarySearch]
@@ -60,7 +60,7 @@ impl ValueTree for IntValueTree {
 
     fn simplify(&mut self) -> bool {
         if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
-            return false;
+            return false
         }
 
         self.hi = self.curr;
@@ -69,7 +69,7 @@ impl ValueTree for IntValueTree {
 
     fn complicate(&mut self) -> bool {
         if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
-            return false;
+            return false
         }
 
         self.lo = self.curr + if self.hi < 0.into() { (-1).into() } else { 1.into() };
