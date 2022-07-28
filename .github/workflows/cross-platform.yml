@@ -6,6 +6,12 @@ name: cross-platform
 
 env:
   CARGO_TERM_COLOR: always
+  CI: true
+  COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+  PULL_NUMBER: ${{ github.event.pull_request.number }}
+  RUN_ID: ${{ github.run_id }}
+  CARGO_UNSTABLE_SPARSE_REGISTRY: true
+  CARGO_INCREMENTAL: 0
 
 jobs:
   build:
@@ -31,18 +37,17 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.job.target }}
-          override: true
-          profile: minimal
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cache-ci-
           cache-on-failure: true
 
       # Required for forge commands that use git
@@ -72,21 +77,21 @@ jobs:
         shell: pwsh
 
       - name: Build
-        uses: actions-rs/cargo@v1
+        uses: ClementTsang/cargo-action@v0.0.2
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
           args: --verbose --locked --bins --tests
 
       - name: Run forge
-        uses: actions-rs/cargo@v1
+        uses: ClementTsang/cargo-action@v0.0.2
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
           args: --locked --bin forge -- --help
 
       - name: Run tests
-        uses: actions-rs/cargo@v1
+        uses: ClementTsang/cargo-action@v0.0.2
         if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
         with:
           use-cross: ${{ matrix.job.use-cross }}

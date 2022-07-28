@@ -3,14 +3,16 @@ name: Release version
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 env:
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   CARGO_TERM_COLOR: always
+  CARGO_UNSTABLE_SPARSE_REGISTRY: true
+  CARGO_INCREMENTAL: 0
 
 jobs:
   prepare:
@@ -24,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -107,17 +109,15 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
-          profile: minimal
           toolchain: stable
           target: ${{ matrix.job.target }}
-          override: true
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
@@ -135,7 +135,7 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
-        uses: actions-rs/cargo@v1
+        uses: ClementTsang/cargo-action@v0.0.2
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
         with:
@@ -203,8 +203,8 @@ jobs:
         if: ${{ env.IS_NIGHTLY }}
         uses: softprops/action-gh-release@v1
         with:
-          name: 'Nightly'
-          tag_name: 'nightly'
+          name: "Nightly"
+          tag_name: "nightly"
           prerelease: true
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
@@ -218,7 +218,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag

@@ -1,7 +1,6 @@
 on:
   push:
-    branches:
-      - master
+    branches: [$default-branch]
   pull_request:
 
 name: test
@@ -9,6 +8,8 @@ name: test
 env:
   NEXTEST_EXPERIMENTAL_FILTER_EXPR: 1
   CARGO_TERM_COLOR: always
+  CARGO_UNSTABLE_SPARSE_REGISTRY: true
+  CARGO_INCREMENTAL: 0
 
 jobs:
   build-tests:
@@ -28,16 +29,17 @@ jobs:
             flags: -p foundry-cli --features external-integration-tests
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
+
+      - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cache-ci-
           cache-on-failure: true
+
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
@@ -58,14 +60,14 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork)'
+            filter: "!test(~fork)"
           - name: forking
-            filter: 'test(~fork)'
+            filter: "test(~fork)"
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - run: mkdir -p ~/.cargo/bin
@@ -85,15 +87,15 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork)'
+            filter: "!test(~fork)"
           - name: forking
-            filter: 'test(~fork)'
+            filter: "test(~fork)"
         partition: [1, 2]
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - run: mkdir -p ~/.cargo/bin
@@ -110,8 +112,8 @@ jobs:
           key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
       - name: Setup git config
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "<>"
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
 
       - name: cargo nextest
         run: ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file nextest-integration.tar.zst -E '${{ matrix.job.filter }}'
@@ -124,9 +126,9 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork_integration)'
+            filter: "!test(~fork_integration)"
           - name: forking
-            filter: 'test(~fork_integration)'
+            filter: "test(~fork_integration)"
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -157,15 +159,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
+
+      - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cache-ci-
           cache-on-failure: true
 
       - name: cargo test
@@ -175,22 +177,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
-          profile: minimal
           components: rustfmt, clippy
-          override: true
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: cache-ci-
           cache-on-failure: true
 
       - name: cargo fmt
-        uses: actions-rs/cargo@v1
+        uses: ClementTsang/cargo-action@v0.0.2
         with:
           command: fmt
           args: --all --check
@@ -204,5 +205,5 @@ jobs:
   cross-platform:
     name: Cross-platform tests
     if: github.event_name != 'pull_request'
-    needs: [ integration, lint, doc, unit ]
+    needs: [integration, lint, doc, unit]
     uses: ./.github/workflows/cross-platform.yml

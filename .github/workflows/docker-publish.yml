@@ -1,7 +1,7 @@
 name: Build and Publish Docker
 
-on: 
-  # Trigger without any parameters a proactive rebuild 
+on:
+  # Trigger without any parameters a proactive rebuild
   workflow_dispatch: {}
   workflow_call:
 
@@ -9,10 +9,11 @@ env:
   REGISTRY: ghcr.io
   # Will resolve to foundry-rs/foundry
   IMAGE_NAME: ${{ github.repository }}
+  CARGO_UNSTABLE_SPARSE_REGISTRY: true
+  CARGO_INCREMENTAL: 0
 
 jobs:
   container:
-
     runs-on: ubuntu-latest
     # https://docs.github.com/en/actions/reference/authentication-in-a-workflow
     permissions:
@@ -35,7 +36,7 @@ jobs:
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
-      # Ensure this doesn't trigger on PR's
+        # Ensure this doesn't trigger on PR's
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:

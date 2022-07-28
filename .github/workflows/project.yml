@@ -13,4 +13,3 @@ jobs:
         with:
           project-url: https://github.com/orgs/foundry-rs/projects/2
           github-token: ${{ secrets.GH_PROJECTS_TOKEN }}
-
