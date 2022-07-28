@@ -797,12 +797,12 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     Create2 {
         #[clap(
             long,
-            help = "Prefix for the vanity address.",
+            help = "Prefix for the contract address.",
             required_unless_present = "ends-with",
             value_name = "HEX"
         )]
         starts_with: Option<String>,
-        #[clap(long, help = "Suffix for the vanity address.", value_name = "HEX")]
+        #[clap(long, help = "Suffix for the contract address.", value_name = "HEX")]
         ends_with: Option<String>,
         #[clap(short, long, help = "Address of the contract deployer.")]
         deployer: Address,
