@@ -123,6 +123,7 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString5(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
+        HEVMCalls::MineSalt(inner) => Ok(Bytes::new()),
         _ => return None,
     })
 }

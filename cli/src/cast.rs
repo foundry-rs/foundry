@@ -16,12 +16,14 @@ use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
     abi::HumanReadableParser,
-    core::{types::{BlockId, BlockNumber::Latest, H256}, rand::thread_rng},
+    core::{
+        rand::thread_rng,
+        types::{BlockId, BlockNumber::Latest, H256},
+    },
     providers::{Middleware, Provider},
-    types::{Address, NameOrAddress, U256, Bytes},
-    utils::get_create2_address_from_hash
+    types::{Address, Bytes, NameOrAddress, U256},
+    utils::get_create2_address_from_hash,
 };
-use proptest::prelude::Rng;
 use eyre::WrapErr;
 use foundry_common::fs;
 use foundry_config::Chain;
@@ -36,16 +38,16 @@ use opts::{
     cast::{Opts, Subcommands},
     WalletType,
 };
+use rayon::prelude::*;
+use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Read, Write},
     path::Path,
     str::FromStr,
-    time::Instant
-};
-use rayon::prelude::*;
-use regex::RegexSet; // TODO: use builder for exact match
+    time::Instant,
+}; // TODO: use builder for exact match
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -689,7 +691,7 @@ async fn main() -> eyre::Result<()> {
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::Create2 { starts_with, ends_with, deployer, init_code } => {
-            let mut regexs = vec![];
+            let mut regexs = vec![]; // TODO: add --matching param
             if let Some(prefix) = starts_with {
                 let pad_width = prefix.len() + prefix.len() % 2;
                 hex::decode(format!("{:0>width$}", prefix, width = pad_width))
@@ -714,10 +716,10 @@ async fn main() -> eyre::Result<()> {
 
             println!("Starting to generate deterministic contract address...");
             let timer = Instant::now();
-            let salt = std::iter::repeat_with(move || thread_rng().gen::<u64>())
+            let salt = std::iter::repeat_with(move || H256::random_using(&mut thread_rng()))
                 .par_bridge()
                 .find_any(|salt| {
-                    let salt = Bytes::from(salt.to_ne_bytes());
+                    let salt = Bytes::from(salt.to_fixed_bytes());
                     let init_code = init_code.clone();
 
                     let addr = get_create2_address_from_hash(deployer, salt, init_code);
@@ -730,8 +732,12 @@ async fn main() -> eyre::Result<()> {
             println!(
                 "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
                 timer.elapsed().as_secs(),
-                SimpleCast::checksum_address(&get_create2_address_from_hash(deployer, Bytes::from(salt.to_ne_bytes()), init_code))?,
-                salt
+                SimpleCast::checksum_address(&get_create2_address_from_hash(
+                    deployer,
+                    Bytes::from(salt.to_fixed_bytes()),
+                    init_code
+                ))?,
+                U256::from(salt.to_fixed_bytes())
             );
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
