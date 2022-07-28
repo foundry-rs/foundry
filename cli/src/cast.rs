@@ -145,7 +145,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 format_uint(
                     SimpleCast::left_shift(&value, &bits, det_base_in(&value, base_in)?)?,
-                    det_base_out(&base_out)
+                    det_base_out(&base_out)?
                 )?
             );
         }
@@ -154,7 +154,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 format_uint(
                     SimpleCast::right_shift(&value, &bits, det_base_in(&value, base_in)?)?,
-                    det_base_out(&base_out)
+                    det_base_out(&base_out)?
                 )?
             );
         }
@@ -748,10 +748,11 @@ fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
     }
 }
 
-fn det_base_out(base_out: &str) -> u32 {
+fn det_base_out(base_out: &str) -> eyre::Result<u32> {
     match base_out {
-        "10" | "dec" => 10,
-        "16" | "hex" | _ => 16,
+        "10" | "dec" => Ok(10),
+        "16" | "hex" => Ok(16),
+        _ => eyre::bail!("Provided base is not a valid."),
     }
 }
 

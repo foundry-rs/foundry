@@ -876,6 +876,7 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
 fn parse_base(s: &str) -> eyre::Result<String> {
     Ok(match s {
         "10" | "dec" => "10".to_string(),
-        "16" | "hex" | _ => "16".to_string(),
+        "16" | "hex" => "16".to_string(),
+        _ => eyre::bail!("Provided base is not a valid."),
     })
 }
