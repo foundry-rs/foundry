@@ -16,8 +16,8 @@ use ethers::{
 use eyre::Context;
 use forge::{
     coverage::{
-        find_anchors, ContractId, CoverageReport, CoverageReporter, DebugReporter, ItemAnchor,
-        LcovReporter, SourceAnalyzer, SummaryReporter,
+        analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
+        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
