@@ -96,9 +96,7 @@ contract Yul {
             mstore(0xe0, 0x80)
 
             let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
-            if iszero(s2) {
-                revert(3, 3)
-            }
+            if iszero(s2) { revert(3, 3) }
         }
 
         // https://github.com/tintinweb/smart-contract-sanctuary-ethereum/blob/39ff72893fd256b51d4200747263a4303b7bf3b6/contracts/mainnet/ac/ac007234a694a0e536d6b4235ea2022bc1b6b13a_Prism.sol#L147

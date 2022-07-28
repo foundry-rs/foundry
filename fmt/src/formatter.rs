@@ -2911,14 +2911,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         if attempt_single_line && statements.len() == 1 {
-            let chunk = self.chunked(loc.start(), Some(loc.end()), |fmt| {
+            let fits_on_single = self.try_on_single_line(|fmt| {
                 write!(fmt.buf(), "{{ ")?;
                 statements.first_mut().unwrap().visit(fmt)?;
                 write!(fmt.buf(), " }}")?;
                 Ok(())
             })?;
-            if self.will_chunk_fit("{}", &chunk)? {
-                return self.write_chunk(&chunk)
+
+            if fits_on_single {
+                return Ok(())
             }
         }
 
@@ -3048,7 +3049,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         write_chunk!(self, loc.start(), "if")?;
         expr.visit(self)?;
-        block.visit(self)
+        self.visit_yul_block(block.loc, &mut block.statements, true)
     }
 
     fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
