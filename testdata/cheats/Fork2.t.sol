@@ -112,8 +112,6 @@ contract ForkTest is DSTest {
         dummy.set(expectedValue);
 
         cheats.selectFork(optimismFork);
-        // this doesn't work yet because `dummy` is only available on `mainnetFork`
-        // dummy.hello();
 
         cheats.selectFork(mainnetFork);
         assertEq(dummy.val(), expectedValue);
