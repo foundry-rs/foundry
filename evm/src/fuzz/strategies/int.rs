@@ -41,13 +41,10 @@ impl IntValueTree {
     }
 
     fn magnitude_greater(lhs: I256, rhs: I256) -> bool {
-        if lhs == 0.into() {
-            false
-        } else if lhs < 0.into() {
-            lhs < rhs
-        } else {
-            lhs > rhs
+        if lhs.is_zero() {
+            return false
         }
+        (lhs > rhs) ^ (lhs.is_negative())
     }
 }
 
