@@ -99,7 +99,6 @@ ethers::contract::abigen!(
             rollFork(uint256,uint256)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
-            mineSalt(bytes32,address)(bytes32,address)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
