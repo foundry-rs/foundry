@@ -26,28 +26,28 @@ pub struct CoverageReport {
 }
 
 impl CoverageReport {
-    // TODO: Doc
+    /// Add a source file path.
     pub fn add_source(&mut self, version: Version, source_id: usize, path: String) {
         self.source_paths.insert((version.clone(), source_id), path.clone());
         self.source_paths_to_ids.insert((version, path), source_id);
     }
 
-    // TODO: Doc
+    /// Get the source ID for a specific source file path.
     pub fn get_source_id(&self, version: Version, path: String) -> Option<&usize> {
         self.source_paths_to_ids.get(&(version, path))
     }
 
-    // TODO: Doc
+    /// Add coverage items to this report
     pub fn add_items(&mut self, version: Version, items: Vec<CoverageItem>) {
         self.items.entry(version).or_default().extend(items);
     }
 
-    // TODO: Doc
+    /// Add anchors to this report
     pub fn add_anchors(&mut self, anchors: HashMap<ContractId, Vec<ItemAnchor>>) {
         self.anchors.extend(anchors);
     }
 
-    // TODO: Doc
+    /// Get coverage summaries by source file path
     pub fn summary_by_file(&self) -> impl Iterator<Item = (String, CoverageSummary)> {
         let mut summaries: BTreeMap<String, CoverageSummary> = BTreeMap::new();
 
@@ -70,7 +70,7 @@ impl CoverageReport {
         summaries.into_iter()
     }
 
-    // TODO: Doc
+    /// Get coverage items by source file path
     pub fn items_by_source(&self) -> impl Iterator<Item = (String, Vec<CoverageItem>)> {
         let mut items_by_source: BTreeMap<String, Vec<CoverageItem>> = BTreeMap::new();
 
@@ -130,7 +130,7 @@ impl HitMap {
     }
 }
 
-// TODO: Docs
+/// A unique identifier for a contract
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ContractId {
     pub version: Version,
