@@ -60,6 +60,11 @@ pub enum WalletSubcommands {
     },
     #[clap(name = "address", visible_aliases = &["a", "addr"], about = "Convert a private key to an address.")]
     Address {
+        #[clap(
+            help = "If provided, the address will be derived from the specified private key.",
+            value_name = "PRIVATE_KEY"
+        )]
+        private_key_override: Option<String>,
         #[clap(flatten)]
         wallet: Wallet,
     },
@@ -171,10 +176,12 @@ impl WalletSubcommands {
                     hex::encode(wallet.signer().to_bytes()),
                 );
             }
-            WalletSubcommands::Address { wallet } => {
+            WalletSubcommands::Address { wallet, private_key_override } => {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
-                    wallet,
+                    wallet: private_key_override
+                        .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
+                        .unwrap_or(wallet),
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Some(Chain::Mainnet),
