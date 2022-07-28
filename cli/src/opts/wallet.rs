@@ -49,7 +49,7 @@ impl WalletType {
     }
 }
 
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Parser, Debug, Default, Clone, Serialize)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
     doc,

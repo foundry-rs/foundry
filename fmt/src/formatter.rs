@@ -539,7 +539,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 '/' => true,
                 _ => self.config.bracket_spacing,
             },
-            '(' | '.' => false,
+            '(' | '.' => matches!(next_char, '/'),
             '/' => true,
             _ => match next_char {
                 '}' | ']' => self.config.bracket_spacing,
@@ -692,22 +692,27 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write a comment to the buffer formatted.
     /// WARNING: This may introduce a newline if the comment is a Line comment
-    fn write_comment(&mut self, comment: &CommentWithMetadata) -> Result<()> {
+    fn write_comment(&mut self, comment: &CommentWithMetadata, is_first: bool) -> Result<()> {
         if comment.is_prefix() {
             let last_indent_group_skipped = self.last_indent_group_skipped();
+            let write_preserved_ln = |fmt: &mut Self| -> Result<()> {
+                writeln!(fmt.buf())?;
+                fmt.set_last_indent_group_skipped(last_indent_group_skipped);
+                Ok(())
+            };
             if !self.is_beginning_of_line() {
-                writeln!(self.buf())?;
-                self.set_last_indent_group_skipped(last_indent_group_skipped);
+                write_preserved_ln(self)?;
+            }
+            if !is_first && comment.has_newline_before {
+                write_preserved_ln(self)?;
             }
             let mut lines = comment.comment.splitn(2, '\n');
             write!(self.buf(), "{}", lines.next().unwrap())?;
             if let Some(line) = lines.next() {
-                writeln!(self.buf())?;
-                self.set_last_indent_group_skipped(last_indent_group_skipped);
+                write_preserved_ln(self)?;
                 self.write_raw(line)?;
             }
-            writeln!(self.buf())?;
-            self.set_last_indent_group_skipped(last_indent_group_skipped);
+            write_preserved_ln(self)?;
         } else {
             let indented = self.is_beginning_of_line();
             self.indented_if(indented, 1, |fmt| {
@@ -729,20 +734,29 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    /// Write a postfix comments before a given location
-    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for postfix in self.comments.remove_postfixes_before(byte_end) {
-            self.write_comment(&postfix)?;
+    /// Write multiple comments
+    fn write_comments<'b>(
+        &mut self,
+        comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
+    ) -> Result<()> {
+        let mut is_first = true;
+        for comment in comments {
+            self.write_comment(comment, is_first)?;
+            is_first = false;
         }
         Ok(())
     }
 
+    /// Write a postfix comments before a given location
+    fn write_postfix_comments_before(&mut self, byte_end: usize) -> Result<()> {
+        let comments = self.comments.remove_postfixes_before(byte_end);
+        self.write_comments(&comments)
+    }
+
     /// Write all prefix comments before a given location
     fn write_prefix_comments_before(&mut self, byte_end: usize) -> Result<()> {
-        for prefix in self.comments.remove_prefixes_before(byte_end) {
-            self.write_comment(&prefix)?;
-        }
-        Ok(())
+        let comments = self.comments.remove_prefixes_before(byte_end);
+        self.write_comments(&comments)
     }
 
     /// Check if a chunk will fit on the current line
@@ -777,12 +791,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// to the next line
     fn write_chunk(&mut self, chunk: &Chunk) -> Result<()> {
         // handle comments before chunk
-        for comment in &chunk.postfixes_before {
-            self.write_comment(comment)?;
-        }
-        for comment in &chunk.prefixes {
-            self.write_comment(comment)?;
-        }
+        self.write_comments(&chunk.postfixes_before)?;
+        self.write_comments(&chunk.prefixes)?;
 
         // trim chunk start
         let content = if chunk.content.starts_with('\n') {
@@ -815,9 +825,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
 
         // write any postfix comments
-        for comment in &chunk.postfixes {
-            self.write_comment(comment)?;
-        }
+        self.write_comments(&chunk.postfixes)?;
 
         Ok(())
     }
@@ -835,10 +843,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let mut chunk = chunk.clone();
 
             // handle postfixes before and add newline if necessary
-            let postfixes_before = std::mem::take(&mut chunk.postfixes_before);
-            for comment in postfixes_before {
-                self.write_comment(&comment)?;
-            }
+            self.write_comments(&std::mem::take(&mut chunk.postfixes_before))?;
             if multiline && !self.is_beginning_of_line() {
                 writeln!(self.buf())?;
             }
@@ -851,16 +856,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             // add separator
             if chunks.peek().is_some() {
                 write!(self.buf(), "{}", separator)?;
-                for comment in postfixes {
-                    self.write_comment(&comment)?;
-                }
+                self.write_comments(&postfixes)?;
                 if multiline && !self.is_beginning_of_line() {
                     writeln!(self.buf())?;
                 }
             } else {
-                for comment in postfixes {
-                    self.write_comment(&comment)?;
-                }
+                self.write_comments(&postfixes)?;
             }
         }
         Ok(())
@@ -1031,13 +1032,19 @@ impl<'a, W: Write> Formatter<'a, W> {
 
             // write prefix comments
             let comments = self.comments.remove_prefixes_before(item.loc().start());
-            for comment in &comments {
-                if !is_first_line && (needs_space || comment.has_newline_before) {
-                    writeln!(self.buf())?;
-                    needs_space = false;
+            let mut is_first_comment = true;
+            for mut comment in comments {
+                if is_first_line {
+                    comment.has_newline_before = false;
+                } else if needs_space || comment.has_newline_before {
+                    if is_first_comment {
+                        writeln!(self.buf())?;
+                    }
+                    needs_space = false
                 }
-                self.write_comment(comment)?;
+                self.write_comment(&comment, is_first_comment)?;
                 is_first_line = false;
+                is_first_comment = false;
                 last_byte_written = comment.loc.end();
             }
 
@@ -1057,9 +1064,9 @@ impl<'a, W: Write> Formatter<'a, W> {
             // write postfix comments
             if let Some(next_item) = items_iter.peek() {
                 let comments = self.comments.remove_postfixes_before(next_item.loc().start());
-                for comment in comments {
-                    self.write_comment(&comment)?;
-                    last_byte_written = comment.loc.end();
+                self.write_comments(&comments)?;
+                if let Some(last_comment) = comments.last() {
+                    last_byte_written = last_comment.loc.end();
                 }
                 self.write_whitespace_separator(true)?;
             }
@@ -1122,21 +1129,36 @@ impl<'a, W: Write> Formatter<'a, W> {
         let whitespace = if !prefix.is_empty() { " " } else { "" };
         if items.is_empty() {
             if paren_required {
-                write!(self.buf(), "{whitespace}()")?;
+                write!(self.buf(), "{whitespace}(")?;
+                if let Some(end_offset) = end_offset {
+                    self.indented(1, |fmt| {
+                        fmt.write_postfix_comments_before(end_offset)?;
+                        fmt.write_prefix_comments_before(end_offset)?;
+                        Ok(())
+                    })?;
+                }
+                write_chunk!(self, end_offset.unwrap_or_default(), ")")?;
             }
         } else {
             write!(self.buf(), "{whitespace}(")?;
-            let byte_offset =
-                start_offset.unwrap_or_else(|| items.first().as_ref().unwrap().loc().start());
-            self.surrounded(byte_offset, "", ")", end_offset, |fmt, _multiline| {
-                let args = fmt.items_to_chunks(
-                    end_offset,
-                    items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
-                )?;
-                let multiline = fmt.are_chunks_separated_multiline("{})", &args, ", ")?;
-                fmt.write_chunks_separated(&args, ",", multiline)?;
-                Ok(())
-            })?;
+            self.surrounded(
+                start_offset.unwrap_or_default(),
+                "",
+                ")",
+                end_offset,
+                |fmt, multiline| {
+                    fmt.write_postfix_comments_before(items.first().unwrap().loc().start())?;
+                    fmt.write_whitespace_separator(multiline)?;
+                    let args = fmt.items_to_chunks(
+                        end_offset,
+                        items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
+                    )?;
+                    let multiline =
+                        multiline && fmt.are_chunks_separated_multiline("{});", &args, ",")?;
+                    fmt.write_chunks_separated(&args, ",", multiline)?;
+                    Ok(())
+                },
+            )?;
         }
         Ok(())
     }
@@ -1156,20 +1178,20 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         self.indented(1, |fmt| {
             fmt.write_lined_visitable(statements.iter_mut(), |_, _| false)?;
+            fmt.write_postfix_comments_before(loc.end())?;
 
-            let prefix_comments = fmt.comments.remove_prefixes_before(loc.end());
-            if prefix_comments.is_empty() {
-                fmt.write_postfix_comments_before(loc.end())?;
-            } else {
-                let first_prefix = prefix_comments.first().unwrap();
-                fmt.write_postfix_comments_before(first_prefix.loc.start())?;
-                if first_prefix.has_newline_before && !fmt.is_beginning_of_line() {
-                    write!(fmt.buf(), "\n\n")?;
-                }
-                for prefix in prefix_comments {
-                    fmt.write_comment(&prefix)?;
+            let comments = fmt.comments.remove_prefixes_before(loc.end());
+            if let (Some(statements_end), Some(prefixes_start)) = (
+                statements.last().map(|last| last.loc().end()),
+                comments.first().map(|first| first.loc.start()),
+            ) {
+                if fmt.blank_lines(statements_end, prefixes_start) > 1 {
+                    fmt.write_whitespace_separator(true)?;
+                    writeln!(fmt.buf())?;
                 }
             }
+            fmt.write_comments(&comments)?;
+
             Ok(())
         })?;
 
@@ -1705,15 +1727,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     fmt.grouped(|fmt| {
                         start.as_mut().map(|start| start.visit(fmt)).transpose()?;
                         write!(fmt.buf(), ":")?;
-                        if start.is_some() && multiline {
-                            fmt.write_whitespace_separator(true)?;
-                        }
                         if let Some(end) = end {
                             let mut chunk =
                                 fmt.chunked(end.loc().start(), Some(loc.end()), |fmt| {
                                     end.visit(fmt)
                                 })?;
-                            if chunk.prefixes.is_empty() && chunk.postfixes_before.is_empty() {
+                            if chunk.prefixes.is_empty() &&
+                                chunk.postfixes_before.is_empty() &&
+                                (start.is_none() || fmt.will_it_fit(&chunk.content))
+                            {
                                 chunk.needs_space = Some(false);
                             }
                             fmt.write_chunk(&chunk)?;

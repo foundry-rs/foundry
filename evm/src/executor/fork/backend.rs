@@ -22,7 +22,7 @@ use std::{
         Arc,
     },
 };
-use tracing::trace;
+use tracing::{error, trace, warn};
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
@@ -208,13 +208,22 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let res = provider.get_block(number).await;
-                    let block = res.ok().flatten();
+                    let block = provider.get_block(number).await;
+
                     let block_hash = match block {
-                        Some(block) => Ok(block
+                        Ok(Some(block)) => Ok(block
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
-                        None => Err(eyre::eyre!("block {number} not found")),
+                        Ok(None) => {
+                            warn!(target: "backendhandler", ?number, "block not found");
+                            // if no block was returned then the block does not exist, in which case
+                            // we return empty hash
+                            Ok(KECCAK_EMPTY)
+                        }
+                        Err(_) => {
+                            error!(target: "backendhandler", ?number, "failed to get block");
+                            Err(eyre::eyre!("block {number} not found"))
+                        }
                     };
                     (block_hash, number)
                 });

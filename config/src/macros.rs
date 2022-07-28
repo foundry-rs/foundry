@@ -41,7 +41,7 @@
 /// let figment: Figment = From::from(&MyArgs::default());
 /// let config: Config = From::from(&MyArgs::default());
 ///
-///  // Use `impl_figment` on a type that has several nested `Provider` as fields.
+///  // Use `impl_figment` on a type that has several nested `Provider` as fields but is _not_ a `Provider` itself
 ///
 /// #[derive(Default)]
 /// struct Outer {
@@ -93,7 +93,97 @@ macro_rules! impl_figment_convert {
             }
         }
     };
+    ($name:ty, self, $start:ident $(, $more:ident)*) => {
+        impl<'a> From<&'a $name> for $crate::figment::Figment {
+            fn from(args: &'a $name) -> Self {
+                let mut figment: $crate::figment::Figment = From::from(&args.$start);
+                $ (
+                  figment =  figment.merge(&args.$more);
+                )*
+                figment = figment.merge(args);
+                figment
+            }
+        }
+
+        impl<'a> From<&'a $name> for $crate::Config {
+            fn from(args: &'a $name) -> Self {
+                let figment: $crate::figment::Figment = args.into();
+                $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
 }
+
+/// Same as `impl_figment_convert` but also merges the type itself into the figment
+///
+/// # Example
+///
+/// Merge several nested `Provider` together with the type itself
+///
+/// ```rust
+/// use std::path::PathBuf;
+/// use foundry_config::{Config, merge_impl_figment_convert, impl_figment_convert};
+/// use foundry_config::figment::*;
+/// use foundry_config::figment::value::*;
+///
+/// #[derive(Default)]
+/// struct MyArgs {
+///     root: Option<PathBuf>,
+/// }
+///
+/// impl Provider for MyArgs {
+///     fn metadata(&self) -> Metadata {
+///         Metadata::default()
+///     }
+///
+///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+///        todo!()
+///     }
+/// }
+///
+/// impl_figment_convert!(MyArgs);
+///
+/// #[derive(Default)]
+/// struct OuterArgs {
+///     value: u64,
+///     inner: MyArgs
+/// }
+///
+/// impl Provider for OuterArgs {
+///     fn metadata(&self) -> Metadata {
+///         Metadata::default()
+///     }
+///
+///     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+///             todo!()
+///     }
+/// }
+///
+/// merge_impl_figment_convert!(OuterArgs, inner);
+/// ```
+#[macro_export]
+macro_rules! merge_impl_figment_convert {
+    ($name:ty, $start:ident $(, $more:ident)*) => {
+        impl<'a> From<&'a $name> for $crate::figment::Figment {
+            fn from(args: &'a $name) -> Self {
+                let mut figment: $crate::figment::Figment = From::from(&args.$start);
+                $ (
+                  figment =  figment.merge(&args.$more);
+                )*
+                figment = figment.merge(args);
+                figment
+            }
+        }
+
+        impl<'a> From<&'a $name> for $crate::Config {
+            fn from(args: &'a $name) -> Self {
+                let figment: $crate::figment::Figment = args.into();
+                $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
+}
+
 /// A macro to implement converters from a type to [`Config`] and [`figment::Figment`]
 #[macro_export]
 macro_rules! impl_figment_convert_cast {
