@@ -381,8 +381,20 @@ impl Config {
             Ok(config) => config,
             Err(errors) => {
                 // providers can be nested and can return duplicate errors
-                let errors: BTreeSet<_> =
-                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
+                let errors: BTreeSet<_> = errors
+                    .into_iter()
+                    .map(|err| {
+                        if err
+                            .metadata
+                            .as_ref()
+                            .map(|meta| meta.name.contains(Toml::NAME))
+                            .unwrap_or_default()
+                        {
+                            return format!("foundry.toml error: {}", err)
+                        }
+                        format!("foundry config error: {}", err)
+                    })
+                    .collect();
                 for error in errors {
                     eprintln!("{}", error);
                 }
