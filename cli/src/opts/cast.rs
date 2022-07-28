@@ -1,10 +1,10 @@
 use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
     cmd::cast::{
-        estimate::EstimateSubcommands, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
+        estimate::EstimateArgs, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
         wallet::WalletSubcommands,
     },
-    utils::{parse_ether_value, parse_u256},
+    utils::parse_u256,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
@@ -455,29 +455,7 @@ Examples:
     #[clap(name = "estimate")]
     #[clap(visible_alias = "e")]
     #[clap(about = "Estimate the gas cost of a transaction.")]
-    Estimate {
-        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
-        to: Option<NameOrAddress>,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: Option<String>,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
-            value_name = "VALUE"
-        )]
-        value: Option<U256>,
-        #[clap(flatten)]
-        // TODO: We only need RPC URL and Etherscan API key here.
-        eth: EthereumOpts,
-        #[clap(subcommand)]
-        command: Option<EstimateSubcommands>,
-    },
+    Estimate(EstimateArgs),
     #[clap(name = "--calldata-decode")]
     #[clap(visible_alias = "cdd")]
     #[clap(about = "Decode ABI-encoded input data.")]

@@ -10,7 +10,7 @@ use cast::{Cast, SimpleCast, TxBuilder};
 use foundry_config::Config;
 use utils::get_http_provider;
 mod opts;
-use crate::{cmd::Cmd, utils::consume_config_rpc_url, cmd::cast::estimate};
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
@@ -676,14 +676,7 @@ async fn main() -> eyre::Result<()> {
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
-        Subcommands::Estimate { to, 
-                                sig,
-                                args,
-                                value,
-                                eth,
-                                command } => {
-            estimate::run(to, sig, args, value, eth, command).await?
-        },
+        Subcommands::Estimate(cmd) => cmd.run().await?,
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
