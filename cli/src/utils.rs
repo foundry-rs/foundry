@@ -1,14 +1,20 @@
+use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
+    prelude::{Http, Provider, RetryClient, TransactionReceipt},
     solc::EvmVersion,
     types::U256,
+    utils::format_units,
 };
-use forge::executor::{opts::EvmOpts, Fork, SpecId};
-use foundry_config::{cache::StorageCachingConfig, Config};
+use forge::executor::SpecId;
+use foundry_config::Config;
 use std::{
     future::Future,
-    path::{Path, PathBuf},
+    ops::Mul,
+    path::Path,
+    process::{Command, Output},
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -77,19 +83,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
         EvmVersion::London => SpecId::LONDON,
         _ => panic!("Unsupported EVM version"),
     }
-}
-
-/// Securely reads a secret from stdin, or proceeds to return a fallback value
-/// which was provided in cleartext via CLI or env var
-#[allow(dead_code)]
-pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
-    Ok(if secret {
-        println!("Insert secret:");
-        rpassword::read_password()?
-    } else {
-        // guaranteed to be Some(..)
-        unsafe_secret.unwrap()
-    })
 }
 
 /// Artifact/Contract identifier can take the following form:
@@ -178,60 +171,6 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     rt.block_on(future)
 }
 
-/// Helper function that returns the [Fork] to use, if any.
-///
-/// storage caching for the [Fork] will be enabled if
-///   - `fork_url` is present
-///   - `fork_block_number` is present
-///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
-///   - storage is allowed (`no_storage_caching = false`)
-///
-/// If all these criteria are met, then storage caching is enabled and storage info will be written
-/// to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
-///
-/// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will be
-/// at `~/.foundry/cache/mainnet/14435000/storage.json`
-pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
-    /// Returns the path where the cache file should be stored
-    ///
-    /// or `None` if caching should not be enabled
-    ///
-    /// See also [ Config::foundry_block_cache_file()]
-    fn get_block_storage_path(
-        evm_opts: &EvmOpts,
-        config: &StorageCachingConfig,
-        chain_id: u64,
-    ) -> Option<PathBuf> {
-        if evm_opts.no_storage_caching {
-            // storage caching explicitly opted out of
-            return None
-        }
-        let url = evm_opts.fork_url.as_ref()?;
-        // cache only if block explicitly pinned
-        let block = evm_opts.fork_block_number?;
-
-        if config.enable_for_endpoint(url) && config.enable_for_chain_id(chain_id) {
-            return Config::foundry_block_cache_file(chain_id, block)
-        }
-
-        None
-    }
-
-    if let Some(ref url) = evm_opts.fork_url {
-        let chain_id = evm_opts.get_chain_id();
-        let cache_storage = get_block_storage_path(evm_opts, config, chain_id);
-        let fork = Fork {
-            url: url.clone(),
-            pin_block: evm_opts.fork_block_number,
-            cache_path: cache_storage,
-            chain_id,
-        };
-        return Some(fork)
-    }
-
-    None
-}
-
 /// Conditionally print a message
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
@@ -252,11 +191,93 @@ pub(crate) use p_println;
 /// Disables terminal colours if either:
 /// - Running windows and the terminal does not support colour codes.
 /// - Colour has been disabled by some environment variable.
+/// - We are running inside a test
 pub fn enable_paint() {
     let is_windows = cfg!(windows) && !Paint::enable_windows_ascii();
     let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
     if is_windows || env_colour_disabled {
         Paint::disable();
+    }
+}
+
+/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
+/// node) and with the default, `7s` if otherwise.
+pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClient<Http>>> {
+    let (max_retry, initial_backoff) = if aggressive { (1000, 1) } else { (10, 1000) };
+
+    let provider = Provider::<RetryClient<Http>>::new_client(url, max_retry, initial_backoff)
+        .expect("Bad fork provider.");
+
+    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
+        provider.interval(Duration::from_millis(100))
+    } else {
+        provider
+    })
+}
+
+/// Prints parts of the receipt to stdout
+pub fn print_receipt(receipt: &TransactionReceipt) {
+    let contract_address = receipt
+        .contract_address
+        .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
+        .unwrap_or_default();
+
+    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_price = receipt.effective_gas_price.unwrap_or_default();
+
+    let gas_details = if gas_price.is_zero() {
+        format!("Gas Used: {gas_used}")
+    } else {
+        let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
+        let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+        format!(
+            "Paid: {} ETH ({gas_used} gas * {} gwei)",
+            paid.trim_end_matches('0'),
+            gas_price.trim_end_matches('0').trim_end_matches('.')
+        )
+    };
+
+    let check = if receipt.status.unwrap_or_default().is_zero() {
+        Emoji("❌ ", " [Failed] ")
+    } else {
+        Emoji("✅ ", " [Success] ")
+    };
+
+    println!(
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        check,
+        hex::encode(receipt.transaction_hash.as_bytes()),
+        contract_address,
+        receipt.block_number.unwrap_or_default(),
+        gas_details
+    );
+}
+
+/// Useful extensions to [`std::process::Command`].
+pub trait CommandUtils {
+    /// Returns the command's output if execution is successful, otherwise, throws an error.
+    fn exec(&mut self) -> eyre::Result<Output>;
+
+    /// Returns the command's stdout if execution is successful, otherwise, throws an error.
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+}
+
+impl CommandUtils for Command {
+    #[track_caller]
+    fn exec(&mut self) -> eyre::Result<Output> {
+        let output = self.output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        Ok(output)
+    }
+
+    #[track_caller]
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+        let output = self.exec()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().into())
     }
 }
 

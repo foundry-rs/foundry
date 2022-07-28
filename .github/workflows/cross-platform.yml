@@ -1,13 +1,17 @@
-on: 
+on:
   workflow_dispatch:
   workflow_call:
 
 name: cross-platform
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -22,12 +26,30 @@ jobs:
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
-          #- os: windows-latest
-          #  target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.job.target }}
+          override: true
+          profile: minimal
+
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      # Required for forge commands that use git
+      - name: Setup git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
 
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
@@ -42,45 +64,31 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.job.target }}
-          override: true
-          profile: minimal
-
-      - name: Environment information
-        shell: bash
+      # For some reason the FFI cheatcode uses WSL bash instead of Git bash, so we need to install a WSL distribution
+      - name: Windows setup
+        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
         run: |
-          gcc --version || true
-          rustup -V
-          rustup toolchain list
-          rustup default
-          cargo -V
-          rustc -V
-
-      - uses: Swatinem/rust-cache@v1
-        with:
-          cache-on-failure: true
+          wsl --install --distribution Ubuntu
+        shell: pwsh
 
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --verbose --workspace
+          args: --verbose --locked --bins --tests
 
       - name: Run forge
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
-          args: -p foundry-cli --bin forge -- --help
+          args: --locked --bin forge -- --help
 
       - name: Run tests
         uses: actions-rs/cargo@v1
+        if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --workspace
+          args: --locked --workspace -- --skip fork

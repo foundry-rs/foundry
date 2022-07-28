@@ -1,11 +1,12 @@
 //! tree command
 
-use crate::cmd::{forge::build::ProjectPathsArgs, Cmd};
+use crate::cmd::Cmd;
 use clap::Parser;
 use ethers::solc::Graph;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(TreeArgs, opts);
+use crate::cmd::forge::build::ProjectPathsArgs;
 use ethers::solc::resolver::{Charset, TreeOptions};
 
 /// Command to display the project's dependency tree
@@ -13,7 +14,12 @@ use ethers::solc::resolver::{Charset, TreeOptions};
 pub struct TreeArgs {
     #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
     no_dedupe: bool,
-    #[clap(help = "Character set to use in output: utf8, ascii", default_value = "utf8", long)]
+    #[clap(
+        help = "Character set to use in output: utf8, ascii",
+        default_value = "utf8",
+        long,
+        value_name = "CHARSET"
+    )]
     charset: Charset,
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     opts: ProjectPathsArgs,

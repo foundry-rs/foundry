@@ -4,11 +4,16 @@ use crate::{revm::AccountInfo, U256};
 use ethers::{
     prelude::{Address, Bytes, H160},
     types::H256,
+    utils::keccak256,
 };
+use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
+    HashMap,
 };
+
+use serde::{Deserialize, Serialize};
 
 /// This bundles all required revm traits
 pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
@@ -32,12 +37,24 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) {
         let mut info = self.basic(address);
+        let code_hash = if code.as_ref().is_empty() {
+            KECCAK_EMPTY
+        } else {
+            H256::from_slice(&keccak256(code.as_ref())[..])
+        };
+        info.code_hash = code_hash;
         info.code = Some(code.to_vec().into());
         self.insert_account(address, info);
     }
 
     /// Sets the balance of the given address
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
+
+    /// Write all chain data to serialized bytes buffer
+    fn dump_state(&self) -> Option<SerializableState>;
+
+    /// Deserialize and add all chain data to the backend storage
+    fn load_state(&mut self, buf: SerializableState) -> bool;
 
     /// Creates a new snapshot
     fn snapshot(&mut self) -> U256;
@@ -62,11 +79,19 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
 impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.insert_cache(address, account)
+        self.insert_account_info(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
-        self.insert_cache_storage(address, slot, val)
+        self.insert_account_storage(address, slot, val)
+    }
+
+    fn dump_state(&self) -> Option<SerializableState> {
+        None
+    }
+
+    fn load_state(&mut self, _buf: SerializableState) -> bool {
+        false
     }
 
     fn snapshot(&mut self) -> U256 {
@@ -109,4 +134,17 @@ impl DatabaseRef for StateDb {
     fn block_hash(&self, number: U256) -> H256 {
         self.0.block_hash(number)
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SerializableState {
+    pub accounts: HashMap<Address, SerializableAccountRecord>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SerializableAccountRecord {
+    pub nonce: u64,
+    pub balance: U256,
+    pub code: Bytes,
+    pub storage: HashMap<U256, U256>,
 }

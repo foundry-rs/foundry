@@ -618,10 +618,10 @@ impl Tui {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
             } else {
-                text_output.extend(Text::from(format!("Unknown contract at address {address}")));
+                text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
             }
         } else {
-            text_output.extend(Text::from(format!("Unknown contract at address {address}")));
+            text_output.extend(Text::from(format!("Unknown contract at address {address:?}")));
         }
 
         let paragraph =
@@ -641,7 +641,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                "Address: {} | PC: {} | Gas used in call: {}",
+                "Address: {:?} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -927,8 +927,10 @@ impl Ui for Tui {
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // Poll events since last tick
-                if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
+                // Poll events since last tick - if last tick is greater than tick_rate, we demand
+                // immediate availability of the event. This may affect
+                // interactivity, but I'm not sure as it is hard to test.
+                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {

@@ -8,7 +8,10 @@ use ethers::{
     prelude::{Address, Wallet},
     signers::Signer as EthersSigner,
     types::{
-        transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Signature, H256,
+        transaction::{
+            eip2718::TypedTransaction as EthersTypedTransactionRequest, eip712::TypedData,
+        },
+        Signature, H256,
     },
 };
 use std::collections::HashMap;
@@ -26,6 +29,13 @@ pub trait Signer: Send + Sync {
 
     /// Returns the signature
     async fn sign(&self, address: Address, message: &[u8]) -> Result<Signature, BlockchainError>;
+
+    /// Encodes and signs the typed data according EIP-712. Payload must implement Eip712 trait.
+    async fn sign_typed_data(
+        &self,
+        address: Address,
+        payload: &TypedData,
+    ) -> Result<Signature, BlockchainError>;
 
     /// signs a transaction request using the given account in request
     fn sign_transaction(
@@ -63,6 +73,15 @@ impl Signer for DevSigner {
         let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
 
         Ok(signer.sign_message(message).await?)
+    }
+
+    async fn sign_typed_data(
+        &self,
+        address: Address,
+        payload: &TypedData,
+    ) -> Result<Signature, BlockchainError> {
+        let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
+        Ok(signer.sign_typed_data(payload).await?)
     }
 
     fn sign_transaction(

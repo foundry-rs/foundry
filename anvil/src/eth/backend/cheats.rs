@@ -1,9 +1,9 @@
 //! Support for "cheat codes" / bypass functions
 
 use anvil_core::eth::transaction::TypedTransaction;
-use ethers::types::{Address, Signature, U256};
+use ethers::types::{Address, Signature, H256, U256};
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
 /// The signature used to bypass signing via the `eth_sendUnsignedTransaction` cheat RPC
@@ -27,30 +27,25 @@ pub struct CheatsManager {
 // === impl CheatsManager ===
 
 impl CheatsManager {
-    /// Sets the account to impersonate and returns the account that was previously impersonated if
-    /// any
-    pub fn impersonate(&self, account: Address) -> Option<Address> {
-        trace!(target: "cheats", "Start impersonating {:?}", account);
-        self.state.write().impersonated_account.replace(account)
+    /// Sets the account to impersonate
+    ///
+    /// This also accepts the actual code hash if the address is a contract to bypass EIP-3607
+    ///
+    /// Returns `true` if the account is already impersonated
+    pub fn impersonate(&self, addr: Address, code_hash: Option<H256>) -> bool {
+        trace!(target: "cheats", "Start impersonating {:?}", addr);
+        self.state.write().impersonated_account.insert(addr, code_hash).is_some()
     }
 
-    /// Removes the account that is currently impersonated, if any
-    pub fn stop_impersonating(&self) -> Option<Address> {
-        let acc = self.state.write().impersonated_account.take();
-        if let Some(ref acc) = acc {
-            trace!(target: "cheats", "Stop impersonating {:?}", acc);
-        }
-        acc
-    }
-
-    /// Returns the account that's currently being impersonated
-    pub fn impersonated_account(&self) -> Option<Address> {
-        self.state.read().impersonated_account
+    /// Removes the account that from the impersonated set
+    pub fn stop_impersonating(&self, addr: &Address) -> Option<H256> {
+        trace!(target: "cheats", "Stop impersonating {:?}", addr);
+        self.state.write().impersonated_account.remove(addr).flatten()
     }
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        self.state.read().impersonated_account == Some(addr)
+        self.state.read().impersonated_account.contains_key(&addr)
     }
 
     /// Returns the signature to use to bypass transaction signing
@@ -62,14 +57,18 @@ impl CheatsManager {
 /// Container type for all the state variables
 #[derive(Debug, Clone)]
 pub struct CheatsState {
-    /// The account that's currently impersonated
-    pub impersonated_account: Option<Address>,
+    /// All accounts that are currently impersonated
+    ///
+    /// If the account is a contract it holds the hash of the contracts code that is temporarily
+    /// set to `KECCAK_EMPTY` to bypass EIP-3607 which rejects transactions from senders with
+    /// deployed code
+    pub impersonated_account: HashMap<Address, Option<H256>>,
     /// The signature used for the `eth_sendUnsignedTransaction` cheat code
     pub bypass_signature: Signature,
 }
 
 impl Default for CheatsState {
     fn default() -> Self {
-        Self { impersonated_account: None, bypass_signature: BYPASS_SIGNATURE }
+        Self { impersonated_account: Default::default(), bypass_signature: BYPASS_SIGNATURE }
     }
 }

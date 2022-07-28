@@ -1,31 +1,55 @@
+use self::{
+    env::Broadcast,
+    expect::{handle_expect_emit, handle_expect_revert},
+    util::process_create,
+};
+use crate::{
+    abi::HEVMCalls,
+    executor::{
+        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
+        HARDHAT_CONSOLE_ADDRESS,
+    },
+};
+use bytes::Bytes;
+use ethers::{
+    abi::{AbiDecode, AbiEncode, RawLog},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
+        U256,
+    },
+};
+use revm::{
+    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
+};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
+    sync::Arc,
+};
+
 /// Cheatcodes related to the execution environment.
 mod env;
 pub use env::{Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
-pub use expect::{ExpectedEmit, ExpectedRevert};
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
+/// Fork related cheatcodes
+mod fork;
 /// Cheatcodes that configure the fuzzer
 mod fuzz;
+/// Snapshot related cheatcodes
+mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
-mod util;
+pub mod util;
+pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
-use self::expect::{handle_expect_emit, handle_expect_revert};
-use crate::{
-    abi::HEVMCalls,
-    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-};
-use bytes::Bytes;
-use ethers::{
-    abi::{AbiDecode, AbiEncode, RawLog},
-    types::{Address, H256, U256},
-};
-use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
-    Return,
-};
-use std::collections::BTreeMap;
+mod config;
+pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -33,9 +57,6 @@ use std::collections::BTreeMap;
 /// mocking addresses, signatures and altering call reverts.
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
-    /// Whether FFI is enabled or not
-    pub ffi: bool,
-
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -60,22 +81,59 @@ pub struct Cheatcodes {
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
 
+    /// Recorded logs
+    pub recorded_logs: Option<RecordedLogs>,
+
     /// Mocked calls
-    pub mocked_calls: BTreeMap<Address, BTreeMap<Bytes, Bytes>>,
+    pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
 
     /// Expected calls
-    pub expected_calls: BTreeMap<Address, Vec<Bytes>>,
+    pub expected_calls: BTreeMap<Address, Vec<ExpectedCallData>>,
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Current broadcasting information
+    pub broadcast: Option<Broadcast>,
+
+    /// Used to correct the nonce of --sender after the initiating call
+    pub corrected_nonce: bool,
+
+    /// Scripting based transactions
+    pub broadcastable_transactions: VecDeque<TypedTransaction>,
+
+    /// Additional, user configurable context this Inspector has access to when inspecting a call
+    pub config: Arc<CheatsConfig>,
+
+    /// Test-scoped context holding data that needs to be reset every test run
+    pub context: Context,
+}
+
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
+    }
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
-        Self { ffi, block: Some(block), gas_price: Some(gas_price), ..Default::default() }
+    pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
+        Self {
+            corrected_nonce: false,
+            block: Some(block),
+            gas_price: Some(gas_price),
+            config: Arc::new(config),
+            ..Default::default()
+        }
     }
 
-    fn apply_cheatcode<DB: Database>(
+    fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
         caller: Address,
@@ -89,20 +147,58 @@ impl Cheatcodes {
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
-            .or_else(|| ext::apply(self.ffi, &decoded))
+            .or_else(|| ext::apply(self, self.config.ffi, &decoded))
+            .or_else(|| snapshot::apply(self, data, &decoded))
+            .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
     }
 }
 
 impl<DB> Inspector<DB> for Cheatcodes
 where
-    DB: Database,
+    DB: DatabaseExt,
 {
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
+        }
+
+        Return::Continue
+    }
+
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+        // Match logs if `expectEmit` has been called
+        if !self.expected_emits.is_empty() {
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
+        }
+
+        // Stores this log if `recordLogs` has been called
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs
+                .entries
+                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+        }
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
-        _: bool,
+        is_static: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
@@ -113,7 +209,9 @@ where
             // Handle expected calls
             if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
-                    expected.len() <= call.input.len() && expected == &call.input[..expected.len()]
+                    expected.calldata.len() <= call.input.len() &&
+                        expected.calldata == call.input[..expected.calldata.len()] &&
+                        expected.value.map(|value| value == call.transfer.value).unwrap_or(true)
                 }) {
                     expecteds.remove(found_match);
                 }
@@ -121,11 +219,17 @@ where
 
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&call.contract) {
-                if let Some(mock_retdata) = mocks.get(&call.input) {
+                let ctx = MockCallDataContext {
+                    calldata: call.input.clone(),
+                    value: Some(call.transfer.value),
+                };
+                if let Some(mock_retdata) = mocks.get(&ctx) {
                     return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
-                } else if let Some((_, mock_retdata)) =
-                    mocks.iter().find(|(mock, _)| *mock == &call.input[..mock.len()])
-                {
+                } else if let Some((_, mock_retdata)) = mocks.iter().find(|(mock, _)| {
+                    mock.calldata.len() <= call.input.len() &&
+                        *mock.calldata == call.input[..mock.calldata.len()] &&
+                        mock.value.map(|value| value == call.transfer.value).unwrap_or(true)
+                }) {
                     return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 }
             }
@@ -148,28 +252,58 @@ where
                 }
             }
 
+            // Apply our broadcast
+            if let Some(broadcast) = &self.broadcast {
+                // We only apply a broadcast *to a specific depth*.
+                //
+                // We do this because any subsequent contract calls *must* exist on chain and
+                // we only want to grab *this* call, not internal ones
+                if data.subroutine.depth() == broadcast.depth &&
+                    call.context.caller == broadcast.original_caller
+                {
+                    // At the target depth we set `msg.sender` & tx.origin.
+                    // We are simulating the caller as being an EOA, so *both* must be set to the
+                    // broadcast.origin.
+                    call.context.caller = broadcast.origin;
+                    call.transfer.source = broadcast.origin;
+                    // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
+                    // because we only need the from, to, value, and data. We can later change this
+                    // into 1559, in the cli package, relatively easily once we
+                    // know the target chain supports EIP-1559.
+                    if !is_static {
+                        data.subroutine.load_account(broadcast.origin, data.db);
+                        let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
+
+                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                            TransactionRequest {
+                                from: Some(broadcast.origin),
+                                to: Some(NameOrAddress::Address(call.contract)),
+                                value: Some(call.transfer.value),
+                                data: Some(call.input.clone().into()),
+                                nonce: Some(account.info.nonce.into()),
+                                ..Default::default()
+                            },
+                        ));
+
+                        // call_inner does not increase nonces, so we have to do it ourselves
+                        account.info.nonce += 1;
+                    } else if broadcast.single_call {
+                        return (
+                            Return::Revert,
+                            Gas::new(0),
+                            "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead."
+                            .to_string()
+                            .encode()
+                            .into()
+                        );
+                    }
+                }
+            }
+
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         } else {
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
-    }
-
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _: bool,
-    ) -> Return {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            data.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
-        }
-
-        Return::Continue
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
@@ -206,17 +340,6 @@ where
         Return::Continue
     }
 
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
-        // Match logs if `expectEmit` has been called
-        if !self.expected_emits.is_empty() {
-            handle_expect_emit(
-                self,
-                RawLog { topics: topics.to_vec(), data: data.to_vec() },
-                address,
-            );
-        }
-    }
-
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -237,6 +360,13 @@ where
             }
             if prank.single_call {
                 std::mem::take(&mut self.prank);
+            }
+        }
+
+        // Clean up broadcast
+        if let Some(broadcast) = &self.broadcast {
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
             }
         }
 
@@ -278,9 +408,10 @@ where
                     Return::Revert,
                     remaining_gas,
                     format!(
-                        "Expected a call to {:?} with data {}, but got none",
+                        "Expected a call to {:?} with data {}{}, but got none",
                         address,
-                        ethers::types::Bytes::from(expecteds[0].clone())
+                        ethers::types::Bytes::from(expecteds[0].calldata.clone()),
+                        expecteds[0].value.map(|v| format!(" and value {}", v)).unwrap_or_default()
                     )
                     .encode()
                     .into(),
@@ -323,6 +454,29 @@ where
             }
         }
 
+        // Apply our broadcast
+        if let Some(broadcast) = &self.broadcast {
+            if data.subroutine.depth() == broadcast.depth &&
+                call.caller == broadcast.original_caller
+            {
+                data.subroutine.load_account(broadcast.origin, data.db);
+
+                let (bytecode, to, nonce) =
+                    process_create(broadcast.origin, call.init_code.clone(), data, call);
+
+                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                    TransactionRequest {
+                        from: Some(broadcast.origin),
+                        to,
+                        value: Some(call.value),
+                        data: Some(bytecode.into()),
+                        nonce: Some(nonce.into()),
+                        ..Default::default()
+                    },
+                ));
+            }
+        }
+
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
@@ -342,6 +496,13 @@ where
             }
             if prank.single_call {
                 std::mem::take(&mut self.prank);
+            }
+        }
+
+        // Clean up broadcasts
+        if let Some(broadcast) = &self.broadcast {
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
             }
         }
 

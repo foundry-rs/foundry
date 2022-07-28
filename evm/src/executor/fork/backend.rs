@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::executor::fork::BlockchainDb;
+use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -14,13 +14,15 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
-    sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+    sync::{
+        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+        Arc,
+    },
 };
-use tracing::{trace, warn};
+use tracing::trace;
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
@@ -106,21 +108,15 @@ where
         match req {
             BackendRequest::Basic(addr, sender) => {
                 trace!(target: "backendhandler", "received request basic address={:?}", addr);
-                let lock = self.db.accounts().read();
-                let basic = lock.get(&addr).cloned();
-                // release the lock
-                drop(lock);
-                if let Some(basic) = basic {
+                let acc = self.db.accounts().read().get(&addr).cloned();
+                if let Some(basic) = acc {
                     let _ = sender.send(basic);
                 } else {
                     self.request_account(addr, sender);
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let lock = self.db.block_hashes().read();
-                let hash = lock.get(&number).cloned();
-                // release the lock
-                drop(lock);
+                let hash = self.db.block_hashes().read().get(&number).cloned();
                 if let Some(hash) = hash {
                     let _ = sender.send(hash);
                 } else {
@@ -128,13 +124,9 @@ where
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
-                let lock = self.db.storage().read();
-                let acc = lock.get(&addr);
-                let value = acc.and_then(|acc| acc.get(&idx).copied());
-                // release the lock
-                drop(lock);
-
                 // account is already stored in the cache
+                let value =
+                    self.db.storage().read().get(&addr).and_then(|acc| acc.get(&idx).copied());
                 if let Some(value) = value {
                     let _ = sender.send(value);
                 } else {
@@ -342,14 +334,6 @@ where
     }
 }
 
-impl<M: Middleware> Drop for BackendHandler<M> {
-    fn drop(&mut self) {
-        trace!(target: "backendhandler", "flushing cache");
-        self.db.cache().flush();
-        trace!(target: "backendhandler", "flushing cache finished");
-    }
-}
-
 /// A cloneable backend type that shares access to the backend data with all its clones.
 ///
 /// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandler`
@@ -382,13 +366,18 @@ impl<M: Middleware> Drop for BackendHandler<M> {
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
+    /// Ensures that the underlying cache gets flushed once the last `SharedBackend` is dropped.
+    ///
+    /// There is only one instance of the type, so as soon as the last `SharedBackend` is deleted,
+    /// `FlushJsonBlockCacheDB` is also deleted and the cache is flushed.
+    cache: Arc<FlushJsonBlockCacheDB>,
 }
 
 impl SharedBackend {
-    /// _Spawns_ a new `BackendHandler` on a background thread that listens for requests from any
+    /// _Spawns_ a new `BackendHandler` on a `tokio::task` that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `db`.
     ///
-    /// The spawned `BackendHandler` is dropped once the last `SharedBackend` connected to it is
+    /// The spawned `BackendHandler` finishes once the last `SharedBackend` connected to it is
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
@@ -397,9 +386,39 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (shared, handler) = Self::new(provider, db, pin_block);
-        // spawn the provider handler to background
-        trace!(target: "backendhandler", "spawning Backendhandler");
+        // spawn the provider handler to a task
+        trace!(target: "backendhandler", "spawning Backendhandler task");
         tokio::spawn(handler);
+        shared
+    }
+
+    /// Same as `Self::spawn_backend` but spawns the `BackendHandler` on a separate `std::thread` in
+    /// its own `tokio::Runtime`
+    pub fn spawn_backend_thread<M>(
+        provider: M,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+    ) -> Self
+    where
+        M: Middleware + Unpin + 'static + Clone,
+    {
+        let (shared, handler) = Self::new(provider, db, pin_block);
+
+        // spawn a light-weight thread with a thread-local async runtime just for
+        // sending and receiving data from the remote client
+        let _ = std::thread::Builder::new()
+            .name("fork-backend-thread".to_string())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to create fork-backend-thread tokio runtime");
+
+                rt.block_on(async move { handler.await });
+            })
+            .expect("failed to spawn backendhandler thread");
+        trace!(target: "backendhandler", "spawned Backendhandler thread");
+
         shared
     }
 
@@ -413,8 +432,9 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
+        let cache = Arc::new(FlushJsonBlockCacheDB(Arc::clone(db.cache())));
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
-        (Self { backend }, handler)
+        (Self { backend, cache }, handler)
     }
 
     /// Updates the pinned block to fetch data from
@@ -451,14 +471,18 @@ impl SharedBackend {
             Ok(rx.recv()?)
         })
     }
+
+    /// Flushes the DB to disk if caching is enabled
+    pub(crate) fn flush_cache(&self) {
+        self.cache.0.flush();
+    }
 }
 
 impl DatabaseRef for SharedBackend {
     fn basic(&self, address: H160) -> AccountInfo {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(address).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
-            Default::default()
+            panic!("Failed to send/recv `basic` for {address}");
         })
     }
 
@@ -468,10 +492,8 @@ impl DatabaseRef for SharedBackend {
 
     fn storage(&self, address: H160, index: U256) -> U256 {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index)
-            .unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
-            Default::default()
+        self.do_get_storage(address, index).unwrap_or_else(|_| {
+            panic!("Failed to send/recv `storage` for {address} at {index}");
         })
     }
 
@@ -482,8 +504,7 @@ impl DatabaseRef for SharedBackend {
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         self.do_get_block_hash(number).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
-            Default::default()
+            panic!("Failed to send/recv `block_hash` for {number}");
         })
     }
 }
@@ -492,14 +513,18 @@ impl DatabaseRef for SharedBackend {
 mod tests {
     use crate::executor::{
         fork::{BlockchainDbMeta, JsonBlockCacheDB},
-        Fork,
+        opts::EvmOpts,
+        Backend,
     };
     use ethers::{
         providers::{Http, Provider},
+        solc::utils::RuntimeOrHandle,
         types::Address,
     };
-    use foundry_utils::RuntimeOrHandle;
 
+    use crate::executor::fork::CreateFork;
+    use ethers::types::Chain;
+    use foundry_config::Config;
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
@@ -557,24 +582,26 @@ mod tests {
         assert!(!json.db().accounts.read().is_empty());
     }
 
-    #[test]
-    fn can_read_write_cache() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn can_read_write_cache() {
         let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
-        let tmpdir = tempfile::tempdir().unwrap();
-        let cache_path = tmpdir.path().join("storage.json");
-        let runtime = RuntimeOrHandle::new();
 
-        let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
-        let env = revm::Env::default();
+        let block_num = provider.get_block_number().await.unwrap().as_u64();
 
-        let fork = Fork {
-            cache_path: Some(cache_path.clone()),
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_block_number = Some(block_num);
+
+        let env = evm_opts.fork_evm_env(ENDPOINT).await.unwrap();
+
+        let fork = CreateFork {
+            enable_caching: true,
             url: ENDPOINT.to_string(),
-            pin_block: Some(block_num),
-            chain_id: 1,
+            env: env.clone(),
+            evm_opts,
         };
 
-        let backend = runtime.block_on(fork.spawn_backend(&env));
+        let backend = Backend::spawn(Some(fork));
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
@@ -589,15 +616,14 @@ mod tests {
             let _ = backend.storage(address, idx.into());
         }
         drop(backend);
-        drop(runtime);
 
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
-            hosts: Default::default(),
-        };
+        let meta =
+            BlockchainDbMeta { cfg_env: env.cfg, block_env: env.block, hosts: Default::default() };
 
-        let db = BlockchainDb::new(meta, Some(cache_path));
+        let db = BlockchainDb::new(
+            meta,
+            Some(Config::foundry_block_cache_dir(Chain::Mainnet, block_num).unwrap()),
+        );
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);

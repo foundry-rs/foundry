@@ -2,8 +2,8 @@ use super::fuzz_param_from_state;
 use crate::{executor::StateChangeset, utils};
 use bytes::Bytes;
 use ethers::{
-    abi::{Function, RawLog},
-    types::{Address, H256, U256},
+    abi::Function,
+    types::{Address, Log, H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -49,7 +49,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
     let mut state: HashSet<[u8; 32]> = HashSet::new();
-    for (address, storage) in db.storage() {
+    for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
 
         // Insert basic account information
@@ -58,7 +58,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
 
         // Insert storage
-        for (slot, value) in storage {
+        for (slot, value) in &account.storage {
             state.insert(utils::u256_to_h256_le(*slot).into());
             state.insert(utils::u256_to_h256_le(*value).into());
         }
@@ -76,7 +76,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
 
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
 pub fn collect_state_from_call(
-    logs: &[RawLog],
+    logs: &[Log],
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
 ) {
@@ -106,7 +106,7 @@ pub fn collect_state_from_call(
             log.topics.iter().for_each(|topic| {
                 state.insert(topic.0);
             });
-            log.data.chunks(32).for_each(|chunk| {
+            log.data.0.chunks(32).for_each(|chunk| {
                 let mut buffer: [u8; 32] = [0; 32];
                 let _ = (&mut buffer[..])
                     .write(chunk)

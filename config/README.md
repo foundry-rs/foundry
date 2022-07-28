@@ -8,7 +8,7 @@ sensible set of defaults.
 Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
 arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
 profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
-in `FOUNDRY_PROFILE`.
+in `FOUNDRY_PROFILE`. But all custom profiles inherit from the `default` profile.
 
 ## foundry.toml
 
@@ -25,7 +25,7 @@ The following is an example of what such a file might look like. This can also b
 
 ```toml
 ## defaults for _all_ profiles
-[default]
+[profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -33,13 +33,13 @@ solc = "0.8.10" # to use a specific local solc install set the path as `solc = "
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
-[hardhat]
+[profile.hardhat]
 src = "contracts"
 out = "artifacts"
 libs = ["node_modules"]
 
 ## set only when the `spells` profile is selected
-[spells]
+[profile.spells]
 ## --snip-- more settings
 ```
 
@@ -54,18 +54,20 @@ and merge, at the per-key level:
 
 The selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
 
-#### All Options
+### All Options
 
 The following is a foundry.toml file with all configuration options set.
 
 ```toml
 ## defaults for _all_ profiles
-[default]
+[profile.default]
 src = 'src'
 test = 'test'
 out = 'out'
 libs = ['lib']
 remappings = []
+# additional solc allow paths
+allow_paths = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings 
 libraries = []
@@ -82,7 +84,8 @@ optimizer = true
 optimizer_runs = 200
 via_ir = false
 verbosity = 0
-ignored_error_codes = []
+# ignore solc warnings for missing license and exceeded contract size
+ignored_error_codes = [1878, 5574]
 fuzz_runs = 256
 ffi = false
 sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
@@ -104,7 +107,7 @@ block_difficulty = 0
 # "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
 revert_strings = "default"
 # caches storage retrieved locally for certain chains and endpoints
-# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
 # to disable storage caching entirely set `no_storage_caching = true`
 rpc_storage_caching = { chains = "all", endpoints = "all" }
@@ -116,26 +119,46 @@ bytecode_hash = "ipfs"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false
+# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+etherscan_api_key="YOURETHERSCANAPIKEY"
 ```
 
-##### Additional Optimizer settings
+#### Additional Optimizer settings
 
 Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
 The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond
-to: `[default.optimizer_details]`
-belongs to the `[default]` profile
+to: `[profile.default.optimizer_details]`
+belongs to the `[profile.default]` profile
 
 ```toml
-[default.optimizer_details]
+[profile.default.optimizer_details]
 constantOptimizer = true
 yul = true
 # this sets the `yulDetails` of the `optimizer_details` for the `default` profile
-[default.optimizer_details.yulDetails]
+[profile.default.optimizer_details.yulDetails]
 stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
+```
+
+#### RPC-Endpoints settings
+
+The `rpc_endpoints` value accepts a list of `alias = "<url|env var>"` pairs.
+
+The following example declares two pairs:
+The alias `optimism` references the endpoint URL directly.
+The alias `mainnet` references the environment variable `RPC_MAINNET` which holds the entire URL.
+The alias `goerli` references an endpoint that will be interpolated with the value the `GOERLI_API_KEY` holds.
+
+Environment variables need to be wrapped in `${}`
+
+```toml
+[profile.default.rpc_endpoints]
+optimism = "https://optimism.alchemyapi.io/v2/1234567"
+mainnet = "${RPC_MAINNET}"
+goerli = "https://eth-goerli.alchemyapi.io/v2/${GOERLI_API_KEY}"
 ```
 
 ##### Additional Model Checker settings
@@ -151,12 +174,12 @@ The latter requires the z3 library version [4.8.8, 4.8.14] to be installed
 in the system (SO version 4.8).
 
 Similarly to the optimizer settings above, the `model_checker` settings must be
-prefixed with the profile they correspond to: `[default.model_checker]` belongs
-to the `[default]` profile.
+prefixed with the profile they correspond to: `[profile.default.model_checker]` belongs
+to the `[profile.default]` profile.
 
 ```toml
-[default.model_checker]
-contracts = { '/path/to/project/src/Contract.sol' = [ 'Contract' ] }
+[profile.default.model_checker]
+contracts = { 'src/Contract.sol' = [ 'Contract' ] }
 engine = 'chc'
 timeout = 10000
 targets = [ 'assert' ]

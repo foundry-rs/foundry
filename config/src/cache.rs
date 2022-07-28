@@ -193,12 +193,22 @@ pub struct Cache {
 impl fmt::Display for Cache {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for chain in &self.chains {
-            match NumberPrefix::decimal(chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32) {
+            match NumberPrefix::decimal(
+                chain.block_explorer as f32 + chain.blocks.iter().map(|x| x.1).sum::<u64>() as f32,
+            ) {
                 NumberPrefix::Standalone(size) => {
                     writeln!(f, "-️ {} ({:.1} B)", chain.name, size)?;
                 }
                 NumberPrefix::Prefixed(prefix, size) => {
                     writeln!(f, "-️ {} ({:.1} {}B)", chain.name, size, prefix)?;
+                }
+            }
+            match NumberPrefix::decimal(chain.block_explorer as f32) {
+                NumberPrefix::Standalone(size) => {
+                    writeln!(f, "\t-️ Block Explorer ({:.1} B)\n", size)?;
+                }
+                NumberPrefix::Prefixed(prefix, size) => {
+                    writeln!(f, "\t-️ Block Explorer ({:.1} {}B)\n", size, prefix)?;
                 }
             }
             for block in &chain.blocks {
@@ -216,7 +226,7 @@ impl fmt::Display for Cache {
     }
 }
 
-/// A chain folder in the foundry cache
+/// A representation of data for a given chain in the foundry cache
 #[derive(Debug)]
 pub struct ChainCache {
     /// The name of the chain
@@ -224,10 +234,15 @@ pub struct ChainCache {
 
     /// A tuple containing block number and the block directory size in bytes
     pub blocks: Vec<(String, u64)>,
+
+    /// The size of the block explorer directory in bytes
+    pub block_explorer: u64,
 }
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_str_eq;
+
     use super::*;
 
     #[test]
@@ -259,5 +274,52 @@ mod tests {
                 endpoints: CachedEndpoints::All
             }
         )
+    }
+
+    #[test]
+    fn cache_to_string() {
+        let cache = Cache {
+            chains: vec![
+                ChainCache {
+                    name: "mainnet".to_string(),
+                    blocks: vec![("1".to_string(), 1), ("2".to_string(), 2)],
+                    block_explorer: 500,
+                },
+                ChainCache {
+                    name: "ropsten".to_string(),
+                    blocks: vec![("1".to_string(), 1), ("2".to_string(), 2)],
+                    block_explorer: 4567,
+                },
+                ChainCache {
+                    name: "rinkeby".to_string(),
+                    blocks: vec![("1".to_string(), 1032), ("2".to_string(), 2000000)],
+                    block_explorer: 4230000,
+                },
+                ChainCache {
+                    name: "mumbai".to_string(),
+                    blocks: vec![("1".to_string(), 1), ("2".to_string(), 2)],
+                    block_explorer: 0,
+                },
+            ],
+        };
+
+        let expected = "\
+            -️ mainnet (503.0 B)\n\t\
+                -️ Block Explorer (500.0 B)\n\n\t\
+                -️ Block 1 (1.0 B)\n\t\
+                -️ Block 2 (2.0 B)\n\
+            -️ ropsten (4.6 kB)\n\t\
+                -️ Block Explorer (4.6 kB)\n\n\t\
+                -️ Block 1 (1.0 B)\n\t\
+                -️ Block 2 (2.0 B)\n\
+            -️ rinkeby (6.2 MB)\n\t\
+                -️ Block Explorer (4.2 MB)\n\n\t\
+                -️ Block 1 (1.0 kB)\n\t\
+                -️ Block 2 (2.0 MB)\n\
+            -️ mumbai (3.0 B)\n\t\
+                -️ Block Explorer (0.0 B)\n\n\t\
+                -️ Block 1 (1.0 B)\n\t\
+                -️ Block 2 (2.0 B)\n";
+        assert_str_eq!(format!("{cache}"), expected);
     }
 }

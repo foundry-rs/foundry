@@ -1,9 +1,14 @@
+use std::cmp::Ordering;
+
 use super::Cheatcodes;
-use crate::abi::HEVMCalls;
+use crate::{
+    abi::HEVMCalls,
+    executor::inspector::cheatcodes::util::{ERROR_PREFIX, REVERT_PREFIX},
+};
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiEncode, RawLog},
-    types::{Address, H160},
+    abi::{AbiDecode, AbiEncode, RawLog},
+    types::{Address, H160, U256},
 };
 use revm::{return_ok, Database, EVMData, Return};
 
@@ -53,16 +58,25 @@ pub fn handle_expect_revert(
         return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
-    let (err, actual_revert): (_, Bytes) = match retdata {
-        _ if retdata.len() >= 4 && retdata[0..4] == [8, 195, 121, 160] => {
+    let string_data = match retdata {
+        _ if retdata.len() >= REVERT_PREFIX.len() &&
+            retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
+        {
+            Some(&retdata[4..])
+        }
+        _ if retdata.len() >= ERROR_PREFIX.len() &&
+            &retdata[..ERROR_PREFIX.len()] == ERROR_PREFIX.as_slice() =>
+        {
+            Some(&retdata[ERROR_PREFIX.len()..])
+        }
+        _ => None,
+    };
+
+    let (err, actual_revert): (_, Bytes) = match string_data {
+        Some(data) => {
             // It's a revert string, so we do some conversion to perform the check
-            let decoded_data: Bytes =
-                ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &retdata[4..])
-                    .expect("String error code, but data is not a string")[0]
-                    .clone()
-                    .into_bytes()
-                    .expect("Cannot fail as this is bytes")
-                    .into();
+            let decoded_data = ethers::prelude::Bytes::decode(data)
+                .expect("String error code, but data can't be decoded as bytes");
 
             (
                 format!(
@@ -76,7 +90,7 @@ pub fn handle_expect_revert(
                 )
                 .encode()
                 .into(),
-                decoded_data,
+                decoded_data.0,
             )
         }
         _ => (
@@ -132,31 +146,68 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address
         // log that we expect
         let expected =
             next_expect.log.as_ref().expect("we should have a log to compare against here");
-        if expected.topics[0] == log.topics[0] {
-            // Topic 0 can match, but the amount of topics can differ.
-            if expected.topics.len() != log.topics.len() {
-                next_expect.found = false;
-            } else {
-                // Match topics
-                next_expect.found = log
-                    .topics
-                    .iter()
-                    .skip(1)
-                    .enumerate()
-                    .filter(|(i, _)| next_expect.checks[*i])
-                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
 
-                // Maybe match source address
-                if let Some(addr) = next_expect.address {
-                    next_expect.found &= addr == *address;
-                }
+        let expected_topic_0 = expected.topics.get(0);
+        let log_topic_0 = log.topics.get(0);
 
-                // Maybe match data
-                if next_expect.checks[3] {
-                    next_expect.found &= expected.data == log.data;
-                }
+        // same topic0 and equal number of topics should be verified further, others are a no
+        // match
+        if expected_topic_0
+            .zip(log_topic_0)
+            .map_or(false, |(a, b)| a == b && expected.topics.len() == log.topics.len())
+        {
+            // Match topics
+            next_expect.found = log
+                .topics
+                .iter()
+                .skip(1)
+                .enumerate()
+                .filter(|(i, _)| next_expect.checks[*i])
+                .all(|(i, topic)| topic == &expected.topics[i + 1]);
+
+            // Maybe match source address
+            if let Some(addr) = next_expect.address {
+                next_expect.found &= addr == *address;
+            }
+
+            // Maybe match data
+            if next_expect.checks[3] {
+                next_expect.found &= expected.data == log.data;
             }
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ExpectedCallData {
+    /// The expected calldata
+    pub calldata: Bytes,
+    /// The expected value sent in the call
+    pub value: Option<U256>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MockCallDataContext {
+    /// The partial calldata to match for mock
+    pub calldata: Bytes,
+    /// The value to match for mock
+    pub value: Option<U256>,
+}
+
+impl Ord for MockCallDataContext {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Calldata matching is reversed to ensure that a tighter match is
+        // returned if an exact match is not found. In case, there is
+        // a partial match to calldata that is more specific than
+        // a match to a msg.value, then the more specific calldata takes
+        // precedence.
+        self.calldata.cmp(&other.calldata).reverse().then(self.value.cmp(&other.value).reverse())
+    }
+}
+
+impl PartialOrd for MockCallDataContext {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -190,16 +241,34 @@ pub fn apply<DB: Database>(
             });
             Ok(Bytes::new())
         }
-        HEVMCalls::ExpectCall(inner) => {
-            state.expected_calls.entry(inner.0).or_default().push(inner.1.to_vec().into());
-            Ok(Bytes::new())
-        }
-        HEVMCalls::MockCall(inner) => {
+        HEVMCalls::ExpectCall0(inner) => {
             state
-                .mocked_calls
+                .expected_calls
                 .entry(inner.0)
                 .or_default()
-                .insert(inner.1.to_vec().into(), inner.2.to_vec().into());
+                .push(ExpectedCallData { calldata: inner.1.to_vec().into(), value: None });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectCall1(inner) => {
+            state
+                .expected_calls
+                .entry(inner.0)
+                .or_default()
+                .push(ExpectedCallData { calldata: inner.2.to_vec().into(), value: Some(inner.1) });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCall0(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
+                inner.2.to_vec().into(),
+            );
+            Ok(Bytes::new())
+        }
+        HEVMCalls::MockCall1(inner) => {
+            state.mocked_calls.entry(inner.0).or_default().insert(
+                MockCallDataContext { calldata: inner.2.to_vec().into(), value: Some(inner.1) },
+                inner.3.to_vec().into(),
+            );
             Ok(Bytes::new())
         }
         HEVMCalls::ClearMockedCalls(_) => {

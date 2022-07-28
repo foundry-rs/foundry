@@ -4,11 +4,23 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{self, AbiEncode, Token, Tokenize},
+    abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     types::{Address, H256, U256},
     utils::keccak256,
 };
 use revm::{Database, EVMData};
+
+#[derive(Clone, Debug, Default)]
+pub struct Broadcast {
+    /// Address of the transaction origin
+    pub origin: Address,
+    /// Original caller
+    pub original_caller: Address,
+    /// Depth of the broadcast
+    pub depth: u64,
+    /// Whether or not the prank stops by itself after the next call
+    pub single_call: bool,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
@@ -26,6 +38,27 @@ pub struct Prank {
     pub single_call: bool,
 }
 
+fn broadcast(
+    state: &mut Cheatcodes,
+    origin: Address,
+    original_caller: Address,
+    depth: u64,
+    single_call: bool,
+) -> Result<Bytes, Bytes> {
+    let broadcast = Broadcast { origin, original_caller, depth, single_call };
+
+    if state.prank.is_some() {
+        return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into());
+    }
+
+    if state.broadcast.is_some() {
+        return Err("You have an active broadcast already.".to_string().encode().into())
+    }
+
+    state.broadcast = Some(broadcast);
+    Ok(Bytes::new())
+}
+
 fn prank(
     state: &mut Cheatcodes,
     prank_caller: Address,
@@ -39,6 +72,10 @@ fn prank(
 
     if state.prank.is_some() {
         return Err("You have an active prank already.".to_string().encode().into())
+    }
+
+    if state.broadcast.is_some() {
+        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".to_string().encode().into());
     }
 
     state.prank = Some(prank);
@@ -64,6 +101,36 @@ fn accesses(state: &mut Cheatcodes, address: Address) -> Bytes {
         .into()
     } else {
         ethers::abi::encode(&[Token::Array(vec![]), Token::Array(vec![])]).into()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecordedLogs {
+    pub entries: Vec<RawLog>,
+}
+
+fn start_record_logs(state: &mut Cheatcodes) {
+    state.recorded_logs = Some(Default::default());
+}
+
+fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
+    if let Some(recorded_logs) = state.recorded_logs.replace(Default::default()) {
+        ethers::abi::encode(
+            &recorded_logs
+                .entries
+                .iter()
+                .map(|entry| {
+                    Token::Tuple(vec![
+                        entry.topics.clone().into_token(),
+                        Token::Bytes(entry.data.clone()),
+                    ])
+                })
+                .collect::<Vec<Token>>()
+                .into_tokens(),
+        )
+        .into()
+    } else {
+        ethers::abi::encode(&[Token::Array(vec![])]).into()
     }
 }
 
@@ -160,6 +227,11 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::RecordLogs(_) => {
+            start_record_logs(state);
+            Ok(Bytes::new())
+        }
+        HEVMCalls::GetRecordedLogs(_) => Ok(get_recorded_logs(state)),
         HEVMCalls::SetNonce(inner) => {
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
@@ -176,6 +248,8 @@ pub fn apply<DB: Database>(
             }
         }
         HEVMCalls::GetNonce(inner) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
             data.subroutine.load_account(inner.0, data.db);
@@ -188,6 +262,41 @@ pub fn apply<DB: Database>(
             data.env.cfg.chain_id = inner.0;
             Ok(Bytes::new())
         }
+        HEVMCalls::Broadcast0(_) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), true)
+        }
+        HEVMCalls::Broadcast1(inner) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+            broadcast(state, inner.0, caller, data.subroutine.depth(), true)
+        }
+        HEVMCalls::StartBroadcast0(_) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), false)
+        }
+        HEVMCalls::StartBroadcast1(inner) => {
+            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+            broadcast(state, inner.0, caller, data.subroutine.depth(), false)
+        }
+        HEVMCalls::StopBroadcast(_) => {
+            state.broadcast = None;
+            Ok(Bytes::new())
+        }
         _ => return None,
     })
+}
+
+/// When using `forge script`, the script method is called using the address from `--sender`.
+/// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
+/// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
+fn correct_sender_nonce(
+    sender: &Address,
+    subroutine: &mut revm::SubRoutine,
+    state: &mut Cheatcodes,
+) {
+    if !state.corrected_nonce {
+        let account = subroutine.state().get_mut(sender).unwrap();
+        account.info.nonce -= 1;
+        state.corrected_nonce = true;
+    }
 }

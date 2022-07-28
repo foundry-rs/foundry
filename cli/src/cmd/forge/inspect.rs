@@ -8,11 +8,185 @@ use crate::{
 };
 use clap::Parser;
 use comfy_table::Table;
-use ethers::prelude::artifacts::output_selection::{
-    ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
+use ethers::prelude::{
+    artifacts::output_selection::{
+        BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+        EvmOutputSelection, EwasmOutputSelection,
+    },
+    info::ContractInfo,
 };
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
+
+#[derive(Debug, Clone, Parser)]
+pub struct InspectArgs {
+    #[clap(
+        help = "The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.",
+        value_name = "CONTRACT"
+    )]
+    pub contract: ContractInfo,
+
+    #[clap(help = "The contract artifact field to inspect.", value_name = "FIELD")]
+    pub field: ContractArtifactFields,
+
+    #[clap(long, help = "Pretty print the selected field, if supported.")]
+    pub pretty: bool,
+
+    /// All build arguments are supported
+    #[clap(flatten)]
+    build: build::CoreBuildArgs,
+}
+
+impl Cmd for InspectArgs {
+    type Output = ();
+    fn run(self) -> eyre::Result<Self::Output> {
+        let InspectArgs { mut contract, field, build, pretty } = self;
+
+        // Map field to ContractOutputSelection
+        let mut cos = build.compiler.extra_output;
+        if !field.is_default() && !cos.iter().any(|selected| field.eq(selected)) {
+            cos.push(field.into());
+        }
+
+        // Run Optimized?
+        let optimized = if let ContractArtifactFields::AssemblyOptimized = field {
+            true
+        } else {
+            build.compiler.optimize
+        };
+
+        // Build modified Args
+        let modified_build_args = CoreBuildArgs {
+            compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
+            ..build
+        };
+
+        // Build the project
+        let project = modified_build_args.project()?;
+        let outcome = if let Some(ref mut contract_path) = contract.path {
+            let target_path = dunce::canonicalize(&*contract_path)?;
+            *contract_path = target_path.to_string_lossy().into_owned();
+            compile::compile_files(&project, vec![target_path], true)
+        } else {
+            compile::suppress_compile(&project)
+        }?;
+
+        // Find the artifact
+        let found_artifact = outcome.find_contract(&contract);
+
+        // Unwrap the inner artifact
+        let artifact = found_artifact.ok_or_else(|| {
+            eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
+        })?;
+
+        // Match on ContractArtifactFields and Pretty Print
+        match field {
+            ContractArtifactFields::Abi => {
+                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
+            }
+            ContractArtifactFields::Bytecode => {
+                let tval: Value = to_value(&artifact.bytecode)?;
+                println!(
+                    "{}",
+                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
+                        || eyre::eyre!("Failed to extract artifact bytecode as a string")
+                    )?
+                );
+            }
+            ContractArtifactFields::DeployedBytecode => {
+                let tval: Value = to_value(&artifact.deployed_bytecode)?;
+                println!(
+                    "{}",
+                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
+                        || eyre::eyre!("Failed to extract artifact deployed bytecode as a string")
+                    )?
+                );
+            }
+            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
+                println!(
+                    "{}",
+                    to_value(&artifact.assembly)?.as_str().ok_or_else(|| eyre::eyre!(
+                        "Failed to extract artifact assembly as a string"
+                    ))?
+                );
+            }
+            ContractArtifactFields::MethodIdentifiers => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.method_identifiers)?)?
+                );
+            }
+            ContractArtifactFields::GasEstimates => {
+                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
+            }
+            ContractArtifactFields::StorageLayout => {
+                if pretty {
+                    if let Some(storage_layout) = &artifact.storage_layout {
+                        let mut table = Table::new();
+                        table.set_header(vec![
+                            "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
+                        ]);
+
+                        for slot in &storage_layout.storage {
+                            let storage_type = storage_layout.types.get(&slot.storage_type);
+                            table.add_row(vec![
+                                slot.label.clone(),
+                                storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
+                                slot.slot.clone(),
+                                slot.offset.to_string(),
+                                storage_type
+                                    .as_ref()
+                                    .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+                                slot.contract.clone(),
+                            ]);
+                        }
+                        println!("{table}");
+                    }
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?
+                    );
+                }
+            }
+            ContractArtifactFields::DevDoc => {
+                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
+            }
+            ContractArtifactFields::Ir => {
+                println!(
+                    "{}",
+                    to_value(&artifact.ir)?
+                        .as_str()
+                        .ok_or_else(|| eyre::eyre!("Failed to extract artifact ir as a string"))?
+                );
+            }
+            ContractArtifactFields::IrOptimized => {
+                println!(
+                    "{}",
+                    to_value(&artifact.ir_optimized)?.as_str().ok_or_else(|| eyre::eyre!(
+                        "Failed to extract artifact optimized ir as a string"
+                    ))?
+                );
+            }
+            ContractArtifactFields::Metadata => {
+                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.metadata)?)?);
+            }
+            ContractArtifactFields::UserDoc => {
+                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.userdoc)?)?);
+            }
+            ContractArtifactFields::Ewasm => {
+                println!(
+                    "{}",
+                    to_value(&artifact.ewasm)?.as_str().ok_or_else(|| eyre::eyre!(
+                        "Failed to extract artifact ewasm as a string"
+                    ))?
+                );
+            }
+        };
+
+        Ok(())
+    }
+}
 
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -31,6 +205,53 @@ pub enum ContractArtifactFields {
     Metadata,
     UserDoc,
     Ewasm,
+}
+
+// === impl ContractArtifactFields ===
+
+impl ContractArtifactFields {
+    /// Returns true if this field is generated by default
+    pub fn is_default(&self) -> bool {
+        matches!(self, ContractArtifactFields::Bytecode | ContractArtifactFields::DeployedBytecode)
+    }
+}
+
+impl From<ContractArtifactFields> for ContractOutputSelection {
+    fn from(field: ContractArtifactFields) -> Self {
+        match field {
+            ContractArtifactFields::Abi => ContractOutputSelection::Abi,
+            ContractArtifactFields::Bytecode => ContractOutputSelection::Evm(
+                EvmOutputSelection::ByteCode(BytecodeOutputSelection::All),
+            ),
+            ContractArtifactFields::DeployedBytecode => ContractOutputSelection::Evm(
+                EvmOutputSelection::DeployedByteCode(DeployedBytecodeOutputSelection::All),
+            ),
+            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
+                ContractOutputSelection::Evm(EvmOutputSelection::Assembly)
+            }
+            ContractArtifactFields::MethodIdentifiers => {
+                ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers)
+            }
+            ContractArtifactFields::GasEstimates => {
+                ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates)
+            }
+            ContractArtifactFields::StorageLayout => ContractOutputSelection::StorageLayout,
+            ContractArtifactFields::DevDoc => ContractOutputSelection::DevDoc,
+            ContractArtifactFields::Ir => ContractOutputSelection::Ir,
+            ContractArtifactFields::IrOptimized => ContractOutputSelection::IrOptimized,
+            ContractArtifactFields::Metadata => ContractOutputSelection::Metadata,
+            ContractArtifactFields::UserDoc => ContractOutputSelection::UserDoc,
+            ContractArtifactFields::Ewasm => {
+                ContractOutputSelection::Ewasm(EwasmOutputSelection::All)
+            }
+        }
+    }
+}
+
+impl PartialEq<ContractOutputSelection> for ContractArtifactFields {
+    fn eq(&self, other: &ContractOutputSelection) -> bool {
+        self.to_string() == other.to_string()
+    }
 }
 
 impl fmt::Display for ContractArtifactFields {
@@ -85,189 +306,5 @@ impl FromStr for ContractArtifactFields {
             "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
             _ => Err(format!("Unknown field: {s}")),
         }
-    }
-}
-
-#[derive(Debug, Clone, Parser)]
-pub struct InspectArgs {
-    #[clap(help = "The name of the contract to inspect.")]
-    pub contract: String,
-
-    #[clap(help = "The contract artifact field to inspect.")]
-    pub field: ContractArtifactFields,
-
-    #[clap(long, help = "Pretty print the selected field, if supported.")]
-    pub pretty: bool,
-
-    /// All build arguments are supported
-    #[clap(flatten)]
-    build: build::CoreBuildArgs,
-}
-
-impl Cmd for InspectArgs {
-    type Output = ();
-    fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { contract, field, build, pretty } = self;
-
-        // Map field to ContractOutputSelection
-        let mut cos = build.compiler.extra_output;
-        if !cos.iter().any(|&i| i.to_string() == field.to_string()) {
-            match field {
-                ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
-                ContractArtifactFields::Bytecode => { /* Auto Generated */ }
-                ContractArtifactFields::DeployedBytecode => { /* Auto Generated */ }
-                ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
-                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::Assembly))
-                }
-                ContractArtifactFields::MethodIdentifiers => {
-                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers))
-                }
-                ContractArtifactFields::GasEstimates => {
-                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates))
-                }
-                ContractArtifactFields::StorageLayout => {
-                    cos.push(ContractOutputSelection::StorageLayout)
-                }
-                ContractArtifactFields::DevDoc => cos.push(ContractOutputSelection::DevDoc),
-                ContractArtifactFields::Ir => cos.push(ContractOutputSelection::Ir),
-                ContractArtifactFields::IrOptimized => {
-                    cos.push(ContractOutputSelection::IrOptimized)
-                }
-                ContractArtifactFields::Metadata => cos.push(ContractOutputSelection::Metadata),
-                ContractArtifactFields::UserDoc => cos.push(ContractOutputSelection::UserDoc),
-                ContractArtifactFields::Ewasm => {
-                    cos.push(ContractOutputSelection::Ewasm(EwasmOutputSelection::All))
-                }
-            }
-        }
-
-        // Run Optimized?
-        let optimized = if let ContractArtifactFields::AssemblyOptimized = field {
-            true
-        } else {
-            build.compiler.optimize
-        };
-
-        // Build modified Args
-        let modified_build_args = CoreBuildArgs {
-            compiler: CompilerArgs { extra_output: cos, optimize: optimized, ..build.compiler },
-            ..build
-        };
-
-        // Build the project
-        let project = modified_build_args.project()?;
-        let outcome = compile::suppress_compile(&project)?;
-
-        // Find the artifact
-        let found_artifact = outcome.find(&contract);
-
-        // Unwrap the inner artifact
-        let artifact = found_artifact.ok_or_else(|| {
-            eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
-        })?;
-
-        // Match on ContractArtifactFields and Pretty Print
-        match field {
-            ContractArtifactFields::Abi => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
-            }
-            ContractArtifactFields::Bytecode => {
-                let tval: Value = to_value(&artifact.bytecode)?;
-                println!(
-                    "{}",
-                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
-                        || eyre::eyre!("Failed to extract artifact bytecode as a string")
-                    )?
-                );
-            }
-            ContractArtifactFields::DeployedBytecode => {
-                let tval: Value = to_value(&artifact.deployed_bytecode)?;
-                println!(
-                    "{}",
-                    tval.get("object").unwrap_or(&tval).clone().as_str().ok_or_else(
-                        || eyre::eyre!("Failed to extract artifact deployed bytecode as a string")
-                    )?
-                );
-            }
-            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
-                println!(
-                    "{}",
-                    to_value(&artifact.assembly)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact assembly as a string"
-                    ))?
-                );
-            }
-            ContractArtifactFields::MethodIdentifiers => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.method_identifiers)?)?
-                );
-            }
-            ContractArtifactFields::GasEstimates => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates)?)?);
-            }
-            ContractArtifactFields::StorageLayout => {
-                if pretty {
-                    if let Some(storage_layout) = &artifact.storage_layout {
-                        let mut table = Table::new();
-                        table.set_header(vec!["Name", "Type", "Slot", "Offset", "Bytes"]);
-
-                        for slot in &storage_layout.storage {
-                            let storage_type = storage_layout.types.get(&slot.storage_type);
-                            table.add_row(vec![
-                                slot.label.clone(),
-                                storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
-                                slot.slot.clone(),
-                                slot.offset.to_string(),
-                                storage_type
-                                    .as_ref()
-                                    .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
-                            ]);
-                        }
-                        println!("{table}");
-                    }
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&to_value(&artifact.storage_layout)?)?
-                    );
-                }
-            }
-            ContractArtifactFields::DevDoc => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc)?)?);
-            }
-            ContractArtifactFields::Ir => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ir)?
-                        .as_str()
-                        .ok_or_else(|| eyre::eyre!("Failed to extract artifact ir as a string"))?
-                );
-            }
-            ContractArtifactFields::IrOptimized => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ir_optimized)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact optimized ir as a string"
-                    ))?
-                );
-            }
-            ContractArtifactFields::Metadata => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.metadata)?)?);
-            }
-            ContractArtifactFields::UserDoc => {
-                println!("{}", serde_json::to_string_pretty(&to_value(&artifact.userdoc)?)?);
-            }
-            ContractArtifactFields::Ewasm => {
-                println!(
-                    "{}",
-                    to_value(&artifact.ewasm)?.as_str().ok_or_else(|| eyre::eyre!(
-                        "Failed to extract artifact ewasm as a string"
-                    ))?
-                );
-            }
-        };
-
-        Ok(())
     }
 }

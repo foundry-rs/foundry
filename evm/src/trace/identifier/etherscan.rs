@@ -3,6 +3,7 @@ use ethers::{
     abi::{Abi, Address},
     etherscan,
     prelude::{contract::ContractMetadata, errors::EtherscanError},
+    solc::utils::RuntimeOrHandle,
     types::Chain,
 };
 use futures::{
@@ -64,10 +65,11 @@ impl TraceIdentifier for EtherscanIdentifier {
                     label: Some(label.clone()),
                     contract: Some(label),
                     abi: Some(Cow::Owned(abi)),
+                    artifact_id: None,
                 })
                 .collect();
 
-            foundry_utils::RuntimeOrHandle::new().block_on(fut)
+            RuntimeOrHandle::new().block_on(fut)
         })
     }
 }

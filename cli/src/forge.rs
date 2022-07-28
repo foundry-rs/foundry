@@ -1,22 +1,25 @@
 pub mod cmd;
 pub mod compile;
+mod handler;
 mod opts;
 mod suggestions;
 mod term;
 mod utils;
 
-use crate::cmd::{
-    forge::{cache::CacheSubcommands, watch},
-    Cmd,
+use crate::{
+    cmd::{
+        forge::{cache::CacheSubcommands, watch},
+        Cmd,
+    },
+    utils::CommandUtils,
 };
-use opts::forge::{Dependency, Opts, Subcommands};
-use std::process::Command;
-
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
+use opts::forge::{Opts, Subcommands};
+use std::process::Command;
 
 fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 
@@ -30,6 +33,12 @@ fn main() -> eyre::Result<()> {
                 outcome.ensure_ok()?;
             }
         }
+        Subcommands::Script(cmd) => {
+            utils::block_on(cmd.run_script())?;
+        }
+        Subcommands::Coverage(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
         }
@@ -40,8 +49,8 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        Subcommands::Run(cmd) => {
-            cmd.run()?;
+        Subcommands::Debug(cmd) => {
+            utils::block_on(cmd.debug())?;
         }
         Subcommands::VerifyContract(args) => {
             utils::block_on(args.run())?;
@@ -58,26 +67,26 @@ fn main() -> eyre::Result<()> {
             }
         },
         Subcommands::Create(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.run())?;
         }
         Subcommands::Update { lib } => {
             let mut cmd = Command::new("git");
 
-            cmd.args(&["submodule", "update", "--remote", "--init", "--recursive"]);
+            cmd.args(&["submodule", "update", "--remote", "--init"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
                 cmd.args(&["--", lib.display().to_string().as_str()]);
             }
 
-            cmd.spawn()?.wait()?;
+            cmd.exec()?;
         }
         // TODO: Make it work with updates?
         Subcommands::Install(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Remove { dependencies } => {
-            remove(std::env::current_dir()?, dependencies)?;
+        Subcommands::Remove(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Remappings(cmd) => {
             cmd.run()?;
@@ -99,9 +108,9 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        // Subcommands::Fmt(cmd) => {
-        //     cmd.run()?;
-        // }
+        Subcommands::Fmt(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }
@@ -111,45 +120,13 @@ fn main() -> eyre::Result<()> {
         Subcommands::Inspect(cmd) => {
             cmd.run()?;
         }
+        Subcommands::UploadSelectors(args) => {
+            utils::block_on(args.run())?;
+        }
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
     }
 
     Ok(())
-}
-
-fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
-    let libs = std::path::Path::new("lib");
-    let git_mod_root = std::path::Path::new(".git/modules");
-
-    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
-        let path = libs.join(&target_dir);
-        let git_mod_path = git_mod_root.join(&path);
-        println!("Removing {} in {:?}, (url: {:?}, tag: {:?})", dep.name, path, dep.url, dep.tag);
-
-        // remove submodule entry from .git/config
-        Command::new("git")
-            .args(&["submodule", "deinit", "-f", &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // remove the submodule repository from .git/modules directory
-        Command::new("rm")
-            .args(&["-rf", &git_mod_path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // remove the leftover submodule directory
-        Command::new("git")
-            .args(&["rm", "-f", &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        Ok(())
-    })
 }

@@ -36,7 +36,11 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use ethers::types::{TxHash, U64};
+use anvil_core::eth::transaction::PendingTransaction;
+use ethers::{
+    prelude::TxpoolStatus,
+    types::{TxHash, U64},
+};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -61,6 +65,24 @@ impl Pool {
         self.inner.read().ready_transactions()
     }
 
+    /// Returns all transactions that are not ready to be included in a block yet
+    pub fn pending_transactions(&self) -> Vec<Arc<PoolTransaction>> {
+        self.inner.read().pending_transactions.transactions().collect()
+    }
+
+    /// Returns the _pending_ transaction for that `hash` if it exists in the mempool
+    pub fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        self.inner.read().get_transaction(hash)
+    }
+
+    /// Returns the number of tx that are ready and queued for further execution
+    pub fn txpool_status(&self) -> TxpoolStatus {
+        // Note: naming differs here compared to geth's `TxpoolStatus`
+        let pending = self.ready_transactions().count().into();
+        let queued = self.inner.read().pending_transactions.len().into();
+        TxpoolStatus { pending, queued }
+    }
+
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
@@ -73,7 +95,7 @@ impl Pool {
         // prune all the markers the mined transactions provide
         let res = self
             .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
-        trace!(target: "node", "pruned transaction markers {:?}", res);
+        trace!(target: "txpool", "pruned transaction markers {:?}", res);
         res
     }
 
@@ -86,7 +108,7 @@ impl Pool {
         block_number: U64,
         markers: impl IntoIterator<Item = TxMarker>,
     ) -> PruneResult {
-        debug!(target: "txpool", "pruning transactions for block {}", block_number);
+        debug!(target: "txpool", ?block_number, "pruning transactions");
         self.inner.write().prune_markers(markers)
     }
 
@@ -94,7 +116,11 @@ impl Pool {
     pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         let added = self.inner.write().add_transaction(tx)?;
         if let AddedTransaction::Ready(ref ready) = added {
-            self.notify_listener(ready.hash)
+            self.notify_listener(ready.hash);
+            // also notify promoted transactions
+            for promoted in ready.promoted.iter().copied() {
+                self.notify_listener(promoted);
+            }
         }
         Ok(added)
     }
@@ -124,7 +150,7 @@ impl Pool {
     ///
     /// **Note**: this will also drop any transaction that depend on the `tx`
     pub fn drop_transaction(&self, tx: TxHash) -> Option<Arc<PoolTransaction>> {
-        trace!(target: "txpool", "Dropping transaction: {:?}", tx);
+        trace!(target: "txpool", "Dropping transaction: [{:?}]", tx);
         let removed = {
             let mut pool = self.inner.write();
             pool.ready_transactions.remove_with_markers(vec![tx], None)
@@ -183,8 +209,20 @@ impl PoolInner {
         self.ready_transactions.get_transactions()
     }
 
+    /// checks both pools for the matching transaction
+    ///
+    /// Returns `None` if the transaction does not exist in the pool
+    fn get_transaction(&self, hash: TxHash) -> Option<PendingTransaction> {
+        if let Some(pending) = self.pending_transactions.get(&hash) {
+            return Some(pending.transaction.pending_transaction.clone())
+        }
+        Some(
+            self.ready_transactions.get(&hash)?.transaction.transaction.pending_transaction.clone(),
+        )
+    }
+
     /// Returns true if this pool already contains the transaction
-    pub fn contains(&self, tx_hash: &TxHash) -> bool {
+    fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 

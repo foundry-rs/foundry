@@ -1,12 +1,15 @@
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::cmd::Cmd;
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    Cmd,
+};
 use clap::{Parser, ValueHint};
+use foundry_common::fs;
 use foundry_config::Config;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
-    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath)]
+    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath, value_name = "TARGET_PATH")]
     pub target_path: PathBuf,
 
     #[clap(
@@ -14,7 +17,8 @@ pub struct FlattenArgs {
         short,
         help = "The path to output the flattened contract.",
         long_help = "The path to output the flattened contract. If not specified, the flattened contract will be output to stdout.",
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "FILE"
     )]
     pub output: Option<PathBuf>,
 
@@ -40,6 +44,9 @@ impl Cmd for FlattenArgs {
             libraries: vec![],
             via_ir: false,
             revert_strings: None,
+            silent: false,
+            build_info: false,
+            build_info_path: None,
         };
 
         let config = Config::from(&build_args);
@@ -52,8 +59,8 @@ impl Cmd for FlattenArgs {
 
         match output {
             Some(output) => {
-                std::fs::create_dir_all(&output.parent().unwrap())?;
-                std::fs::write(&output, flattened)?;
+                fs::create_dir_all(&output.parent().unwrap())?;
+                fs::write(&output, flattened)?;
                 println!("Flattened file written at {}", output.display());
             }
             None => println!("{flattened}"),

@@ -77,7 +77,7 @@ impl Default for TransactionOrder {
 pub struct TransactionPriority(pub U256);
 
 /// Internal Transaction type
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PoolTransaction {
     /// the pending eth transaction
     pub pending_transaction: PendingTransaction,
@@ -131,6 +131,20 @@ pub struct PendingTransactions {
 // == impl PendingTransactions ==
 
 impl PendingTransactions {
+    /// Returns the number of transactions that are currently waiting
+    pub fn len(&self) -> usize {
+        self.waiting_queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.waiting_queue.is_empty()
+    }
+
+    /// Returns an iterator over all transactions in the waiting pool
+    pub fn transactions(&self) -> impl Iterator<Item = Arc<PoolTransaction>> + '_ {
+        self.waiting_queue.values().map(|tx| tx.transaction.clone())
+    }
+
     /// Adds a transaction to Pending queue of transactions
     pub fn add_transaction(&mut self, tx: PendingPoolTransaction) -> Result<(), PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");
@@ -169,6 +183,11 @@ impl PendingTransactions {
     /// Returns true if given transaction is part of the queue
     pub fn contains(&self, hash: &TxHash) -> bool {
         self.waiting_queue.contains_key(hash)
+    }
+
+    /// Returns the transaction for the hash if it's pending
+    pub fn get(&self, hash: &TxHash) -> Option<&PendingPoolTransaction> {
+        self.waiting_queue.get(hash)
     }
 
     /// This will check off the markers of pending transactions.
@@ -369,6 +388,11 @@ impl ReadyTransactions {
         self.ready_tx.read().contains_key(hash)
     }
 
+    /// Returns the transaction for the hash if it's in the ready pool but not yet mined
+    pub fn get(&self, hash: &TxHash) -> Option<ReadyTransaction> {
+        self.ready_tx.read().get(hash).cloned()
+    }
+
     pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
         &self.provided_markers
     }
@@ -460,7 +484,7 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() < to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {
@@ -645,7 +669,7 @@ impl Ord for PoolTransactionRef {
 }
 
 #[derive(Debug, Clone)]
-struct ReadyTransaction {
+pub struct ReadyTransaction {
     /// ref to the actual transaction
     pub transaction: PoolTransactionRef,
     /// tracks the transactions that get unlocked by this transaction

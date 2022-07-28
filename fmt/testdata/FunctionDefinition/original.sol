@@ -7,6 +7,44 @@ interface FunctionInterfaces {
 
     function oneReturn() returns(uint y1);
 
+    // function prefix
+    function withComments( // function name postfix
+    // x1 prefix
+    uint256 x1, // x1 postfix
+
+        // x2 prefix
+            uint256 x2, // x2 postfix
+                // x2 postfix2
+        /*
+            multi-line x3 prefix
+        */
+        uint256 x3 // x3 postfix
+
+    )
+            // pure prefix
+                pure // pure postfix
+        // modifier1 prefix
+        modifier1 // modifier1 postfix
+    // public prefix
+    public // public postfix
+        // modifier2 prefix
+        modifier2 /*
+                    mutliline modifier2 postfix
+                    */
+            // modifier3 prefix
+            modifier3 // modifier3 postfix
+        returns (
+            // y1 prefix
+            uint256 y1, // y1 postfix
+            // y2 prefix
+            uint256 y2, // y2 postfix
+            // y3 prefix
+            uint256 y3 // y3 postfix
+        ); // function postfix
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                    TEST
+    //////////////////////////////////////////////////////////////////////////*/
     function manyParams(uint x1, uint x2, uint x3, uint x4, uint x5, uint x6, uint x7, uint x8, uint x9, uint x10);
 
     function manyModifiers() modifier1() modifier2() modifier3 modifier4 modifier5 modifier6 modifier7 modifier8 modifier9 modifier10;
@@ -167,3 +205,14 @@ contract FunctionDefinitions {
     fallback() external payable virtual {}
     receive() external payable virtual {}
 }
+
+contract FunctionOverrides is FunctionInterfaces, FunctionDefinitions {
+    function noParamsNoModifiersNoReturns() override {
+        a = 1;
+    }
+
+    function oneParam(uint256 x) override(FunctionInterfaces, FunctionDefinitions, SomeOtherFunctionContract, SomeImport.AndAnotherFunctionContract) {
+        a = 1;
+    }
+}
+

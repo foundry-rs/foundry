@@ -1,8 +1,14 @@
 #![doc = include_str!("../README.md")]
 
-// mod formatter;
-// mod loc;
-// mod visit;
-//
-// pub use formatter::{Formatter, FormatterConfig};
-// pub use visit::Visitable;
+mod comments;
+mod formatter;
+mod macros;
+pub mod solang_ext;
+mod string;
+mod visit;
+
+pub use foundry_config::fmt::*;
+
+pub use comments::Comments;
+pub use formatter::{Formatter, FormatterError};
+pub use visit::{Visitable, Visitor};

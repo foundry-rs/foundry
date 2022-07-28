@@ -7,19 +7,23 @@ use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
     cache::CacheArgs,
-    config,
+    config, coverage,
     create::CreateArgs,
+    debug::DebugArgs,
     flatten,
+    fmt::FmtArgs,
+    fourbyte::UploadSelectorsArgs,
     init::InitArgs,
     inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
-    run::RunArgs,
+    script::ScriptArgs,
     snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
 
+use crate::cmd::forge::remove::RemoveArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -45,24 +49,28 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(alias = "t")]
-    #[clap(about = "Run the project's tests.")]
+    #[clap(visible_alias = "t", about = "Run the project's tests.")]
     Test(test::TestArgs),
 
-    #[clap(alias = "bi")]
-    #[clap(about = "Generate Rust bindings for smart contracts.")]
+    #[clap(
+        about = "Run a smart contract as a script, building transactions that can be sent onchain."
+    )]
+    Script(ScriptArgs),
+
+    #[clap(about = "Generate coverage reports.")]
+    Coverage(coverage::CoverageArgs),
+
+    #[clap(alias = "bi", about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(alias = "b")]
-    #[clap(about = "Build the project's smart contracts.")]
+    #[clap(visible_alias = "b", about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(alias = "r")]
-    #[clap(about = "Run a single smart contract as a script.")]
-    Run(RunArgs),
+    #[clap(visible_alias = "d", about = "Debugs a single smart contract as a script.")]
+    Debug(DebugArgs),
 
     #[clap(
-        alias = "u",
+        visible_alias = "u",
         about = "Update one or multiple dependencies.",
         long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
     )]
@@ -75,53 +83,54 @@ pub enum Subcommands {
     },
 
     #[clap(
-        alias = "i",
+        visible_alias = "i",
         about = "Install one or multiple dependencies.",
         long_about = "Install one or multiple dependencies. If no arguments are provided, then existing dependencies will be installed."
     )]
     Install(InstallArgs),
 
-    #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
-    Remove {
-        #[clap(help = "The path to the dependency you want to remove.")]
-        dependencies: Vec<Dependency>,
-    },
+    #[clap(visible_alias = "rm", about = "Remove one or multiple dependencies.")]
+    Remove(RemoveArgs),
 
-    #[clap(alias = "re", about = "Get the automatically inferred remappings for the project.")]
+    #[clap(
+        visible_alias = "re",
+        about = "Get the automatically inferred remappings for the project."
+    )]
     Remappings(RemappingArgs),
 
     #[clap(
-        alias = "v",
+        visible_alias = "v",
         about = "Verify smart contracts on Etherscan.",
         long_about = "Verify smart contracts on Etherscan."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
-        alias = "vc",
+        visible_alias = "vc",
         about = "Check verification status on Etherscan.",
         long_about = "Check verification status on Etherscan."
     )]
     VerifyCheck(VerifyCheckArgs),
 
-    #[clap(alias = "c", about = "Deploy a smart contract.")]
+    #[clap(visible_alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
     #[clap(about = "Create a new Forge project.")]
     Init(InitArgs),
 
-    #[clap(alias = "com", about = "Generate shell completions script")]
+    #[clap(visible_alias = "com", about = "Generate shell completions script.")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 
-    #[clap(alias = "cl", about = "Remove the build artifacts and cache directories.")]
+    #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
             help = "The project's root path. Defaults to the current working directory.",
             long,
-            value_hint = ValueHint::DirPath
+            value_hint = ValueHint::DirPath,
+            value_name = "PATH"
         )]
         root: Option<PathBuf>,
     },
@@ -129,22 +138,32 @@ pub enum Subcommands {
     #[clap(about = "Manage the Foundry cache.")]
     Cache(CacheArgs),
 
-    #[clap(alias = "s", about = "Create a snapshot of each test's gas usage.")]
+    #[clap(visible_alias = "s", about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(alias = "co", about = "Display the current config.")]
+    #[clap(visible_alias = "co", about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(alias = "f", about = "Flatten a source file and all of its imports into one file.")]
+    #[clap(
+        visible_alias = "f",
+        about = "Flatten a source file and all of its imports into one file."
+    )]
     Flatten(flatten::FlattenArgs),
 
-    // #[clap(about = "formats Solidity source files")]
-    // Fmt(FmtArgs),
-    #[clap(alias = "in", about = "Get specialized information about a smart contract")]
+    #[clap(about = "Formats Solidity source files.")]
+    Fmt(FmtArgs),
+
+    #[clap(visible_alias = "in", about = "Get specialized information about a smart contract.")]
     Inspect(inspect::InspectArgs),
 
     #[clap(
-        alias = "tr",
+        visible_alias = "up",
+        about = "Uploads abi of given contract to https://sig.eth.samczsun.com function selector database."
+    )]
+    UploadSelectors(UploadSelectorsArgs),
+
+    #[clap(
+        visible_alias = "tr",
         about = "Display a tree visualization of the project's dependency graph."
     )]
     Tree(tree::TreeArgs),
@@ -156,7 +175,7 @@ pub enum Subcommands {
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "The target EVM version.", long)]
+    #[clap(help = "The target EVM version.", long, value_name = "VERSION")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
@@ -164,7 +183,7 @@ pub struct CompilerArgs {
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "The number of optimizer runs.", long)]
+    #[clap(help = "The number of optimizer runs.", long, value_name = "RUNS")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
 
@@ -173,63 +192,16 @@ pub struct CompilerArgs {
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
     ///
     /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
-    #[clap(long, min_values = 1)]
+    #[clap(long, min_values = 1, value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output: Vec<ContractOutputSelection>,
 
     /// Extra output to write to separate files.
     ///
     /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
-    #[clap(long, min_values = 1)]
+    #[clap(long, min_values = 1, value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output_files: Vec<ContractOutputSelection>,
-}
-
-/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
-/// optional.
-#[derive(Clone, Debug)]
-pub struct ContractInfo {
-    /// Location of the contract
-    pub path: Option<String>,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for ContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let err = "contract source info format must be `<path>:<contractname>` or `<contractname>`";
-        let mut iter = s.rsplit(':');
-        let name = iter.next().ok_or_else(|| eyre::eyre!(err))?.trim().to_string();
-        let path = iter.next().map(str::to_string);
-
-        if name.ends_with(".sol") || name.contains('/') {
-            eyre::bail!(err)
-        }
-
-        Ok(Self { path, name })
-    }
-}
-
-/// Represents the common dapp argument pattern `<path>:<contractname>`
-#[derive(Clone, Debug)]
-pub struct FullContractInfo {
-    /// Location of the contract
-    pub path: String,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for FullContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (path, name) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{s}`"))?;
-        Ok(Self { path: path.to_string(), name: name.trim().to_string() })
-    }
 }
 
 /// A git dependency which will be installed as a submodule
@@ -260,14 +232,27 @@ const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
 const ALIAS_SEPARATOR: char = '=';
 
+/// Commonly used aliases for solidity repos,
+const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin")];
+
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        let mut dependency = dependency.to_string();
+
+        // this will update wrong conventional aliases
+        for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
+            if dependency.starts_with(alias) {
+                dependency = dependency.replacen(alias, real_org, 1);
+                break
+            }
+        }
+
         // everything before "=" should be considered the alias
         let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1)
         } else {
-            (None, dependency)
+            (None, dependency.as_str())
         };
 
         let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
@@ -289,19 +274,32 @@ impl FromStr for Dependency {
             }
         };
 
-        // everything after the "@" should be considered the version
+        // everything after the last "@" should be considered the version if there are no path
+        // segments
         let (url, name, tag) = if let Some(url_with_version) = url_with_version {
-            let mut split = url_with_version.split(VERSION_SEPARATOR);
-            let url = split
-                .next()
-                .ok_or_else(|| eyre::eyre!("no dependency path was provided"))?
-                .to_string();
+            // `@`s are actually valid github project name chars but we assume this is unlikely and
+            // treat everything after the last `@` as the version tag there's still the
+            // case that the user tries to use `@<org>/<project>`, so we need to check that the
+            // `tag` does not contain a slash
+            let mut split = url_with_version.rsplit(VERSION_SEPARATOR);
+
+            let mut tag = None;
+            let mut url = url_with_version.as_str();
+
+            let maybe_tag = split.next().unwrap();
+            if let Some(actual_url) = split.next() {
+                if !maybe_tag.contains('/') {
+                    tag = Some(maybe_tag.to_string());
+                    url = actual_url;
+                }
+            }
+
+            let url = url.to_string();
             let name = url
                 .split('/')
                 .last()
                 .ok_or_else(|| eyre::eyre!("no dependency name found"))?
                 .to_string();
-            let tag = split.next().map(ToString::to_string);
 
             (Some(url), Some(name), tag)
         } else {
@@ -315,6 +313,7 @@ impl FromStr for Dependency {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::solc::info::ContractInfo;
 
     #[test]
     fn parses_dependencies() {
@@ -450,5 +449,50 @@ mod tests {
             let contract = ContractInfo::from_str(input);
             assert!(contract.is_err())
         });
+    }
+
+    #[test]
+    fn can_parse_oz_dep() {
+        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable").unwrap();
+        assert_eq!(dep.name, "contracts-upgradeable");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+        );
+        assert_eq!(dep.tag, None);
+        assert_eq!(dep.alias, None);
+    }
+
+    #[test]
+    fn can_parse_oz_dep_tag() {
+        let dep = Dependency::from_str("@openzeppelin/contracts-upgradeable@v1").unwrap();
+        assert_eq!(dep.name, "contracts-upgradeable");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+        );
+        assert_eq!(dep.tag, Some("v1".to_string()));
+        assert_eq!(dep.alias, None);
+    }
+
+    #[test]
+    fn can_parse_oz_with_tag() {
+        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@v4.7.0").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
+        );
+        assert_eq!(dep.tag, Some("v4.7.0".to_string()));
+        assert_eq!(dep.alias, None);
+
+        let dep = Dependency::from_str("OpenZeppelin/openzeppelin-contracts@4.7.0").unwrap();
+        assert_eq!(dep.name, "openzeppelin-contracts");
+        assert_eq!(
+            dep.url,
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts".to_string())
+        );
+        assert_eq!(dep.tag, Some("4.7.0".to_string()));
+        assert_eq!(dep.alias, None);
     }
 }

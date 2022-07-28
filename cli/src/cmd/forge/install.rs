@@ -1,22 +1,23 @@
-//! Create command
-use atty::{self, Stream};
-use std::{
-    io::{stdin, stdout, Write},
-    path::PathBuf,
-    str,
+//! Install command
+use crate::{
+    cmd::Cmd,
+    opts::forge::Dependency,
+    utils::{p_println, CommandUtils},
 };
-
-use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
+use atty::{self, Stream};
 use clap::{Parser, ValueHint};
+use foundry_common::fs;
 use foundry_config::{find_project_root_path, Config};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use yansi::Paint;
-
 use std::{
-    path::Path,
-    process::{Command, Stdio},
+    io::{stdin, stdout, Write},
+    path::{Path, PathBuf},
+    process::Command,
+    str,
 };
+use tracing::trace;
+use yansi::Paint;
 
 static DEPENDENCY_VERSION_TAG_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^v?\d+(\.\d+)*$").unwrap());
@@ -39,8 +40,9 @@ pub struct InstallArgs {
     /// - A tag: v1.2.3
     /// - A commit: 8e8128
     ///
-    /// Target installation directory can be addded via `<alias>=` suffix.
+    /// Target installation directory can be added via `<alias>=` suffix.
     /// The dependency will installed to `lib/<alias>`.
+    #[clap(value_name = "DEPENDENCIES")]
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
@@ -48,7 +50,8 @@ pub struct InstallArgs {
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
         long,
-        value_hint = ValueHint::DirPath
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
     )]
     pub root: Option<PathBuf>,
 }
@@ -60,12 +63,6 @@ impl Cmd for InstallArgs {
         let InstallArgs { root, .. } = self;
         let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
         install(&root, self.dependencies, self.opts)?;
-        let mut config = Config::load_with_root(root);
-        let lib = PathBuf::from("lib");
-        if !config.libs.contains(&lib) {
-            config.libs.push(lib);
-            config.update_libs()?;
-        }
         Ok(())
     }
 }
@@ -87,20 +84,23 @@ pub(crate) fn install(
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
     let root = root.as_ref();
-    let libs = root.join("lib");
+    let mut config = Config::load_with_root(root);
+
+    let install_lib_dir = config.install_lib_dir();
+    let libs = root.join(&install_lib_dir);
 
     if dependencies.is_empty() {
-        let mut cmd = Command::new("git");
-        cmd.args(&[
-            "submodule",
-            "update",
-            "--init",
-            "--recursive",
-            libs.display().to_string().as_str(),
-        ]);
-        cmd.spawn()?.wait()?;
+        Command::new("git")
+            .args(&[
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                libs.display().to_string().as_str(),
+            ])
+            .exec()?;
     }
-    std::fs::create_dir_all(&libs)?;
+    fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
         if dep.url.is_none() {
@@ -112,10 +112,34 @@ pub(crate) fn install(
         if no_git {
             install_as_folder(&dep, &libs, target_dir)?;
         } else {
-            install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+            if !no_commit {
+                ensure_git_status_clean(root)?;
+            }
+            let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
+
+            // Pin branch to submodule if branch is used
+            if let Some(branch) = tag {
+                if !(branch.is_empty()) {
+                    Command::new("git")
+                        .args(&[
+                            "submodule",
+                            "set-branch",
+                            "-b",
+                            &branch,
+                            install_lib_dir.join(&target_dir).to_str().unwrap(),
+                        ])
+                        .exec()?;
+                }
+            }
         }
 
         p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
+    }
+
+    // update `libs` in config if not included yet
+    if !config.libs.contains(&install_lib_dir) {
+        config.libs.push(install_lib_dir);
+        config.update_libs()?;
     }
     Ok(())
 }
@@ -129,7 +153,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     git_checkout(dep, libs, target_dir, false)?;
 
     // remove git artifacts
-    std::fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
+    fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
 
     Ok(())
 }
@@ -140,32 +164,47 @@ fn install_as_submodule(
     libs: &Path,
     target_dir: &str,
     no_commit: bool,
-) -> eyre::Result<()> {
+) -> eyre::Result<Option<String>> {
     // install the dep
     git_submodule(dep, libs, target_dir)?;
 
     // checkout the tag if necessary
-    let message = if dep.tag.is_none() {
-        format!("forge install: {target_dir}")
+    let tag = if dep.tag.is_none() {
+        None
     } else {
         let tag = git_checkout(dep, libs, target_dir, true)?;
         if !no_commit {
-            Command::new("git").args(&["add", &libs.display().to_string()]).spawn()?.wait()?;
+            Command::new("git").args(&["add", &libs.display().to_string()]).exec()?;
         }
-        format!("forge install: {target_dir}\n\n{tag}")
+        Some(tag)
     };
 
     // commit the added submodule
     if !no_commit {
-        Command::new("git")
-            .args(&["commit", "-m", &message])
-            .current_dir(&libs)
-            .stdout(Stdio::piped())
-            .spawn()?
-            .wait()?;
+        let message = if let Some(tag) = &tag {
+            format!("forge install: {target_dir}\n\n{tag}")
+        } else {
+            format!("forge install: {target_dir}")
+        };
+
+        Command::new("git").args(&["commit", "-m", &message]).current_dir(&libs).exec()?;
     }
 
+    Ok(tag)
+}
+
+pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
+    if !git_status_clean(root)? {
+        eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
+    }
     Ok(())
+}
+
+// check that there are no modification in git working/staging area
+fn git_status_clean(root: impl AsRef<Path>) -> eyre::Result<bool> {
+    let stdout =
+        Command::new("git").args(&["status", "--short"]).current_dir(root).get_stdout_lossy()?;
+    Ok(stdout.is_empty())
 }
 
 fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
@@ -174,7 +213,6 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
     let output = Command::new("git")
         .args(&["clone", "--recursive", url, target_dir])
         .current_dir(&libs)
-        .stdout(Stdio::piped())
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("remote: Repository not found") {
@@ -192,15 +230,17 @@ fn git_clone(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()
 }
 
 fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
-    let url = dep.url.as_ref().unwrap();
+    let url = dep.url.as_ref().ok_or_else(|| eyre::eyre!("No dependency url"))?;
+    trace!("installing git submodule {:?} in {} from `{}`", dep, target_dir, url);
 
     let output = Command::new("git")
-        .args(&["submodule", "add", url, target_dir])
+        .args(&["submodule", "add", "--force", url, target_dir])
         .current_dir(&libs)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, "`git submodule add`");
+
     if stderr.contains("remote: Repository not found") {
         eyre::bail!("Repo: \"{}\" not found!", url)
     } else if stderr.contains("already exists in the index") {
@@ -218,13 +258,15 @@ fn git_submodule(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Resul
         eyre::bail!("{}", stderr.trim())
     }
 
-    Command::new("git")
+    trace!(?dep, "successfully installed");
+
+    let output = Command::new("git")
         .args(&["submodule", "update", "--init", "--recursive", target_dir])
         .current_dir(&libs)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?
-        .wait()?;
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, ?libs, "`git submodule update --init --recursive` {}", target_dir);
 
     Ok(())
 }
@@ -240,28 +282,38 @@ fn git_checkout(
         return Ok(String::new())
     }
 
-    let mut tag = dep.tag.as_ref().unwrap().clone();
+    let mut tag = dep.tag.clone().unwrap();
+    let mut is_branch = false;
     // only try to match tag if current terminal is a tty
     if atty::is(Stream::Stdout) {
-        tag = match_tag(&tag, libs, target_dir)?
+        if tag.is_empty() {
+            tag = match_tag(&tag, libs, target_dir)?;
+        } else if let Some(branch) = match_branch(&tag, libs, target_dir)? {
+            trace!(?tag, ?branch, "selecting branch for given tag");
+            tag = branch;
+            is_branch = true;
+        }
     }
     let url = dep.url.as_ref().unwrap();
 
-    let args = if recurse {
-        vec!["checkout", "--recurse-submodules", &tag]
-    } else {
-        vec!["checkout", &tag]
+    let checkout = |tag: &str| {
+        let args = if recurse {
+            vec!["checkout", "--recurse-submodules", tag]
+        } else {
+            vec!["checkout", tag]
+        };
+        trace!(?tag, ?recurse, "git checkout");
+        Command::new("git").args(args).current_dir(&libs.join(&target_dir)).output()
     };
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(&libs.join(&target_dir))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
+
+    let output = checkout(&tag)?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    trace!(?stderr, ?tag, "checked out");
+
     if !&output.status.success() {
         // remove dependency on failed checkout
-        std::fs::remove_dir_all(libs.join(&target_dir))?;
+        fs::remove_dir_all(libs.join(&target_dir))?;
 
         if stderr.contains(
             format!("error: pathspec '{tag}' did not match any file(s) known to git").as_str(),
@@ -272,7 +324,11 @@ fn git_checkout(
         }
     }
 
-    Ok(tag)
+    if is_branch {
+        Ok(tag)
+    } else {
+        Ok(String::new())
+    }
 }
 
 /// disambiguate tag if it is a version tag
@@ -289,9 +345,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
     let output = Command::new("git")
         .args(&["tag"])
         .current_dir(&libs.join(&target_dir))
-        .stdout(Stdio::piped())
-        .output()?;
-    let output = String::from_utf8_lossy(&output.stdout);
+        .get_stdout_lossy()?;
     let mut candidates: Vec<String> = output
         .trim()
         .split('\n')
@@ -344,7 +398,7 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
         stdout().flush()?;
         let mut input = String::new();
         stdin().read_line(&mut input)?;
-        // default selection, return fist candidate
+        // default selection, return first candidate
         if input.trim().is_empty() {
             println!("[1] {} selected", candidates[1]);
             return Ok(candidates[1].clone())
@@ -358,5 +412,80 @@ fn match_tag(tag: &String, libs: &Path, target_dir: &str) -> eyre::Result<String
             }
             _ => continue,
         }
+    }
+}
+
+fn match_branch(tag: &str, libs: &Path, target_dir: &str) -> eyre::Result<Option<String>> {
+    // fetch remote branches and check for tag
+    let output = Command::new("git")
+        .args(&["branch", "-r"])
+        .current_dir(&libs.join(&target_dir))
+        .get_stdout_lossy()?;
+
+    let mut candidates = output
+        .lines()
+        .map(|x| x.trim().trim_start_matches("origin/"))
+        .filter(|x| x.starts_with(tag))
+        .map(str::to_string)
+        .rev()
+        .collect::<Vec<_>>();
+
+    trace!(?candidates, ?tag, "found branch candidates");
+
+    // no match found, fall back to the user-provided tag
+    if candidates.is_empty() {
+        return Ok(None)
+    }
+
+    // have exact match
+    for candidate in candidates.iter() {
+        if candidate.as_str() == tag {
+            return Ok(Some(tag.to_string()))
+        }
+    }
+
+    // only one candidate, ask whether the user wants to accept or not
+    if candidates.len() == 1 {
+        let matched_tag = candidates[0].clone();
+        print!("Found a similar branch: {}, do you want to use this instead? ([y]/n)", matched_tag);
+        stdout().flush()?;
+        let mut input = String::new();
+        stdin().read_line(&mut input)?;
+        input = input.trim().to_lowercase();
+        return if input.is_empty() || input == "y" || input == "yes" {
+            Ok(Some(matched_tag))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // multiple candidates, ask the user to choose one or skip
+    candidates.insert(0, format!("{} (original branch)", tag));
+    println!("There are multiple matching branches:");
+    for (i, candidate) in candidates.iter().enumerate() {
+        println!("[{}] {}", i, candidate);
+    }
+
+    let n_candidates = candidates.len();
+    print!("Please select a tag (0-{}, default: 1, Press <enter> to cancel): ", n_candidates - 1);
+    stdout().flush()?;
+    let mut input = String::new();
+    stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    // default selection, return first candidate
+    if input.is_empty() {
+        println!("cancel branch matching");
+        return Ok(None)
+    }
+
+    // match user input, 0 indicates skipping and use original tag
+    match input.parse::<usize>() {
+        Ok(i) if i == 0 => Ok(Some(tag.to_string())),
+        Ok(i) if (1..=n_candidates).contains(&i) => {
+            println!("[{}] {} selected", i, candidates[i]);
+            Ok(Some(candidates.remove(i)))
+        }
+        _ => Ok(None),
     }
 }

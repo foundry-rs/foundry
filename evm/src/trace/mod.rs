@@ -97,11 +97,16 @@ impl fmt::Display for CallTraceArena {
             idx: usize,
             left: &str,
             child: &str,
+            verbose: bool,
         ) -> fmt::Result {
             let node = &arena.arena[idx];
 
             // Display trace header
-            writeln!(writer, "{}{}", left, node.trace)?;
+            if !verbose {
+                writeln!(writer, "{}{}", left, node.trace)?;
+            } else {
+                writeln!(writer, "{}{:#}", left, node.trace)?;
+            }
 
             // Display logs and subcalls
             let left_prefix = format!("{child}{BRANCH}");
@@ -123,7 +128,14 @@ impl fmt::Display for CallTraceArena {
                         })?;
                     }
                     LogCallOrder::Call(index) => {
-                        inner(arena, writer, node.children[*index], &left_prefix, &right_prefix)?;
+                        inner(
+                            arena,
+                            writer,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                            verbose,
+                        )?;
                     }
                 }
             }
@@ -145,7 +157,7 @@ impl fmt::Display for CallTraceArena {
             Ok(())
         }
 
-        inner(self, f, 0, "  ", "  ")
+        inner(self, f, 0, "  ", "  ", f.alternate())
     }
 }
 
@@ -197,7 +209,7 @@ impl fmt::Display for RawOrDecodedLog {
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
@@ -205,22 +217,22 @@ pub enum LogCallOrder {
 
 // TODO: Maybe unify with output
 /// Raw or decoded calldata.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
     Raw(Vec<u8>),
     /// Decoded calldata.
     ///
-    /// The first element in the tuple is the function name, and the second element is a vector of
-    /// decoded parameters.
-    Decoded(String, Vec<String>),
+    /// The first element in the tuple is the function name, second is the function signature and
+    /// the third element is a vector of decoded parameters.
+    Decoded(String, String, Vec<String>),
 }
 
 impl RawOrDecodedCall {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
             RawOrDecodedCall::Raw(raw) => raw.clone(),
-            RawOrDecodedCall::Decoded(_, _) => {
+            RawOrDecodedCall::Decoded(_, _, _) => {
                 vec![]
             }
         }
@@ -234,7 +246,7 @@ impl Default for RawOrDecodedCall {
 }
 
 /// Raw or decoded return data.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
     Raw(Vec<u8>),
@@ -273,7 +285,7 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
@@ -353,6 +365,8 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let address =
+            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
         if self.created() {
             write!(
                 f,
@@ -361,7 +375,7 @@ impl fmt::Display for CallTrace {
                 Paint::yellow(CALL),
                 Paint::yellow("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                self.address
+                address
             )?;
         } else {
             let (func, inputs) = match &self.data {
@@ -371,7 +385,7 @@ impl fmt::Display for CallTrace {
                     assert!(bytes.len() >= 4);
                     (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
                 }
-                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
             };
 
             let action = match self.kind {
@@ -388,7 +402,7 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
                 if !self.value.is_zero() {
                     format!("{{value: {}}}", self.value)

@@ -8,4 +8,5 @@ A test suite that tests different aspects of Foundry.
 - [`logs`](logs): Tests for Foundry logging capabilities
 - [`cheats`](cheats): Tests for Foundry cheatcodes
 - [`fuzz`](fuzz): Tests for the Foundry fuzzer
-- [`fuzz`](fuzz): Tests for Foundry tracer
+- [`trace`](trace): Tests for the Foundry tracer
+- [`fork`](fork): Tests for Foundry forking capabilities
