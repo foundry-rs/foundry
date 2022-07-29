@@ -73,7 +73,7 @@ impl ScriptArgs {
     /// and any CREATE2 contract addresses created.
     pub async fn execute_transactions(
         &self,
-        transactions: VecDeque<TypedTransaction>,
+        transactions: VecDeque<BroadcastableTransaction>,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
@@ -103,8 +103,8 @@ impl ScriptArgs {
             .collect();
 
         let mut final_txs = VecDeque::new();
-        for tx in transactions {
-            match tx {
+        for transaction in transactions {
+            match transaction.transaction {
                 TypedTransaction::Legacy(mut tx) => {
                     let mut result = runner
                         .simulate(
@@ -139,6 +139,7 @@ impl ScriptArgs {
 
                     final_txs.push_back(TransactionWithMetadata::new(
                         tx.into(),
+                        transaction.rpc,
                         &result,
                         &address_to_abi,
                         decoder,

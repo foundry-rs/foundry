@@ -249,6 +249,7 @@ pub struct TransactionWithMetadata {
     pub function: Option<String>,
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
+    pub rpc: Option<String>,
     pub transaction: TypedTransaction,
 }
 
@@ -267,11 +268,12 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 impl TransactionWithMetadata {
     pub fn new(
         transaction: TypedTransaction,
+        rpc: Option<String>,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
     ) -> eyre::Result<Self> {
-        let mut metadata = Self { transaction, ..Default::default() };
+        let mut metadata = Self { transaction, rpc, ..Default::default() };
 
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {

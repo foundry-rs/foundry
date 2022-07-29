@@ -1,4 +1,4 @@
-use self::inspector::{InspectorData, InspectorStackConfig};
+use self::inspector::{cheatcodes::BroadcastableTransaction, InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
     format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
@@ -528,7 +528,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        transactions: Option<VecDeque<TypedTransaction>>,
+        transactions: Option<VecDeque<BroadcastableTransaction>>,
         state_changeset: Option<StateChangeset>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -576,7 +576,7 @@ pub struct CallResult<D: Detokenize> {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -608,7 +608,7 @@ pub struct RawCallResult {
     /// The debug nodes of the call
     pub debug: Option<DebugArena>,
     /// Scripted transactions generated from this call
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you

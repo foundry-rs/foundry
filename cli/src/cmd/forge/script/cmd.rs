@@ -133,8 +133,14 @@ impl ScriptArgs {
                     );
 
                     if let Some(txs) = &mut result.transactions {
+                        // TODO(joshie): how to handle lib linking to different forks?
                         for tx in txs.iter() {
-                            lib_deploy.push_back(TypedTransaction::Legacy(tx.clone().into()));
+                            lib_deploy.push_back(BroadcastableTransaction {
+                                rpc: tx.rpc.clone(),
+                                transaction: TypedTransaction::Legacy(
+                                    tx.transaction.clone().into(),
+                                ),
+                            });
                         }
                         *txs = lib_deploy;
                     }
@@ -202,7 +208,10 @@ impl ScriptArgs {
 
         if let Some(new_txs) = &result.transactions {
             for new_tx in new_txs.iter() {
-                txs.push_back(TypedTransaction::Legacy(new_tx.clone().into()));
+                txs.push_back(BroadcastableTransaction {
+                    rpc: new_tx.rpc.clone(),
+                    transaction: TypedTransaction::Legacy(new_tx.transaction.clone().into()),
+                });
             }
         }
 

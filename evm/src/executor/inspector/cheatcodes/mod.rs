@@ -100,13 +100,19 @@ pub struct Cheatcodes {
     pub corrected_nonce: bool,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<TypedTransaction>,
+    pub broadcastable_transactions: VecDeque<BroadcastableTransaction>,
 
     /// Additional, user configurable context this Inspector has access to when inspecting a call
     pub config: Arc<CheatsConfig>,
 
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BroadcastableTransaction {
+    pub rpc: Option<String>,
+    pub transaction: TypedTransaction,
 }
 
 #[derive(Debug, Default)]
@@ -274,16 +280,17 @@ where
                         data.subroutine.load_account(broadcast.origin, data.db);
                         let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
 
-                        self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                            TransactionRequest {
+                        self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                            rpc: data.db.active_fork_url(),
+                            transaction: TypedTransaction::Legacy(TransactionRequest {
                                 from: Some(broadcast.origin),
                                 to: Some(NameOrAddress::Address(call.contract)),
                                 value: Some(call.transfer.value),
                                 data: Some(call.input.clone().into()),
                                 nonce: Some(account.info.nonce.into()),
                                 ..Default::default()
-                            },
-                        ));
+                            }),
+                        });
 
                         // call_inner does not increase nonces, so we have to do it ourselves
                         account.info.nonce += 1;
@@ -464,16 +471,17 @@ where
                 let (bytecode, to, nonce) =
                     process_create(broadcast.origin, call.init_code.clone(), data, call);
 
-                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
-                    TransactionRequest {
+                self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: data.db.active_fork_url(),
+                    transaction: TypedTransaction::Legacy(TransactionRequest {
                         from: Some(broadcast.origin),
                         to,
                         value: Some(call.value),
                         data: Some(bytecode.into()),
                         nonce: Some(nonce.into()),
                         ..Default::default()
-                    },
-                ));
+                    }),
+                });
             }
         }
 

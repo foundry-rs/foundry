@@ -206,6 +206,7 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
+            // TODO(joshie): is_some() or all txes have a selected fork
             if script_config.evm_opts.fork_url.is_some() {
                 let gas_filled_txs = self
                     .execute_transactions(txs, &mut script_config, decoder, &verify.known_contracts)

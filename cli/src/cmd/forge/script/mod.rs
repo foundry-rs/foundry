@@ -7,6 +7,7 @@ use crate::{
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
+use cast::executor::inspector::cheatcodes::BroadcastableTransaction;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Function},
@@ -301,7 +302,7 @@ impl ScriptArgs {
     fn maybe_new_sender(
         &self,
         evm_opts: &EvmOpts,
-        transactions: Option<&VecDeque<TypedTransaction>>,
+        transactions: Option<&VecDeque<BroadcastableTransaction>>,
         predeploy_libraries: &[Bytes],
     ) -> eyre::Result<Option<Address>> {
         let mut new_sender = None;
@@ -309,7 +310,7 @@ impl ScriptArgs {
         if let Some(txs) = transactions {
             if !predeploy_libraries.is_empty() {
                 for tx in txs.iter() {
-                    match tx {
+                    match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
                             if tx.to.is_none() {
                                 let sender = tx.from.expect("no sender");
@@ -338,16 +339,17 @@ impl ScriptArgs {
         from: Address,
         nonce: U256,
         data: &[Bytes],
-    ) -> VecDeque<TypedTransaction> {
+    ) -> VecDeque<BroadcastableTransaction> {
         data.iter()
             .enumerate()
-            .map(|(i, bytes)| {
-                TypedTransaction::Legacy(TransactionRequest {
+            .map(|(i, bytes)| BroadcastableTransaction {
+                rpc: None,
+                transaction: TypedTransaction::Legacy(TransactionRequest {
                     from: Some(from),
                     data: Some(bytes.clone()),
                     nonce: Some(nonce + i),
                     ..Default::default()
-                })
+                }),
             })
             .collect()
     }
@@ -407,7 +409,7 @@ pub struct ScriptResult {
     pub debug: Option<Vec<DebugArena>>,
     pub gas: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
-    pub transactions: Option<VecDeque<TypedTransaction>>,
+    pub transactions: Option<VecDeque<BroadcastableTransaction>>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
 }
