@@ -75,7 +75,13 @@ impl CheatsConfig {
         let url_or_alias = url_or_alias.into();
         match self.rpc_endpoints.get(&url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
-            Some(Err(err)) => Err(util::encode_error(err)),
+            Some(Err(err)) => {
+                // try resolve again, by checking if env vars are now set
+                if let Ok(url) = err.try_resolve_endpoint() {
+                    return Ok(url)
+                }
+                Err(util::encode_error(err))
+            }
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
                     Err(util::encode_error(format!("invalid rpc url {}", url_or_alias)))
