@@ -1,9 +1,11 @@
 use super::{
-    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantExecutor,
-    InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
+    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantFuzzError,
+    InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator, TargetedContracts,
 };
 use crate::{
-    executor::{inspector::Fuzzer, Executor, RawCallResult},
+    executor::{
+        inspector::Fuzzer, Executor, RawCallResult, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
+    },
     fuzz::{
         strategies::{
             build_initial_state, collect_created_contracts, collect_state_from_call,
@@ -11,11 +13,13 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
+    CALLER,
 };
 use ethers::{
-    abi::{Abi, Address, Function},
+    abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
     prelude::{ArtifactId, U256},
 };
+use eyre::ContextCompat;
 use parking_lot::RwLock;
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -23,10 +27,27 @@ use proptest::{
 };
 use revm::DatabaseCommit;
 use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use tracing::warn;
 
 /// Alias for (Dictionary for fuzzing, initial contracts to fuzz and an InvariantStrategy).
 type InvariantPreparation =
     (EvmFuzzState, FuzzRunIdentifiedContracts, BoxedStrategy<Vec<BasicTxDetails>>);
+
+/// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
+///
+/// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
+/// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
+/// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
+pub struct InvariantExecutor<'a> {
+    pub executor: &'a mut Executor,
+    /// Proptest runner.
+    runner: TestRunner,
+    /// Contracts deployed with `setUp()`
+    setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+    /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
+    /// to identify them from the stateset changes.
+    project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+}
 
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
@@ -259,6 +280,104 @@ impl<'a> InvariantExecutor<'a> {
         self.executor.set_tracing(false);
 
         Ok((fuzz_state, targeted_contracts, strat))
+    }
+
+    /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
+    /// `targetContracts() -> address[]` and `excludeContracts() -> address[]`.
+    pub fn select_contracts_and_senders(
+        &self,
+        invariant_address: Address,
+        abi: &Abi,
+    ) -> eyre::Result<(Vec<Address>, TargetedContracts)> {
+        let [senders, selected, excluded] =
+            ["targetSenders", "targetContracts", "excludeContracts"]
+                .map(|method| self.get_list::<Address>(invariant_address, abi, method));
+
+        let mut contracts: TargetedContracts = self
+            .setup_contracts
+            .clone()
+            .into_iter()
+            .filter(|(addr, _)| {
+                *addr != invariant_address &&
+                    *addr != CHEATCODE_ADDRESS &&
+                    *addr != HARDHAT_CONSOLE_ADDRESS &&
+                    (selected.is_empty() || selected.contains(addr)) &&
+                    (excluded.is_empty() || !excluded.contains(addr))
+            })
+            .map(|(addr, (name, abi))| (addr, (name, abi, vec![])))
+            .collect();
+
+        self.select_selectors(invariant_address, abi, &mut contracts)?;
+
+        Ok((senders, contracts))
+    }
+
+    /// Selects the functions to fuzz based on the contract method `targetSelectors() -> (address,
+    /// bytes4[])[]`.
+    pub fn select_selectors(
+        &self,
+        address: Address,
+        abi: &Abi,
+        targeted_contracts: &mut TargetedContracts,
+    ) -> eyre::Result<()> {
+        let selectors =
+            self.get_list::<(Address, Vec<FixedBytes>)>(address, abi, "targetSelectors");
+
+        fn get_function(name: &str, selector: FixedBytes, abi: &Abi) -> eyre::Result<Function> {
+            abi.functions()
+                .into_iter()
+                .find(|func| func.short_signature().as_slice() == selector.as_slice())
+                .cloned()
+                .wrap_err(format!("{name} does not have the selector {:?}", selector))
+        }
+
+        for (address, bytes4_array) in selectors.into_iter() {
+            if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
+                // The contract is already part of our filter, and all we do is specify that we're
+                // only looking at specific functions coming from `bytes4_array`.
+                for selector in bytes4_array {
+                    address_selectors.push(get_function(name, selector, abi)?);
+                }
+            } else {
+                let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
+                    "[targetSelectors] address does not have an associated contract: {}",
+                    address
+                ))?;
+                let mut functions = vec![];
+                for selector in bytes4_array {
+                    functions.push(get_function(name, selector, abi)?);
+                }
+
+                targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
+            }
+        }
+        Ok(())
+    }
+
+    /// Gets list of `T` by calling the contract `method_name` function.
+    fn get_list<T>(&self, address: Address, abi: &Abi, method_name: &str) -> Vec<T>
+    where
+        T: Tokenizable + Detokenize + TokenizableItem,
+    {
+        if let Some(func) = abi.functions().into_iter().find(|func| func.name == method_name) {
+            if let Ok(call_result) = self.executor.call::<Vec<T>, _, _>(
+                CALLER,
+                address,
+                func.clone(),
+                (),
+                U256::zero(),
+                Some(abi),
+            ) {
+                return call_result.result
+            } else {
+                warn!(
+                    "The function {} was found but there was an error querying its data.",
+                    method_name
+                );
+            }
+        };
+
+        Vec::new()
     }
 }
 

@@ -1,17 +1,15 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::{fuzz::*, CALLER};
 mod executor;
-mod filters;
-use self::executor::InvariantFailures;
 use crate::{
     decode::decode_revert,
     executor::{Executor, RawCallResult},
 };
 use ethers::{
     abi::{Abi, Function},
-    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
+pub use executor::{InvariantExecutor, InvariantFailures};
 use parking_lot::RwLock;
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
@@ -37,22 +35,6 @@ pub struct InvariantTestOptions {
     /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
     /// checks
     pub call_override: bool,
-}
-
-/// Wrapper around any [`Executor`] implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
-///
-/// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contracts with
-/// inputs, until it finds a counterexample sequence. The provided [`TestRunner`] contains all the
-/// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
-pub struct InvariantExecutor<'a> {
-    pub executor: &'a mut Executor,
-    /// Proptest runner.
-    runner: TestRunner,
-    /// Contracts deployed with `setUp()`
-    setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
-    /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
-    /// to identify them from the stateset changes.
-    project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
