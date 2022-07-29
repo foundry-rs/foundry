@@ -16,13 +16,9 @@ use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
     abi::HumanReadableParser,
-    core::{
-        rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest, H256},
-    },
+    core::types::{BlockId, BlockNumber::Latest, H256},
     providers::{Middleware, Provider},
-    types::{Address, Bytes, NameOrAddress, U256},
-    utils::get_create2_address_from_hash,
+    types::{Address, NameOrAddress, U256},
 };
 use eyre::WrapErr;
 use foundry_common::fs;
@@ -38,16 +34,13 @@ use opts::{
     cast::{Opts, Subcommands},
     WalletType,
 };
-use rayon::prelude::*;
-use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Read, Write},
     path::Path,
     str::FromStr,
-    time::Instant,
-}; // TODO: use builder for exact match
+};
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -690,56 +683,7 @@ async fn main() -> eyre::Result<()> {
             let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
-        Subcommands::Create2 { starts_with, ends_with, deployer, init_code } => {
-            let mut regexs = vec![]; // TODO: add --matching param
-            if let Some(prefix) = starts_with {
-                let pad_width = prefix.len() + prefix.len() % 2;
-                hex::decode(format!("{:0>width$}", prefix, width = pad_width))
-                    .expect("invalid prefix hex provided");
-                regexs.push(format!(r"^{}", prefix));
-            }
-            if let Some(suffix) = ends_with {
-                let pad_width = suffix.len() + suffix.len() % 2;
-                hex::decode(format!("{:0>width$}", suffix, width = pad_width))
-                    .expect("invalid suffix hex provided");
-                regexs.push(format!(r"{}$", suffix));
-            }
-
-            assert!(
-                regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
-                "vanity patterns length exceeded. cannot be more than 40 characters",
-            );
-
-            let regex = RegexSet::new(regexs)?;
-
-            let init_code = Bytes::from(init_code.into_bytes());
-
-            println!("Starting to generate deterministic contract address...");
-            let timer = Instant::now();
-            let salt = std::iter::repeat_with(move || H256::random_using(&mut thread_rng()))
-                .par_bridge()
-                .find_any(|salt| {
-                    let salt = Bytes::from(salt.to_fixed_bytes());
-                    let init_code = init_code.clone();
-
-                    let addr = get_create2_address_from_hash(deployer, salt, init_code);
-                    let addr = hex::encode(addr);
-
-                    regex.matches(&addr).into_iter().count() == regex.patterns().len()
-                })
-                .expect("failed to generate vanity wallet");
-
-            println!(
-                "Successfully found contract address in {} seconds.\nAddress: {}\nSalt: {}",
-                timer.elapsed().as_secs(),
-                SimpleCast::checksum_address(&get_create2_address_from_hash(
-                    deployer,
-                    Bytes::from(salt.to_fixed_bytes()),
-                    init_code
-                ))?,
-                U256::from(salt.to_fixed_bytes())
-            );
-        }
+        Subcommands::Create2(cmd) => cmd.run()?.await?,
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {

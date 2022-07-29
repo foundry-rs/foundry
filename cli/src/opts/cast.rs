@@ -1,6 +1,9 @@
 use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
+    cmd::cast::{
+        create2::Create2Args, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
+        wallet::WalletSubcommands,
+    },
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -794,26 +797,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         visible_alias = "c2",
         about = "Generate a deterministic contract address using CREATE2"
     )]
-    Create2 {
-        #[clap(
-            long,
-            help = "Prefix for the contract address.",
-            required_unless_present = "ends-with",
-            value_name = "HEX"
-        )]
-        starts_with: Option<String>,
-        #[clap(long, help = "Suffix for the contract address.", value_name = "HEX")]
-        ends_with: Option<String>,
-        #[clap(short, long, help = "Address of the contract deployer.")]
-        deployer: Address,
-        #[clap(
-            short,
-            long,
-            help = "Init code of the contract to be deployed.",
-            value_name = "HEX"
-        )]
-        init_code: String,
-    },
+    Create2(Create2Args),
     #[clap(
         name = "find-block",
         visible_alias = "f",
