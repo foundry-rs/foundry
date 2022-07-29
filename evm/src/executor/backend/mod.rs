@@ -97,6 +97,9 @@ pub trait DatabaseExt: Database {
 
     /// Ensures that a corresponding `ForkId` exists for the given local `id`
     fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId>;
+
+    /// Returns the Fork url that's currently used in the database, if fork mode is on
+    fn active_fork_url(&self) -> Option<String>;
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -362,6 +365,11 @@ impl DatabaseExt for Backend {
     fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
         self.inner.ensure_fork_id(id)
     }
+
+    fn active_fork_url(&self) -> Option<String> {
+        let fork = self.inner.issued_local_fork_ids.get(&self.db.db.as_fork()?)?;
+        self.forks.get_fork_url(fork.clone()).ok()?
+    }
 }
 
 impl DatabaseRef for Backend {
@@ -486,7 +494,7 @@ pub struct BackendInner {
     pub launched_with_fork: Option<ForkId>,
     /// This tracks numeric fork ids and the `ForkId` used by the handler.
     ///
-    /// This is neceessary, because there can be multiple `Backends` associated with a single
+    /// This is necessary, because there can be multiple `Backends` associated with a single
     /// `ForkId` which is only a pair of endpoint + block. Since an existing fork can be
     /// modified (e.g. `roll_fork`), but this should only affect the fork that's unique for the
     /// test and not the `ForkId`

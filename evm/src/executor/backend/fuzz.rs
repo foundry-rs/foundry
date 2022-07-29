@@ -239,6 +239,11 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn ensure_fork_id(&self, id: U256) -> eyre::Result<&ForkId> {
         self.inner.ensure_fork_id(id).or_else(|_| self.backend.ensure_fork_id(id))
     }
+
+    fn active_fork_url(&self) -> Option<String> {
+        let fork = self.backend.inner.issued_local_fork_ids.get(&self.active_db().db.as_fork()?)?;
+        self.backend.forks.get_fork_url(fork.clone()).ok()?
+    }
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {

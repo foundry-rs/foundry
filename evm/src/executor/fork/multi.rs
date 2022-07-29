@@ -137,12 +137,22 @@ impl MultiFork {
         Ok(rx.recv()?)
     }
 
-    /// Returns the corresponding fork if it exist
+    /// Returns the corresponding fork if it exists
     ///
     /// Returns `None` if no matching fork backend is available.
     pub fn get_fork(&self, id: impl Into<ForkId>) -> eyre::Result<Option<SharedBackend>> {
         let (sender, rx) = oneshot_channel();
         let req = Request::GetFork(id.into(), sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()?)
+    }
+
+    /// Returns the corresponding fork url if it exists
+    ///
+    /// Returns `None` if no matching fork is available.
+    pub fn get_fork_url(&self, id: impl Into<ForkId>) -> eyre::Result<Option<String>> {
+        let (sender, rx) = oneshot_channel();
+        let req = Request::GetForkUrl(id.into(), sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
@@ -167,6 +177,8 @@ enum Request {
     GetEnv(ForkId, GetEnvSender),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
+    /// Returns the Fork Url for the `ForkId` if it exists
+    GetForkUrl(ForkId, OneshotSender<Option<String>>),
 }
 
 enum ForkTask {
@@ -264,6 +276,10 @@ impl MultiForkHandler {
                 self.forks.clear();
                 self.handlers.clear();
                 let _ = sender.send(());
+            }
+            Request::GetForkUrl(fork_id, sender) => {
+                let fork = self.forks.get(&fork_id).map(|f| f.opts.url.clone());
+                let _ = sender.send(fork);
             }
         }
     }
