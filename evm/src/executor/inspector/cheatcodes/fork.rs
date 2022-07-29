@@ -28,7 +28,7 @@ pub fn apply<DB: DatabaseExt>(
             create_select_fork(state, data, fork.0.clone(), Some(fork.1.as_u64()))
                 .map(|id| id.encode().into())
         }
-        HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::SelectFork(fork_id) => select_fork(state, data, fork_id.0),
         HEVMCalls::ActiveFork(_) => data
             .db
             .active_fork()
@@ -68,7 +68,15 @@ pub fn apply<DB: DatabaseExt>(
 }
 
 /// Selects the given fork id
-fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
+fn select_fork<DB: DatabaseExt>(
+    state: &mut Cheatcodes,
+    data: &mut EVMData<DB>,
+    fork_id: U256,
+) -> Result<Bytes, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(util::encode_error("You need to stop broadcasting before you can select forks."))
+    }
+
     data.db.select_fork(fork_id, data.env).map(|_| Default::default()).map_err(util::encode_error)
 }
 
@@ -79,6 +87,10 @@ fn create_select_fork<DB: DatabaseExt>(
     url_or_alias: String,
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
+    if state.broadcast.is_some() {
+        return Err(util::encode_error("You need to stop broadcasting before you can select forks."))
+    }
+
     let fork = create_fork_request(state, url_or_alias, block, data)?;
     data.db.create_select_fork(fork, data.env).map_err(util::encode_error)
 }
