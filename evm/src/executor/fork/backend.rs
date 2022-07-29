@@ -567,6 +567,12 @@ mod tests {
         assert_eq!(slots.len(), 1);
         assert_eq!(slots.get(&idx).copied().unwrap(), value);
 
+        let max_num = U256::from(u64::MAX);
+        println!("max_num {:?}", max_num);
+        let max_hash = backend.block_hash(max_num);
+        println!("max_hash {:?}", max_hash);
+        assert_eq!(max_hash, KECCAK_EMPTY);
+
         let num = U256::from(10u64);
         let hash = backend.block_hash(num);
         let mem_hash = *db.block_hashes().read().get(&num.as_u64()).unwrap();
