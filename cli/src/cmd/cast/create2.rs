@@ -8,10 +8,10 @@ use ethers::{
     types::{Address, Bytes, H256, U256},
     utils::get_create2_address_from_hash,
 };
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, Error};
 use futures::future::BoxFuture;
 use rayon::prelude::*;
-use regex::RegexSet;
+use regex::RegexSetBuilder;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Parser)]
@@ -57,10 +57,12 @@ impl Create2Args {
         starts_with: Option<String>,
         ends_with: Option<String>,
         matching: Option<String>,
-        case_sentitive: bool,
+        case_sensitive: bool,
         deployer: Address,
         init_code: String,
     ) -> Result<()> {
+        let mut regexs = vec![];
+
         if matching.is_some() {
             let matches = matching.unwrap();
             if starts_with.is_some() || ends_with.is_some() {
@@ -71,10 +73,10 @@ impl Create2Args {
                 eyre::bail!("Please provide a 40 bytes long sequence for matching");
             }
 
-            hex::decode(matches).wrap_err("invalid matching hex provided")?; // TODO: build regex
+            hex::decode(&matches.replace("X", "0")).wrap_err("invalid matching hex provided")?;
+            regexs.push(matches.replace("X", "."));
         }
 
-        let mut regexs = vec![];
         if let Some(prefix) = starts_with {
             let pad_width = prefix.len() + prefix.len() % 2;
             hex::decode(format!("{:0>width$}", prefix, width = pad_width))
@@ -93,7 +95,7 @@ impl Create2Args {
             "vanity patterns length exceeded. cannot be more than 40 characters",
         );
 
-        let regex = RegexSet::new(regexs)?;
+        let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
         let init_code = Bytes::from(init_code.into_bytes());
 
