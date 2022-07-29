@@ -99,8 +99,11 @@ impl RpcEndpoint {
         // loop over all placeholders in the input and replace them one by one
         for caps in RE_PLACEHOLDER.captures_iter(input) {
             let var = &caps["inner"];
-            let value = env::var(var)
-                .map_err(|source| UnresolvedEnvVarError { var: var.to_string(), source })?;
+            let value = env::var(var).map_err(|source| UnresolvedEnvVarError {
+                unresolved: input.to_string(),
+                var: var.to_string(),
+                source,
+            })?;
 
             res = res.replacen(&caps["outer"], &value, 1);
         }
@@ -178,15 +181,30 @@ impl Deref for ResolvedRpcEndpoints {
 /// Error when we failed to resolve an env var
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnresolvedEnvVarError {
+    /// The unresolved input string
+    pub unresolved: String,
     /// Var that couldn't be resolved
     pub var: String,
     /// the `env::var` error
     pub source: VarError,
 }
 
+// === impl UnresolvedEnvVarError ===
+
+impl UnresolvedEnvVarError {
+    /// Tries to resolve the RPC endpoint again
+    pub fn try_resolve_endpoint(&self) -> Result<String, UnresolvedEnvVarError> {
+        RpcEndpoint::interpolate(&self.unresolved)
+    }
+}
+
 impl fmt::Display for UnresolvedEnvVarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Failed to resolve env var `{}`: {}", self.var, self.source)
+        write!(
+            f,
+            "Failed to resolve env var `{}` in `{}`: {}",
+            self.unresolved, self.var, self.source
+        )
     }
 }
 
