@@ -73,8 +73,8 @@ impl Create2Args {
                 eyre::bail!("Please provide a 40 bytes long sequence for matching");
             }
 
-            hex::decode(&matches.replace("X", "0")).wrap_err("invalid matching hex provided")?;
-            regexs.push(matches.replace("X", "."));
+            hex::decode(&matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
+            regexs.push(matches.replace('X', "."));
         }
 
         if let Some(prefix) = starts_with {
@@ -115,7 +115,7 @@ impl Create2Args {
                 };
                 let addr = addr.strip_prefix("0x").unwrap();
 
-                regex.matches(&addr).into_iter().count() == regex.patterns().len()
+                regex.matches(addr).into_iter().count() == regex.patterns().len()
             })
             .expect("failed to generate vanity wallet");
 
