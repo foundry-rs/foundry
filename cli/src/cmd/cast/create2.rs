@@ -8,7 +8,7 @@ use ethers::{
     types::{Address, Bytes, H256, U256},
     utils::get_create2_address_from_hash,
 };
-use eyre::{Result, WrapErr, Error};
+use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use rayon::prelude::*;
 use regex::RegexSetBuilder;
@@ -28,7 +28,7 @@ pub struct Create2Args {
     #[clap(long, help = "Sequence that the address has to match", value_name = "HEX")]
     matching: Option<String>,
     #[clap(short, long)]
-    case_sentitive: bool,
+    case_sensitive: bool,
     #[clap(short, long, help = "Address of the contract deployer.")]
     deployer: Address,
     #[clap(short, long, help = "Init code of the contract to be deployed.", value_name = "HEX")]
@@ -39,13 +39,13 @@ impl Cmd for Create2Args {
     type Output = BoxFuture<'static, Result<()>>;
 
     fn run(self) -> Result<Self::Output> {
-        let Create2Args { starts_with, ends_with, matching, case_sentitive, deployer, init_code } =
+        let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
             self;
         Ok(Box::pin(Self::generate_address(
             starts_with,
             ends_with,
             matching,
-            case_sentitive,
+            case_sensitive,
             deployer,
             init_code,
         )))
@@ -99,6 +99,7 @@ impl Create2Args {
 
         let init_code = Bytes::from(init_code.into_bytes());
 
+
         println!("Starting to generate deterministic contract address...");
         let timer = Instant::now();
         let salt = std::iter::repeat_with(move || H256::random_using(&mut thread_rng()))
@@ -107,8 +108,12 @@ impl Create2Args {
                 let salt = Bytes::from(salt.to_fixed_bytes());
                 let init_code = init_code.clone();
 
-                let addr = get_create2_address_from_hash(deployer, salt, init_code);
-                let addr = hex::encode(addr);
+                let addr = if case_sensitive {
+                    SimpleCast::checksum_address(&get_create2_address_from_hash(deployer, salt, init_code)).unwrap()
+                } else {
+                    get_create2_address_from_hash(deployer, salt, init_code).to_string()
+                };
+                let addr = addr.strip_prefix("0x").unwrap();
 
                 regex.matches(&addr).into_iter().count() == regex.patterns().len()
             })
