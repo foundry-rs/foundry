@@ -177,15 +177,13 @@ impl WalletSubcommands {
                 );
             }
             WalletSubcommands::Address { wallet, private_key_override } => {
-                // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet: private_key_override
                         .map(|pk| Wallet { private_key: Some(pk), ..Default::default() })
                         .unwrap_or(wallet),
                     rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Some(Chain::Mainnet),
-                    etherscan_api_key: None,
+                    chain: Some(Chain::Mainnet.into()),
+                    ..Default::default()
                 }
                 .signer(0u64.into())
                 .await?
@@ -199,13 +197,11 @@ impl WalletSubcommands {
                 println!("Address: {}", SimpleCast::checksum_address(&addr)?);
             }
             WalletSubcommands::Sign { message, wallet } => {
-                // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
                     rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Some(Chain::Mainnet),
-                    etherscan_api_key: None,
+                    chain: Some(Chain::Mainnet.into()),
+                    ..Default::default()
                 }
                 .signer(0u64.into())
                 .await?
