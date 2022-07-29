@@ -48,6 +48,8 @@ use ui::{TUIExitReason, Tui, Ui};
 
 mod cmd;
 mod executor;
+mod multi;
+mod providers;
 mod receipts;
 mod sequence;
 
@@ -436,6 +438,7 @@ pub struct ScriptConfig {
 }
 
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
+#[derive(Clone)]
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,

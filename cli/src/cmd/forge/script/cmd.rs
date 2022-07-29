@@ -60,7 +60,7 @@ impl ScriptArgs {
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
-                self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                self.send_transactions(&mut deployment_sequence).await?;
             }
 
             if self.verify {
@@ -77,7 +77,7 @@ impl ScriptArgs {
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
 
-                deployment_sequence.verify_contracts(verify, chain).await?;
+                deployment_sequence.verify_contracts(verify).await?;
             }
         } else {
             let BuildOutput {

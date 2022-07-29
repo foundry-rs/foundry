@@ -21,9 +21,14 @@ use std::{
 };
 use tracing::trace;
 
+pub enum SequenceType {
+    Single(ScriptSequence),
+    Multi(Vec<ScriptSequence>),
+}
+
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Default)]
 pub struct ScriptSequence {
     pub transactions: VecDeque<TransactionWithMetadata>,
     pub receipts: Vec<TransactionReceipt>,
@@ -32,6 +37,9 @@ pub struct ScriptSequence {
     pub path: PathBuf,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
+    pub chain: u64,
+    #[serde(skip)]
+    pub multi: bool,
 }
 
 impl ScriptSequence {
@@ -40,10 +48,10 @@ impl ScriptSequence {
         returns: HashMap<String, NestedValue>,
         sig: &str,
         target: &ArtifactId,
-        config: &Config,
+        log_folder: &Path,
         chain_id: u64,
     ) -> eyre::Result<Self> {
-        let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let path = ScriptSequence::get_path(log_folder, sig, target, chain_id)?;
 
         Ok(ScriptSequence {
             transactions,
@@ -56,6 +64,8 @@ impl ScriptSequence {
                 .expect("Wrong system time.")
                 .as_secs(),
             libraries: vec![],
+            chain: chain_id,
+            multi: false,
         })
     }
 
@@ -70,9 +80,9 @@ impl ScriptSequence {
         Ok(ethers::solc::utils::read_json_file(path)?)
     }
 
-    /// Saves the transactions as files
+    /// Saves the transactions as file if it's a standalone deployment.
     pub fn save(&mut self) -> eyre::Result<()> {
-        if !self.transactions.is_empty() {
+        if !self.multi && !self.transactions.is_empty() {
             self.timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             let path = self.path.to_string_lossy();
             //../run-latest.json
@@ -145,8 +155,8 @@ impl ScriptSequence {
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
-    pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
-        trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
+    pub async fn verify_contracts(&mut self, verify: VerifyBundle) -> eyre::Result<()> {
+        trace!(?self.chain, "verifying {} contracts", verify.known_contracts.len());
         if let Some(etherscan_key) = &verify.etherscan_key {
             let mut future_verifications = vec![];
 
@@ -197,7 +207,7 @@ impl ScriptSequence {
                                 compiler_version: Some(version.to_string()),
                                 constructor_args: Some(hex::encode(&constructor_args)),
                                 num_of_optimizations: verify.num_of_optimizations,
-                                chain: chain.into(),
+                                chain: self.chain.into(),
                                 etherscan_key: etherscan_key.clone(),
                                 project_paths: verify.project_paths.clone(),
                                 flatten: false,
@@ -223,8 +233,17 @@ impl ScriptSequence {
     }
 
     /// Returns the list of the transactions without the metadata.
-    pub fn typed_transactions(&self) -> Vec<&TypedTransaction> {
-        self.transactions.iter().map(|tx| tx.typed_tx()).collect()
+    pub fn typed_transactions(&self) -> Vec<(String, &TypedTransaction)> {
+        self.transactions
+            .iter()
+            .map(|tx| {
+                (tx.rpc.clone().expect("to have been filled with a proper rpc"), tx.typed_tx())
+            })
+            .collect()
+    }
+
+    pub fn set_multi(&mut self, is_multi: bool) {
+        self.multi = is_multi;
     }
 }
 

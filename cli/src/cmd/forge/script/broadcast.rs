@@ -1,9 +1,14 @@
 use super::{
+    multi::MultiChainSequence,
+    providers::ProviderInfo,
     sequence::{ScriptSequence, TransactionWithMetadata},
     *,
 };
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    cmd::{
+        forge::script::{providers::ProvidersManager, receipts::wait_for_receipts},
+        has_batch_support, has_different_gas_calc,
+    },
     init_progress,
     opts::WalletType,
     update_progress,
@@ -19,16 +24,24 @@ use eyre::ContextCompat;
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::{cmp::min, fmt, sync::Arc};
+use std::{
+    borrow::Borrow,
+    cell::{Cell, RefCell},
+    cmp::min,
+    collections::{hash_map::Entry, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 impl ScriptArgs {
     /// Sends the transactions which haven't been broadcasted yet.
     pub async fn send_transactions(
         &self,
         deployment_sequence: &mut ScriptSequence,
-        fork_url: &str,
     ) -> eyre::Result<()> {
-        let provider = get_http_provider(fork_url, true);
+        // TODO(joshie)
+        let fork_url = deployment_sequence.typed_transactions().first().unwrap().0.clone();
+        let provider = get_http_provider(&fork_url, true);
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -36,7 +49,7 @@ impl ScriptArgs {
                 .typed_transactions()
                 .into_iter()
                 .skip(already_broadcasted)
-                .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
+                .map(|(rpc, tx)| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
             let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
@@ -66,7 +79,7 @@ impl ScriptArgs {
                 .typed_transactions()
                 .into_iter()
                 .skip(already_broadcasted)
-                .map(|tx| {
+                .map(|(rpc, tx)| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
 
@@ -112,7 +125,8 @@ impl ScriptArgs {
                     batch_number * batch_size + min(batch_size, batch.len()) - 1
                 );
                 for (tx, signer) in batch.into_iter() {
-                    let tx_hash = self.send_transaction(tx, signer, sequential_broadcast, fork_url);
+                    let tx_hash =
+                        self.send_transaction(tx, signer, sequential_broadcast, &fork_url);
 
                     if sequential_broadcast {
                         let tx_hash = tx_hash.await?;
@@ -206,8 +220,10 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            // TODO(joshie): is_some() or all txes have a selected fork
-            if script_config.evm_opts.fork_url.is_some() {
+            // TODO(joshie): validate rpc
+            let only_fork_rpcs = txs.len() == txs.iter().filter(|tx| tx.rpc.is_some()).count();
+
+            if script_config.evm_opts.fork_url.is_some() || only_fork_rpcs {
                 let gas_filled_txs = self
                     .execute_transactions(txs, &mut script_config, decoder, &verify.known_contracts)
                     .await
@@ -218,28 +234,43 @@ impl ScriptArgs {
                         )
                     })?;
 
-                let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
-
-                let provider = get_http_provider(&fork_url, false);
-                let chain = provider.get_chainid().await?.as_u64();
-
                 let returns = self.get_returns(&script_config, &result.returned)?;
+                let mut deployments = self
+                    .handle_chain_requirements(
+                        gas_filled_txs,
+                        target,
+                        &script_config.config,
+                        returns,
+                    )
+                    .await?;
 
-                let mut deployment_sequence = ScriptSequence::new(
-                    self.handle_chain_requirements(gas_filled_txs, provider, chain).await?,
-                    returns,
+                // TODO(joshie): move inside
+                let mut multi = MultiChainSequence::new(
+                    deployments.clone(),
                     &self.sig,
                     target,
-                    &script_config.config,
-                    chain,
+                    &script_config.config.broadcast,
                 )?;
-
-                deployment_sequence.add_libraries(libraries);
+                multi.save();
 
                 if self.broadcast {
-                    self.send_transactions(&mut deployment_sequence, &fork_url).await?;
-                    if self.verify {
-                        deployment_sequence.verify_contracts(verify, chain).await?;
+                    if deployments.len() == 1 {
+                        let mut deployment_sequence = deployments.first_mut().unwrap();
+
+                        deployment_sequence.add_libraries(libraries);
+                        self.send_transactions(&mut deployment_sequence).await?;
+
+                        if self.verify {
+                            deployment_sequence.verify_contracts(verify).await?;
+                        }
+                    } else {
+                        self.multi_chain_deployment(
+                            multi,
+                            libraries,
+                            verify,
+                            &script_config.config,
+                        )
+                        .await?;
                     }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
@@ -257,43 +288,116 @@ impl ScriptArgs {
     /// and/or gas calculations).
     async fn handle_chain_requirements(
         &self,
-        txes: VecDeque<TransactionWithMetadata>,
-        provider: Arc<Provider<RetryClient<Http>>>,
-        chain: u64,
-    ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let mut is_legacy = self.legacy;
-        if let Chain::Named(chain) = Chain::from(chain) {
-            is_legacy |= chain.is_legacy();
-        };
+        transactions: VecDeque<TransactionWithMetadata>,
+        target: &ArtifactId,
+        config: &Config,
+        returns: HashMap<String, NestedValue>,
+    ) -> eyre::Result<Vec<ScriptSequence>> {
+        let arg_url = self.evm_opts.fork_url.clone().unwrap_or_default();
 
+        // TODO(joshie)
+        let last_rpc = transactions.back().unwrap().rpc.clone();
+        let is_multi = transactions.iter().find(|tx| tx.rpc != last_rpc).is_some();
+
+        let log_folder =
+            if is_multi { config.broadcast.join("multi") } else { config.broadcast.to_path_buf() };
+
+        // TODO(joshie): make it accessible outside for broadcasting stage.
+        let mut providers: HashMap<String, Arc<Provider<RetryClient<Http>>>> = HashMap::new();
+        let mut chains: HashMap<String, u64> = HashMap::new();
+        let mut addresses = HashSet::new();
         let mut new_txes = VecDeque::new();
         let mut total_gas = U256::zero();
-        for mut tx in txes.into_iter() {
+        let mut txes_iter = transactions.into_iter().peekable();
+        let mut manager = ProvidersManager::default();
+        let mut deployments = vec![];
+
+        while let Some(mut tx) = txes_iter.next() {
+            let tx_rpc = tx.rpc.unwrap_or_else(|| arg_url.clone());
+
+            if tx_rpc.is_empty() {
+                // TODO(joshie): improve error
+                eyre::bail!("Transaction needs a RPC url.");
+            }
+
+            // TODO(joshie): Fill it for when its empty?
+            tx.rpc = Some(tx_rpc.clone());
+
+            let provider_info = match manager.inner.entry(tx_rpc.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let info = ProviderInfo::new(&tx_rpc, &tx, self.slow).await?;
+                    entry.insert(info)
+                }
+            };
+
+            let mut is_legacy = self.legacy;
+            if let Chain::Named(chain) = Chain::from(provider_info.chain) {
+                is_legacy |= chain.is_legacy();
+            };
+
             tx.change_type(is_legacy);
 
             let typed_tx = tx.typed_tx_mut();
 
-            if has_different_gas_calc(chain) {
-                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
+            if has_different_gas_calc(provider_info.chain) {
+                typed_tx.set_gas(provider_info.provider.estimate_gas(typed_tx).await?);
             }
 
             total_gas += *typed_tx.gas().expect("gas is set");
 
+            let from = tx.typed_tx().from().expect("No sender for onchain transaction.");
+            if !provider_info.wallets.contains_key(from) {
+                addresses.insert(*from);
+            }
+
+            if let Some(next_tx) = txes_iter.peek() {
+                if next_tx.rpc == tx.rpc {
+                    new_txes.push_back(tx);
+                    continue
+                }
+            }
             new_txes.push_back(tx);
+
+            if self.broadcast {
+                provider_info.wallets.extend(
+                    self.wallets
+                        .find_all(provider_info.provider.clone(), addresses.clone())
+                        .await?,
+                );
+                provider_info.sequential &= provider_info.wallets.len() != 1;
+            }
+
+            addresses.clear();
+            let mut sequence = ScriptSequence::new(
+                new_txes,
+                returns.clone(),
+                &self.sig,
+                target,
+                &log_folder,
+                provider_info.chain,
+            )?;
+            sequence.set_multi(is_multi);
+            sequence.save();
+            deployments.push(sequence);
+
+            new_txes = VecDeque::new();
         }
 
+        // TODO per chain
         // We don't store it in the transactions, since we want the most updated value. Right before
         // broadcasting.
-        let per_gas = if let Some(gas_price) = self.with_gas_price {
-            gas_price
-        } else {
-            match new_txes.front().unwrap().typed_tx() {
-                TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
-                    provider.get_gas_price().await?
-                }
-                TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
-            }
-        };
+        // let per_gas = if let Some(gas_price) = self.with_gas_price {
+        //     gas_price
+        // } else {
+        //     match new_txes.front().unwrap().typed_tx() {
+        //         TypedTransaction::Legacy(_) | TypedTransaction::Eip2930(_) => {
+        //             provider.get_gas_price().await?
+        //         }
+        //         TypedTransaction::Eip1559(_) => provider.estimate_eip1559_fees(None).await?.0,
+        //     }
+        // };
+        let per_gas = U256::from(0);
 
         println!("\n==========================");
         println!("\nEstimated total gas used for script: {}", total_gas);
@@ -304,7 +408,7 @@ impl ScriptArgs {
                 .trim_end_matches('0')
         );
         println!("\n==========================");
-        Ok(new_txes)
+        Ok(deployments)
     }
 }
 
