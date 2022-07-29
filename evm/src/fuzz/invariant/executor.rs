@@ -127,7 +127,14 @@ impl<'a> InvariantExecutor<'a> {
 
                     // Executes the call from the randomly generated sequence.
                     let RawCallResult {
-                        result, reverted, gas, stipend, state_changeset, logs, ..
+                        result,
+                        reverted,
+                        gas,
+                        stipend,
+                        state_changeset,
+                        logs,
+                        status,
+                        ..
                     } = executor
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
@@ -175,6 +182,7 @@ impl<'a> InvariantExecutor<'a> {
                                 test_contract_abi,
                                 &result,
                                 &inputs,
+                                status,
                                 &[],
                             );
 
@@ -216,7 +224,6 @@ impl<'a> InvariantExecutor<'a> {
             });
         }
 
-        // TODO: only saving one sequence case per invariant failure. Do we want more?
         let (reverts, invariants) = failures.into_inner().into_inner();
 
         Ok(Some(InvariantFuzzTestResult { invariants, cases: fuzz_cases.into_inner(), reverts }))

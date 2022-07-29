@@ -145,12 +145,6 @@ fn select_random_function(
             .prop_map(move |selector| selector.select(targeted_functions.clone()));
 
         selector.boxed()
-        // todo make it an union too?
-        // proptest::strategy::Union::new_weighted(vec![
-        //     (100, selector.boxed()),
-        //     (0, total_random.boxed()),
-        // ])
-        // .boxed()
     } else {
         total_random.boxed()
     }

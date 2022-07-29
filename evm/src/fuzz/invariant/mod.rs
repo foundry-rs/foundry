@@ -17,6 +17,7 @@ use proptest::{
     strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::{TestError, TestRunner},
 };
+use revm::Return;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
@@ -57,7 +58,7 @@ pub fn assert_invariants(
     }
 
     for func in invariants {
-        let RawCallResult { reverted, state_changeset, result, .. } = executor
+        let RawCallResult { reverted, state_changeset, result, status, .. } = executor
             .call_raw(
                 CALLER,
                 invariant_address,
@@ -98,6 +99,7 @@ pub fn assert_invariants(
                         test_contract_abi,
                         &result,
                         calldata,
+                        status,
                         &inner_sequence,
                     )),
                 );
@@ -156,6 +158,7 @@ impl InvariantFuzzError {
         abi: &Abi,
         result: &bytes::Bytes,
         calldata: &[BasicTxDetails],
+        status: Return,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         let mut func = None;
@@ -173,8 +176,7 @@ impl InvariantFuzzError {
                 format!(
                     "{}, reason: '{}'",
                     origin,
-                    // TODO: status
-                    match decode_revert(result.as_ref(), Some(abi), None) {
+                    match decode_revert(result.as_ref(), Some(abi), Some(status)) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
                     }
@@ -183,9 +185,8 @@ impl InvariantFuzzError {
                 calldata.to_vec(),
             ),
             return_reason: "".into(),
-            // return_reason: status,
-            // TODO: status
-            revert_reason: decode_revert(result.as_ref(), Some(abi), None).unwrap_or_default(),
+            revert_reason: decode_revert(result.as_ref(), Some(abi), Some(status))
+                .unwrap_or_default(),
             addr: invariant_address,
             func,
             inner_sequence: inner_sequence.to_vec(),
