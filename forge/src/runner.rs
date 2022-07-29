@@ -11,7 +11,9 @@ use eyre::Result;
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions},
+        invariant::{
+            InvariantContract, InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions,
+        },
         BaseCounterExample, CounterExample, FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -458,10 +460,11 @@ impl<'a> ContractRunner<'a> {
             project_contracts,
         );
 
+        let invariant_contract =
+            InvariantContract { address, invariant_functions: functions, abi: self.contract };
+
         if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
-            functions,
-            address,
-            self.contract,
+            invariant_contract,
             InvariantTestOptions {
                 depth: test_options.invariant_depth,
                 fail_on_revert: test_options.invariant_fail_on_revert,

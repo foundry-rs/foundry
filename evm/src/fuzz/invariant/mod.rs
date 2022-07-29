@@ -17,7 +17,6 @@ use proptest::{
     strategy::{SBoxedStrategy, Strategy, ValueTree},
     test_runner::{TestError, TestRunner},
 };
-use revm::Return;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
@@ -25,6 +24,17 @@ pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
 
 /// (Sender, (TargetContract, Calldata))
 pub type BasicTxDetails = (Address, (Address, Bytes));
+
+/// Test contract which is testing its invariants.
+#[derive(Debug, Clone)]
+pub struct InvariantContract<'a> {
+    /// Address of the test contract.
+    pub address: Address,
+    /// Invariant functions present in the test contract.
+    pub invariant_functions: Vec<&'a Function>,
+    /// Abi of the test contract.
+    pub abi: &'a Abi,
+}
 
 /// Metadata on how to run invariant tests
 #[derive(Debug, Clone, Copy, Default)]
@@ -41,10 +51,8 @@ pub struct InvariantTestOptions {
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 pub fn assert_invariants(
-    test_contract_abi: &Abi,
+    invariant_contract: &InvariantContract,
     executor: &Executor,
-    invariant_address: Address,
-    invariants: &[&Function],
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
 ) -> eyre::Result<()> {
@@ -57,49 +65,47 @@ pub fn assert_invariants(
         }
     }
 
-    for func in invariants {
-        let RawCallResult { reverted, state_changeset, result, status, .. } = executor
+    for func in &invariant_contract.invariant_functions {
+        let mut call_result = executor
             .call_raw(
                 CALLER,
-                invariant_address,
+                invariant_contract.address,
                 func.encode_input(&[]).expect("invariant should have no inputs").into(),
                 U256::zero(),
             )
             .expect("EVM error");
 
-        let err = if reverted {
-            Some((*func, result))
+        let err = if call_result.reverted {
+            Some(*func)
         } else {
             // This will panic and get caught by the executor
             if !executor.is_success(
-                invariant_address,
-                reverted,
-                state_changeset.expect("we should have a state changeset"),
+                invariant_contract.address,
+                call_result.reverted,
+                call_result.state_changeset.take().expect("we should have a state changeset"),
                 false,
             ) {
-                Some((*func, result))
+                Some(*func)
             } else {
                 None
             }
         };
 
-        if let Some((func, result)) = err {
+        if let Some(broken_invariant) = err {
             let invariant_error = invariant_failures
                 .failed_invariants
-                .get(&func.name)
+                .get(&broken_invariant.name)
                 .expect("to have been initialized.");
 
             // We only care about invariants which we haven't broken yet.
             if invariant_error.is_none() {
                 invariant_failures.failed_invariants.insert(
-                    func.name.clone(),
+                    broken_invariant.name.clone(),
                     Some(InvariantFuzzError::new(
-                        invariant_address,
-                        Some(func),
-                        test_contract_abi,
-                        &result,
+                        invariant_contract,
+                        Some(broken_invariant),
                         calldata,
-                        status,
+                        call_result,
                         &inner_sequence,
                     )),
                 );
@@ -153,12 +159,10 @@ pub struct InvariantFuzzError {
 
 impl InvariantFuzzError {
     fn new(
-        invariant_address: Address,
+        invariant_contract: &InvariantContract,
         error_func: Option<&Function>,
-        abi: &Abi,
-        result: &bytes::Bytes,
         calldata: &[BasicTxDetails],
-        status: Return,
+        call_result: RawCallResult,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         let mut func = None;
@@ -176,7 +180,11 @@ impl InvariantFuzzError {
                 format!(
                     "{}, reason: '{}'",
                     origin,
-                    match decode_revert(result.as_ref(), Some(abi), Some(status)) {
+                    match decode_revert(
+                        call_result.result.as_ref(),
+                        Some(invariant_contract.abi),
+                        Some(call_result.status)
+                    ) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
                     }
@@ -185,9 +193,13 @@ impl InvariantFuzzError {
                 calldata.to_vec(),
             ),
             return_reason: "".into(),
-            revert_reason: decode_revert(result.as_ref(), Some(abi), Some(status))
-                .unwrap_or_default(),
-            addr: invariant_address,
+            revert_reason: decode_revert(
+                call_result.result.as_ref(),
+                Some(invariant_contract.abi),
+                Some(call_result.status),
+            )
+            .unwrap_or_default(),
+            addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),
         }
