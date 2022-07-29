@@ -99,7 +99,6 @@ impl Create2Args {
 
         let init_code = Bytes::from(init_code.into_bytes());
 
-
         println!("Starting to generate deterministic contract address...");
         let timer = Instant::now();
         let salt = std::iter::repeat_with(move || H256::random_using(&mut thread_rng()))
@@ -109,7 +108,10 @@ impl Create2Args {
                 let init_code = init_code.clone();
 
                 let addr = if case_sensitive {
-                    SimpleCast::checksum_address(&get_create2_address_from_hash(deployer, salt, init_code)).unwrap()
+                    SimpleCast::checksum_address(&get_create2_address_from_hash(
+                        deployer, salt, init_code,
+                    ))
+                    .unwrap()
                 } else {
                     get_create2_address_from_hash(deployer, salt, init_code).to_string()
                 };
