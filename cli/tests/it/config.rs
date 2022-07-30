@@ -59,6 +59,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz_runs: 1000,
         fuzz_max_local_rejects: 2000,
         fuzz_max_global_rejects: 100203,
+        fuzz_seed: Some(1000.into()),
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
