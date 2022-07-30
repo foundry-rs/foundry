@@ -51,6 +51,7 @@ impl DebugArgs {
             sig: self.sig,
             legacy: false,
             broadcast: false,
+            skip_simulation: false,
             opts: BuildArgs {
                 args: self.opts,
                 names: false,

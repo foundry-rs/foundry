@@ -83,6 +83,9 @@ pub struct ScriptArgs {
     #[clap(long, help = "Broadcasts the transactions.")]
     pub broadcast: bool,
 
+    #[clap(long, help = "Skips on-chain simulation")]
+    pub skip_simulation: bool,
+
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     pub opts: BuildArgs,
 
