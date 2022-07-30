@@ -10,7 +10,11 @@ use crate::{
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
-    prelude::{artifacts::Ast, Artifact, Bytes, Project, ProjectCompileOutput},
+    abi::Address,
+    prelude::{
+        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
+        Artifact, Bytes, Project, ProjectCompileOutput,
+    },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
 use eyre::Context;
@@ -193,8 +197,12 @@ impl CoverageArgs {
                             contract_name: id.name.clone(),
                         },
                         (
-                            artifact.get_bytecode_bytes()?.into_owned(),
-                            artifact.get_deployed_bytecode_bytes()?.into_owned(),
+                            artifact
+                                .get_bytecode()
+                                .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
+                            artifact.get_deployed_bytecode().and_then(|bytecode| {
+                                dummy_link_deployed_bytecode(bytecode.into_owned())
+                            })?,
                         ),
                     ),
                 ))
@@ -327,4 +335,26 @@ pub enum CoverageReportKind {
     Summary,
     Lcov,
     Debug,
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
+    let link_references = std::mem::take(&mut obj.link_references);
+    for (file, libraries) in link_references {
+        for library in libraries.keys() {
+            obj.link(&file, library, Address::zero());
+        }
+    }
+
+    obj.object.resolve();
+    obj.object.into_bytes()
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_deployed_bytecode(obj: CompactDeployedBytecode) -> Option<Bytes> {
+    obj.bytecode.and_then(dummy_link_bytecode)
 }
