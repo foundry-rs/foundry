@@ -456,3 +456,28 @@ impl_loc! { IdentifierPath }
 impl_loc! { YulTypedIdentifier }
 impl_loc! { EventParameter }
 impl_loc! { ErrorParameter }
+
+/// Extra helpers for Locs
+pub trait LocExt {
+    fn with_start_from(self, other: &Self) -> Self;
+    fn with_end_from(self, other: &Self) -> Self;
+    fn with_start(self, start: usize) -> Self;
+    fn with_end(self, end: usize) -> Self;
+}
+
+impl LocExt for Loc {
+    fn with_start_from(mut self, other: &Self) -> Self {
+        self.use_start_from(other);
+        self
+    }
+    fn with_end_from(mut self, other: &Self) -> Self {
+        self.use_end_from(other);
+        self
+    }
+    fn with_start(self, start: usize) -> Self {
+        Loc::File(self.file_no(), start, self.end())
+    }
+    fn with_end(self, end: usize) -> Self {
+        Loc::File(self.file_no(), self.start(), end)
+    }
+}

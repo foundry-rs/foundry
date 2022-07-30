@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{Comments, Formatter, Visitable};
+use forge_fmt::{format, parse};
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
@@ -80,26 +80,22 @@ impl Cmd for FmtArgs {
 
         let diffs = inputs
             .par_iter()
-            .enumerate()
-            .map(|(i, input)| {
+            .map(|input| {
                 let source = match input {
                     Input::Path(path) => fs::read_to_string(&path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let (mut source_unit, comments) = solang_parser::parse(&source, i)
+                /// TODO emit warnings for invalid inline config items
+                let parsed = parse(&source)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
-                let comments = Comments::new(comments, &source);
 
                 let mut output = String::new();
-                let mut formatter =
-                    Formatter::new(&mut output, &source, comments, config.fmt.clone());
-
-                source_unit.visit(&mut formatter).unwrap();
+                format(&mut output, parsed, config.fmt.clone()).unwrap();
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
