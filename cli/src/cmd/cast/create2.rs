@@ -9,7 +9,6 @@ use ethers::{
     utils::get_create2_address_from_hash,
 };
 use eyre::{Result, WrapErr};
-use futures::future::BoxFuture;
 use rayon::prelude::*;
 use regex::RegexSetBuilder;
 use std::time::Instant;
@@ -36,24 +35,24 @@ pub struct Create2Args {
 }
 
 impl Cmd for Create2Args {
-    type Output = BoxFuture<'static, Result<()>>;
+    type Output = ();
 
-    fn run(self) -> Result<Self::Output> {
+    fn run(self) -> eyre::Result<Self::Output> {
         let Create2Args { starts_with, ends_with, matching, case_sensitive, deployer, init_code } =
             self;
-        Ok(Box::pin(Self::generate_address(
+        Create2Args::generate_address(
             starts_with,
             ends_with,
             matching,
             case_sensitive,
             deployer,
             init_code,
-        )))
+        )
     }
 }
 
 impl Create2Args {
-    async fn generate_address(
+    fn generate_address(
         starts_with: Option<String>,
         ends_with: Option<String>,
         matching: Option<String>,
@@ -63,8 +62,7 @@ impl Create2Args {
     ) -> Result<()> {
         let mut regexs = vec![];
 
-        if matching.is_some() {
-            let matches = matching.unwrap();
+        if let Some(matches) = matching {
             if starts_with.is_some() || ends_with.is_some() {
                 eyre::bail!("Either use --matching or --starts/ends-with");
             }

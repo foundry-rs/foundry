@@ -683,7 +683,7 @@ async fn main() -> eyre::Result<()> {
             let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
-        Subcommands::Create2(cmd) => cmd.run()?.await?,
+        Subcommands::Create2(cmd) => cmd.run()?,
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
