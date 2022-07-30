@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     abi::HEVMCalls,
     executor::inspector::{
@@ -308,7 +310,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
 /// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
-fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
+fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
     let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
@@ -325,6 +327,38 @@ fn parse_json(state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, By
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res))]);
     Ok(abi_encoded.into())
+}
+
+fn write_json(
+    state: &mut Cheatcodes,
+    keys: &Vec<String>,
+    values: &Vec<String>,
+    path: impl AsRef<Path>,
+    overwrite: &bool,
+) -> Result<Bytes, Bytes> {
+    // if file exsits && overwrite = false, then read and then write
+    // else write
+    if keys.len() != values.len() {
+        return Err("keys and values are of different length".to_string().encode().into())
+    }
+    let path = full_path(state, &path);
+    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let data = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (keys[index].clone(), value.to_owned()))
+        .collect::<HashMap<String, String>>();
+    if *overwrite {
+        fs::write(path, &serde_json::to_string(&data).unwrap()).map_err(util::encode_error)?;
+        Ok(Bytes::new())
+    } else {
+        let file = fs::read_to_string(&path).map_err(util::encode_error)?;
+        let mut parsed: HashMap<String, String> =
+            serde_json::from_str(&file).map_err(util::encode_error)?;
+        parsed.extend(data);
+        fs::write(path, &serde_json::to_string(&parsed).unwrap()).map_err(util::encode_error)?;
+        Ok(Bytes::new())
+    }
 }
 
 pub fn apply(
@@ -368,6 +402,7 @@ pub fn apply(
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
         HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
+        HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1, &inner.2, &inner.3),
         _ => return None,
     })
 }
