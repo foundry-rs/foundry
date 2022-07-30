@@ -20,6 +20,7 @@ use ethers::{
 };
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
+    TransactTo,
 };
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -49,6 +50,7 @@ pub mod util;
 pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
 
 mod config;
+use crate::executor::backend::RevertDiagnostic;
 pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
@@ -77,6 +79,9 @@ pub struct Cheatcodes {
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
+
+    /// Additional diagnostic for reverts
+    pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
@@ -171,6 +176,40 @@ where
         }
         if let Some(gas_price) = self.gas_price.take() {
             data.env.tx.gas_price = gas_price;
+        }
+
+        Return::Continue
+    }
+
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // Record writes and reads if `record` has been called
+        if let Some(storage_accesses) = &mut self.accesses {
+            match interpreter.contract.code[interpreter.program_counter()] {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    // An SSTORE does an SLOAD internally
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                    storage_accesses
+                        .writes
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                _ => (),
+            }
         }
 
         Return::Continue
@@ -306,40 +345,6 @@ where
         }
     }
 
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
-        // Record writes and reads if `record` has been called
-        if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.code[interpreter.program_counter()] {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-
-                    // An SSTORE does an SLOAD internally
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                    storage_accesses
-                        .writes
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                _ => (),
-            }
-        }
-
-        Return::Continue
-    }
-
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -428,6 +433,30 @@ where
                         .encode()
                         .into(),
                 )
+            }
+        }
+
+        // if there's a revert and a previous call was diagnosed as fork related revert then we can
+        // return a better error here
+        if status == Return::Revert {
+            if let Some(err) = self.fork_revert_diagnostic.take() {
+                return (status, remaining_gas, err.to_error_msg(self).encode().into())
+            }
+        }
+
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let _ = self.fork_revert_diagnostic.take();
+
+        // try to diagnose reverts in multi-fork mode where a call is made to an address that does
+        // not exist
+        if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
+            // if a call to a different contract than the original test contract returned with
+            // `Stop` we check if the contract actually exists on the active fork
+            if data.db.is_forked_mode() && status == Return::Stop && call.contract != test_contract
+            {
+                self.fork_revert_diagnostic =
+                    data.db.diagnose_revert(call.contract, &data.subroutine);
             }
         }
 

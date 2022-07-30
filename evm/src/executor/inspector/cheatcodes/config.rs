@@ -3,6 +3,7 @@ use bytes::Bytes;
 
 use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
+use tracing::trace;
 
 use super::util;
 
@@ -38,10 +39,12 @@ impl CheatsConfig {
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
 
+        let rpc_endpoints = config.rpc_endpoints.clone().resolved();
+        trace!(?rpc_endpoints, "using resolved rpc endpoints");
         Self {
             ffi: evm_opts.ffi,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
-            rpc_endpoints: config.rpc_endpoints.clone().resolved(),
+            rpc_endpoints,
             root: config.__root.0.clone(),
             allowed_paths,
             evm_opts: evm_opts.clone(),
