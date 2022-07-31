@@ -31,6 +31,7 @@ use anvil_core::{
             TypedTransactionRequest,
         },
         EthRequest,
+        proof::AccountProof,
     },
     types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
 };
@@ -181,6 +182,9 @@ impl EthApi {
             }
             EthRequest::EthGetCodeAt(addr, block) => {
                 self.get_code(addr, block).await.to_rpc_result()
+            }
+            EthRequest::EthGetProof(addr, keys, block) => {
+                self.get_proof(addr, keys, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
             EthRequest::EthSignTypedData(addr, data) => {
@@ -555,6 +559,28 @@ impl EthApi {
         node_info!("eth_getCode");
         let number = self.backend.ensure_block_number(block_number)?;
         self.backend.get_code(address, Some(number.into())).await
+    }
+
+    /// Returns the account and storage values of the specified account including the Merkle-proof.
+    /// This call can be used to verify that the data you are pulling from is not tampered with.
+    ///
+    /// Handler for ETH RPC call: `eth_getProof`
+    pub async fn get_proof(&self, address: Address, keys: Vec<U256>, block_number: Option<BlockId>) -> Result<AccountProof> {
+        node_info!("eth_getProof");
+        let number = self.backend.ensure_block_number(block_number)?;
+        // check if the number predates the fork, if in fork mode
+        if let Some(fork) = self.get_fork() {
+            if fork.predates_fork(number) {
+
+            }
+        }
+
+
+
+
+
+
+        todo!()
     }
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).

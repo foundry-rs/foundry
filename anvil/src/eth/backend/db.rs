@@ -69,6 +69,11 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
         None
     }
 
+    /// Return the DB as read-only hashdb
+    fn as_hash_db(&self) {
+        todo!()
+    }
+
     /// Returns the current, standalone state of the Db
     fn current_state(&self) -> StateDb;
 }

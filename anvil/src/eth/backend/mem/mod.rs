@@ -1371,6 +1371,20 @@ impl Backend {
         Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
+
+    /// Prove an account's existence or nonexistence in the state trie.
+    ///
+    /// Returns a merkle proof of the account's trie node omitted or an encountered trie error.
+    /// If the account doesn't exist in the trie, prove that and return defaults.
+    /// Requires a secure trie to be used for accurate results.
+    /// `account_key` == keccak(address)
+    pub fn prove_account(&self, addr: Address) -> TrieResult<(Vec<Bytes>, BasicAccount)> {
+        let account_key = keccak256(addr.as_ref());
+
+
+
+    }
+
     /// Returns a new block event stream
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         let (tx, rx) = unbounded();
