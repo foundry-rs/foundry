@@ -524,7 +524,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("core{}FailingSetup.t.sol:FailingSetupTest", std::path::MAIN_SEPARATOR)
+                    format!("core{}FailingSetup.t.sol:FailingSetupTest", "/")
                         .as_str(),
                     vec![(
                         "setUp()",
@@ -535,7 +535,7 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}MultipleSetup.t.sol:MultipleSetup", std::path::MAIN_SEPARATOR)
+                    format!("core{}MultipleSetup.t.sol:MultipleSetup", "/")
                         .as_str(),
                     vec![(
                         "setUp()",
@@ -546,14 +546,14 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}Reverting.t.sol:RevertingTest", std::path::MAIN_SEPARATOR)
+                    format!("core{}Reverting.t.sol:RevertingTest", "/")
                         .as_str(),
                     vec![("testFailRevert()", true, None, None, None)],
                 ),
                 (
                     format!(
                         "core{}SetupConsistency.t.sol:SetupConsistencyCheck",
-                        std::path::MAIN_SEPARATOR
+                        "/"
                     )
                     .as_str(),
                     vec![
@@ -562,13 +562,13 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("core{}DSStyle.t.sol:DSStyleTest", std::path::MAIN_SEPARATOR).as_str(),
+                    format!("core{}DSStyle.t.sol:DSStyleTest", "/").as_str(),
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
                     format!(
                         "core{}ContractEnvironment.t.sol:ContractEnvironmentTest",
-                        std::path::MAIN_SEPARATOR
+                        "/"
                     )
                     .as_str(),
                     vec![
@@ -579,7 +579,7 @@ mod tests {
                 (
                     format!(
                         "core{}PaymentFailure.t.sol:PaymentFailureTest",
-                        std::path::MAIN_SEPARATOR
+                        "/"
                     )
                     .as_str(),
                     vec![(
@@ -593,7 +593,7 @@ mod tests {
                 (
                     format!(
                         "core{}LibraryLinking.t.sol:LibraryLinkingTest",
-                        std::path::MAIN_SEPARATOR
+                        "/"
                     )
                     .as_str(),
                     vec![
@@ -602,7 +602,7 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR)
+                    format!("core{}Abstract.t.sol:AbstractTest", "/")
                         .as_str(),
                     vec![("testSomething()", true, None, None, None)],
                 ),
@@ -619,7 +619,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("logs{}DebugLogs.t.sol:DebugLogsTest", std::path::MAIN_SEPARATOR).as_str(),
+                    format!("logs{}DebugLogs.t.sol:DebugLogsTest", "/").as_str(),
                     vec![
                         (
                             "test1()",
@@ -788,7 +788,7 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("logs{}HardhatLogs.t.sol:HardhatLogsTest", std::path::MAIN_SEPARATOR).as_str(),
+                    format!("logs{}HardhatLogs.t.sol:HardhatLogsTest", "/").as_str(),
                     vec![
                         (
                             "testInts()",
@@ -1374,12 +1374,12 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         println!("{:?}", results.keys());
         assert!(results
             .get(
-                format!("core{}Abstract.t.sol:AbstractTestBase", std::path::MAIN_SEPARATOR)
+                format!("core{}Abstract.t.sol:AbstractTestBase", "/")
                     .as_str()
             )
             .is_none());
         assert!(results
-            .get(format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR).as_str())
+            .get(format!("core{}Abstract.t.sol:AbstractTest", "/").as_str())
             .is_some());
     }
 }
