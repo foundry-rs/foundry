@@ -7,6 +7,7 @@ mod ganache;
 mod gas;
 mod geth;
 mod logs;
+mod proof;
 mod pubsub;
 mod revert;
 mod sign;
@@ -15,7 +16,6 @@ mod transaction;
 mod txpool;
 pub mod utils;
 mod wsapi;
-mod proof;
 
 #[allow(unused)]
 pub(crate) fn init_tracing() {

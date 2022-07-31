@@ -1410,7 +1410,8 @@ impl Backend {
                 storage_root: KECCAK_NULL_RLP,
             });
 
-            let proof = recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+            let proof =
+                recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
 
             let account_proof = AccountProof {
                 balance: account.balance,

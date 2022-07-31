@@ -26,7 +26,7 @@ use crate::{
 use anvil_core::{
     eth::{
         block::BlockInfo,
-        proof::{AccountProof},
+        proof::AccountProof,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,

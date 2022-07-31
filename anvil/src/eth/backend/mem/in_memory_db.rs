@@ -1,18 +1,16 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::{Db, SerializableAccountRecord, SerializableState, StateDb},
-    mem::state::state_merkle_trie_root,
+    eth::backend::db::{
+        AsHashDB, Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+    },
+    mem::state::{state_merkle_trie_root, trie_hash_db},
     revm::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;
-use tracing::{trace, warn};
-use crate::{
-    eth::backend::db::{AsHashDB, MaybeHashDatabase},
-    mem::state::trie_hash_db,
-};
 use forge::revm::KECCAK_EMPTY;
+use tracing::{trace, warn};
 
 // reexport for convenience
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
