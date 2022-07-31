@@ -18,19 +18,36 @@ use std::{
     process::Command,
     str::FromStr,
 };
+use tracing::trace;
 
+/// Invokes a `Command` with the given args and returns the abi encoded response
+///
+/// If the output of the command is valid hex, it returns the hex decoded value
 fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
-    let output = Command::new(&args[0])
-        .current_dir(&state.config.root)
-        .args(&args[1..])
-        .output()
-        .map_err(util::encode_error)?
-        .stdout;
-    let output = unsafe { std::str::from_utf8_unchecked(&output) };
-    let decoded = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(output))
-        .map_err(util::encode_error)?;
+    if args.is_empty() || args[0].is_empty() {
+        return Err(util::encode_error("Can't execute empty command"))
+    }
+    let mut cmd = Command::new(&args[0]);
+    if args.len() > 1 {
+        cmd.args(&args[1..]);
+    }
 
-    Ok(abi::encode(&[Token::Bytes(decoded.to_vec())]).into())
+    trace!(?args, "invoking ffi");
+
+    let stdout = cmd
+        .current_dir(&state.config.root)
+        .output()
+        .map_err(|err| util::encode_error(format!("Failed to execute command: {}", err)))?
+        .stdout;
+
+    let output = String::from_utf8(stdout)
+        .map_err(|err| util::encode_error(format!("Failed to decode non utf-8 output: {}", err)))?;
+
+    if let Ok(hex_decoded) = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(&output)) {
+        return Ok(abi::encode(&[Token::Bytes(hex_decoded.to_vec())]).into())
+    }
+
+    Ok(output.encode().into())
 }
 
 /// An enum which unifies the deserialization of Hardhat-style artifacts with Forge-style artifacts
@@ -279,4 +296,40 @@ pub fn apply(
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::inspector::CheatsConfig;
+    use ethers::core::abi::AbiDecode;
+    use std::sync::Arc;
+
+    fn cheats() -> Cheatcodes {
+        let config =
+            CheatsConfig { root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")), ..Default::default() };
+        Cheatcodes { config: Arc::new(config), ..Default::default() }
+    }
+
+    #[test]
+    fn test_ffi_hex() {
+        let msg = "gm";
+        let cheats = cheats();
+        let args = ["echo".to_string(), "-n".to_string(), hex::encode(msg)];
+        let output = ffi(&cheats, &args).unwrap();
+
+        let output = String::decode(&output).unwrap();
+        assert_eq!(output, msg);
+    }
+
+    #[test]
+    fn test_ffi_string() {
+        let msg = "gm";
+        let cheats = cheats();
+        let args = ["echo".to_string(), "-n".to_string(), msg.to_string()];
+        let output = ffi(&cheats, &args).unwrap();
+
+        let output = String::decode(&output).unwrap();
+        assert_eq!(output, msg);
+    }
 }
