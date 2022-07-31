@@ -2,6 +2,7 @@
 pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
+import "../logs/console.sol";
 
 interface Cheats {
     function toString(bytes32) external returns (string memory);
@@ -17,7 +18,7 @@ contract FuzzTest is DSTest {
     }
 
     function testFailFuzz(uint8 x) public {
-        emit log(x);
+        console.log(x);
         emit log("testFailFuzz");
         require(x == 5, "should revert");
     }
