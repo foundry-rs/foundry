@@ -13,6 +13,7 @@ pub const MAX_ARRAY_LEN: usize = 256;
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
+    dbg!(param);
     match param {
         ParamType::Address => {
             // The key to making this work is the `boxed()` call which type erases everything
@@ -42,7 +43,10 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             _ => panic!("unsupported solidity type int{n}"),
         },
         ParamType::Uint(n) => {
-            super::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
+            super::UintStrategy::new(*n, vec![]).prop_map(|x| {
+                println!("fuzz value {:?}", x);
+                x.into_token()
+            }).boxed()
         }
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<Vec<u8>>()

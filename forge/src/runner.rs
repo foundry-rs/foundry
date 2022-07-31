@@ -266,7 +266,7 @@ impl<'a> ContractRunner<'a> {
                     });
 
                     if is_fuzz_fail {
-                        dbg!(&result);
+                        // dbg!(&result);
                     }
                     result
                 };

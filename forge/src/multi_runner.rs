@@ -1259,7 +1259,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
             ..Default::default() };
         runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
 
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();
+        let suite_result = runner.test(&Filter::new("testFailFuzz", ".*", ".*fuzz"), None, true).unwrap();
 
         assert!(!suite_result.is_empty());
 
