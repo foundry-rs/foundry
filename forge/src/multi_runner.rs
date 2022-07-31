@@ -524,8 +524,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("core{}FailingSetup.t.sol:FailingSetupTest", "/")
-                        .as_str(),
+                    "core/FailingSetup.t.sol:FailingSetupTest",
                     vec![(
                         "setUp()",
                         false,
@@ -535,8 +534,7 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}MultipleSetup.t.sol:MultipleSetup", "/")
-                        .as_str(),
+                    "core/MultipleSetup.t.sol:MultipleSetup",
                     vec![(
                         "setUp()",
                         false,
@@ -546,42 +544,29 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}Reverting.t.sol:RevertingTest", "/")
-                        .as_str(),
+                    "core/Reverting.t.sol:RevertingTest",
                     vec![("testFailRevert()", true, None, None, None)],
                 ),
                 (
-                    format!(
-                        "core{}SetupConsistency.t.sol:SetupConsistencyCheck",
-                        "/"
-                    )
-                    .as_str(),
+                    "core/SetupConsistency.t.sol:SetupConsistencyCheck",
                     vec![
                         ("testAdd()", true, None, None, None),
                         ("testMultiply()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!("core{}DSStyle.t.sol:DSStyleTest", "/").as_str(),
+                    "core/DSStyle.t.sol:DSStyleTest",
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
-                    format!(
-                        "core{}ContractEnvironment.t.sol:ContractEnvironmentTest",
-                        "/"
-                    )
-                    .as_str(),
+                    "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
                     vec![
                         ("testAddresses()", true, None, None, None),
                         ("testEnvironment()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!(
-                        "core{}PaymentFailure.t.sol:PaymentFailureTest",
-                        "/"
-                    )
-                    .as_str(),
+                    "core/PaymentFailure.t.sol:PaymentFailureTest",
                     vec![(
                         "testCantPay()",
                         false,
@@ -591,19 +576,14 @@ mod tests {
                     )],
                 ),
                 (
-                    format!(
-                        "core{}LibraryLinking.t.sol:LibraryLinkingTest",
-                        "/"
-                    )
-                    .as_str(),
+                    "core/LibraryLinking.t.sol:LibraryLinkingTest",
                     vec![
                         ("testDirect()", true, None, None, None),
                         ("testNested()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!("core{}Abstract.t.sol:AbstractTest", "/")
-                        .as_str(),
+                    "core/Abstract.t.sol:AbstractTest",
                     vec![("testSomething()", true, None, None, None)],
                 ),
             ]),
@@ -619,7 +599,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("logs{}DebugLogs.t.sol:DebugLogsTest", "/").as_str(),
+                    "logs/DebugLogs.t.sol:DebugLogsTest",
                     vec![
                         (
                             "test1()",
@@ -788,7 +768,7 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("logs{}HardhatLogs.t.sol:HardhatLogsTest", "/").as_str(),
+                    "logs/HardhatLogs.t.sol:HardhatLogsTest",
                     vec![
                         (
                             "testInts()",
@@ -1372,14 +1352,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
             .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None, true)
             .unwrap();
         println!("{:?}", results.keys());
-        assert!(results
-            .get(
-                format!("core{}Abstract.t.sol:AbstractTestBase", "/")
-                    .as_str()
-            )
-            .is_none());
-        assert!(results
-            .get(format!("core{}Abstract.t.sol:AbstractTest", "/").as_str())
-            .is_some());
+        assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
+        assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
     }
 }
