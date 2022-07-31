@@ -17,7 +17,7 @@ use ethers::{
 use foundry_common::fs;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
-use serde_json::{json, to_value, Number, Value};
+use serde_json::Value;
 use std::{
     env,
     io::{BufRead, BufReader, Write},
@@ -303,7 +303,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
             .collect::<Vec<Token>>();
         Ok(Token::Tuple(values))
     } else {
-        Err(Token::String("Could not decode field".to_owned()))
+        Err(Token::String("Could not decode field".to_string()))
     }
 }
 /// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
@@ -321,11 +321,11 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
         .iter()
         .map(|inner| {
             let val = inner;
-            value_to_token(val).unwrap()
+            value_to_token(val).map_err(util::encode_error)
         })
-        .collect::<Vec<Token>>();
+        .collect::<Result<Vec<Token>, Bytes>>();
     // encode the bytes as the 'bytes' solidity type
-    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res))]);
+    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
     Ok(abi_encoded.into())
 }
 
@@ -334,7 +334,7 @@ fn write_json(
     keys: &Vec<String>,
     values: &Vec<String>,
     path: impl AsRef<Path>,
-    overwrite: &bool,
+    overwrite: bool,
 ) -> Result<Bytes, Bytes> {
     // if file exsits && overwrite = false, then read and then write
     // else write
@@ -348,7 +348,7 @@ fn write_json(
         .enumerate()
         .map(|(index, value)| (keys[index].clone(), value.to_owned()))
         .collect::<HashMap<String, String>>();
-    if *overwrite {
+    if overwrite {
         fs::write(path, &serde_json::to_string(&data).unwrap()).map_err(util::encode_error)?;
         Ok(Bytes::new())
     } else {
