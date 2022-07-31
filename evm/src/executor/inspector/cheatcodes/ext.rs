@@ -406,6 +406,7 @@ pub fn apply(
         _ => return None,
     })
 }
+<<<<<<< HEAD
 
 <<<<<<< HEAD
 #[cfg(test)]
@@ -501,3 +502,31 @@ mod tests {
 //         let parsed_json = json_to_vector(&json).unwrap();
 //         assert_eq!(json_vector, parsed_json);
 //     }
+
+//     #[test]
+//     fn test_nested_json_to_values() {
+//         let json =
+//             json!({ "a": { "nested": { "double_nest": 123}}, "b": ["an", "array"] , "c": true});
+//         let json_vector = vec![
+//             AbiValues { value: to_value::<u32>(123).unwrap(), abi_type: ParamType::Uint(256) },
+//             AbiValues {
+//                 value: to_value(vec![to_value("an").unwrap(),
+// to_value("array").unwrap()]).unwrap(),                 abi_type: ParamType::String,
+//             },
+//             AbiValues { value: to_value(true).unwrap(), abi_type: ParamType::Bool },
+//         ];
+//         let parsed_json = json_to_vector(&json).unwrap();
+//         assert_eq!(json_vector, parsed_json);
+//     }
+
+//     #[test]
+//     fn test_json_value_to_value() {
+//         let json = json!({ "a": 123});
+//         let json_vector = vec![AbiValues {
+//             value: to_value::<u32>(123).unwrap(),
+//             abi_type: ParamType::Uint(256),
+//         }];
+//         let parsed_json = json_to_vector(&json).unwrap();
+//         assert_eq!(json_vector, parsed_json);
+//     }
+// }
