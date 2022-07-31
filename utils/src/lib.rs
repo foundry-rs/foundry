@@ -851,6 +851,9 @@ mod tests {
         let output = project.compile().unwrap();
         let contracts = output
             .into_artifacts()
+            .inspect(|i| {
+                println!("artifact id {:?}", i.0);
+            })
             .filter(|(i, _)| contract_names.contains(&i.slug().as_str()))
             .map(|(id, c)| (id, c.into_contract_bytecode()))
             .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
