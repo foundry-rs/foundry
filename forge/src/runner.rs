@@ -261,6 +261,7 @@ impl<'a> ContractRunner<'a> {
                     Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 } else {
                     fuzzer.as_ref().map(|fuzzer| {
+                        println!("running fuzzer {} shouldfail ={}", func.name, *should_fail);
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
                     })
                 };
