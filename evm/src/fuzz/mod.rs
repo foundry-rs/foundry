@@ -100,7 +100,7 @@ impl<'a> FuzzedExecutor<'a> {
             );
 
             if func.name == "testFailFuzz" {
-                println!("fuzz success {}", success);
+                println!("fuzz success {}, reverted {}", success,  call.reverted);
             }
 
             if success {
