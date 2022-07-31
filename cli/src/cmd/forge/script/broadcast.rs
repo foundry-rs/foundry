@@ -289,7 +289,9 @@ impl ScriptArgs {
             let typed_tx = tx.typed_tx_mut();
 
             if has_different_gas_calc(chain) || self.skip_simulation {
-                typed_tx.set_gas(provider.estimate_gas(typed_tx).await? * 2);
+                typed_tx.set_gas(
+                    provider.estimate_gas(typed_tx).await? * self.gas_estimate_multiplier / 100,
+                );
             }
 
             total_gas += *typed_tx.gas().expect("gas is set");

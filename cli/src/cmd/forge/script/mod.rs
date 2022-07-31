@@ -86,6 +86,15 @@ pub struct ScriptArgs {
     #[clap(long, help = "Skips on-chain simulation")]
     pub skip_simulation: bool,
 
+    #[clap(
+        long,
+        short,
+        default_value = "130",
+        value_name = "GAS_ESTIMATE_MULTIPLIER",
+        help = "Relative percentage to multiply gas estimates by"
+    )]
+    pub gas_estimate_multiplier: u64,
+
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     pub opts: BuildArgs,
 
