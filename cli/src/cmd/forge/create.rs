@@ -24,6 +24,7 @@ use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
+use path_slash::PathBufExt;
 use tracing::log::trace;
 
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
@@ -97,10 +98,16 @@ impl CreateArgs {
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = format!("{}", canonicalized(project.root().join(&path)).display());
+            *path = canonicalized(project.root().join(&path)).to_slash_lossy().to_string();
         }
 
-        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract).map_err(|err| {
+            output.into_artifacts().for_each(|(id,_)| {
+                dbg!(id);
+            });
+
+            err
+        })?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
