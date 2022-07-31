@@ -202,7 +202,7 @@ impl MemDb {
                     .code
                     .as_ref()
                     .filter(|code| !code.is_empty())
-                    .map(|code| H256::from_slice(&keccak256(code)))
+                    .map(|code| H256::from_slice(&keccak256(code.bytes())))
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {

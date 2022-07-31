@@ -481,7 +481,7 @@ impl Visitor {
 
             // We found a push, so we do some PC -> IC translation accounting, but we also check if
             // this push is coupled with the JUMPI we are interested in.
-            if opcode_infos[op as usize].is_push {
+            if opcode_infos[op as usize].is_push() {
                 let element = if let Some(element) = source_map.get(pc - cumulative_push_size) {
                     element
                 } else {

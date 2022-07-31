@@ -184,7 +184,7 @@ where
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
         // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.code[interpreter.program_counter()] {
+            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
                 opcode::SLOAD => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
                     storage_accesses

@@ -1,5 +1,4 @@
 //! In memory blockchain backend
-
 use crate::{
     eth::{
         backend::{
@@ -1096,9 +1095,9 @@ impl Backend {
             trace!(target: "backend", "get code for {:?}", address);
             let account = db.basic(address);
             let code = if let Some(code) = account.code {
-                code.into()
+                code.bytes().clone().into()
             } else {
-                db.code_by_hash(account.code_hash).into()
+                db.code_by_hash(account.code_hash).bytes().clone().into()
             };
             Ok(code)
         })
