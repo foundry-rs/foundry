@@ -1254,11 +1254,9 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
-        let cfg = proptest::test_runner::Config {
-            failure_persistence: None,
+        let cfg = proptest::test_runner::Config { failure_persistence: None,
             cases: 256,
-            ..Default::default()
-        };
+            ..Default::default() };
         runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
 
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();

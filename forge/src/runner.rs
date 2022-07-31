@@ -260,10 +260,15 @@ impl<'a> ContractRunner<'a> {
                 let result = if func.inputs.is_empty() {
                     Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 } else {
-                    fuzzer.as_ref().map(|fuzzer| {
-                        println!("running fuzzer {} shouldfail ={}", func.name, *should_fail);
+                    let is_fuzz_fail = func.name == "testFailFuzz";
+                    let result = fuzzer.as_ref().map(|fuzzer| {
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
-                    })
+                    });
+
+                    if is_fuzz_fail {
+                        dbg!(&result);
+                    }
+                    result
                 };
 
                 result.map(|result| Ok((func.signature(), result?)))
