@@ -317,7 +317,7 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
     // an entire JSON object.
     let res = values
         .as_array()
-        .unwrap()
+        .ok_or(util::encode_error("JsonPath did not return an array"))?
         .iter()
         .map(|inner| {
             let val = inner;
