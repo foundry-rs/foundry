@@ -35,7 +35,7 @@ async fn can_impersonate_account() {
     let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 
     let res = provider.send_transaction(tx.clone(), None).await;
-    assert!(res.is_err());
+    res.unwrap_err();
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
 
@@ -50,7 +50,7 @@ async fn can_impersonate_account() {
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
-    assert!(res.is_err());
+    res.unwrap_err();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -76,7 +76,7 @@ async fn can_impersonate_contract() {
     let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 
     let res = provider.send_transaction(tx.clone(), None).await;
-    assert!(res.is_err());
+    res.unwrap_err();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
@@ -91,7 +91,7 @@ async fn can_impersonate_contract() {
 
     api.anvil_stop_impersonating_account(impersonate).await.unwrap();
     let res = provider.send_transaction(tx, None).await;
-    assert!(res.is_err());
+    res.unwrap_err();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);

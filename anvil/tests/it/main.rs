@@ -15,6 +15,7 @@ mod transaction;
 mod txpool;
 pub mod utils;
 mod wsapi;
+mod proof;
 
 #[allow(unused)]
 pub(crate) fn init_tracing() {

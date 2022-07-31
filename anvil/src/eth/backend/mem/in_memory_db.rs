@@ -8,10 +8,14 @@ use crate::{
 };
 use ethers::prelude::H256;
 use tracing::{trace, warn};
+use crate::{
+    eth::backend::db::{AsHashDB, MaybeHashDatabase},
+    mem::state::trie_hash_db,
+};
+use forge::revm::KECCAK_EMPTY;
+
 // reexport for convenience
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
-
-use forge::revm::KECCAK_EMPTY;
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -98,7 +102,13 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.inner.clone())
+        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+    }
+}
+
+impl MaybeHashDatabase for MemDb {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        Some(trie_hash_db(&self.inner.accounts))
     }
 }
 

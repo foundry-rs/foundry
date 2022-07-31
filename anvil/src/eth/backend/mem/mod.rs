@@ -5,7 +5,7 @@ use crate::{
         backend::{
             cheats,
             cheats::CheatsManager,
-            db::{Db, SerializableState},
+            db::{AsHashDB, Db, MaybeHashDatabase, SerializableState},
             executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -27,16 +27,19 @@ use crate::{
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header},
+        proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{
             EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
         },
+        trie::{RefTrieDB, KECCAK_NULL_RLP},
         utils::to_access_list,
     },
     types::{Forking, Index},
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
+    abi::ethereum_types::BigEndianHash,
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         Address, Block as EthersBlock, BlockId, Bytes, Filter, FilteredParams, Log, Trace,
@@ -53,10 +56,12 @@ use foundry_evm::{
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
+use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
+use trie_db::{Recorder, Trie};
 
 pub mod fork_db;
 pub mod in_memory_db;
@@ -1054,7 +1059,7 @@ impl Backend {
     /// Helper function to execute a closure with the database at a specific block
     pub fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
     where
-        F: FnOnce(Box<dyn DatabaseRef + '_>) -> T,
+        F: FnOnce(Box<dyn MaybeHashDatabase + '_>) -> T,
     {
         let block_number: U256 = self.convert_block_number(block_number).into();
 
@@ -1371,18 +1376,64 @@ impl Backend {
         Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
-
     /// Prove an account's existence or nonexistence in the state trie.
     ///
-    /// Returns a merkle proof of the account's trie node omitted or an encountered trie error.
-    /// If the account doesn't exist in the trie, prove that and return defaults.
-    /// Requires a secure trie to be used for accurate results.
-    /// `account_key` == keccak(address)
-    pub fn prove_account(&self, addr: Address) -> TrieResult<(Vec<Bytes>, BasicAccount)> {
-        let account_key = keccak256(addr.as_ref());
+    /// Returns a merkle proof of the account's trie node
+    pub fn prove_account_at(
+        &self,
+        addr: Address,
+        values: Vec<H256>,
+        block_number: Option<BlockNumber>,
+    ) -> Result<AccountProof, BlockchainError> {
+        self.with_database_at(block_number, |db| {
+            trace!(target: "backend", "get proof for {:?} at {:?}", addr, block_number);
+            let (db, root) = db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
+            let data: &dyn HashDB<_, _> = db.deref();
+            let mut recorder = Recorder::new();
+            let trie = RefTrieDB::new(&data, &root.0)
+                .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
 
+            let maybe_account: Option<BasicAccount> = {
+                let acc_decoder = |bytes: &[u8]| {
+                    rlp::decode(bytes).unwrap_or_else(|_| {
+                        panic!("prove_account_at, could not query trie for account={:?}", &addr)
+                    })
+                };
+                let query = (&mut recorder, acc_decoder);
+                trie.get_with(addr.as_bytes(), query)
+                    .map_err(|err| BlockchainError::TrieError(err.to_string()))?
+            };
+            let account = maybe_account.unwrap_or_else(|| BasicAccount {
+                balance: 0.into(),
+                nonce: 0.into(),
+                code_hash: KECCAK_EMPTY,
+                storage_root: KECCAK_NULL_RLP,
+            });
 
+            let proof = recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
 
+            let account_proof = AccountProof {
+                balance: account.balance,
+                nonce: account.nonce,
+                code_hash: account.code_hash,
+                storage_hash: account.storage_root,
+                account_proof: proof,
+                storage_proof: values
+                    .into_iter()
+                    .map(|storage_key| {
+                        prove_storage(&account, &db, storage_key).map(
+                            |(storage_proof, storage_value)| StorageProof {
+                                key: storage_key.into_uint(),
+                                value: storage_value.into_uint(),
+                                proof: storage_proof.into_iter().map(Into::into).collect(),
+                            },
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
+
+            Ok(account_proof)
+        })
     }
 
     /// Returns a new block event stream
@@ -1519,4 +1570,29 @@ pub fn transaction_build(
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);
 
     transaction
+}
+
+/// Prove a storage key's existence or nonexistence in the account's storage
+/// trie.
+/// `storage_key` is the hash of the desired storage key, meaning
+/// this will only work correctly under a secure trie.
+pub fn prove_storage(
+    acc: &BasicAccount,
+    data: &AsHashDB,
+    storage_key: H256,
+) -> Result<(Vec<Vec<u8>>, H256), BlockchainError> {
+    let data: &dyn HashDB<_, _> = data.deref();
+    let mut recorder = Recorder::new();
+    let trie = RefTrieDB::new(&data, &acc.storage_root.0)
+        .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+
+    let item: U256 = {
+        let decode_value = |bytes: &[u8]| rlp::decode(bytes).expect("decoding db value failed");
+        let query = (&mut recorder, decode_value);
+        trie.get_with(storage_key.as_bytes(), query)
+            .map_err(|err| BlockchainError::TrieError(err.to_string()))?
+            .unwrap_or_else(U256::zero)
+    };
+
+    Ok((recorder.drain().into_iter().map(|r| r.data).collect(), BigEndianHash::from_uint(&item)))
 }

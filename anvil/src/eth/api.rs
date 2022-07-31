@@ -26,12 +26,12 @@ use crate::{
 use anvil_core::{
     eth::{
         block::BlockInfo,
+        proof::{AccountProof},
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
         },
         EthRequest,
-        proof::AccountProof,
     },
     types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
 };
@@ -565,22 +565,16 @@ impl EthApi {
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     ///
     /// Handler for ETH RPC call: `eth_getProof`
-    pub async fn get_proof(&self, address: Address, keys: Vec<U256>, block_number: Option<BlockId>) -> Result<AccountProof> {
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<H256>,
+        block_number: Option<BlockId>,
+    ) -> Result<AccountProof> {
         node_info!("eth_getProof");
         let number = self.backend.ensure_block_number(block_number)?;
-        // check if the number predates the fork, if in fork mode
-        if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-
-            }
-        }
-
-
-
-
-
-
-        todo!()
+        let proof = self.backend.prove_account_at(address, keys, Some(number.into()))?;
+        Ok(proof)
     }
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).

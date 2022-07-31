@@ -9,14 +9,30 @@ use ethers::{
 use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
+    revm::{db::CacheDB, Database, DatabaseCommit},
     HashMap,
 };
+use hash_db::HashDB;
 
+use crate::mem::state::trie_hash_db;
+use anvil_core::eth::trie::KeccakHasher;
+use foundry_evm::executor::backend::MemDb;
 use serde::{Deserialize, Serialize};
 
+/// Type alias for the `HashDB` representation of the Database
+pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
+
+/// Helper trait get access to the data in `HashDb` form
+#[auto_impl::auto_impl(&, Box)]
+pub trait MaybeHashDatabase: DatabaseRef {
+    /// Return the DB as read-only hashdb and the root key
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        None
+    }
+}
+
 /// This bundles all required revm traits
-pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
+pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send + Sync {
     /// Inserts an account
     fn insert_account(&mut self, address: Address, account: AccountInfo);
 
@@ -69,11 +85,6 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
         None
     }
 
-    /// Return the DB as read-only hashdb
-    fn as_hash_db(&self) {
-        todo!()
-    }
-
     /// Returns the current, standalone state of the Db
     fn current_state(&self) -> StateDb;
 }
@@ -108,17 +119,23 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(InMemoryDB::default())
+        StateDb::new(MemDb::default())
+    }
+}
+
+impl<T: DatabaseRef> MaybeHashDatabase for CacheDB<T> {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        Some(trie_hash_db(&self.accounts))
     }
 }
 
 /// Represents a state at certain point
-pub struct StateDb(Box<dyn DatabaseRef + Send + Sync>);
+pub struct StateDb(Box<dyn MaybeHashDatabase + Send + Sync>);
 
 // === impl StateDB ===
 
 impl StateDb {
-    pub fn new(db: impl DatabaseRef + Send + Sync + 'static) -> Self {
+    pub fn new(db: impl MaybeHashDatabase + Send + Sync + 'static) -> Self {
         Self(Box::new(db))
     }
 }
@@ -138,6 +155,12 @@ impl DatabaseRef for StateDb {
 
     fn block_hash(&self, number: U256) -> H256 {
         self.0.block_hash(number)
+    }
+}
+
+impl MaybeHashDatabase for StateDb {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        self.0.maybe_as_hash_db()
     }
 }
 

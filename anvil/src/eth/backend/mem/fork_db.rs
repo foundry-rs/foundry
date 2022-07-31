@@ -1,8 +1,9 @@
 use crate::{
-    eth::backend::db::{Db, SerializableState, StateDb},
+    eth::backend::db::{Db, MaybeHashDatabase, SerializableState, StateDb},
     revm::AccountInfo,
     Address, U256,
 };
+use foundry_evm::executor::fork::database::ForkDbSnapshot;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 
 /// Implement the helper for the fork database
@@ -35,3 +36,6 @@ impl Db for ForkedDatabase {
         StateDb::new(self.create_snapshot())
     }
 }
+
+impl MaybeHashDatabase for ForkedDatabase {}
+impl MaybeHashDatabase for ForkDbSnapshot {}

@@ -1,7 +1,8 @@
 //! Support for generating the state root for memdb storage
 use std::collections::BTreeMap;
 
-use anvil_core::eth::trie::{sec_trie_root, trie_root};
+use crate::eth::backend::db::AsHashDB;
+use anvil_core::eth::trie::{sec_trie_root, trie_root, RefTrieDBMut};
 use bytes::Bytes;
 use ethers::{
     types::{Address, H256, U256},
@@ -9,6 +10,8 @@ use ethers::{
 };
 use forge::revm::db::DbAccount;
 use foundry_evm::revm::{AccountInfo, Log};
+use memory_db::HashKey;
+use trie_db::TrieMut;
 
 /// Returns the log hash for all `logs`
 ///
@@ -29,16 +32,38 @@ pub fn log_rlp_hash(logs: Vec<Log>) -> H256 {
     H256::from_slice(out.as_slice())
 }
 
-pub fn state_merkle_trie_root(accounts: &BTreeMap<Address, DbAccount>) -> H256 {
-    let vec = accounts
+/// Returns the account data as `HashDB`
+pub fn trie_hash_db(accounts: &BTreeMap<Address, DbAccount>) -> (AsHashDB, H256) {
+    let accounts = trie_accounts(accounts);
+
+    // Populate DB with full trie from entries.
+    let (db, root) = {
+        let mut db = <memory_db::MemoryDB<_, HashKey<_>, _>>::default();
+        let mut root = Default::default();
+        {
+            let mut trie = RefTrieDBMut::new(&mut db, &mut root);
+            for (address, value) in accounts {
+                trie.insert(address.as_ref(), value.as_ref()).unwrap();
+            }
+        }
+        (db, root)
+    };
+    (Box::new(db), H256::from(root))
+}
+
+/// Returns all RLP-encoded Accounts
+pub fn trie_accounts(accounts: &BTreeMap<Address, DbAccount>) -> Vec<(Address, Bytes)> {
+    accounts
         .iter()
         .map(|(address, account)| {
             let storage_root = trie_account_rlp(&account.info, &account.storage);
             (*address, storage_root)
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    trie_root(vec)
+pub fn state_merkle_trie_root(accounts: &BTreeMap<Address, DbAccount>) -> H256 {
+    trie_root(trie_accounts(accounts))
 }
 
 /// Returns the RLP for this account.
