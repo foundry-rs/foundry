@@ -402,7 +402,7 @@ pub fn apply(
         // "$" is the JSONPath key for the root of the object
         HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
         HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
-        HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1, &inner.2, &inner.3),
+        HEVMCalls::WriteJson(inner) => write_json(state, &inner.0, &inner.1, &inner.2, inner.3),
         _ => return None,
     })
 }
