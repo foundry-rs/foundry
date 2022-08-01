@@ -21,7 +21,10 @@ use std::sync::Arc;
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
-impl_figment_convert_cast!(EthereumOpts);
+impl_figment_convert_cast!(
+    #[emit_warnings]
+    EthereumOpts
+);
 #[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]

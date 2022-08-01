@@ -75,6 +75,25 @@ macro_rules! impl_figment_convert {
             }
         }
     };
+    (#[emit_warnings] $name:ty) => {
+        impl<'a> From<&'a $name> for $crate::figment::Figment {
+            fn from(args: &'a $name) -> Self {
+                if let Some(root) = args.root.clone() {
+                    $crate::Config::figment_with_root_emit_warnings(root)
+                } else {
+                    $crate::Config::figment_with_root_emit_warnings($crate::find_project_root_path().unwrap())
+                }
+                .merge(args)
+            }
+        }
+
+        impl<'a> From<&'a $name> for $crate::Config {
+            fn from(args: &'a $name) -> Self {
+                let figment: $crate::figment::Figment = args.into();
+                $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
     ($name:ty, $start:ident $(, $more:ident)*) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
@@ -202,6 +221,23 @@ macro_rules! impl_figment_convert_cast {
             }
         }
     };
+    (#[emit_warnings] $name:ty) => {
+        impl<'a> From<&'a $name> for $crate::figment::Figment {
+            fn from(args: &'a $name) -> Self {
+                $crate::Config::figment_with_root_emit_warnings(
+                    $crate::find_project_root_path().unwrap(),
+                )
+                .merge(args)
+            }
+        }
+
+        impl<'a> From<&'a $name> for $crate::Config {
+            fn from(args: &'a $name) -> Self {
+                let figment: $crate::figment::Figment = args.into();
+                $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
 }
 
 macro_rules! config_warn {
@@ -214,4 +250,15 @@ macro_rules! config_warn {
         )
     }
 }
+macro_rules! config_warn_if {
+    ($condition:expr, $($arg:tt)*) => {
+        if $condition {
+            $crate::macros::config_warn!($($arg)*);
+        } else {
+            $crate::trace!("(supressed warning): {}", format_args!($($arg)*));
+        }
+    }
+}
+
 pub(crate) use config_warn;
+pub(crate) use config_warn_if;

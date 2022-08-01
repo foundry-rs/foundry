@@ -31,11 +31,11 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::trace;
+pub(crate) use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
-pub(crate) use macros::config_warn;
+pub(crate) use macros::{config_warn, config_warn_if};
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
@@ -327,6 +327,9 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
+    /// Emit warnings to stderr
+    #[serde(default, skip)]
+    pub __emit_warnings: bool,
 }
 
 impl Config {
@@ -841,6 +844,15 @@ impl Config {
         Self::with_root(root).into()
     }
 
+    /// Returns the loaded figment but emits warnings.
+    ///
+    /// See `Config::figment_with_root` and `Config::__emit_warnings`
+    pub fn figment_with_root_emit_warnings(root: impl Into<PathBuf>) -> Figment {
+        let mut config = Self::with_root(root);
+        config.__emit_warnings = true;
+        config.into()
+    }
+
     /// Creates a new Config that adds additional context extracted from the provided root.
     ///
     /// # Example
@@ -1230,19 +1242,22 @@ impl Config {
         dir_size_recursive(fs::read_dir(chain_path)?)
     }
 
+    /// Collect warnings for unknown or malformed sections in toml provider
+    fn lint_toml_provider(toml_provider: impl Provider) -> Vec<String> {
+        toml_provider.data().unwrap_or_default().keys().filter(|k| {
+            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+        }).map(|unknown_key| {
+            let src =
+                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
+            format!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{unknown_key}] instead or run `forge config --fix`.")
+        }).collect()
+    }
+
     fn merge_toml_provider(
         mut figment: Figment,
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
-        // provide warnings for unknown sections in toml provider
-        for unknown_key in toml_provider.data().unwrap_or_default().keys().filter(|k| {
-            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
-        }) {
-            let src =
-                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            config_warn!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead or run `forge config --fix`.");
-        }
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -1274,19 +1289,22 @@ impl From<Config> for Figment {
 
         // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = Config::merge_toml_provider(
-                figment,
-                TomlFileProvider::new(None, global_toml).cached(),
-                profile.clone(),
-            );
+            let provider = TomlFileProvider::new(None, global_toml).cached();
+            for warning in Config::lint_toml_provider(&provider) {
+                config_warn_if!(c.__emit_warnings, "{warning}");
+            }
+            figment = Config::merge_toml_provider(figment, provider, profile.clone());
         }
         // merge local foundry.toml file
-        figment = Config::merge_toml_provider(
-            figment,
-            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
-                .cached(),
-            profile.clone(),
-        );
+        figment = {
+            let provider =
+                TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                    .cached();
+            for warning in Config::lint_toml_provider(&provider) {
+                config_warn_if!(c.__emit_warnings, "{warning}");
+            }
+            Config::merge_toml_provider(figment, provider, profile.clone())
+        };
 
         // merge environment variables
         figment = figment
@@ -1514,6 +1532,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             __non_exhaustive: (),
+            __emit_warnings: false,
         }
     }
 }
