@@ -84,9 +84,7 @@ impl Executor {
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
             revm::AccountInfo {
-                // Safety: The bytecode is a singular STOP opcode (0x00) and has a length of 1,
-                // which respects the invariants outlined in REVM.
-                code: Some(unsafe { Bytecode::new_checked(vec![0u8].into(), 1) }),
+                code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
                 ..Default::default()
             },
         );
