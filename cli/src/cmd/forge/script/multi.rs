@@ -3,7 +3,6 @@ use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
 use foundry_common::fs;
 use futures::future::join_all;
-use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
 use std::{
     io::BufWriter,

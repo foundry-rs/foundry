@@ -248,7 +248,7 @@ impl ScriptArgs {
                     target,
                     &script_config.config.broadcast,
                 )?;
-                multi.save();
+                multi.save()?;
 
                 if self.broadcast {
                     if deployments.len() == 1 {
@@ -366,7 +366,7 @@ impl ScriptArgs {
                 provider_info.chain,
             )?;
             sequence.set_multi(is_multi);
-            sequence.save();
+            sequence.save()?;
             deployments.push(sequence);
 
             new_txes = VecDeque::new();

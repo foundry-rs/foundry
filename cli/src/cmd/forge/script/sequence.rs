@@ -249,7 +249,7 @@ impl Drop for ScriptSequence {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
@@ -286,14 +286,14 @@ impl TransactionWithMetadata {
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
-    ) -> eyre::Result<Self> {
+    ) -> Self {
         let mut metadata = Self { transaction, rpc, ..Default::default() };
 
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(true, Address::from_slice(&result.returned), local_contracts)
             } else {
-                metadata.set_call(to, local_contracts, decoder)?;
+                metadata.set_call(to, local_contracts, decoder).expect("to be able to decode");
             }
         } else if metadata.transaction.to().is_none() {
             metadata.set_create(
@@ -302,7 +302,7 @@ impl TransactionWithMetadata {
                 local_contracts,
             );
         }
-        Ok(metadata)
+        metadata
     }
 
     fn set_create(

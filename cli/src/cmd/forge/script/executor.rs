@@ -16,7 +16,6 @@ use forge::{
 };
 use futures::future::join_all;
 use parking_lot::RwLock;
-use rayon::iter::ParallelIterator;
 use std::{
     collections::{HashSet, VecDeque},
     sync::Arc,
@@ -84,9 +83,13 @@ impl ScriptArgs {
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let mut runners = self.build_runners(script_config, &transactions).await;
-
-        let mut failed = false;
+        let runners = Arc::new(
+            self.build_runners(script_config, &transactions)
+                .await
+                .into_iter()
+                .map(|(k, runner)| (k, Arc::new(RwLock::new(runner))))
+                .collect::<HashMap<_, _>>(),
+        );
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -107,14 +110,20 @@ impl ScriptArgs {
             })
             .collect();
 
-        let mut final_txs = VecDeque::new();
-        for transaction in transactions {
-            let runner = runners
-                .get_mut(transaction.rpc.as_ref().expect("to have been filled already."))
-                .expect("to have been built.");
+        let final_txs = Arc::new(RwLock::new(VecDeque::new()));
 
-            match transaction.transaction {
-                TypedTransaction::Legacy(mut tx) => {
+        // for transaction in transactions
+        let futs = transactions
+            .into_iter()
+            .map(|transaction| async {
+                let mut runner = runners
+                    .get(transaction.rpc.as_ref().expect("to have been filled already."))
+                    .expect("to have been built.")
+                    .write();
+
+                let mut failed = false;
+
+                if let TypedTransaction::Legacy(mut tx) = transaction.transaction {
                     let mut result = runner
                         .simulate(
                             tx.from.expect(
@@ -146,23 +155,24 @@ impl ScriptArgs {
                         }
                     }
 
-                    final_txs.push_back(TransactionWithMetadata::new(
+                    final_txs.write().push_back(TransactionWithMetadata::new(
                         tx.into(),
                         transaction.rpc,
                         &result,
                         &address_to_abi,
                         decoder,
-                    )?);
+                    ));
                 }
-                _ => unreachable!(),
+                failed
+            })
+            .collect::<Vec<_>>();
+
+        for failed in join_all(futs).await {
+            if failed {
+                eyre::bail!("Simulated execution failed")
             }
         }
-
-        if failed {
-            eyre::bail!("Simulated execution failed")
-        } else {
-            Ok(final_txs)
-        }
+        Ok(Arc::try_unwrap(final_txs).expect("Only one ref").into_inner())
     }
 
     /// Build the multiple runners from different forks.
