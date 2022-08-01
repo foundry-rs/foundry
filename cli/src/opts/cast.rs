@@ -304,25 +304,19 @@ Examples:
         #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256), value_name = "NONCE")]
         nonce: Option<U256>,
     },
-    
-    // TODO: Currently implemented for hash only, add other options...
     #[clap(name = "events")]
     #[clap(visible_alias = "ev")] 
-    #[clap(about = "Get readable event logs from a combination of tx hash, contract address, filters, and block range.")]
+    #[clap(about = "Get readable event logs from a tx hash.")]
     Events {
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
         #[clap(value_name = "HASH")]
-        tx_hash: Option<String>,
+        tx_hash: String,
         #[clap(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
         etherscan_api_key: Option<String>,
         #[clap(flatten)]
         chain: ClapChain,
-    },
-    
-    
-    
-    
+    },    
     #[clap(name = "namehash")]
     #[clap(visible_aliases = &["na", "nh"])]
     #[clap(about = "Calculate the ENS namehash of a name.")]
