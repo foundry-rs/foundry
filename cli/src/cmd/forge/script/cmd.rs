@@ -22,7 +22,7 @@ impl ScriptArgs {
             config: Config::from_provider(figment).sanitized(),
             evm_opts,
             called_function: None,
-            backend: None,
+            backend: HashMap::new(),
         };
 
         self.maybe_load_private_key(&mut script_config)?;

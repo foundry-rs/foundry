@@ -433,7 +433,7 @@ pub struct ScriptConfig {
     pub config: foundry_config::Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
-    pub backend: Option<Backend>,
+    pub backend: HashMap<String, Backend>,
     pub called_function: Option<Function>,
 }
 

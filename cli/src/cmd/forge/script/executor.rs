@@ -6,6 +6,7 @@ use crate::{
     },
     utils,
 };
+use cast::hashbrown::HashSet;
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -74,13 +75,12 @@ impl ScriptArgs {
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<BroadcastableTransaction>,
-        script_config: &mut ScriptConfig,
+        mut script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let mut runner = self
-            .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
-            .await;
+        let mut runners = self.build_runners(script_config, &transactions).await;
+
         let mut failed = false;
 
         if script_config.evm_opts.verbosity > 3 {
@@ -104,6 +104,10 @@ impl ScriptArgs {
 
         let mut final_txs = VecDeque::new();
         for transaction in transactions {
+            let mut runner = runners
+                .get_mut(transaction.rpc.as_ref().expect("to have been filled already."))
+                .expect("to have been built.");
+
             match transaction.transaction {
                 TypedTransaction::Legacy(mut tx) => {
                     let mut result = runner
@@ -156,6 +160,34 @@ impl ScriptArgs {
         }
     }
 
+    /// Build the multiple runners from different forks.
+    async fn build_runners(
+        &self,
+        script_config: &mut ScriptConfig,
+        transactions: &VecDeque<BroadcastableTransaction>,
+    ) -> HashMap<String, ScriptRunner> {
+        let mut runners = HashMap::new();
+        let user_rpc = script_config.evm_opts.fork_url.clone();
+        for tx in transactions {
+            let rpc = tx.rpc.as_ref().unwrap();
+
+            if !runners.contains_key(rpc) {
+                script_config.evm_opts.fork_url = tx.rpc.clone();
+                runners.insert(
+                    rpc.clone(),
+                    self.prepare_runner(
+                        script_config,
+                        script_config.evm_opts.sender,
+                        SimulationStage::OnChain,
+                    )
+                    .await,
+                );
+            }
+        }
+        script_config.evm_opts.fork_url = user_rpc;
+        runners
+    }
+
     /// Creates the Runner that drives script execution
     async fn prepare_runner(
         &self,
@@ -165,14 +197,20 @@ impl ScriptArgs {
     ) -> ScriptRunner {
         trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
+        let url = script_config.evm_opts.fork_url.clone().unwrap_or_default();
 
+        // TODO(joshie): somehow get fork backend from the local simulation run
         // The db backend that serves all the data.
-        let db = script_config.backend.clone().unwrap_or_else(|| {
-            let backend =
-                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
-            script_config.backend = Some(backend.clone());
-            backend
-        });
+        let db = match script_config.backend.get(&url) {
+            Some(db) => db.clone(),
+            None => {
+                let backend = Backend::spawn(
+                    script_config.evm_opts.get_fork(&script_config.config, env.clone()),
+                );
+                script_config.backend.insert(url.clone(), backend);
+                script_config.backend.get(&url).unwrap().clone()
+            }
+        };
 
         let mut builder = ExecutorBuilder::default()
             .with_config(env)

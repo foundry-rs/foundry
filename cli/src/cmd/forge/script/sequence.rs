@@ -21,11 +21,6 @@ use std::{
 };
 use tracing::trace;
 
-pub enum SequenceType {
-    Single(ScriptSequence),
-    Multi(Vec<ScriptSequence>),
-}
-
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
 #[derive(Deserialize, Serialize, Clone, Default)]
