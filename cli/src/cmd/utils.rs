@@ -34,7 +34,7 @@ pub fn remove_contract(
         contract
     } else {
         dbg!(info.clone());
-        output.clone().into_artifacts().for_each(|(id,_)| {
+        output.clone().into_artifacts().for_each(|(id, _)| {
             dbg!(id);
         });
         panic!("failed to remove contract");
