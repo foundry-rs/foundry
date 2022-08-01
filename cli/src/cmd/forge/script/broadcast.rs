@@ -25,8 +25,6 @@ use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
-    borrow::Borrow,
-    cell::{Cell, RefCell},
     cmp::min,
     collections::{hash_map::Entry, HashSet},
     fmt,
@@ -49,7 +47,7 @@ impl ScriptArgs {
                 .typed_transactions()
                 .into_iter()
                 .skip(already_broadcasted)
-                .map(|(rpc, tx)| *tx.from().expect("No sender for onchain transaction!"))
+                .map(|(_, tx)| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
             let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
@@ -79,7 +77,7 @@ impl ScriptArgs {
                 .typed_transactions()
                 .into_iter()
                 .skip(already_broadcasted)
-                .map(|(rpc, tx)| {
+                .map(|(_, tx)| {
                     let from = *tx.from().expect("No sender for onchain transaction!");
                     let signer = local_wallets.get(&from).expect("`find_all` returned incomplete.");
 
@@ -171,10 +169,10 @@ impl ScriptArgs {
         }
 
         println!("\n\n==========================");
-        println!(
-            "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
-            deployment_sequence.path
-        );
+        println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.");
+        if !deployment_sequence.multi {
+            print!(" Transaction receipts written to {:?}", deployment_sequence.path)
+        }
         Ok(())
     }
 
@@ -255,22 +253,15 @@ impl ScriptArgs {
 
                 if self.broadcast {
                     if deployments.len() == 1 {
-                        let mut deployment_sequence = deployments.first_mut().unwrap();
+                        let deployment_sequence = deployments.first_mut().unwrap();
 
                         deployment_sequence.add_libraries(libraries);
-                        self.send_transactions(&mut deployment_sequence).await?;
 
                         if self.verify {
                             deployment_sequence.verify_contracts(verify).await?;
                         }
                     } else {
-                        self.multi_chain_deployment(
-                            multi,
-                            libraries,
-                            verify,
-                            &script_config.config,
-                        )
-                        .await?;
+                        self.multi_chain_deployment(multi, libraries, verify).await?;
                     }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
@@ -297,14 +288,12 @@ impl ScriptArgs {
 
         // TODO(joshie)
         let last_rpc = transactions.back().unwrap().rpc.clone();
-        let is_multi = transactions.iter().find(|tx| tx.rpc != last_rpc).is_some();
+        let is_multi = transactions.iter().any(|tx| tx.rpc != last_rpc);
 
         let log_folder =
             if is_multi { config.broadcast.join("multi") } else { config.broadcast.to_path_buf() };
 
         // TODO(joshie): make it accessible outside for broadcasting stage.
-        let mut providers: HashMap<String, Arc<Provider<RetryClient<Http>>>> = HashMap::new();
-        let mut chains: HashMap<String, u64> = HashMap::new();
         let mut addresses = HashSet::new();
         let mut new_txes = VecDeque::new();
         let mut total_gas = U256::zero();
@@ -384,7 +373,7 @@ impl ScriptArgs {
             new_txes = VecDeque::new();
         }
 
-        // TODO per chain
+        // TODO(joshie) per chain
         // We don't store it in the transactions, since we want the most updated value. Right before
         // broadcasting.
         // let per_gas = if let Some(gas_price) = self.with_gas_price {

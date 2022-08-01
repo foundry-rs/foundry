@@ -1,18 +1,11 @@
 use super::sequence::TransactionWithMetadata;
-use crate::{
-    cmd::has_batch_support,
-    opts::{MultiWallet, WalletType},
-    utils::get_http_provider,
-};
+use crate::{cmd::has_batch_support, opts::WalletType, utils::get_http_provider};
 use ethers::{
     abi::Address,
     prelude::{Http, Middleware, Provider, RetryClient, U256},
     types::transaction::eip2718::TypedTransaction,
 };
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub struct ProvidersManager {

@@ -6,7 +6,7 @@ use crate::{
     },
     utils,
 };
-use cast::hashbrown::HashSet;
+
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -75,7 +75,7 @@ impl ScriptArgs {
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<BroadcastableTransaction>,
-        mut script_config: &mut ScriptConfig,
+        script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
         contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
@@ -104,7 +104,7 @@ impl ScriptArgs {
 
         let mut final_txs = VecDeque::new();
         for transaction in transactions {
-            let mut runner = runners
+            let runner = runners
                 .get_mut(transaction.rpc.as_ref().expect("to have been filled already."))
                 .expect("to have been built.");
 

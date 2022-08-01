@@ -3,6 +3,9 @@ use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
 use foundry_common::fs;
 use foundry_config::Config;
+use futures::future::join_all;
+
+use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
 use std::{
     io::BufWriter,
@@ -84,18 +87,32 @@ impl ScriptArgs {
         mut deployments: MultiChainSequence,
         libraries: Libraries,
         verify: VerifyBundle,
-        config: &Config,
     ) -> eyre::Result<()> {
-        for mut deployment_sequence in deployments.deployments {
-            if !libraries.is_empty() {
-                eyre::bail!("Libraries are not currently supported on multi deployment setups.");
-            }
+        if !libraries.is_empty() {
+            eyre::bail!("Libraries are currently not supported on multi deployment setups.");
+        }
 
-            self.send_transactions(&mut deployment_sequence).await?;
+        let futs = deployments
+            .deployments
+            .iter_mut()
+            .map(|sequence| async {
+                match self.send_transactions(sequence).await {
+                    Ok(_) => {
+                        if self.verify {
+                            return sequence.verify_contracts(verify.clone()).await
+                        }
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
+                }
+            })
+            .collect::<Vec<_>>();
 
-            if self.verify {
-                deployment_sequence.verify_contracts(verify.clone()).await?;
-            }
+        let errors =
+            join_all(futs).await.into_iter().filter(|res| res.is_err()).collect::<Vec<_>>();
+
+        if !errors.is_empty() {
+            return Err(eyre::eyre!("{errors:?}"))
         }
 
         Ok(())
