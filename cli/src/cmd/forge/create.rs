@@ -97,7 +97,7 @@ impl CreateArgs {
             compile::compile(&project, false, false)
         }?;
 
-        output.slash_paths();
+        // output.slash_paths();
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
