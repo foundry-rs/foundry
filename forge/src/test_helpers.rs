@@ -81,11 +81,7 @@ pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor) -> FuzzedExecutor {
     FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), CALLER)
 }
 
-#[cfg(not(windows))]
 pub const RE_PATH_SEPARATOR: &str = "/";
-
-#[cfg(windows)]
-pub const RE_PATH_SEPARATOR: &str = "\\\\";
 
 pub mod filter {
     use super::*;

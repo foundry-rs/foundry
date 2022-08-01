@@ -20,7 +20,7 @@ async fn test_can_change_mining_mode() {
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 0);
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 1);
 }
