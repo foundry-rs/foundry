@@ -15,9 +15,9 @@ use std::cmp::Ordering;
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
 /// to populate the return with dummy bytes so the decode doesn't fail.
 ///
-/// 320 bytes was arbitrarily chosen because it is long enough for return values up to 10 words in
+/// 512 bytes was arbitrarily chosen because it is long enough for return values up to 16 words in
 /// size.
-static DUMMY_CALL_OUTPUT: [u8; 320] = [0u8; 320];
+static DUMMY_CALL_OUTPUT: [u8; 512] = [0u8; 512];
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
