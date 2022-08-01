@@ -4112,9 +4112,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "455988f0a9920c91f192268ee31d79fcb980006058514d1e6b543af3d71670f3"
+checksum = "7f0033a9176ff78b9d6791f5d2af3c74455c0ace2303a81ad8400a65de64b640"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4140,6 +4140,7 @@ dependencies = [
  "num 0.4.0",
  "primitive-types",
  "ripemd",
+ "secp256k1",
  "sha2 0.10.2",
  "sha3",
  "substrate-bn",
@@ -4367,6 +4368,24 @@ dependencies = [
  "pkcs8",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ece73253dd9e1fb540ff324eae554113a31c25fb598d22fd13b088a6a03f90d"
+dependencies = [
+ "secp256k1-sys",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7058dc8eaf3f2810d7828680320acda0b25a288f6d288e19278e249bbf74226b"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

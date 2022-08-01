@@ -2,7 +2,6 @@ use crate::executor::{
     fork::{CreateFork, ForkId, MultiFork, SharedBackend},
     snapshot::Snapshots,
 };
-use bytes::Bytes;
 use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
@@ -10,8 +9,8 @@ use ethers::{
 use hashbrown::HashMap as Map;
 use revm::{
     db::{CacheDB, DatabaseRef},
-    Account, AccountInfo, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log, Return,
-    SubRoutine, TransactOut, TransactTo, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log,
+    Return, SubRoutine, TransactOut, TransactTo, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -702,7 +701,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         if let Some(db) = self.active_fork_db() {
             db.code_by_hash(code_hash)
         } else {
@@ -736,7 +735,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::code_by_hash(db, code_hash)
         } else {
@@ -780,7 +779,7 @@ impl Database for Backend {
         }
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
         if let Some(db) = self.active_fork_db_mut() {
             db.code_by_hash(code_hash)
         } else {

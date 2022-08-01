@@ -14,7 +14,7 @@ use ethers::{
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut,
+    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, Return, TransactOut,
     TransactTo, TxEnv, EVM,
 };
 /// Reexport commonly used revm types
@@ -83,7 +83,10 @@ impl Executor {
         // does not fail
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
+            revm::AccountInfo {
+                code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
+                ..Default::default()
+            },
         );
 
         Executor { backend, env, inspector_config, gas_limit }
