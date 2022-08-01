@@ -21,10 +21,10 @@ use eyre::Context;
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
+use path_slash::PathBufExt;
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-use path_slash::PathBufExt;
 use tracing::log::trace;
 
 pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
@@ -102,7 +102,7 @@ impl CreateArgs {
         }
 
         let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract).map_err(|err| {
-            output.into_artifacts().for_each(|(id,_)| {
+            output.into_artifacts().for_each(|(id, _)| {
                 dbg!(id);
             });
 

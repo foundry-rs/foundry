@@ -15,9 +15,9 @@ use ethers::prelude::{
     },
     info::ContractInfo,
 };
+use path_slash::PathBufExt;
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
-use path_slash::PathBufExt;
 
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
@@ -77,7 +77,7 @@ impl Cmd for InspectArgs {
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
-            outcome.clone().into_artifacts().for_each(|(id,_)| {
+            outcome.clone().into_artifacts().for_each(|(id, _)| {
                 dbg!(id);
             });
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
