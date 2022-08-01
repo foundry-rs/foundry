@@ -8,12 +8,15 @@ use crate::{
 };
 use clap::Parser;
 use comfy_table::Table;
-use ethers::prelude::{
-    artifacts::output_selection::{
-        BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-        EvmOutputSelection, EwasmOutputSelection,
+use ethers::{
+    prelude::{
+        artifacts::output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection,
+        },
+        info::ContractInfo,
     },
-    info::ContractInfo,
+    solc::utils::canonicalize,
 };
 use path_slash::PathBufExt;
 use serde_json::{to_value, Value};
@@ -65,8 +68,8 @@ impl Cmd for InspectArgs {
         // Build the project
         let project = modified_build_args.project()?;
         let outcome = if let Some(ref mut contract_path) = contract.path {
-            let target_path = dunce::canonicalize(&*contract_path)?;
-            *contract_path = target_path.to_slash_lossy().to_string();
+            let target_path = canonicalize(&*contract_path)?;
+            *contract_path = target_path.to_string_lossy().to_string();
             compile::compile_files(&project, vec![target_path], true)
         } else {
             compile::suppress_compile(&project)

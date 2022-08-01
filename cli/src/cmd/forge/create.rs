@@ -98,7 +98,7 @@ impl CreateArgs {
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = canonicalized(project.root().join(&path)).to_slash_lossy().to_string();
+            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
         }
 
         let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
