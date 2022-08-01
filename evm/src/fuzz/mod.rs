@@ -10,7 +10,6 @@ use ethers::{
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 
-use ethers::{abi::AbiDecode, types::U256};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
