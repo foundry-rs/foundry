@@ -18,7 +18,11 @@ use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    ops::{Shl, Shr},
+    path::PathBuf,
+    str::FromStr,
+};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -642,7 +646,7 @@ where
                 let address: &str = &event["address"].as_str().ok_or( eyre::eyre!("Could not parse event address from receipt"))?;
                 let topics = &event["topics"].as_array().ok_or( eyre::eyre!("Could not parse topic log from receipt"))?;
                 let topic0 =topics[0].as_str().ok_or( eyre::eyre!("Could not parse Topic 0 from receipt"))?;
-                let data: String = event["data"].as_str().ok_or( eyre::eyre!("Could not parse data from receipt"))?.to_string();
+                let mut data: String = event["data"].as_str().ok_or( eyre::eyre!("Could not parse data from receipt"))?.to_string();
                 
                 let mut event_data = EventData {
                     sig: None,
@@ -714,14 +718,14 @@ where
                                 .map(|chunk| chunk.into())
                                 .collect();
                         
-                        // let topics_as_data = topics[1..]
-                        //     .iter()
-                        //     .map(|topic| topic.as_str().unwrap()[2..].to_string())
-                        //     .collect::<Vec<String>>()
-                        //     .join("")
-                        //     .to_string();
+                        let topics_as_data = topics[1..]
+                            .iter()
+                            .map(|topic| topic.as_str().unwrap()[2..].to_string())
+                            .collect::<Vec<String>>()
+                            .join("")
+                            .to_string();
 
-                        // data = format!("Ox{}{}", topics_as_data, data[2..].to_string());
+                        data = format!("Ox{}{}", topics_as_data, data[2..].to_string());
                     }
                 }
 
@@ -776,11 +780,11 @@ where
 
                 if &event_data.args.len() == &0 {
                     return_string.push_str(
-                        &format!("Contract {} emits: \n{} (unknown)\n", &event_data.address, &topic0)
+                        &format!("Contract {} emits: \nUnknown: {}\n", &event_data.address, &topic0)
                     );
-                    for (idx, topic) in topics[1..].iter().enumerate() {
+                    for topic in topics[1..].iter() {
                         return_string.push_str(
-                            &format!("({}) {}\n", idx + 1, topic.as_str().unwrap())
+                            &format!("(0) {}\n", topic.as_str().unwrap())
                         );
                     }
                 } else {
@@ -793,9 +797,7 @@ where
                         );
                     }
                 }
-                return_string.push_str(
-                    &format!("Data: {}\n\n", data)
-                );
+                return_string.push_str("\n");
             }
             Ok(return_string)
         } else {
@@ -1227,6 +1229,22 @@ impl SimpleCast {
         }
         let num_hex = format!("{:x}", num);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
+    pub fn left_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input as base {base_in}")?;
+        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+
+        Ok(value.shl(bits))
+    }
+
+    pub fn right_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input as base {base_in}")?;
+        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+
+        Ok(value.shr(bits))
     }
 
     /// Converts an eth amount into a specified unit

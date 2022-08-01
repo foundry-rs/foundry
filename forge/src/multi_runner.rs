@@ -51,6 +51,7 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
+    /// Returns the number of matching tests
     pub fn count_filtered_tests(&self, filter: &impl TestFilter) -> usize {
         self.contracts
             .iter()
@@ -498,8 +499,8 @@ mod tests {
                         logs.iter().eq(expected_logs.iter()),
                         "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
                         test_name,
-                        logs.join("\n"),
-                        expected_logs.join("\n")
+                        expected_logs.join("\n"),
+                        logs.join("\n")
                     );
                 }
 
@@ -507,7 +508,7 @@ mod tests {
                     assert_eq!(
                         warnings_count, expected_warning_count,
                         "Test {} did not pass as expected. Expected:\n{}Got:\n{}",
-                        test_name, warnings_count, expected_warning_count
+                        test_name, expected_warning_count, warnings_count
                     );
                 }
             }
@@ -581,7 +582,13 @@ mod tests {
                         std::path::MAIN_SEPARATOR
                     )
                     .as_str(),
-                    vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
+                    vec![(
+                        "testCantPay()",
+                        false,
+                        Some("EvmError: Revert".to_string()),
+                        None,
+                        None,
+                    )],
                 ),
                 (
                     format!(
@@ -802,8 +809,8 @@ mod tests {
                             None,
                             Some(vec![
                                 "constructor".into(),
-                                "testMisc, 0x0000000000000000000000000000000000000001".into(),
-                                "testMisc, 42".into(),
+                                "testMisc 0x0000000000000000000000000000000000000001".into(),
+                                "testMisc 42".into(),
                             ]),
                             None,
                         ),
@@ -1115,6 +1122,48 @@ mod tests {
                             Some(vec!["constructor".into(), "0x0000000000000000000000000000000000000001".into()]),
                             None,
                         ),
+                        (
+                            "testConsoleLogFormatString()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatUint()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatAddress()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log addr=0x0000000000000000000000000000000000000001".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatMulti()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log str=test uint=1".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatEscape()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log % test".into()]),
+                            None,
+                        ),
+                        (
+                            "testConsoleLogFormatSpill()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "formatted log test 1".into()]),
+                            None,
+                        ),
                     ],
                 ),
             ]),
@@ -1140,13 +1189,41 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         );
     }
 
-    /// Executes all fork cheatcodes
+    /// Executes reverting fork test
+    #[test]
+    fn test_cheats_fork_revert() {
+        let mut runner = runner();
+        let suite_result = runner
+            .test(
+                &Filter::new(
+                    "testNonExistingContractRevert",
+                    ".*",
+                    &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
+                ),
+                None,
+                true,
+            )
+            .unwrap();
+        assert_eq!(suite_result.len(), 1);
+
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (_, result) in test_results {
+                assert_eq!(
+                     result.reason.unwrap(),
+                     "Contract 0xCe71065D4017F316EC606Fe4422e11eB2c47c246 does not exists on active fork with id `1`\n        But exists on non active forks: `[0]`"
+                );
+            }
+        }
+    }
+
+    /// Executes all non-reverting fork cheatcodes
     #[test]
     fn test_cheats_fork() {
         let mut runner = runner();
         let suite_result = runner
             .test(
-                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR)),
+                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
+                    .exclude_tests(".*Revert"),
                 None,
                 true,
             )
@@ -1197,14 +1274,21 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
+
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();
+
+        assert!(!suite_result.is_empty());
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
 
                 match test_name.as_ref() {
-                    "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
+                    "testPositive(uint256)" |
+                    "testSuccessfulFuzz(uint128,uint128)" |
+                    "testToStringFuzz(bytes32)" => assert!(
                         result.success,
                         "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                         test_name,

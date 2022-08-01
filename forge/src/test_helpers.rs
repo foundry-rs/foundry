@@ -95,6 +95,7 @@ pub mod filter {
         test_regex: Regex,
         contract_regex: Regex,
         path_regex: Regex,
+        exclude_tests: Option<Regex>,
     }
 
     impl Filter {
@@ -103,7 +104,16 @@ pub mod filter {
                 test_regex: Regex::new(test_pattern).unwrap(),
                 contract_regex: Regex::new(contract_pattern).unwrap(),
                 path_regex: Regex::new(path_pattern).unwrap(),
+                exclude_tests: None,
             }
+        }
+
+        /// All tests to also exclude
+        ///
+        /// This is a workaround since regex does not support negative look aheads
+        pub fn exclude_tests(mut self, pattern: &str) -> Self {
+            self.exclude_tests = Some(Regex::new(pattern).unwrap());
+            self
         }
 
         pub fn matches_all() -> Self {
@@ -111,13 +121,20 @@ pub mod filter {
                 test_regex: Regex::new(".*").unwrap(),
                 contract_regex: Regex::new(".*").unwrap(),
                 path_regex: Regex::new(".*").unwrap(),
+                exclude_tests: None,
             }
         }
     }
 
     impl TestFilter for Filter {
         fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-            self.test_regex.is_match(test_name.as_ref())
+            let test_name = test_name.as_ref();
+            if let Some(ref exclude) = self.exclude_tests {
+                if exclude.is_match(test_name) {
+                    return false
+                }
+            }
+            self.test_regex.is_match(test_name)
         }
 
         fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {

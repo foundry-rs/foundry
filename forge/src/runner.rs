@@ -66,6 +66,8 @@ impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
+        trace!(?setup, "Setting test contract");
+
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(CALLER, U256::MAX);
@@ -125,10 +127,11 @@ impl<'a> ContractRunner<'a> {
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
 
-        // Now we set the contracts initial balance, and we also reset `self.sender`s balance to
-        // the initial balance we want
+        // Now we set the contracts initial balance, and we also reset `self.sender`s and `CALLER`s
+        // balance to the initial balance we want
         self.executor.set_balance(address, self.initial_balance);
         self.executor.set_balance(self.sender, self.initial_balance);
+        self.executor.set_balance(CALLER, self.initial_balance);
 
         self.executor.deploy_create2_deployer()?;
 

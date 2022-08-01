@@ -211,4 +211,28 @@ contract HardhatLogsTest {
 	function testConsoleLogAddress() public view {
 		console.log(testAddr);
 	}
+
+    function testConsoleLogFormatString() public view {
+        console.log("formatted log str=%s", testStr);
+    }
+
+    function testConsoleLogFormatUint() public view {
+        console.log("formatted log uint=%s", testUint);
+    }
+
+    function testConsoleLogFormatAddress() public view {
+        console.log("formatted log addr=%s", testAddr);
+    }
+
+    function testConsoleLogFormatMulti() public view {
+        console.log("formatted log str=%s uint=%d", testStr, testUint);
+    }
+
+    function testConsoleLogFormatEscape() public view {
+        console.log("formatted log %% %s", testStr);
+    }
+
+    function testConsoleLogFormatSpill() public view {
+        console.log("formatted log %s", testStr, testUint);
+    }
 }

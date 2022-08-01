@@ -6,6 +6,12 @@ use forge::{
     CALLER,
 };
 
+/// Represents which simulation stage is the script execution at.
+pub enum SimulationStage {
+    Local,
+    OnChain,
+}
+
 /// Drives script execution
 pub struct ScriptRunner {
     pub executor: Executor,
@@ -29,8 +35,10 @@ impl ScriptRunner {
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
         if !is_broadcast {
-            // We max out their balance so that they can deploy and make calls.
-            self.executor.set_balance(self.sender, U256::MAX);
+            if self.sender == Config::DEFAULT_SENDER {
+                // We max out their balance so that they can deploy and make calls.
+                self.executor.set_balance(self.sender, U256::MAX);
+            }
 
             if need_create2_deployer {
                 self.executor.deploy_create2_deployer()?;

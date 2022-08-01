@@ -29,9 +29,37 @@ pub fn apply<DB: DatabaseExt>(
                 .map(|id| id.encode().into())
         }
         HEVMCalls::SelectFork(fork_id) => select_fork(data, fork_id.0),
+        HEVMCalls::MakePersistent0(acc) => {
+            data.db.add_persistent_account(acc.0);
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent1(acc) => {
+            data.db.extend_persistent_accounts(acc.0.clone());
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent2(acc) => {
+            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(acc.1);
+            Ok(Default::default())
+        }
+        HEVMCalls::MakePersistent3(acc) => {
+            data.db.add_persistent_account(acc.0);
+            data.db.add_persistent_account(acc.1);
+            data.db.add_persistent_account(acc.2);
+            Ok(Default::default())
+        }
+        HEVMCalls::IsPersistent(acc) => Ok(data.db.is_persistent(&acc.0).encode().into()),
+        HEVMCalls::RevokePersistent0(acc) => {
+            data.db.remove_persistent_account(&acc.0);
+            Ok(Default::default())
+        }
+        HEVMCalls::RevokePersistent1(acc) => {
+            data.db.remove_persistent_accounts(acc.0.clone());
+            Ok(Default::default())
+        }
         HEVMCalls::ActiveFork(_) => data
             .db
-            .active_fork()
+            .active_fork_id()
             .map(|id| id.encode().into())
             .ok_or_else(|| util::encode_error("No active fork")),
         HEVMCalls::RollFork0(fork) => {
@@ -69,7 +97,10 @@ pub fn apply<DB: DatabaseExt>(
 
 /// Selects the given fork id
 fn select_fork<DB: DatabaseExt>(data: &mut EVMData<DB>, fork_id: U256) -> Result<Bytes, Bytes> {
-    data.db.select_fork(fork_id, data.env).map(|_| Default::default()).map_err(util::encode_error)
+    data.db
+        .select_fork(fork_id, data.env, &mut data.subroutine)
+        .map(|_| Default::default())
+        .map_err(util::encode_error)
 }
 
 /// Creates and then also selects the new fork
@@ -80,7 +111,7 @@ fn create_select_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_select_fork(fork, data.env).map_err(util::encode_error)
+    data.db.create_select_fork(fork, data.env, &mut data.subroutine).map_err(util::encode_error)
 }
 
 /// Creates a new fork
@@ -91,7 +122,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork).map_err(util::encode_error)
+    data.db.create_fork(fork, &data.subroutine).map_err(util::encode_error)
 }
 
 /// Creates the request object for a new fork request

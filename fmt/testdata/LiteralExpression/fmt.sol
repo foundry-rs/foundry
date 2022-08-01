@@ -38,6 +38,14 @@ contract LiteralExpressions {
 some words"; /* comment10 */
         unicode"Hello 😃";
 
+        // quoted strings
+        'hello "world"';
+        "hello 'world'";
+        "hello \'world\'";
+        "hello \"world\"";
+        "hello \"world\"";
+        "hello \'world\'";
+
         // hex literals
         hex"001122FF";
         hex"001122FF";

@@ -5,7 +5,7 @@ use ethers::{
     prelude::RetryClient,
     providers::{Http, Provider},
     signers::{HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
-    types::{Address, Chain, U256},
+    types::{Address, U256},
 };
 use eyre::Result;
 use foundry_config::{
@@ -14,7 +14,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile,
     },
-    impl_figment_convert_cast, Config,
+    impl_figment_convert_cast, Chain, Config,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use std::sync::Arc;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 impl_figment_convert_cast!(EthereumOpts);
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]
     pub rpc_url: Option<String>,

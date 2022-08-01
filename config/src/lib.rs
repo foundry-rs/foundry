@@ -254,6 +254,11 @@ pub struct Config {
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
+    /// Optional seed for the fuzzing RNG algorithm
+    #[serde(
+        deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
+    )]
+    pub fuzz_seed: Option<U256>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -381,8 +386,20 @@ impl Config {
             Ok(config) => config,
             Err(errors) => {
                 // providers can be nested and can return duplicate errors
-                let errors: BTreeSet<_> =
-                    errors.into_iter().map(|err| format!("config error: {}", err)).collect();
+                let errors: BTreeSet<_> = errors
+                    .into_iter()
+                    .map(|err| {
+                        if err
+                            .metadata
+                            .as_ref()
+                            .map(|meta| meta.name.contains(Toml::NAME))
+                            .unwrap_or_default()
+                        {
+                            return format!("foundry.toml error: {}", err)
+                        }
+                        format!("foundry config error: {}", err)
+                    })
+                    .collect();
                 for error in errors {
                     eprintln!("{}", error);
                 }
@@ -575,7 +592,7 @@ impl Config {
     /// Ensures that the configured version is installed if explicitly set
     ///
     /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
-    /// it's missing.
+    /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
@@ -585,6 +602,12 @@ impl Config {
                     let v = version.to_string();
                     let mut solc = Solc::find_svm_installed_version(&v)?;
                     if solc.is_none() {
+                        if self.offline {
+                            return Err(SolcError::msg(format!(
+                                "can't install missing solc {} in offline mode",
+                                version
+                            )))
+                        }
                         Solc::blocking_install(version)?;
                         solc = Solc::find_svm_installed_version(&v)?;
                     }
@@ -1442,6 +1465,7 @@ impl Default for Config {
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
+            fuzz_seed: None,
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -2832,6 +2856,7 @@ mod tests {
                 fuzz_max_global_rejects = 65536
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
+                fuzz_seed = '0x3e8'
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
@@ -2869,6 +2894,8 @@ mod tests {
             )?;
 
             let config = Config::load_with_root(jail.directory());
+
+            assert_eq!(config.fuzz_seed, Some(1000.into()));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]

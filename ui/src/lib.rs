@@ -927,8 +927,10 @@ impl Ui for Tui {
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // Poll events since last tick
-                if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
+                // Poll events since last tick - if last tick is greater than tick_rate, we demand
+                // immediate availability of the event. This may affect
+                // interactivity, but I'm not sure as it is hard to test.
+                if event::poll(tick_rate.saturating_sub(last_tick.elapsed())).unwrap() {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {

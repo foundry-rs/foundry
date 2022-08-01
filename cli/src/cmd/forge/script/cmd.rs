@@ -22,6 +22,7 @@ impl ScriptArgs {
             config: Config::from_provider(figment).sanitized(),
             evm_opts,
             called_function: None,
+            backend: None,
         };
 
         self.maybe_load_private_key(&mut script_config)?;
@@ -151,7 +152,7 @@ impl ScriptArgs {
                     result,
                     libraries,
                     &mut decoder,
-                    &script_config,
+                    script_config,
                     verify,
                 )
                 .await?;

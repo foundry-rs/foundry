@@ -16,7 +16,7 @@ foundry-config = { path = "./../config" }
 serde_json = "1.0.67"
 serde = "1.0.130"
 hex = "0.4.3"
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "abigen"] }
 
 # Error handling
 eyre = "0.6.5"

@@ -424,3 +424,24 @@ forgetest_async!(
         assert!(fixtures_log == run_log);
     }
 );
+
+forgetest_async!(test_default_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    // Expect the default sender to have uint256.max balance.
+    tester
+        .add_sig("TestInitialBalance", "runDefaultSender()")
+        .simulate(ScriptOutcome::OkSimulation);
+});
+
+forgetest_async!(test_custom_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    // Expect the sender to have its starting balance.
+    tester
+        .add_deployer(0)
+        .add_sig("TestInitialBalance", "runCustomSender()")
+        .simulate(ScriptOutcome::OkSimulation);
+});
