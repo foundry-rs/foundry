@@ -3,7 +3,7 @@
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
-    report::{BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
+    report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
     CompilerInput, CompilerOutput, Solc,
 };
 use once_cell::sync::Lazy;
@@ -137,7 +137,7 @@ impl Spinner {
     }
 }
 
-/// A spinner used as [`ethers::solc::report::Reporter`]
+/// A spinner used as [`report::Reporter`]
 ///
 /// This reporter will prefix messages with a spinning cursor
 #[derive(Debug)]
@@ -151,7 +151,7 @@ pub struct SpinnerReporter {
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
     ///
-    /// The spinner's message will be updated via the `ethers::solc::Reporter` events
+    /// The spinner's message will be updated via the `reporter` events
     ///
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
@@ -258,12 +258,8 @@ impl Reporter for SpinnerReporter {
         self.send_msg(Paint::red(format!("Failed to install solc {version}: {error}")).to_string());
     }
 
-    fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
-        self.send_msg(format!(
-            "Unable to resolve import: \"{}\" with remappings:\n        {}",
-            import.display(),
-            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n        ")
-        ));
+    fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
+        self.send_msg(report::format_unresolved_imports(imports, remappings));
     }
 }
 
@@ -273,11 +269,11 @@ impl Reporter for SpinnerReporter {
 /// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
 pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     let reporter = if TERM_SETTINGS.indicate_progress {
-        ethers::solc::report::Report::new(SpinnerReporter::spawn())
+        report::Report::new(SpinnerReporter::spawn())
     } else {
-        ethers::solc::report::Report::new(BasicStdoutReporter::default())
+        report::Report::new(BasicStdoutReporter::default())
     };
-    ethers::solc::report::with_scoped(&reporter, f)
+    report::with_scoped(&reporter, f)
 }
 
 #[cfg(test)]
@@ -298,7 +294,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn can_format_properly() {
         let r = SpinnerReporter::spawn();
         let remappings: Vec<Remapping> = vec![
@@ -307,12 +302,15 @@ mod tests {
             "ds-test/=lib/ds-test/src/".parse().unwrap(),
             "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/".parse().unwrap(),
         ];
-        r.on_unresolved_import(Path::new("hardhat/console.sol"), &remappings);
+        let unresolved = vec![(Path::new("./src/Import.sol"), Path::new("src/File.col"))];
+        r.on_unresolved_imports(&unresolved, &remappings);
         // formats:
-        // [⠒] Unable to resolve import: "hardhat/console.sol" with remappings:
-        //     library/=library/src/
-        //     weird-erc20/=lib/weird-erc20/src/
-        //     ds-test/=lib/ds-test/src/
-        //     openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
+        // [⠒] Unable to resolve imports:
+        //       "./src/Import.sol" in "src/File.col"
+        // with remappings:
+        //       library/=library/src/
+        //       weird-erc20/=lib/weird-erc20/src/
+        //       ds-test/=lib/ds-test/src/
+        //       openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
     }
 }
