@@ -18,10 +18,6 @@ pub struct FormatterConfig {
     pub func_attrs_with_params_multiline: bool,
     /// Style of quotation marks
     pub quote_style: QuoteStyle,
-    /// If string literal length causes the expression or statement to
-    /// be split from single line into multiple, ignore and preserve
-    /// it on the same line.
-    pub ignore_string_literal_len: bool,
 }
 
 /// Style of uint/int256 types
@@ -68,7 +64,6 @@ impl Default for FormatterConfig {
             int_types: IntTypes::Long,
             func_attrs_with_params_multiline: true,
             quote_style: QuoteStyle::Double,
-            ignore_string_literal_len: true,
         }
     }
 }

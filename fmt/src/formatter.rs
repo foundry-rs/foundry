@@ -1288,26 +1288,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write a quoted string. See `Formatter::quote_str` for more information
     fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
-        let mut chunk = self.chunk_at(
-            loc.start(),
-            Some(loc.end()),
-            Some(false),
-            self.quote_str(loc, prefix, string),
-        );
-
-        if self.config.ignore_string_literal_len {
-            self.write_comments(&chunk.postfixes_before)?;
-            self.write_comments(&chunk.prefixes)?;
-            if self.next_char_needs_space(chunk.content.chars().next().unwrap()) {
-                chunk.content.insert(0, ' ');
-            }
-            write!(self.buf(), "{}", chunk.content)?;
-            self.write_comments(&chunk.postfixes)?;
-        } else {
-            self.write_chunk(&chunk)?;
-        }
-
-        Ok(())
+        write_chunk!(self, loc.start(), loc.end(), "{}", self.quote_str(loc, prefix, string))
     }
 }
 
