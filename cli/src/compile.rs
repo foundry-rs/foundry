@@ -144,7 +144,10 @@ impl ProjectCompiler {
         let now = std::time::Instant::now();
         tracing::trace!(target : "forge::compile", "start compiling project");
 
-        let output = term::with_spinner_reporter(|| f(project))?;
+        let mut output = term::with_spinner_reporter(|| f(project))?;
+
+        // ensure consistent `/` on windows
+        output.slash_paths();
 
         let elapsed = now.elapsed();
         tracing::trace!(target : "forge::compile", "finished compiling after {:?}", elapsed);
@@ -215,7 +218,7 @@ impl ProjectCompiler {
 /// compilation was successful or if there was a cache hit.
 /// Doesn't print anything to stdout, thus is "suppressed".
 pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    let output = ethers::solc::report::with_scoped(
+    let mut output = ethers::solc::report::with_scoped(
         &ethers::solc::report::Report::new(NoReporter::default()),
         || project.compile(),
     )?;
@@ -223,6 +226,9 @@ pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput>
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
+
+    // ensure consistent `/` on windows
+    output.slash_paths();
 
     Ok(output)
 }

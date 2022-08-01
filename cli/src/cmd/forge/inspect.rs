@@ -18,7 +18,7 @@ use ethers::{
     },
     solc::utils::canonicalize,
 };
-use path_slash::PathBufExt;
+
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
 

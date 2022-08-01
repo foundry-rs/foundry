@@ -21,7 +21,7 @@ use eyre::Context;
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
-use path_slash::PathBufExt;
+
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
