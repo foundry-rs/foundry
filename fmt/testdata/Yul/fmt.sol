@@ -23,8 +23,8 @@ contract Yul {
             returndatacopy(0, 0, returndatasize())
 
             switch result
-                case 0 { revert(0, returndatasize()) }
-                default { return(0, returndatasize()) }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
 
         // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
@@ -82,14 +82,14 @@ contract Yul {
             mstore(0x7c, PAIR_SWAP_ID)
             // tokenOutNo == 0 ? ....
             switch tokenOutNo
-                case 0 {
-                    mstore(0x80, amountOut)
-                    mstore(0xa0, 0)
-                }
-                case 1 {
-                    mstore(0x80, 0)
-                    mstore(0xa0, amountOut)
-                }
+            case 0 {
+                mstore(0x80, amountOut)
+                mstore(0xa0, 0)
+            }
+            case 1 {
+                mstore(0x80, 0)
+                mstore(0xa0, amountOut)
+            }
             // address(this)
             mstore(0xc0, address())
             // empty bytes
