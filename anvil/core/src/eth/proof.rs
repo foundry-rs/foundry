@@ -1,10 +1,12 @@
 //! Return types for `eth_getProof`
 
+use crate::eth::trie::KECCAK_NULL_RLP;
 use ethers_core::{
     types::{Bytes, H256, U256},
     utils::rlp,
 };
 use fastrlp::{RlpDecodable, RlpEncodable};
+use foundry_evm::revm::KECCAK_EMPTY;
 use serde::{Deserialize, Serialize};
 
 /// Contains the proof for one single storage-entry
@@ -47,6 +49,17 @@ pub struct BasicAccount {
     pub storage_root: H256,
     /// Code hash of the account.
     pub code_hash: H256,
+}
+
+impl Default for BasicAccount {
+    fn default() -> Self {
+        BasicAccount {
+            balance: 0.into(),
+            nonce: 0.into(),
+            code_hash: KECCAK_EMPTY,
+            storage_root: KECCAK_NULL_RLP,
+        }
+    }
 }
 
 impl rlp::Encodable for BasicAccount {

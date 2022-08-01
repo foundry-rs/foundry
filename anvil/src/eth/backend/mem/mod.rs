@@ -32,7 +32,7 @@ use anvil_core::{
         transaction::{
             EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
         },
-        trie::{RefTrieDB, KECCAK_NULL_RLP},
+        trie::RefTrieDB,
         utils::to_access_list,
     },
     types::{Forking, Index},
@@ -215,6 +215,11 @@ impl Backend {
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<&ClientFork> {
         self.fork.as_ref()
+    }
+
+    /// Returns the database
+    pub fn get_db(&self) -> &Arc<RwLock<dyn Db>> {
+        &self.db
     }
 
     /// Whether we're forked off some remote client
@@ -1378,16 +1383,19 @@ impl Backend {
 
     /// Prove an account's existence or nonexistence in the state trie.
     ///
-    /// Returns a merkle proof of the account's trie node
+    /// Returns a merkle proof of the account's trie node, `account_key` == keccak(address)
     pub fn prove_account_at(
         &self,
         addr: Address,
-        values: Vec<H256>,
+        values: Vec<U256>,
         block_number: Option<BlockNumber>,
     ) -> Result<AccountProof, BlockchainError> {
-        self.with_database_at(block_number, |db| {
+        let account_key = H256::from(keccak256(addr.as_bytes()));
+
+        self.with_database_at(block_number, |block_db| {
             trace!(target: "backend", "get proof for {:?} at {:?}", addr, block_number);
-            let (db, root) = db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
+            let (db, root) = block_db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
+
             let data: &dyn HashDB<_, _> = db.deref();
             let mut recorder = Recorder::new();
             let trie = RefTrieDB::new(&data, &root.0)
@@ -1400,18 +1408,16 @@ impl Backend {
                     })
                 };
                 let query = (&mut recorder, acc_decoder);
-                trie.get_with(addr.as_bytes(), query)
+                trie.get_with(account_key.as_bytes(), query)
                     .map_err(|err| BlockchainError::TrieError(err.to_string()))?
             };
-            let account = maybe_account.unwrap_or_else(|| BasicAccount {
-                balance: 0.into(),
-                nonce: 0.into(),
-                code_hash: KECCAK_EMPTY,
-                storage_root: KECCAK_NULL_RLP,
-            });
+            let account = maybe_account.unwrap_or_default();
 
             let proof =
                 recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+
+            let account_db =
+                block_db.maybe_account_db(addr).ok_or(BlockchainError::DataUnavailable)?;
 
             let account_proof = AccountProof {
                 balance: account.balance,
@@ -1421,10 +1427,12 @@ impl Backend {
                 account_proof: proof,
                 storage_proof: values
                     .into_iter()
-                    .map(|storage_key| {
-                        prove_storage(&account, &db, storage_key).map(
+                    .map(|storage_index| {
+                        let storage_key: H256 = BigEndianHash::from_uint(&storage_index);
+                        let key = H256::from(keccak256(storage_key));
+                        prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key: storage_key.into_uint(),
+                                key: key.into_uint(),
                                 value: storage_value.into_uint(),
                                 proof: storage_proof.into_iter().map(Into::into).collect(),
                             },
@@ -1577,6 +1585,7 @@ pub fn transaction_build(
 /// trie.
 /// `storage_key` is the hash of the desired storage key, meaning
 /// this will only work correctly under a secure trie.
+/// `storage_key` == keccak(key)
 pub fn prove_storage(
     acc: &BasicAccount,
     data: &AsHashDB,
@@ -1585,7 +1594,8 @@ pub fn prove_storage(
     let data: &dyn HashDB<_, _> = data.deref();
     let mut recorder = Recorder::new();
     let trie = RefTrieDB::new(&data, &acc.storage_root.0)
-        .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+        .map_err(|err| BlockchainError::TrieError(err.to_string()))
+        .unwrap();
 
     let item: U256 = {
         let decode_value = |bytes: &[u8]| rlp::decode(bytes).expect("decoding db value failed");

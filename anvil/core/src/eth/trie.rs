@@ -4,7 +4,7 @@ use ethers_core::types::H256;
 pub use keccak_hasher::KeccakHasher;
 
 // reexport some trie types
-pub use reference_trie::{RefTrieDB, RefTrieDBMut};
+pub use reference_trie::*;
 
 /// The KECCAK of the RLP encoding of empty data.
 pub const KECCAK_NULL_RLP: H256 = H256([

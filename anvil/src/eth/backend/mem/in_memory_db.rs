@@ -13,6 +13,7 @@ use forge::revm::KECCAK_EMPTY;
 use tracing::{trace, warn};
 
 // reexport for convenience
+use crate::mem::state::storage_trie_db;
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
@@ -107,6 +108,14 @@ impl Db for MemDb {
 impl MaybeHashDatabase for MemDb {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         Some(trie_hash_db(&self.inner.accounts))
+    }
+
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        if let Some(acc) = self.inner.accounts.get(&addr) {
+            Some(storage_trie_db(&acc.storage))
+        } else {
+            Some(storage_trie_db(&Default::default()))
+        }
     }
 }
 

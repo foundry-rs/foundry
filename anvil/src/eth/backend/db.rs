@@ -29,6 +29,10 @@ pub trait MaybeHashDatabase: DatabaseRef {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         None
     }
+    /// Return the storage DB as read-only hashdb and the storage root of the account
+    fn maybe_account_db(&self, _addr: Address) -> Option<(AsHashDB, H256)> {
+        None
+    }
 }
 
 /// This bundles all required revm traits
