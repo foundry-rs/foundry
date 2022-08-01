@@ -22,6 +22,7 @@ use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
 
+use ethers::solc::utils::canonicalize;
 use path_slash::PathBufExt;
 use rustc_hex::ToHex;
 use serde_json::json;
@@ -102,7 +103,7 @@ impl CreateArgs {
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
             *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
-            dbg!(canonicalized(project.root().join(&path)));
+            dbg!(canonicalize(project.root().join(&path)).unwrap());
             dbg!(canonicalized(project.root().join(&path)).to_slash_lossy().to_string());
         }
 
