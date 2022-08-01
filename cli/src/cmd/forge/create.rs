@@ -101,13 +101,7 @@ impl CreateArgs {
             *path = canonicalized(project.root().join(&path)).to_slash_lossy().to_string();
         }
 
-        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract).map_err(|err| {
-            output.into_artifacts().for_each(|(id, _)| {
-                dbg!(id);
-            });
-
-            err
-        })?;
+        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -192,6 +186,8 @@ impl CreateArgs {
         args: Vec<Token>,
         provider: M,
     ) -> eyre::Result<()> {
+        dbg!("deploying");
+        println!("{:?}", bin);
         let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
@@ -251,7 +247,9 @@ impl CreateArgs {
             };
         }
 
+        dbg!("sending");
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+        dbg!("deployed contract");
         let address = deployed_contract.address();
         if self.json {
             let output = json!({

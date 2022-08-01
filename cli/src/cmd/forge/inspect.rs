@@ -77,9 +77,6 @@ impl Cmd for InspectArgs {
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
-            outcome.clone().into_artifacts().for_each(|(id, _)| {
-                dbg!(id);
-            });
             eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 

@@ -93,4 +93,4 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --locked --workspace -- --skip fork --nocapture
+          args: can_create_template_contract --locked --workspace -- --skip fork --nocapture
