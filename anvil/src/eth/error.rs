@@ -62,7 +62,7 @@ pub enum BlockchainError {
     BlockNotFound,
     #[error("Required data unavailable")]
     DataUnavailable,
-    #[error("trie error: {0}")]
+    #[error("Trie error: {0}")]
     TrieError(String),
 }
 
