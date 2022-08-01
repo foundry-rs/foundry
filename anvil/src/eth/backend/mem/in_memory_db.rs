@@ -62,7 +62,7 @@ impl Db for MemDb {
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(account.code.0))
+                        Some(Bytecode::new_raw(account.code.0).to_checked())
                     },
                     // use max nonce in case account is imported multiple times with difference
                     // nonces to prevent collisions

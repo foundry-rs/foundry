@@ -105,7 +105,7 @@ where
         // code given by the interpreter may either be the contract init code, or the runtime code.
         self.ic_map.insert(
             self.context,
-            build_ic_map(data.env.cfg.spec_id, &interp.contract().bytecode.bytecode()),
+            build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
         );
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue

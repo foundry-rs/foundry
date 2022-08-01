@@ -61,7 +61,7 @@ where
         if let Some(context) = self.context.last() {
             self.ic_map.insert(
                 *context,
-                build_ic_map(data.env.cfg.spec_id, &interp.contract().bytecode.bytecode()),
+                build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
             );
         }
         Return::Continue
