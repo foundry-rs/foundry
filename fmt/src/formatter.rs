@@ -2911,14 +2911,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         attempt_single_line: bool,
     ) -> Result<(), Self::Error> {
         if attempt_single_line && statements.len() == 1 {
-            let chunk = self.chunked(loc.start(), Some(loc.end()), |fmt| {
+            let fits_on_single = self.try_on_single_line(|fmt| {
                 write!(fmt.buf(), "{{ ")?;
                 statements.first_mut().unwrap().visit(fmt)?;
                 write!(fmt.buf(), " }}")?;
                 Ok(())
             })?;
-            if self.will_chunk_fit("{}", &chunk)? {
-                return self.write_chunk(&chunk)
+
+            if fits_on_single {
+                return Ok(())
             }
         }
 
@@ -3048,7 +3049,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         write_chunk!(self, loc.start(), "if")?;
         expr.visit(self)?;
-        block.visit(self)
+        self.visit_yul_block(block.loc, &mut block.statements, true)
     }
 
     fn visit_yul_leave(&mut self, loc: Loc) -> Result<(), Self::Error> {
@@ -3059,23 +3060,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write_chunk!(self, stmt.loc.start(), "switch")?;
         stmt.condition.visit(self)?;
         writeln_chunk!(self)?;
-        self.indented(1, |fmt| {
-            let mut cases = stmt.cases.iter_mut().peekable();
-            while let Some(YulSwitchOptions::Case(loc, expr, block)) = cases.next() {
-                write_chunk!(fmt, loc.start(), "case")?;
-                expr.visit(fmt)?;
-                fmt.visit_yul_block(block.loc, &mut block.statements, true)?;
-                let is_last = cases.peek().is_none();
-                if !is_last || stmt.default.is_some() {
-                    writeln_chunk!(fmt)?;
-                }
+        let mut cases = stmt.cases.iter_mut().peekable();
+        while let Some(YulSwitchOptions::Case(loc, expr, block)) = cases.next() {
+            write_chunk!(self, loc.start(), "case")?;
+            expr.visit(self)?;
+            self.visit_yul_block(block.loc, &mut block.statements, true)?;
+            let is_last = cases.peek().is_none();
+            if !is_last || stmt.default.is_some() {
+                writeln_chunk!(self)?;
             }
-            if let Some(YulSwitchOptions::Default(loc, ref mut block)) = stmt.default {
-                write_chunk!(fmt, loc.start(), "default")?;
-                fmt.visit_yul_block(block.loc, &mut block.statements, true)?;
-            }
-            Ok(())
-        })
+        }
+        if let Some(YulSwitchOptions::Default(loc, ref mut block)) = stmt.default {
+            write_chunk!(self, loc.start(), "default")?;
+            self.visit_yul_block(block.loc, &mut block.statements, true)?;
+        }
+        Ok(())
     }
 
     fn visit_yul_var_declaration(
