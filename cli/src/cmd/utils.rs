@@ -33,16 +33,6 @@ pub fn remove_contract(
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
-        let compiled = output.compiled_artifacts().0.keys().collect::<Vec<_>>();
-        dbg!(compiled);
-        let out2 = output.clone().output();
-        let contracts = out2.contracts.keys().collect::<Vec<_>>();
-        dbg!(contracts);
-        dbg!(info.clone());
-        output.clone().into_artifacts().for_each(|(id, _)| {
-            dbg!(id);
-        });
-        panic!("failed to remove contract");
         let mut err = format!("could not find artifact: `{}`", info.name);
         if let Some(suggestion) =
             suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
