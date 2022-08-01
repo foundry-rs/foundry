@@ -29,18 +29,17 @@ impl Db for MemDb {
             .clone()
             .into_iter()
             .map(|(k, v)| {
+                let code = v
+                    .info
+                    .code
+                    .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
+                    .to_checked();
                 (
                     k,
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
-                        code: v
-                            .info
-                            .code
-                            .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
-                            .bytes()
-                            .clone()
-                            .into(),
+                        code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v.storage.into_iter().collect(),
                     },
                 )
@@ -207,7 +206,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: 100100.into(),
-                code: contract_code.bytes().clone().into(),
+                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
                 nonce: 100,
                 storage: new_storage,
             },
