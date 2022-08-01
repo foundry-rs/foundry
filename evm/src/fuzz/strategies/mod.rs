@@ -1,4 +1,6 @@
+mod int;
 mod uint;
+pub use int::IntStrategy;
 pub use uint::UintStrategy;
 
 mod param;

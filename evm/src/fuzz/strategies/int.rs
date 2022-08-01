@@ -1,36 +1,36 @@
-use ethers::core::rand::Rng;
+use ethers::{core::rand::Rng, prelude::Sign};
 use proptest::{
     strategy::{NewTree, Strategy, ValueTree},
     test_runner::TestRunner,
 };
 
-use ethers::types::U256;
+use ethers::types::{I256, U256};
 
-/// Value tree for unsigned ints (up to uint256).
+/// Value tree for signed ints (up to int256).
 /// This is very similar to [proptest::BinarySearch]
-pub struct UintValueTree {
-    /// Lower base
-    lo: U256,
+pub struct IntValueTree {
+    /// Lower base (by absolute value)
+    lo: I256,
     /// Current value
-    curr: U256,
-    /// Higher base
-    hi: U256,
+    curr: I256,
+    /// Higher base (by absolute value)
+    hi: I256,
     /// If true cannot be simplified or complexified
     fixed: bool,
 }
 
-impl UintValueTree {
+impl IntValueTree {
     /// Create a new tree
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: U256, fixed: bool) -> Self {
+    fn new(start: I256, fixed: bool) -> Self {
         Self { lo: 0.into(), curr: start, hi: start, fixed }
     }
 
     fn reposition(&mut self) -> bool {
         let interval = self.hi - self.lo;
-        let new_mid = self.lo + interval / 2;
+        let new_mid = self.lo + interval / 2.into();
 
         if new_mid == self.curr {
             false
@@ -39,17 +39,24 @@ impl UintValueTree {
             true
         }
     }
+
+    fn magnitude_greater(lhs: I256, rhs: I256) -> bool {
+        if lhs.is_zero() {
+            return false
+        }
+        (lhs > rhs) ^ (lhs.is_negative())
+    }
 }
 
-impl ValueTree for UintValueTree {
-    type Value = U256;
+impl ValueTree for IntValueTree {
+    type Value = I256;
 
     fn current(&self) -> Self::Value {
         self.curr
     }
 
     fn simplify(&mut self) -> bool {
-        if self.fixed || (self.hi <= self.lo) {
+        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
             return false
         }
 
@@ -58,27 +65,28 @@ impl ValueTree for UintValueTree {
     }
 
     fn complicate(&mut self) -> bool {
-        if self.fixed || (self.hi <= self.lo) {
+        if self.fixed || !IntValueTree::magnitude_greater(self.hi, self.lo) {
             return false
         }
 
-        self.lo = self.curr + 1;
+        self.lo = self.curr + if self.hi < 0.into() { (-1).into() } else { 1.into() };
+
         self.reposition()
     }
 }
 
-/// Value tree for unsigned ints (up to uint256).
+/// Value tree for signed ints (up to int256).
 /// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
 /// param). Then generate a value for this bit size.
-/// 2. Generate a random value around the edges (+/- 3 around 0 and max possible value)
+/// 2. Generate a random value around the edges (+/- 3 around min, 0 and max possible value)
 /// 3. Generate a value from a predefined fixtures set
 #[derive(Debug)]
-pub struct UintStrategy {
-    /// Bit size of uint (e.g. 256)
+pub struct IntStrategy {
+    /// Bit size of int (e.g. 256)
     bits: usize,
     /// A set of fixtures to be generated
-    fixtures: Vec<U256>,
+    fixtures: Vec<I256>,
     /// The weight for edge cases (+/- 3 around 0 and max possible value)
     edge_weight: usize,
     /// The weight for fixtures
@@ -87,12 +95,12 @@ pub struct UintStrategy {
     random_weight: usize,
 }
 
-impl UintStrategy {
+impl IntStrategy {
     /// Create a new strategy.
     /// #Arguments
     /// * `bits` - Size of uint in bits
     /// * `fixtures` - A set of fixed values to be generated (according to fixtures weight)
-    pub fn new(bits: usize, fixtures: Vec<U256>) -> Self {
+    pub fn new(bits: usize, fixtures: Vec<I256>) -> Self {
         Self {
             bits,
             fixtures,
@@ -105,17 +113,18 @@ impl UintStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
 
-        // Choose if we want values around 0 or max
-        let is_min = rng.gen_bool(0.5);
-        let offset = U256::from(rng.gen_range(0..4));
-        let max = if self.bits < 256 {
-            (U256::from(1u8) << U256::from(self.bits)) - 1
-        } else {
-            U256::MAX
+        let offset = I256::from(rng.gen_range(0..4));
+        let umax: U256 = (U256::from(1u8) << U256::from(self.bits - 1)) - 1;
+        // Choose if we want values around min, -0, +0, or max
+        let kind = rng.gen_range(0..4);
+        let start = match kind {
+            0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax + 1).0 + offset,
+            1 => -offset - 1.into(),
+            2 => offset,
+            3 => I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0 - offset,
+            _ => unreachable!(),
         };
-        let start = if is_min { offset } else { max - offset };
-
-        Ok(UintValueTree::new(start, false))
+        Ok(IntValueTree::new(start, false))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -125,7 +134,7 @@ impl UintStrategy {
         }
         let idx = runner.rng().gen_range(0..self.fixtures.len());
 
-        Ok(UintValueTree::new(self.fixtures[idx], false))
+        Ok(IntValueTree::new(self.fixtures[idx], false))
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
@@ -147,22 +156,23 @@ impl UintStrategy {
             _ => {}
         };
 
-        // init U256 from 2 randoms
+        // init I256 from 2 randoms
         let mut inner: [u64; 4] = [0; 4];
         let mask64 = (1 << 65) - 1;
         inner[0] = (lower & mask64) as u64;
         inner[1] = (lower >> 64) as u64;
         inner[2] = (higher & mask64) as u64;
         inner[3] = (higher >> 64) as u64;
-        let start: U256 = U256(inner);
+        // on overflow it will just go negative
+        let (start, _) = I256::overflowing_from_sign_and_abs(Sign::Positive, U256(inner));
 
-        Ok(UintValueTree::new(start, false))
+        Ok(IntValueTree::new(start, false))
     }
 }
 
-impl Strategy for UintStrategy {
-    type Tree = UintValueTree;
-    type Value = U256;
+impl Strategy for IntStrategy {
+    type Tree = IntValueTree;
+    type Value = I256;
 
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
