@@ -1,2 +1,2 @@
 Error: 
-There are changes in your working/staging area. Commit them first or add the `--no-commit` option.
+This command requires clean working and staging areas, including no untracked files. Modify .gitignore and/or add/commit first, or add the --no-commit option.

@@ -1287,6 +1287,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
 
                 match test_name.as_ref() {
                     "testPositive(uint256)" |
+                    "testPositive(int256)" |
                     "testSuccessfulFuzz(uint128,uint128)" |
                     "testToStringFuzz(bytes32)" => assert!(
                         result.success,

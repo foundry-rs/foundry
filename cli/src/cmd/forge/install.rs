@@ -195,7 +195,7 @@ fn install_as_submodule(
 
 pub fn ensure_git_status_clean(root: impl AsRef<Path>) -> eyre::Result<()> {
     if !git_status_clean(root)? {
-        eyre::bail!("There are changes in your working/staging area. Commit them first or add the `--no-commit` option.")
+        eyre::bail!("This command requires clean working and staging areas, including no untracked files. Modify .gitignore and/or add/commit first, or add the --no-commit option.")
     }
     Ok(())
 }
