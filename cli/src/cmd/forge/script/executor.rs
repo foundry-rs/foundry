@@ -6,7 +6,6 @@ use crate::{
     },
     utils,
 };
-
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
@@ -15,7 +14,13 @@ use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
-use std::collections::VecDeque;
+use futures::future::join_all;
+use parking_lot::RwLock;
+use rayon::iter::ParallelIterator;
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+};
 use tracing::trace;
 
 impl ScriptArgs {
@@ -166,26 +171,30 @@ impl ScriptArgs {
         script_config: &mut ScriptConfig,
         transactions: &VecDeque<BroadcastableTransaction>,
     ) -> HashMap<String, ScriptRunner> {
-        let mut runners = HashMap::new();
-        let user_rpc = script_config.evm_opts.fork_url.clone();
-        for tx in transactions {
-            let rpc = tx.rpc.as_ref().unwrap();
+        let runners = Arc::new(RwLock::new(HashMap::new()));
+        let sender = script_config.evm_opts.sender;
 
-            if !runners.contains_key(rpc) {
-                script_config.evm_opts.fork_url = tx.rpc.clone();
-                runners.insert(
-                    rpc.clone(),
-                    self.prepare_runner(
-                        script_config,
-                        script_config.evm_opts.sender,
-                        SimulationStage::OnChain,
-                    )
-                    .await,
-                );
-            }
-        }
-        script_config.evm_opts.fork_url = user_rpc;
-        runners
+        let unique_rpcs = transactions
+            .iter()
+            .map(|tx| tx.rpc.clone().unwrap_or_default())
+            .collect::<HashSet<String>>();
+
+        let futs = unique_rpcs
+            .iter()
+            .map(|rpc| async {
+                let mut script_config = script_config.clone();
+                script_config.evm_opts.fork_url = Some(rpc.clone());
+
+                let runner =
+                    self.prepare_runner(&mut script_config, sender, SimulationStage::OnChain).await;
+
+                runners.write().insert(rpc.clone(), runner);
+            })
+            .collect::<Vec<_>>();
+
+        join_all(futs).await;
+
+        Arc::try_unwrap(runners).expect("Only one ref.").into_inner()
     }
 
     /// Creates the Runner that drives script execution

@@ -429,6 +429,7 @@ pub struct NestedValue {
     pub value: String,
 }
 
+#[derive(Clone)]
 pub struct ScriptConfig {
     pub config: foundry_config::Config,
     pub evm_opts: EvmOpts,

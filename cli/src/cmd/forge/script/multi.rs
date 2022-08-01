@@ -2,9 +2,7 @@ use super::{sequence::ScriptSequence, ScriptArgs, VerifyBundle};
 use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
 use foundry_common::fs;
-use foundry_config::Config;
 use futures::future::join_all;
-
 use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
 use std::{

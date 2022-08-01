@@ -13,6 +13,7 @@ pub enum SimulationStage {
 }
 
 /// Drives script execution
+#[derive(Debug)]
 pub struct ScriptRunner {
     pub executor: Executor,
     pub initial_balance: U256,

@@ -15,7 +15,7 @@ use crate::{
     utils::get_http_provider,
 };
 use ethers::{
-    prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
+    prelude::{Signer, SignerMiddleware, TxHash},
     providers::Middleware,
     types::transaction::eip2718::TypedTransaction,
     utils::format_units,
@@ -28,7 +28,6 @@ use std::{
     cmp::min,
     collections::{hash_map::Entry, HashSet},
     fmt,
-    sync::Arc,
 };
 
 impl ScriptArgs {

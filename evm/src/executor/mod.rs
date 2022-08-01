@@ -9,7 +9,7 @@ use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
-    types::{transaction::eip2718::TypedTransaction, Log},
+    types::Log,
 };
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
