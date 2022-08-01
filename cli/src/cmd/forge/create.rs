@@ -21,6 +21,7 @@ use eyre::Context;
 use foundry_common::fs;
 use foundry_config::Config;
 use foundry_utils::parse_tokens;
+
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
@@ -95,9 +96,11 @@ impl CreateArgs {
             compile::compile(&project, false, false)
         }?;
 
+        // output.slash_paths();
+
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = format!("{}", canonicalized(project.root().join(&path)).display());
+            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
         }
 
         let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
@@ -245,6 +248,7 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
