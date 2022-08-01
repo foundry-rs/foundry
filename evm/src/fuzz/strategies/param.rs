@@ -20,27 +20,9 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
         }
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
-        // For ints and uints we sample from a U256, then wrap it to the correct size with a
-        // modulo operation. Note that this introduces modulo bias, but it can be removed with
-        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
-        // slow down tests as it resamples bad values, so may want to benchmark the performance
-        // hit and weigh that against the current bias before implementing
-        ParamType::Int(n) => match n / 8 {
-            32 => any::<[u8; 32]>()
-                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
-                .boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    // Generate a uintN in the correct range, then shift it to the range of intN
-                    // by subtracting 2^(N-1)
-                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    num.into_token()
-                })
-                .boxed(),
-            _ => panic!("unsupported solidity type int{n}"),
-        },
+        ParamType::Int(n) => {
+            super::IntStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
+        }
         ParamType::Uint(n) => {
             super::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
         }
