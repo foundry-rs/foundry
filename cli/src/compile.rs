@@ -235,7 +235,7 @@ pub fn compile_files(
     files: Vec<PathBuf>,
     silent: bool,
 ) -> eyre::Result<ProjectCompileOutput> {
-    let output = if silent {
+    let mut output = if silent {
         ethers::solc::report::with_scoped(
             &ethers::solc::report::Report::new(NoReporter::default()),
             || project.compile_files(files),
@@ -250,6 +250,10 @@ pub fn compile_files(
     if !silent {
         println!("{output}");
     }
+
+    // ensure consistent `/` on windows
+    output.slash_paths();
+
     Ok(output)
 }
 
