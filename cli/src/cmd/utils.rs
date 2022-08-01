@@ -33,16 +33,23 @@ pub fn remove_contract(
     let contract = if let Some(contract) = output.remove_contract(info) {
         contract
     } else {
+        dbg!(info.clone());
+        output.clone().into_artifacts().for_each(|(id,_)| {
+            dbg!(id);
+        });
+        panic!("could not find artifact");
         let mut err = format!("could not find artifact: `{}`", info.name);
         if let Some(suggestion) =
             suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
         {
-            err = format!(
-                r#"{}
+            if suggestion != info.name {
+                err = format!(
+                    r#"{}
 
         Did you mean `{}`?"#,
-                err, suggestion
-            );
+                    err, suggestion
+                );
+            }
         }
         eyre::bail!(err)
     };

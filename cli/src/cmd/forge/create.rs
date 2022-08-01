@@ -186,8 +186,6 @@ impl CreateArgs {
         args: Vec<Token>,
         provider: M,
     ) -> eyre::Result<()> {
-        dbg!("deploying");
-        println!("{:?}", bin);
         let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
@@ -247,9 +245,8 @@ impl CreateArgs {
             };
         }
 
-        dbg!("sending");
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
-        dbg!("deployed contract");
+
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
