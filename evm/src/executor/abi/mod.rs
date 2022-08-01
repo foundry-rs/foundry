@@ -6,7 +6,7 @@ use std::collections::HashMap;
 ///
 /// This is the same address as the one used in DappTools's HEVM.
 /// `address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`
-pub static CHEATCODE_ADDRESS: Address = H160([
+pub const CHEATCODE_ADDRESS: Address = H160([
     0x71, 0x09, 0x70, 0x9E, 0xcf, 0xa9, 0x1a, 0x80, 0x62, 0x6f, 0xf3, 0x98, 0x9d, 0x68, 0xf6, 0x7f,
     0x5b, 0x1d, 0xd1, 0x2d,
 ]);
@@ -95,6 +95,13 @@ ethers::contract::abigen!(
             createSelectFork(string)(uint256)
             selectFork(uint256)
             activeFork()(uint256)
+            makePersistent(address)
+            makePersistent(address,address)
+            makePersistent(address,address,address)
+            makePersistent(address[])
+            revokePersistent(address)
+            revokePersistent(address[])
+            isPersistent(address)(bool)
             rollFork(uint256)
             rollFork(uint256,uint256)
             rpcUrl(string)(string)

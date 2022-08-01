@@ -197,7 +197,7 @@ async fn main() -> eyre::Result<()> {
             )?;
 
             let chain: Chain = if let Some(chain) = eth.chain {
-                chain.into()
+                chain
             } else {
                 provider.get_chainid().await?.into()
             };
@@ -227,7 +227,7 @@ async fn main() -> eyre::Result<()> {
             )?;
 
             let chain: Chain = if let Some(chain) = eth.chain {
-                chain.into()
+                chain
             } else {
                 provider.get_chainid().await?.into()
             };
@@ -297,7 +297,7 @@ async fn main() -> eyre::Result<()> {
                 false,
             );
             let chain: Chain = if let Some(chain) = eth.chain {
-                chain.into()
+                chain
             } else {
                 provider.get_chainid().await?.into()
             };
@@ -438,7 +438,7 @@ async fn main() -> eyre::Result<()> {
             )?;
 
             let chain: Chain = if let Some(chain) = eth.chain {
-                chain.into()
+                chain
             } else {
                 provider.get_chainid().await?.into()
             };

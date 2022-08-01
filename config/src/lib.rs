@@ -254,6 +254,11 @@ pub struct Config {
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
+    /// Optional seed for the fuzzing RNG algorithm
+    #[serde(
+        deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
+    )]
+    pub fuzz_seed: Option<U256>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -1460,6 +1465,7 @@ impl Default for Config {
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
+            fuzz_seed: None,
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -2850,6 +2856,7 @@ mod tests {
                 fuzz_max_global_rejects = 65536
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
+                fuzz_seed = '0x3e8'
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
@@ -2887,6 +2894,8 @@ mod tests {
             )?;
 
             let config = Config::load_with_root(jail.directory());
+
+            assert_eq!(config.fuzz_seed, Some(1000.into()));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]

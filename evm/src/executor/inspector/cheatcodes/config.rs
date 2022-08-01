@@ -3,6 +3,7 @@ use bytes::Bytes;
 
 use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
+use tracing::trace;
 
 use super::util;
 
@@ -38,10 +39,12 @@ impl CheatsConfig {
         allowed_paths.extend(config.libs.clone());
         allowed_paths.extend(config.allow_paths.clone());
 
+        let rpc_endpoints = config.rpc_endpoints.clone().resolved();
+        trace!(?rpc_endpoints, "using resolved rpc endpoints");
         Self {
             ffi: evm_opts.ffi,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
-            rpc_endpoints: config.rpc_endpoints.clone().resolved(),
+            rpc_endpoints,
             root: config.__root.0.clone(),
             allowed_paths,
             evm_opts: evm_opts.clone(),
@@ -75,7 +78,13 @@ impl CheatsConfig {
         let url_or_alias = url_or_alias.into();
         match self.rpc_endpoints.get(&url_or_alias) {
             Some(Ok(url)) => Ok(url.clone()),
-            Some(Err(err)) => Err(util::encode_error(err)),
+            Some(Err(err)) => {
+                // try resolve again, by checking if env vars are now set
+                if let Ok(url) = err.try_resolve_endpoint() {
+                    return Ok(url)
+                }
+                Err(util::encode_error(err))
+            }
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
                     Err(util::encode_error(format!("invalid rpc url {}", url_or_alias)))
