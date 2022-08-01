@@ -1,6 +1,9 @@
 use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
+    cmd::cast::{
+        estimate::EstimateSubcommands, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
+        wallet::WalletSubcommands,
+    },
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -19,6 +22,7 @@ pub struct Opts {
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
 )]
+
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
@@ -453,9 +457,9 @@ Examples:
     #[clap(about = "Estimate the gas cost of a transaction.")]
     Estimate {
         #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
-        to: NameOrAddress,
+        to: Option<NameOrAddress>,
         #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: String,
+        sig: Option<String>,
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
         #[clap(
@@ -471,6 +475,8 @@ Examples: 1ether, 10gwei, 0.01ether"#,
         #[clap(flatten)]
         // TODO: We only need RPC URL and Etherscan API key here.
         eth: EthereumOpts,
+        #[clap(subcommand)]
+        command: Option<EstimateSubcommands>,
     },
     #[clap(name = "--calldata-decode")]
     #[clap(visible_alias = "cdd")]

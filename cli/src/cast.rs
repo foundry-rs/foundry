@@ -10,7 +10,7 @@ use cast::{Cast, SimpleCast, TxBuilder};
 use foundry_config::Config;
 use utils::get_http_provider;
 mod opts;
-use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, utils::consume_config_rpc_url, cmd::cast::estimate};
 use cast::InterfacePath;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
@@ -203,7 +203,7 @@ async fn main() -> eyre::Result<()> {
             };
 
             let mut builder =
-                TxBuilder::new(&provider, config.sender, address, chain, false).await?;
+                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
             builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
@@ -233,7 +233,7 @@ async fn main() -> eyre::Result<()> {
             };
 
             let mut builder =
-                TxBuilder::new(&provider, config.sender, address, chain, false).await?;
+                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
             builder.etherscan_api_key(config.etherscan_api_key).set_args(&sig, args).await?;
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, block).await?);
@@ -430,32 +430,6 @@ async fn main() -> eyre::Result<()> {
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
                 println!("{}", serde_json::json!(receipt));
             }
-        }
-        Subcommands::Estimate { to, sig, args, value, eth } => {
-            let config = Config::from(&eth);
-            let provider = Provider::try_from(
-                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            )?;
-
-            let chain: Chain = if let Some(chain) = eth.chain {
-                chain
-            } else {
-                provider.get_chainid().await?.into()
-            };
-
-            let from = eth.sender().await;
-
-            let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
-            builder
-                .etherscan_api_key(config.etherscan_api_key)
-                .value(value)
-                .set_args(sig.as_str(), args)
-                .await?;
-
-            let builder_output = builder.peek();
-
-            let gas = Cast::new(&provider).estimate(builder_output).await?;
-            println!("{gas}");
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
@@ -702,6 +676,14 @@ async fn main() -> eyre::Result<()> {
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
+        Subcommands::Estimate { to, 
+                                sig,
+                                args,
+                                value,
+                                eth,
+                                command } => {
+            estimate::run(to, sig, args, value, eth, command).await?
+        },
         Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
@@ -788,7 +770,7 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
+    let mut builder = TxBuilder::new(&provider, from, Some(to), chain, legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
         .args(params)
