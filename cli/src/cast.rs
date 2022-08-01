@@ -22,10 +22,7 @@ use ethers::{
 };
 
 // ZACH ADDITIONS
-use serde_json::Value;
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::fmt::Formatter;
 // END
 
 use eyre::WrapErr;
@@ -212,6 +209,13 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Events { rpc_url, tx_hash, chain, etherscan_api_key } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
+            
+            let api_key = etherscan_api_key.unwrap_or({
+                Config::load().etherscan_api_key.ok_or(eyre::eyre!(
+                        "No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml"
+                ))?
+            });
+
             if let Some(hash) = tx_hash {
 
                 // Get the receipt from the tx hash and pull the logs.
@@ -220,13 +224,25 @@ async fn main() -> eyre::Result<()> {
                 let logs = &receipt["logs"];
                 let mut event_abis: HashMap<String, Vec<String>> = HashMap::new();
 
+                let mut event_return_data: Vec<EventData> = Vec::new();
+
                 // For each event in the logs...
                 if let serde_json::Value::Array(logs) = logs {
                     for event in logs {
-                        let address: &str = &event["address"].as_str().unwrap();
-                        let topics = &event["topics"].as_array().unwrap();
-                        let topic0 =topics[0].as_str().unwrap();
-                        let mut data: String = event["data"].as_str().unwrap().to_string();
+                        let address: &str = &event["address"].as_str().ok_or(
+                            eyre::eyre!("Could not parse event address from receipt"))?;
+                        let topics = &event["topics"].as_array().ok_or(
+                            eyre::eyre!("Could not parse topic log from receipt"))?;
+                        let topic0 =topics[0].as_str().ok_or(
+                            eyre::eyre!("Could not parse Topic 0 from receipt"))?;
+                        let mut data: String = event["data"].as_str().ok_or(
+                            eyre::eyre!("Could not parse data from receipt"))?.to_string();
+                        
+                        let mut event_data = EventData {
+                            sig: None,
+                            address: address.to_string(),
+                            args: Vec::new(),
+                        };
                         
                         let abi: Vec<String>;
                         let mut args: Vec<EventArg> = Vec::new();
@@ -239,7 +255,7 @@ async fn main() -> eyre::Result<()> {
                         else {
                             let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
                                 chain: chain.inner,
-                                api_key: "H71C8DZPZ82QRFM7MP714T8MIIGJP4PZRZ".to_string(),
+                                api_key: api_key.clone(),
                                 address: address
                                     .parse::<Address>()
                                     .wrap_err("Invalid address provided. Did you make a typo?")?,
@@ -254,29 +270,25 @@ async fn main() -> eyre::Result<()> {
                                 .split("\n")
                                 .map(|line| line.trim().to_string())
                                 .filter(|line| line.starts_with("event"))
-                                .collect::<Vec<_>>();
+                                .collect();
                             
+                            // Save to cache in case a future event in the loop is from the same address.
                             event_abis.insert(address.to_string(), abi.clone());
                         }
 
                         // If we get the event ABI from Etherscan...
                         if &abi.len() > &0 {
                             // Compare topic[0] to the event abi to find the winner.
-                            let winning_sigs = abi
-                                .iter()
-                                .map(|event_string| (translate_event_string_to_hash(event_string).unwrap(), event_string))
-                                .filter(|(hashed_sig, _)| hashed_sig == topic0)
-                                .map(|(_, sig)| sig.to_string())
-                                .collect::<Vec<String>>();
-
+                            let winning_sigs = decode_event_with_abi(topic0, &abi)?;
                             let winning_sig: Option<&String> = winning_sigs.get(0);                            
                             
                             if let Some(winning_sig) = winning_sig {
                                 println!("Contract: {} emits:", &address);
                                 println!("{}", winning_sig);
+                                event_data.sig = Some(winning_sig.clone());
 
                                 // Break the winning signature into its component substrings, and convert to EventArgs.
-                                let mut sig_chunks: Vec<String> = get_sig_chunks(&winning_sig).unwrap();
+                                let mut sig_chunks: Vec<String> = get_sig_chunks(&winning_sig);
                                 sig_chunks.retain(|chunk| !chunk.starts_with("event"));
                                 args = sig_chunks.iter().map(|chunk| chunk.into()).collect();
                             }    
@@ -290,9 +302,10 @@ async fn main() -> eyre::Result<()> {
                             if let Some(winning_sig) = winning_sig {
                                 println!("Contract: {} emits:", &address);
                                 println!("{}", winning_sig);
+                                event_data.sig = Some(winning_sig.clone());
                             
                                 // Break the 4byte returned signature into its component substrings, and convert to EventArgs.
-                                let sig_chunks: Vec<String> = get_sig_chunks(&winning_sig.trim()).unwrap();
+                                let sig_chunks: Vec<String> = get_sig_chunks(&winning_sig.trim());
                                 args = sig_chunks[1..]
                                         .iter()
                                         .filter(|chunk| chunk.len() > 0)
@@ -310,6 +323,7 @@ async fn main() -> eyre::Result<()> {
                             }
                         }
 
+                        // If it wasn't on 4byte either, then just emit the raw topics and data.
                         if args.len() == 0 {
                             println!("Contract: {} emits:", &address);
                             println!("Unknown Event: {}", topic0);
@@ -317,11 +331,12 @@ async fn main() -> eyre::Result<()> {
                                 println!("({}) {}", idx + 1, topic.as_str().unwrap());
                             }
                             println!("Data: {}", data);
+                            break; // CAN WE SPECIFY THAT WE WANT TO CONTINUE MAIN LOOP?
                         };
 
-                        // assert topics.len() == args.filter(indexed).len() + 1;
-                        // Add values and positions to indexed args.
-                        let indexed_args: Vec<EventArg> = args
+                        // If we have args, add values and positions to indexed args.
+                        let original_args = args.clone();
+                        let mut args: Vec<EventArg> = args
                             .iter()
                             .filter(|arg| arg.indexed)
                             .zip(&topics[1..])
@@ -332,7 +347,7 @@ async fn main() -> eyre::Result<()> {
                                         name: Some(arg.name.clone().unwrap()),
                                         type_: arg.type_.clone(),
                                         indexed: arg.indexed,
-                                        value: Some(convert_and_set_value(&arg.type_, t.clone())),
+                                        value: Some(convert_value(&arg.type_, t.clone())),
                                         position: Some(count),
                                     }
                                 } else {
@@ -347,11 +362,8 @@ async fn main() -> eyre::Result<()> {
                             })
                             .collect();
                         
-                        for arg in &indexed_args {
-                            println!("({}) {}: {}", arg.position.clone().unwrap(), arg.name.clone().unwrap(), arg.value.clone().unwrap());
-                        }
-
-                        let non_indexed_args: Vec<EventArg> = args
+                        // Add values to non-indexed args.
+                        let mut non_indexed_args: Vec<EventArg> = original_args
                             .iter()
                             .filter(|arg| !arg.indexed)
                             .zip(split_data_into_args(&data))
@@ -360,22 +372,29 @@ async fn main() -> eyre::Result<()> {
                                     name: arg.name.clone(),
                                     type_: arg.type_.clone(),
                                     indexed: arg.indexed,
-                                    value: Some(convert_and_set_value(&arg.type_, topic.clone())),
+                                    value: Some(convert_value(&arg.type_, topic.clone())),
                                     position: None,
                                 }
                             })
                             .collect();
 
-                        for arg in &non_indexed_args {
-                            println!("{}: {}", arg.name.clone().unwrap_or("Unknown".to_string()), arg.value.clone().unwrap());
+                        args.append(&mut non_indexed_args);
+
+                        event_data.args = args;
+
+                        for arg in &event_data.args {
+                            println!("({}) {}: {}", arg.position.clone().unwrap_or(0), arg.name.clone().unwrap_or("Unknown".to_string()), arg.value.clone().unwrap());    
                         }
+                        
+                        event_return_data.push(event_data);
                         println!("");
                     }
                 } else {
-                    println!("JSON is not an array? (should never happen): {}", logs)
+                    eyre::bail!("There's an issue with the tx logs (they don't seem to be an array)!")
                 }
             } else {
-                println!("No tx hash!");
+                // Insert other input options here as they're built.
+                eyre::bail!("Please include a tx hash!")
             };
         }
         Subcommands::Call { address, sig, args, block, eth } => {
@@ -938,7 +957,7 @@ where
 }
 
 fn translate_event_string_to_hash(event: &str) -> Result<String, eyre::Error> {
-    let sig_chunks: Vec<String> = get_sig_chunks(event).unwrap();
+    let sig_chunks: Vec<String> = get_sig_chunks(event);
 
     let sig = format!("{}({})", 
         sig_chunks[0].split_whitespace().nth(1).unwrap().to_string(), 
@@ -950,14 +969,20 @@ fn translate_event_string_to_hash(event: &str) -> Result<String, eyre::Error> {
     }
 }
 
-fn get_sig_chunks(event: &str) -> Result<Vec<String>, eyre::Error> {
+fn get_sig_chunks(event: &str) -> Vec<String> {
     let mut sig_chunks: Vec<String> = event
         .split(&[',', '(', ')'][..])
         .map(|arg| arg.trim().to_string())
         .collect(); // vec["event Transfer", "address indexed from", "address indexed to", "uint256 value", ";"]
     
     sig_chunks.retain(|arg| arg != ";");
-    Ok(sig_chunks)
+    sig_chunks
+}
+
+struct EventData {
+    sig: Option<String>,
+    address: String,
+    args: Vec<EventArg>,
 }
 
 struct EventArg {
@@ -976,12 +1001,22 @@ fn convert_hex_to_address(hex: &str) -> String {
     format!("0x{}", hex[hex.len() - 40..].to_string())
 }
 
-fn convert_and_set_value(event_type: &EventArgType, value: String) -> String {
+fn convert_value(event_type: &EventArgType, value: String) -> String {
     match event_type {
         EventArgType::Address => convert_hex_to_address(&value),
         EventArgType::Uint256 => SimpleCast::to_dec(&value).unwrap().to_string(),
     }
-    
+}
+
+fn decode_event_with_abi(topic0: &str, abi: &Vec<String>) -> Result<Vec<String>, eyre::Error> {
+    let out = abi
+        .iter()
+        .map(|event_string| (translate_event_string_to_hash(event_string).unwrap(), event_string))
+        .filter(|(hashed_sig, _)| hashed_sig == topic0)
+        .map(|(_, sig)| sig.to_string())
+        .collect::<Vec<String>>();
+
+    Ok(out)
 }
 
 fn split_data_into_args(data: &str) -> Vec<String> {
@@ -1000,6 +1035,18 @@ fn split_data_into_args(data: &str) -> Vec<String> {
     };
     // TODO: if there's any leftover in open, error out!
     out
+}
+
+impl Clone for EventArg {
+    fn clone(&self) -> Self {
+        EventArg {
+            name: self.name.clone(),
+            type_: self.type_.clone(),
+            indexed: self.indexed,
+            value: self.value.clone(),
+            position: self.position.clone(),
+        }
+    }
 }
 
 impl Clone for EventArgType {
