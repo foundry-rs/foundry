@@ -1,8 +1,8 @@
 use crate::U256;
-use ethers_core::types::{ParseChainError, U64};
+use ethers_core::types::{Chain as NamedChain, ParseChainError, U64};
 use fastrlp::{Decodable, Encodable};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, time::Duration};
 
 /// Either a named or chain id or the actual id value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -10,7 +10,7 @@ use std::{fmt, str::FromStr};
 pub enum Chain {
     /// Contains a known chain
     #[serde(serialize_with = "super::from_str_lowercase::serialize")]
-    Named(ethers_core::types::Chain),
+    Named(NamedChain),
     /// Contains the id of a chain
     Id(u64),
 }
@@ -32,6 +32,30 @@ impl Chain {
             Chain::Id(_) => false,
         }
     }
+
+    /// The blocktime various from chain to chain
+    ///
+    /// It can be beneficial to know the average blocktime to adjust the polling of an Http provider
+    /// for example.
+    ///
+    /// **Note:** this will not return the accurate average depending on the time but is rather a
+    /// sensible default derived from blocktime charts like <https://etherscan.com/chart/blocktime>
+    /// <https://polygonscan.com/chart/blocktime>
+    pub fn average_blocktime_hint(&self) -> Option<Duration> {
+        if let Chain::Named(chain) = self {
+            let ms = match chain {
+                NamedChain::Mainnet => 13_000,
+                NamedChain::Polygon | NamedChain::PolygonMumbai => 2_100,
+                NamedChain::Moonbeam | NamedChain::Moonriver => 12_500,
+                NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet => 3_000,
+                NamedChain::Dev | NamedChain::AnvilHardhat => 200,
+                _ => return None,
+            };
+
+            return Some(Duration::from_millis(ms))
+        }
+        None
+    }
 }
 
 impl fmt::Display for Chain {
@@ -39,7 +63,7 @@ impl fmt::Display for Chain {
         match self {
             Chain::Named(chain) => chain.fmt(f),
             Chain::Id(id) => {
-                if let Ok(chain) = ethers_core::types::Chain::try_from(*id) {
+                if let Ok(chain) = NamedChain::try_from(*id) {
                     chain.fmt(f)
                 } else {
                     id.fmt(f)
@@ -49,15 +73,15 @@ impl fmt::Display for Chain {
     }
 }
 
-impl From<ethers_core::types::Chain> for Chain {
-    fn from(id: ethers_core::types::Chain) -> Self {
+impl From<NamedChain> for Chain {
+    fn from(id: NamedChain) -> Self {
         Chain::Named(id)
     }
 }
 
 impl From<u64> for Chain {
     fn from(id: u64) -> Self {
-        ethers_core::types::Chain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
+        NamedChain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id))
     }
 }
 
@@ -88,7 +112,7 @@ impl From<Chain> for U256 {
     }
 }
 
-impl TryFrom<Chain> for ethers_core::types::Chain {
+impl TryFrom<Chain> for NamedChain {
     type Error = ParseChainError;
 
     fn try_from(chain: Chain) -> Result<Self, Self::Error> {
@@ -103,7 +127,7 @@ impl FromStr for Chain {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(chain) = ethers_core::types::Chain::from_str(s) {
+        if let Ok(chain) = NamedChain::from_str(s) {
             Ok(Chain::Named(chain))
         } else {
             s.parse::<u64>()
@@ -129,9 +153,9 @@ impl<'de> Deserialize<'de> for Chain {
             ChainId::Named(s) => {
                 s.to_lowercase().parse().map(Chain::Named).map_err(serde::de::Error::custom)
             }
-            ChainId::Id(id) => Ok(ethers_core::types::Chain::try_from(id)
-                .map(Chain::Named)
-                .unwrap_or_else(|_| Chain::Id(id))),
+            ChainId::Id(id) => {
+                Ok(NamedChain::try_from(id).map(Chain::Named).unwrap_or_else(|_| Chain::Id(id)))
+            }
         }
     }
 }

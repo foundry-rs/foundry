@@ -7,4 +7,5 @@ pub mod errors;
 pub mod evm;
 pub mod fmt;
 pub mod fs;
+pub mod provider;
 pub use constants::*;
