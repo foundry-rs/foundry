@@ -83,7 +83,6 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::FunctionDefinition(function) => function.loc,
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
-            SourceUnitPart::DocComment(doc) => doc.loc,
             SourceUnitPart::Using(using) => using.loc,
         }
     }
@@ -101,7 +100,6 @@ impl LineOfCode for ContractPart {
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
             ContractPart::TypeDefinition(def) => def.loc,
-            ContractPart::DocComment(doc) => doc.loc,
         }
     }
 }
@@ -172,7 +170,6 @@ impl LineOfCode for Statement {
             RevertNamedArgs(loc, _, _) => *loc,
             Emit(loc, _) => *loc,
             Try(loc, _, _, _) => *loc,
-            DocComment(comment) => comment.loc,
         }
     }
 }
@@ -385,6 +382,8 @@ impl LineOfCode for Comment {
         match self {
             Comment::Line(loc, _) => *loc,
             Comment::Block(loc, _) => *loc,
+            Comment::DocLine(loc, _) => *loc,
+            Comment::DocBlock(loc, _) => *loc,
         }
     }
 }

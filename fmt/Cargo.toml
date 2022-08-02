@@ -12,7 +12,7 @@ keywords = ["ethereum", "web3", "solidity", "linter"]
 
 [dependencies]
 semver = "1.0.4"
-solang-parser = "=0.1.16"
+solang-parser = "=0.1.17"
 itertools = "0.10.3"
 thiserror = "1.0.30"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

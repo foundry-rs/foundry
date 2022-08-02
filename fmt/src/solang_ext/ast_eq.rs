@@ -63,12 +63,6 @@ impl AstEq for Base {
     }
 }
 
-impl AstEq for DocComment {
-    fn ast_eq(&self, other: &Self) -> bool {
-        self.ty == other.ty
-    }
-}
-
 impl<T> AstEq for Vec<T>
 where
     T: AstEq,
@@ -263,7 +257,6 @@ impl AstEq for Statement {
                 RevertNamedArgs(loc, expr, args),
                 Emit(loc, expr),
                 Try(loc, expr, params, claus),
-                DocComment(comment),
                 _
                 Block {
                     loc,
@@ -368,12 +361,6 @@ derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
 derive_ast_eq! { struct ErrorDefinition { loc, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
-derive_ast_eq! { enum CommentType {
-    Line,
-    Block,
-    _
-    _
-}}
 derive_ast_eq! { enum UsingList {
     _
     Library(expr),
@@ -562,7 +549,6 @@ derive_ast_eq! { enum SourceUnitPart {
     FunctionDefinition(def),
     VariableDefinition(def),
     TypeDefinition(def),
-    DocComment(comment),
     Using(using),
     StraySemicolon(loc),
     _
@@ -594,7 +580,6 @@ derive_ast_eq! { enum ContractPart {
     TypeDefinition(def),
     StraySemicolon(loc),
     Using(using),
-    DocComment(comment),
     _
 }}
 derive_ast_eq! { enum ContractTy {
