@@ -59,8 +59,10 @@ where
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
         if let Some(context) = self.context.last() {
-            self.ic_map
-                .insert(*context, build_ic_map(data.env.cfg.spec_id, &interp.contract().code));
+            self.ic_map.insert(
+                *context,
+                build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
+            );
         }
         Return::Continue
     }

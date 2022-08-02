@@ -10,7 +10,7 @@ use crate::{
 };
 use cast::fuzz::CounterExample;
 use clap::{AppSettings, Parser};
-use ethers::solc::utils::RuntimeOrHandle;
+use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, opts::EvmOpts},
@@ -23,7 +23,8 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{figment, figment::Figment, Config};
+use proptest::test_runner::{RngAlgorithm, TestRng};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -31,9 +32,13 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 mod filter;
 pub use filter::Filter;
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
@@ -91,6 +96,9 @@ pub struct TestArgs {
     /// List tests instead of running them
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
+
+    #[clap(long, help = "Set seed used to generate randomness during your fuzz runs",   parse(try_from_str = utils::parse_u256))]
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
@@ -109,12 +117,7 @@ impl TestArgs {
         // merge all configs
         let figment: Figment = self.into();
         let evm_opts = figment.extract()?;
-        let mut config = Config::from_provider(figment).sanitized();
-
-        // merging etherscan api key into Config
-        if let Some(etherscan_api_key) = &self.etherscan_api_key {
-            config.etherscan_api_key = Some(etherscan_api_key.to_string());
-        }
+        let config = Config::from_provider(figment).sanitized();
         Ok((config, evm_opts))
     }
 
@@ -130,6 +133,25 @@ impl TestArgs {
             let config = Config::from(self);
             vec![config.src, config.test]
         })
+    }
+}
+
+impl Provider for TestArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Core Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(fuzz_seed) = self.fuzz_seed {
+            dict.insert("fuzz_seed".to_string(), fuzz_seed.to_string().into());
+        }
+
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -292,6 +314,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         fuzz_runs: config.fuzz_runs,
         fuzz_max_local_rejects: config.fuzz_max_local_rejects,
         fuzz_max_global_rejects: config.fuzz_max_global_rejects,
+        fuzz_seed: config.fuzz_seed,
         invariant_runs: config.invariant_runs,
         invariant_depth: config.invariant_depth,
         invariant_fail_on_revert: config.invariant_fail_on_revert,

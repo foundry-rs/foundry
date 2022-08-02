@@ -6,6 +6,7 @@ pub mod coverage;
 
 /// The Forge test runner
 mod runner;
+use ethers::types::U256;
 pub use runner::ContractRunner;
 
 /// Forge test runners for multiple contracts
@@ -38,6 +39,8 @@ pub struct TestOptions {
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
+    /// Optional seed for the fuzzing RNG algorithm
+    pub fuzz_seed: Option<U256>,
     /// The number of runs that must execute for each invariant test group.
     pub invariant_runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.

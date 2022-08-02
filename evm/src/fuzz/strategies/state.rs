@@ -102,7 +102,7 @@ pub fn collect_state_from_call(
 
         // Insert push bytes
         if let Some(code) = &account.info.code {
-            for push_byte in collect_push_bytes(code.clone()) {
+            for push_byte in collect_push_bytes(code.bytes().clone()) {
                 state.insert(push_byte);
             }
         }
@@ -140,7 +140,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     let mut i = 0;
     while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
         let op = code[i];
-        if opcode_infos[op as usize].is_push {
+        if opcode_infos[op as usize].is_push() {
             let push_size = (op - opcode::PUSH1 + 1) as usize;
             let push_start = i + 1;
             let push_end = push_start + push_size;
@@ -182,7 +182,7 @@ pub fn collect_created_contracts(
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts
                         .iter()
-                        .find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
+                        .find(|(_, (_, known_code))| diff_score(known_code, code.bytes()) < 0.1)
                     {
                         created_contracts.push(*address);
                         writable_targeted

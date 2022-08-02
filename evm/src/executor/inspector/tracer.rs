@@ -151,7 +151,7 @@ where
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(

@@ -536,8 +536,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("core{}FailingSetup.t.sol:FailingSetupTest", std::path::MAIN_SEPARATOR)
-                        .as_str(),
+                    "core/FailingSetup.t.sol:FailingSetupTest",
                     vec![(
                         "setUp()",
                         false,
@@ -547,8 +546,7 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}MultipleSetup.t.sol:MultipleSetup", std::path::MAIN_SEPARATOR)
-                        .as_str(),
+                    "core/MultipleSetup.t.sol:MultipleSetup",
                     vec![(
                         "setUp()",
                         false,
@@ -558,42 +556,29 @@ mod tests {
                     )],
                 ),
                 (
-                    format!("core{}Reverting.t.sol:RevertingTest", std::path::MAIN_SEPARATOR)
-                        .as_str(),
+                    "core/Reverting.t.sol:RevertingTest",
                     vec![("testFailRevert()", true, None, None, None)],
                 ),
                 (
-                    format!(
-                        "core{}SetupConsistency.t.sol:SetupConsistencyCheck",
-                        std::path::MAIN_SEPARATOR
-                    )
-                    .as_str(),
+                    "core/SetupConsistency.t.sol:SetupConsistencyCheck",
                     vec![
                         ("testAdd()", true, None, None, None),
                         ("testMultiply()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!("core{}DSStyle.t.sol:DSStyleTest", std::path::MAIN_SEPARATOR).as_str(),
+                    "core/DSStyle.t.sol:DSStyleTest",
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
-                    format!(
-                        "core{}ContractEnvironment.t.sol:ContractEnvironmentTest",
-                        std::path::MAIN_SEPARATOR
-                    )
-                    .as_str(),
+                    "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
                     vec![
                         ("testAddresses()", true, None, None, None),
                         ("testEnvironment()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!(
-                        "core{}PaymentFailure.t.sol:PaymentFailureTest",
-                        std::path::MAIN_SEPARATOR
-                    )
-                    .as_str(),
+                    "core/PaymentFailure.t.sol:PaymentFailureTest",
                     vec![(
                         "testCantPay()",
                         false,
@@ -603,19 +588,14 @@ mod tests {
                     )],
                 ),
                 (
-                    format!(
-                        "core{}LibraryLinking.t.sol:LibraryLinkingTest",
-                        std::path::MAIN_SEPARATOR
-                    )
-                    .as_str(),
+                    "core/LibraryLinking.t.sol:LibraryLinkingTest",
                     vec![
                         ("testDirect()", true, None, None, None),
                         ("testNested()", true, None, None, None),
                     ],
                 ),
                 (
-                    format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR)
-                        .as_str(),
+                    "core/Abstract.t.sol:AbstractTest",
                     vec![("testSomething()", true, None, None, None)],
                 ),
             ]),
@@ -631,7 +611,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    format!("logs{}DebugLogs.t.sol:DebugLogsTest", std::path::MAIN_SEPARATOR).as_str(),
+                    "logs/DebugLogs.t.sol:DebugLogsTest",
                     vec![
                         (
                             "test1()",
@@ -800,7 +780,7 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("logs{}HardhatLogs.t.sol:HardhatLogsTest", std::path::MAIN_SEPARATOR).as_str(),
+                    "logs/HardhatLogs.t.sol:HardhatLogsTest",
                     vec![
                         (
                             "testInts()",
@@ -1201,13 +1181,41 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         );
     }
 
-    /// Executes all fork cheatcodes
+    /// Executes reverting fork test
+    #[test]
+    fn test_cheats_fork_revert() {
+        let mut runner = runner();
+        let suite_result = runner
+            .test(
+                &Filter::new(
+                    "testNonExistingContractRevert",
+                    ".*",
+                    &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
+                ),
+                None,
+                true,
+            )
+            .unwrap();
+        assert_eq!(suite_result.len(), 1);
+
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (_, result) in test_results {
+                assert_eq!(
+                     result.reason.unwrap(),
+                     "Contract 0xCe71065D4017F316EC606Fe4422e11eB2c47c246 does not exists on active fork with id `1`\n        But exists on non active forks: `[0]`"
+                );
+            }
+        }
+    }
+
+    /// Executes all non-reverting fork cheatcodes
     #[test]
     fn test_cheats_fork() {
         let mut runner = runner();
         let suite_result = runner
             .test(
-                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR)),
+                &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
+                    .exclude_tests(".*Revert"),
                 None,
                 TEST_OPTS,
             )
@@ -1268,8 +1276,9 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
             for (test_name, result) in test_results {
                 let logs = decode_console_logs(&result.logs);
 
-                match test_name.as_ref() {
+                match test_name.as_str() {
                     "testPositive(uint256)" |
+                    "testPositive(int256)" |
                     "testSuccessfulFuzz(uint128,uint128)" |
                     "testToStringFuzz(bytes32)" => assert!(
                         result.success,
@@ -1360,16 +1369,8 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                 TEST_OPTS,
             )
             .unwrap();
-        println!("{:?}", results.keys());
-        assert!(results
-            .get(
-                format!("core{}Abstract.t.sol:AbstractTestBase", std::path::MAIN_SEPARATOR)
-                    .as_str()
-            )
-            .is_none());
-        assert!(results
-            .get(format!("core{}Abstract.t.sol:AbstractTest", std::path::MAIN_SEPARATOR).as_str())
-            .is_some());
+        assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
+        assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
     }
 
     #[test]

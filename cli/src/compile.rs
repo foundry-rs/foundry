@@ -250,6 +250,7 @@ pub fn compile_files(
     if !silent {
         println!("{output}");
     }
+
     Ok(output)
 }
 

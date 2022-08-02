@@ -1,6 +1,4 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
-
 use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
@@ -14,6 +12,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
+use revm::{db::DatabaseRef, AccountInfo, Bytecode, KECCAK_EMPTY};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -280,8 +279,12 @@ where
                             };
 
                             // update the cache
-                            let acc =
-                                AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
+                            let acc = AccountInfo {
+                                nonce: nonce.as_u64(),
+                                balance,
+                                code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
+                                code_hash,
+                            };
                             pin.db.accounts().write().insert(addr, acc.clone());
 
                             // notify all listeners
@@ -495,7 +498,7 @@ impl DatabaseRef for SharedBackend {
         })
     }
 
-    fn code_by_hash(&self, _address: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, _address: H256) -> Bytecode {
         panic!("Should not be called. Code is already loaded.")
     }
 

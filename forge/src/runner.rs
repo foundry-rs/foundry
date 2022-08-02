@@ -73,6 +73,8 @@ impl<'a> ContractRunner<'a> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
+        trace!(?setup, "Setting test contract");
+
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(CALLER, U256::MAX);
@@ -271,13 +273,22 @@ impl<'a> ContractRunner<'a> {
         let mut test_results = BTreeMap::new();
         if !tests.is_empty() {
             // TODO: Add Options to modify the persistence
-            let fuzzer = TestRunner::new(proptest::test_runner::Config {
+            let cfg = proptest::test_runner::Config {
                 failure_persistence: None,
                 cases: test_options.fuzz_runs,
                 max_local_rejects: test_options.fuzz_max_local_rejects,
                 max_global_rejects: test_options.fuzz_max_global_rejects,
                 ..Default::default()
-            });
+            };
+
+            let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
+                let mut bytes: [u8; 32] = [0; 32];
+                fuzz_seed.to_big_endian(&mut bytes);
+                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            } else {
+                proptest::test_runner::TestRunner::new(cfg)
+            };
 
             test_results.extend(
                 tests
@@ -297,13 +308,22 @@ impl<'a> ContractRunner<'a> {
 
         if has_invariants && test_options.include_fuzz_tests {
             // TODO: Add Options to modify the persistence
-            let fuzzer = TestRunner::new(proptest::test_runner::Config {
+            let cfg = proptest::test_runner::Config {
                 failure_persistence: None,
                 cases: test_options.invariant_runs,
                 max_local_rejects: test_options.fuzz_max_local_rejects,
                 max_global_rejects: test_options.fuzz_max_global_rejects,
                 ..Default::default()
-            });
+            };
+
+            let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
+                let mut bytes: [u8; 32] = [0; 32];
+                fuzz_seed.to_big_endian(&mut bytes);
+                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            } else {
+                proptest::test_runner::TestRunner::new(cfg)
+            };
 
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let functions: Vec<&Function> = self

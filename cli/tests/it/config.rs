@@ -59,6 +59,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz_runs: 1000,
         fuzz_max_local_rejects: 2000,
         fuzz_max_global_rejects: 100203,
+        fuzz_seed: Some(1000.into()),
         invariant_runs: 256,
         invariant_depth: 15,
         invariant_fail_on_revert: false,
