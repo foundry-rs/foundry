@@ -9,6 +9,10 @@ pub enum CommentType {
     Line,
     /// A Block comment (e.g. `/* ... */`)
     Block,
+    /// A Doc Line comment (e.g. `/// ...`)
+    DocLine,
+    /// A Doc Block comment (e.g. `/** ... */`)
+    DocBlock,
 }
 
 /// The comment position
@@ -41,6 +45,8 @@ impl CommentWithMetadata {
         let (ty, loc, comment) = match comment {
             Comment::Line(loc, comment) => (CommentType::Line, loc, comment),
             Comment::Block(loc, comment) => (CommentType::Block, loc, comment),
+            Comment::DocLine(loc, comment) => (CommentType::DocLine, loc, comment),
+            Comment::DocBlock(loc, comment) => (CommentType::DocBlock, loc, comment),
         };
         Self {
             comment: comment.trim_end().to_string(),
@@ -127,8 +133,12 @@ impl CommentWithMetadata {
 
         Self::new(comment, position, has_newline_before, indent_len)
     }
+    // TODO:
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line)
+    }
+    pub fn is_doc_block(&self) -> bool {
+        matches!(self.ty, CommentType::DocBlock)
     }
     pub fn is_prefix(&self) -> bool {
         matches!(self.position, CommentPosition::Prefix)
