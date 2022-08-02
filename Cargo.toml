@@ -10,6 +10,7 @@ members = [
     "cli/test-utils",
     "common",
     "config",
+    "doc",
     "evm",
     "fmt",
     "forge",

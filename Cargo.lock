@@ -1303,6 +1303,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ethers-solc",
+ "eyre",
+ "forge-fmt",
+ "foundry-common",
+ "solang-parser 0.1.16 (git+https://github.com/hyperledger-labs/solang)",
+ "thiserror",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1692,7 +1705,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.2",
- "solang-parser",
+ "solang-parser 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
@@ -1912,7 +1925,7 @@ dependencies = [
  "itertools",
  "pretty_assertions",
  "semver",
- "solang-parser",
+ "solang-parser 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror",
  "toml",
 ]
@@ -1983,7 +1996,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "similar",
- "solang-parser",
+ "solang-parser 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "strsim",
  "strum 0.24.0",
  "thiserror",
@@ -4663,6 +4676,18 @@ name = "solang-parser"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1f68b8280e3f354d5646218319bcee4febe42833cef5ebf653cfc49d0a94409"
+dependencies = [
+ "itertools",
+ "lalrpop",
+ "lalrpop-util",
+ "phf 0.10.1",
+ "unicode-xid",
+]
+
+[[package]]
+name = "solang-parser"
+version = "0.1.16"
+source = "git+https://github.com/hyperledger-labs/solang#225b367208d0f64458a2eac615717c597aa8ce6e"
 dependencies = [
  "itertools",
  "lalrpop",
