@@ -149,7 +149,7 @@ impl<'a> InvariantExecutor<'a> {
                     );
 
                     // Commit changes to the database.
-                    executor.backend_mut().db.commit(state_changeset);
+                    executor.backend_mut().commit(state_changeset);
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
@@ -215,7 +215,7 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state: EvmFuzzState = build_initial_state(&self.executor.backend().db);
+        let fuzz_state: EvmFuzzState = build_initial_state(&self.executor.backend().mem_db());
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.

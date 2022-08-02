@@ -20,7 +20,7 @@ use foundry_evm::{
     CALLER,
 };
 use parking_lot::RwLock;
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tracing::{error, trace};
@@ -281,7 +281,7 @@ impl<'a> ContractRunner<'a> {
                 ..Default::default()
             };
 
-            let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
+            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
                 let mut bytes: [u8; 32] = [0; 32];
                 fuzz_seed.to_big_endian(&mut bytes);
                 let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
@@ -316,7 +316,7 @@ impl<'a> ContractRunner<'a> {
                 ..Default::default()
             };
 
-            let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
+            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
                 let mut bytes: [u8; 32] = [0; 32];
                 fuzz_seed.to_big_endian(&mut bytes);
                 let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
@@ -472,7 +472,6 @@ impl<'a> ContractRunner<'a> {
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
         let start = Instant::now();
-        let prev_db = self.executor.backend().db.clone();
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
@@ -502,13 +501,11 @@ impl<'a> ContractRunner<'a> {
                         // we want traces for a failed fuzz
                         let mut ided_contracts = identified_contracts.clone();
                         if let TestError::Fail(_reason, vec_addr_bytes) = &error.test_error {
-                            // Reset DB state
-                            self.executor.backend_mut().db = prev_db.clone();
-                            self.executor.set_tracing(true);
+                            // Reset state
+                            let mut executor = self.executor.clone();
+                            executor.set_tracing(true);
 
-                            if let Some(ref mut fuzzer) =
-                                self.executor.inspector_config_mut().fuzzer
-                            {
+                            if let Some(ref mut fuzzer) = executor.inspector_config_mut().fuzzer {
                                 if let Some(ref mut call_generator) = fuzzer.call_generator {
                                     call_generator.last_sequence =
                                         Arc::new(RwLock::new(error.inner_sequence.clone()));
@@ -517,8 +514,7 @@ impl<'a> ContractRunner<'a> {
                             }
 
                             for (sender, (addr, bytes)) in vec_addr_bytes.iter() {
-                                let call_result = self
-                                    .executor
+                                let call_result = executor
                                     .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
                                     .expect("bad call to evm");
 
@@ -541,8 +537,7 @@ impl<'a> ContractRunner<'a> {
                                 ));
 
                                 if let Some(func) = &error.func {
-                                    let error_call_result = self
-                                        .executor
+                                    let error_call_result = executor
                                         .call_raw(self.sender, error.addr, func.0.clone(), 0.into())
                                         .expect("bad call to evm");
 
@@ -588,9 +583,6 @@ impl<'a> ContractRunner<'a> {
                     }
                 })
                 .collect();
-
-            // Final clean-up
-            self.executor.backend_mut().db = prev_db;
 
             Ok(results)
         } else {

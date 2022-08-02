@@ -24,7 +24,6 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment, figment::Figment, Config};
-use proptest::test_runner::{RngAlgorithm, TestRng};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
