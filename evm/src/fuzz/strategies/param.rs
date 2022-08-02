@@ -99,9 +99,7 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
         },
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value
-            .prop_map(move |value| {
-                Token::String(unsafe { std::str::from_utf8_unchecked(&value[..]).to_string() })
-            })
+            .prop_map(move |value| Token::String(String::from_utf8_lossy(&value[..]).to_string()))
             .boxed(),
         ParamType::Array(param) => proptest::collection::vec(
             fuzz_param_from_state(param, arc_state.clone()),
