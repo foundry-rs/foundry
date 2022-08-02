@@ -7,11 +7,10 @@ use crate::{
     },
     revm::db::CacheDB,
 };
-use bytes::Bytes;
 use ethers::prelude::{Address, H256, U256};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
-use revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
 use std::{collections::BTreeMap, sync::Arc};
 use tracing::{trace, warn};
 
@@ -145,7 +144,7 @@ impl Database for ForkedDatabase {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
         self.cache_db.code_by_hash(code_hash)
     }
 
@@ -163,7 +162,7 @@ impl DatabaseRef for ForkedDatabase {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.cache_db.code_by_hash(code_hash)
     }
 
@@ -212,7 +211,7 @@ impl DatabaseRef for ForkDbSnapshot {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.local.code_by_hash(code_hash)
     }
 

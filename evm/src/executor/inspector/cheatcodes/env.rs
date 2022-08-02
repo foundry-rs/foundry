@@ -8,7 +8,7 @@ use ethers::{
     types::{Address, H256, U256},
     utils::keccak256,
 };
-use revm::{Database, EVMData};
+use revm::{Bytecode, Database, EVMData};
 
 #[derive(Clone, Debug, Default)]
 pub struct Broadcast {
@@ -175,7 +175,7 @@ pub fn apply<DB: Database>(
 
             // TODO: Does this increase gas usage?
             data.subroutine.load_account(inner.0, data.db);
-            data.subroutine.set_code(inner.0, code.0, hash);
+            data.subroutine.set_code(inner.0, Bytecode::new_raw(code.0).to_checked(), hash);
             Ok(Bytes::new())
         }
         HEVMCalls::Deal(inner) => {

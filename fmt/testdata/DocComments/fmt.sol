@@ -9,8 +9,8 @@ contract HelloWorld {
     }
 
     /**
-        Here's a more double asterix comment
-    */
+     * Here's a more double asterix comment
+     */
     Person public theDude;
 
     /// Constructs the dude

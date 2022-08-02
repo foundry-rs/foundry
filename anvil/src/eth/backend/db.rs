@@ -9,7 +9,7 @@ use ethers::{
 use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{db::CacheDB, Database, DatabaseCommit, InMemoryDB},
+    revm::{db::CacheDB, Bytecode, Database, DatabaseCommit, InMemoryDB},
     HashMap,
 };
 
@@ -43,7 +43,7 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
             H256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(code.to_vec().into());
+        info.code = Some(Bytecode::new_raw(code.0).to_checked());
         self.insert_account(address, info);
     }
 
@@ -123,7 +123,7 @@ impl DatabaseRef for StateDb {
         self.0.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.0.code_by_hash(code_hash)
     }
 

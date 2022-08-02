@@ -37,12 +37,14 @@ pub fn remove_contract(
         if let Some(suggestion) =
             suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
         {
-            err = format!(
-                r#"{}
+            if suggestion != info.name {
+                err = format!(
+                    r#"{}
 
         Did you mean `{}`?"#,
-                err, suggestion
-            );
+                    err, suggestion
+                );
+            }
         }
         eyre::bail!(err)
     };

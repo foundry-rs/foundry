@@ -5,12 +5,11 @@ use crate::{
     },
     Address,
 };
-use bytes::Bytes;
 use ethers::prelude::{H160, H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{
-    db::DatabaseRef, Account, AccountInfo, Database, Env, Inspector, Log, Return, SubRoutine,
-    TransactOut,
+    db::DatabaseRef, Account, AccountInfo, Bytecode, Database, Env, Inspector, Log, Return,
+    SubRoutine, TransactOut,
 };
 use std::borrow::Cow;
 use tracing::trace;
@@ -142,7 +141,7 @@ impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
         DatabaseRef::basic(self.backend.as_ref(), address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
     }
 
@@ -159,7 +158,7 @@ impl<'a> Database for FuzzBackendWrapper<'a> {
     fn basic(&mut self, address: H160) -> AccountInfo {
         DatabaseRef::basic(self, address)
     }
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
         DatabaseRef::code_by_hash(self, code_hash)
     }
     fn storage(&mut self, address: H160, index: U256) -> U256 {
