@@ -715,12 +715,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .strip_suffix("*/")
                     .unwrap()
                     .trim();
-                let lines =
-                    content.lines().map(|line| line.trim_start()).peekable().collect::<Vec<_>>();
+                let lines = content.lines().map(|line| line.trim_start()).peekable();
                 writeln!(self.buf(), "/**")?;
-                let lines = lines.into_iter();
                 for line in lines {
-                    let line = line.trim().trim_start_matches("*").trim_start();
+                    let line = line.trim().trim_start_matches('*').trim_start();
                     writeln!(self.buf(), " * {line}")?;
                 }
                 write!(self.buf(), " */")?;
