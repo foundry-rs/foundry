@@ -386,6 +386,7 @@ mod tests {
         fuzz_runs: 256,
         fuzz_max_local_rejects: 1024,
         fuzz_max_global_rejects: 65536,
+        fuzz_seed: None,
         invariant_runs: 256,
         invariant_depth: 15,
         invariant_fail_on_revert: false,
@@ -1193,7 +1194,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                     &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
                 ),
                 None,
-                true,
+                TEST_OPTS,
             )
             .unwrap();
         assert_eq!(suite_result.len(), 1);
