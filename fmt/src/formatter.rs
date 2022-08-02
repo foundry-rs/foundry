@@ -1372,48 +1372,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    // TODO:
-    // fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> Result<()> {
-    //     match doc_comment.ty {
-    //         CommentType::Line => {
-    //             write!(self.buf(), "///{}", doc_comment.comment.trim_end())?;
-    //         }
-    //         CommentType::Block => {
-    //             let lines = doc_comment
-    //                 .comment
-    //                 .trim_end()
-    //                 .lines()
-    //                 .map(|line| line.trim_start())
-    //                 .peekable()
-    //                 .collect::<Vec<_>>();
-    //             if lines.iter().skip(1).all(|line| line.starts_with('*')) {
-    //                 writeln!(self.buf(), "/**")?;
-    //                 let mut lines = lines.into_iter();
-    //                 if let Some(first_line) = lines.next() {
-    //                     if !first_line.is_empty() {
-    //                         // write the original first line
-    //                         writeln!(
-    //                             self.buf(),
-    //                             " *{}",
-    //                             doc_comment.comment.lines().next().unwrap().trim_end()
-    //                         )?;
-    //                     }
-    //                 }
-    //                 for line in lines {
-    //                     writeln!(self.buf(), " *{}", &line[1..].trim_end())?;
-    //                 }
-    //                 write!(self.buf(), " */")?;
-    //             } else {
-    //                 write!(self.buf(), "/**")?;
-    //                 self.write_raw(&doc_comment.comment)?;
-    //                 write!(self.buf(), "*/")?;
-    //             }
-    //         }
-    //     }
-
-    //     Ok(())
-    // }
-
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> Result<()> {
         self.context.contract = Some(contract.clone());
 

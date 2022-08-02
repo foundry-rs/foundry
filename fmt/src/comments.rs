@@ -133,7 +133,6 @@ impl CommentWithMetadata {
 
         Self::new(comment, position, has_newline_before, indent_len)
     }
-    // TODO:
     pub fn is_line(&self) -> bool {
         matches!(self.ty, CommentType::Line)
     }
