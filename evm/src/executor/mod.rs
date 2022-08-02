@@ -1,8 +1,8 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
 pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
-    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
+    format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
+    CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 use backend::FuzzBackendWrapper;
 use bytes::Bytes;
@@ -14,7 +14,7 @@ use ethers::{
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut,
+    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, Return, TransactOut,
     TransactTo, TxEnv, EVM,
 };
 /// Reexport commonly used revm types
@@ -81,12 +81,20 @@ impl Executor {
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        backend.db.insert_account_info(
+        backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
+            revm::AccountInfo {
+                code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
+                ..Default::default()
+            },
         );
 
         Executor { backend, env, inspector_config, gas_limit }
+    }
+
+    /// Returns a mutable reference to the Env
+    pub fn env_mut(&mut self) -> &mut Env {
+        &mut self.env
     }
 
     /// Returns a mutable reference to the Backend
@@ -166,10 +174,11 @@ impl Executor {
     pub fn setup(
         &mut self,
         from: Option<Address>,
-        address: Address,
+        to: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
         let from = from.unwrap_or(CALLER);
-        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
+        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -218,7 +227,7 @@ impl Executor {
                 })
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
                     reverted,
@@ -322,6 +331,9 @@ impl Executor {
         let (status, out, gas, state_changeset, logs) =
             self.backend_mut().inspect_ref(env, &mut inspector);
 
+        // if there are multiple forks we need to merge them
+        let logs = self.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         let call_result = convert_executed_call(inspector, executed_call)?;
 
@@ -364,6 +376,9 @@ impl Executor {
         let env = self.build_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+
+        let logs = db.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         convert_executed_call(inspector, executed_call)
     }
@@ -415,7 +430,7 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                     .unwrap_or_else(|_| format!("{:?}", status));
                 return Err(EvmError::Execution {
                     reverted: true,
@@ -481,6 +496,9 @@ impl Executor {
     }
 
     /// Creates the environment to use when executing the transaction
+    ///
+    /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
+    /// the cheatcode state inbetween calls.
     fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
         Env {
             cfg: self.env.cfg.clone(),
@@ -580,7 +598,7 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    status: Return,
+    pub status: Return,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// The raw result of the call
@@ -656,7 +674,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, debug, cheatcodes, coverage, .. } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {
@@ -723,7 +741,7 @@ fn convert_call_result<D: Detokenize>(
             })
         }
         _ => {
-            let reason = foundry_utils::decode_revert(result.as_ref(), abi)
+            let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
                 .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution {
                 reverted,

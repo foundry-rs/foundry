@@ -7,10 +7,9 @@ use crate::{
     compile,
     compile::ProjectCompiler,
     suggestions, utils,
-    utils::FoundryPathExt,
 };
 use clap::{AppSettings, Parser};
-use ethers::solc::{utils::RuntimeOrHandle, FileFilter};
+use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
     executor::{inspector::CheatsConfig, opts::EvmOpts},
@@ -20,203 +19,25 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
+    MultiContractRunner, MultiContractRunnerBuilder,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{figment, figment::Figment, Config};
+use proptest::test_runner::{RngAlgorithm, TestRng};
 use regex::Regex;
-use std::{
-    collections::BTreeMap,
-    fmt,
-    path::{Path, PathBuf},
-    sync::mpsc::channel,
-    thread,
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
-
-#[derive(Debug, Clone, Parser)]
-pub struct Filter {
-    /// Only run test functions matching the specified regex pattern.
-    ///
-    /// Deprecated: See --match-test
-    #[clap(long = "match", short = 'm')]
-    pub pattern: Option<regex::Regex>,
-
-    /// Only run test functions matching the specified regex pattern.
-    #[clap(
-        long = "match-test",
-        visible_alias = "mt",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
-    pub test_pattern: Option<regex::Regex>,
-
-    /// Only run test functions that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-test",
-        visible_alias = "nmt",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
-    pub test_pattern_inverse: Option<regex::Regex>,
-
-    /// Only run tests in contracts matching the specified regex pattern.
-    #[clap(
-        long = "match-contract",
-        visible_alias = "mc",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
-    pub contract_pattern: Option<regex::Regex>,
-
-    /// Only run tests in contracts that do not match the specified regex pattern.
-    #[clap(
-        long = "no-match-contract",
-        visible_alias = "nmc",
-        conflicts_with = "pattern",
-        value_name = "REGEX"
-    )]
-    pub contract_pattern_inverse: Option<regex::Regex>,
-
-    /// Only run tests in source files matching the specified glob pattern.
-    #[clap(
-        long = "match-path",
-        visible_alias = "mp",
-        conflicts_with = "pattern",
-        value_name = "GLOB"
-    )]
-    pub path_pattern: Option<globset::Glob>,
-
-    /// Only run tests in source files that do not match the specified glob pattern.
-    #[clap(
-        name = "no-match-path",
-        long = "no-match-path",
-        visible_alias = "nmp",
-        conflicts_with = "pattern",
-        value_name = "GLOB"
-    )]
-    pub path_pattern_inverse: Option<globset::Glob>,
-}
-
-impl Filter {
-    pub fn with_merged_config(&self, config: &Config) -> Self {
-        let mut filter = self.clone();
-        if filter.test_pattern.is_none() {
-            filter.test_pattern = config.test_pattern.clone().map(|p| p.into());
-        }
-        if filter.test_pattern_inverse.is_none() {
-            filter.test_pattern_inverse = config.test_pattern_inverse.clone().map(|p| p.into());
-        }
-        if filter.contract_pattern.is_none() {
-            filter.contract_pattern = config.contract_pattern.clone().map(|p| p.into());
-        }
-        if filter.contract_pattern_inverse.is_none() {
-            filter.contract_pattern_inverse =
-                config.contract_pattern_inverse.clone().map(|p| p.into());
-        }
-        if filter.path_pattern.is_none() {
-            filter.path_pattern = config.path_pattern.clone();
-        }
-        if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config.path_pattern_inverse.clone();
-        }
-        filter
-    }
-}
-
-impl FileFilter for Filter {
-    /// Returns true if the file regex pattern match the `file`
-    ///
-    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
-    /// [FoundryPathExr::is_sol_test()]
-    fn is_match(&self, file: &Path) -> bool {
-        if let Some(file) = file.as_os_str().to_str() {
-            if let Some(ref glob) = self.path_pattern {
-                return glob.compile_matcher().is_match(file)
-            }
-            if let Some(ref glob) = self.path_pattern_inverse {
-                return !glob.compile_matcher().is_match(file)
-            }
-        }
-        file.is_sol_test()
-    }
-}
-
-impl TestFilter for Filter {
-    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
-        let mut ok = true;
-        let test_name = test_name.as_ref();
-        // Handle the deprecated option match
-        if let Some(re) = &self.pattern {
-            ok &= re.is_match(test_name);
-        }
-        if let Some(re) = &self.test_pattern {
-            ok &= re.is_match(test_name);
-        }
-        if let Some(re) = &self.test_pattern_inverse {
-            ok &= !re.is_match(test_name);
-        }
-        ok
-    }
-
-    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
-        let mut ok = true;
-        let contract_name = contract_name.as_ref();
-        if let Some(re) = &self.contract_pattern {
-            ok &= re.is_match(contract_name);
-        }
-        if let Some(re) = &self.contract_pattern_inverse {
-            ok &= !re.is_match(contract_name);
-        }
-        ok
-    }
-
-    fn matches_path(&self, path: impl AsRef<str>) -> bool {
-        let mut ok = true;
-        let path = path.as_ref();
-        if let Some(ref glob) = self.path_pattern {
-            ok &= glob.compile_matcher().is_match(path);
-        }
-        if let Some(ref glob) = self.path_pattern_inverse {
-            ok &= !glob.compile_matcher().is_match(path);
-        }
-        ok
-    }
-}
-
-impl fmt::Display for Filter {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut patterns = Vec::new();
-        if let Some(ref p) = self.pattern {
-            patterns.push(format!("\tmatch: `{}`", p.as_str()));
-        }
-        if let Some(ref p) = self.test_pattern {
-            patterns.push(format!("\tmatch-test: `{}`", p.as_str()));
-        }
-        if let Some(ref p) = self.test_pattern_inverse {
-            patterns.push(format!("\tno-match-test: `{}`", p.as_str()));
-        }
-        if let Some(ref p) = self.contract_pattern {
-            patterns.push(format!("\tmatch-contract: `{}`", p.as_str()));
-        }
-        if let Some(ref p) = self.contract_pattern_inverse {
-            patterns.push(format!("\tno-match-contract: `{}`", p.as_str()));
-        }
-        if let Some(ref p) = self.path_pattern {
-            patterns.push(format!("\tmatch-path: `{}`", p.glob()));
-        }
-        if let Some(ref p) = self.path_pattern_inverse {
-            patterns.push(format!("\tno-match-path: `{}`", p.glob()));
-        }
-        write!(f, "{}", patterns.join("\n"))
-    }
-}
+mod filter;
+pub use filter::Filter;
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
@@ -274,6 +95,9 @@ pub struct TestArgs {
     /// List tests instead of running them
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
+
+    #[clap(long, help = "Set seed used to generate randomness during your fuzz runs",   parse(try_from_str = utils::parse_u256))]
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
@@ -292,12 +116,7 @@ impl TestArgs {
         // merge all configs
         let figment: Figment = self.into();
         let evm_opts = figment.extract()?;
-        let mut config = Config::from_provider(figment).sanitized();
-
-        // merging etherscan api key into Config
-        if let Some(etherscan_api_key) = &self.etherscan_api_key {
-            config.etherscan_api_key = Some(etherscan_api_key.to_string());
-        }
+        let config = Config::from_provider(figment).sanitized();
         Ok((config, evm_opts))
     }
 
@@ -313,6 +132,25 @@ impl TestArgs {
             let config = Config::from(self);
             vec![config.src, config.test]
         })
+    }
+}
+
+impl Provider for TestArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Core Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(fuzz_seed) = self.fuzz_seed {
+            dict.insert("fuzz_seed".to_string(), fuzz_seed.to_string().into());
+        }
+
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -470,8 +308,19 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         max_global_rejects: config.fuzz_max_global_rejects,
         ..Default::default()
     };
-    let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+
+    let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
+        let mut bytes: [u8; 32] = [0; 32];
+        fuzz_seed.to_big_endian(&mut bytes);
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+        proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+    } else {
+        proptest::test_runner::TestRunner::new(cfg)
+    };
+
     let mut filter = args.filter(&config);
+
+    trace!(target: "forge::test", ?filter, "using filter");
 
     // Set up the project
     let project = config.project()?;

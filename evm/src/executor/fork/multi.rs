@@ -113,6 +113,7 @@ impl MultiFork {
     ///
     /// If no matching fork backend exists it will be created
     pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<(ForkId, SharedBackend)> {
+        trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -123,6 +124,7 @@ impl MultiFork {
     ///
     /// If no matching fork backend exists it will be created
     pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<(ForkId, SharedBackend)> {
+        trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -131,6 +133,7 @@ impl MultiFork {
 
     /// Returns the `Env` of the given fork, if any
     pub fn get_env(&self, fork: ForkId) -> eyre::Result<Option<Env>> {
+        trace!(?fork, "getting env config");
         let (sender, rx) = oneshot_channel();
         let req = Request::GetEnv(fork, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -141,8 +144,10 @@ impl MultiFork {
     ///
     /// Returns `None` if no matching fork backend is available.
     pub fn get_fork(&self, id: impl Into<ForkId>) -> eyre::Result<Option<SharedBackend>> {
+        let id = id.into();
+        trace!(?id, "get fork backend");
         let (sender, rx) = oneshot_channel();
-        let req = Request::GetFork(id.into(), sender);
+        let req = Request::GetFork(id, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
@@ -226,6 +231,8 @@ impl MultiForkHandler {
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender) {
         let fork_id = create_fork_id(&fork.url, fork.evm_opts.fork_block_number);
+        trace!(?fork_id, "created new forkId");
+
         if let Some(fork) = self.forks.get_mut(&fork_id) {
             fork.num_senders += 1;
             let _ = sender.send(Ok((fork_id, fork.backend.clone())));

@@ -15,7 +15,7 @@ contract UnitExpression {
         uint256 someVeryVeryVeryLongVaribleNameForTheMultiplierForEtherValue;
 
         value = someVeryVeryVeryLongVaribleNameForTheMultiplierForEtherValue
-            * /* comment1 */ 1 ether; // comment2
+            * 1 /* comment1 */ ether; // comment2
 
         value = 1 // comment3
             // comment4

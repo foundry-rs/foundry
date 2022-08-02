@@ -87,6 +87,16 @@ cargo +nightly fmt -- --check
 cargo +nightly clippy --all --all-features -- -D warnings
 ```
 
+If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
+
+```json
+"editor.formatOnSave": true,
+"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+"[rust]": {
+  "editor.defaultFormatter": "rust-lang.rust-analyzer"
+}
+```
+
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
 
 If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/master/foundryup).

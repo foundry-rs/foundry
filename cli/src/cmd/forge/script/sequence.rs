@@ -239,35 +239,47 @@ impl Drop for ScriptSequence {
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
-    #[serde(rename = "type")]
+    #[serde(rename = "transactionType")]
     pub opcode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_string")]
     pub contract_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_address")]
     pub contract_address: Option<Address>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_string")]
     pub function: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
-    pub tx: TypedTransaction,
+    pub transaction: TypedTransaction,
+}
+
+fn default_string() -> Option<String> {
+    Some("".to_owned())
+}
+
+fn default_address() -> Option<Address> {
+    Some(Address::from_low_u64_be(0))
+}
+
+fn default_vec_of_strings() -> Option<Vec<String>> {
+    Some(vec![])
 }
 
 impl TransactionWithMetadata {
     pub fn new(
-        tx: TypedTransaction,
+        transaction: TypedTransaction,
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
     ) -> eyre::Result<Self> {
-        let mut metadata = Self { tx, ..Default::default() };
+        let mut metadata = Self { transaction, ..Default::default() };
 
-        if let Some(NameOrAddress::Address(to)) = metadata.tx.to().cloned() {
+        if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(true, Address::from_slice(&result.returned), local_contracts)
             } else {
                 metadata.set_call(to, local_contracts, decoder)?;
             }
-        } else if metadata.tx.to().is_none() {
+        } else if metadata.transaction.to().is_none() {
             metadata.set_create(
                 false,
                 result.address.expect("There should be a contract address."),
@@ -301,7 +313,7 @@ impl TransactionWithMetadata {
     ) -> eyre::Result<()> {
         self.opcode = "CALL".to_string();
 
-        if let Some(data) = self.tx.data() {
+        if let Some(data) = self.transaction.data() {
             if data.0.len() >= 4 {
                 if let Some((contract_name, abi)) = local_contracts.get(&target) {
                     // This CALL is made to a local contract.
@@ -339,23 +351,23 @@ impl TransactionWithMetadata {
     }
 
     pub fn set_tx(&mut self, tx: TypedTransaction) {
-        self.tx = tx;
+        self.transaction = tx;
     }
 
     pub fn change_type(&mut self, is_legacy: bool) {
-        self.tx = if is_legacy {
-            TypedTransaction::Legacy(self.tx.clone().into())
+        self.transaction = if is_legacy {
+            TypedTransaction::Legacy(self.transaction.clone().into())
         } else {
-            TypedTransaction::Eip1559(self.tx.clone().into())
+            TypedTransaction::Eip1559(self.transaction.clone().into())
         };
     }
 
     pub fn typed_tx(&self) -> &TypedTransaction {
-        &self.tx
+        &self.transaction
     }
 
     pub fn typed_tx_mut(&mut self) -> &mut TypedTransaction {
-        &mut self.tx
+        &mut self.transaction
     }
 
     pub fn is_create2(&self) -> bool {

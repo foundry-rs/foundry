@@ -9,6 +9,7 @@ use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::BTreeMap,
+    fmt,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -317,7 +318,7 @@ pub struct FeeHistoryCacheItem {
     pub rewards: Vec<u64>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
@@ -382,5 +383,16 @@ impl FeeDetails {
                 })
             }
         }
+    }
+}
+
+impl fmt::Debug for FeeDetails {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "Fees {{ ")?;
+        write!(fmt, "gaPrice: {:?}, ", self.gas_price)?;
+        write!(fmt, "max_fee_per_gas: {:?}, ", self.max_fee_per_gas)?;
+        write!(fmt, "max_priority_fee_per_gas: {:?}, ", self.max_priority_fee_per_gas)?;
+        write!(fmt, "}}")?;
+        Ok(())
     }
 }

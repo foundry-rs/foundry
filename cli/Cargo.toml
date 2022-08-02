@@ -55,6 +55,7 @@ walkdir = "2.3.2"
 dunce = "1.0.2"
 glob = "0.3.0"
 globset = "0.4.8"
+path-slash = "0.2.0"
 
 # misc
 eyre = "0.6"
@@ -83,7 +84,6 @@ foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
 serial_test = "0.7.0"
-path-slash = "0.2.0"
 
 [features]
 default = ["rustls"]

@@ -103,8 +103,10 @@ where
         // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.ic_map
-            .insert(self.context, build_ic_map(data.env.cfg.spec_id, &interp.contract().code));
+        self.ic_map.insert(
+            self.context,
+            build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
+        );
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
@@ -116,20 +118,20 @@ where
         _is_static: bool,
     ) -> Return {
         let pc = interpreter.program_counter();
-        let op = interpreter.contract.code[pc];
+        let op = interpreter.contract.bytecode.bytecode()[pc];
 
         // Get opcode information
         let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
         let opcode_info = &opcode_infos[op as usize];
 
         // Extract the push bytes
-        let push_size = if opcode_info.is_push { (op - opcode::PUSH1 + 1) as usize } else { 0 };
+        let push_size = if opcode_info.is_push() { (op - opcode::PUSH1 + 1) as usize } else { 0 };
         let push_bytes = match push_size {
             0 => None,
             n => {
                 let start = pc + 1;
                 let end = start + n;
-                Some(interpreter.contract.code[start..end].to_vec())
+                Some(interpreter.contract.bytecode.bytecode()[start..end].to_vec())
             }
         };
 
@@ -139,11 +141,11 @@ where
             .spend()
             .saturating_sub(self.previous_gas_block)
             .saturating_add(self.current_gas_block);
-        if opcode_info.is_gas_block_end {
+        if opcode_info.is_gas_block_end() {
             self.previous_gas_block = interpreter.contract.gas_block(pc);
             self.current_gas_block = 0;
         } else {
-            self.current_gas_block += opcode_info.gas;
+            self.current_gas_block += opcode_info.get_gas() as u64;
         }
 
         self.arena.arena[self.head].steps.push(DebugStep {

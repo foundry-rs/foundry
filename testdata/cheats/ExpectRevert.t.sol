@@ -41,9 +41,29 @@ contract ConstructorReverter {
     }
 }
 
+/// Used to ensure that the dummy data from `vm.expectRevert`
+/// is large enough to decode big structs.
+///
+/// The struct is based on issue #2454
+struct LargeDummyStruct {
+    address a;
+    uint256 b;
+    bool c;
+    address d;
+    address e;
+    string f;
+    address[8] g;
+    address h;
+    uint256 i;
+}
+
 contract Dummy {
     function callMe() public pure returns (string memory) {
         return "thanks for calling";
+    }
+
+    function largeReturnType() public pure returns (LargeDummyStruct memory) {
+        require(false, "reverted with large return type");
     }
 }
 
@@ -85,6 +105,12 @@ contract ExpectRevertTest is DSTest {
         Dummy dummy = new Dummy();
         cheats.expectRevert("called a function and then reverted");
         reverter.callThenRevert(dummy, "called a function and then reverted");
+    }
+
+    function testDummyReturnDataForBigType() public {
+        Dummy dummy = new Dummy();
+        cheats.expectRevert("reverted with large return type");
+        dummy.largeReturnType();
     }
 
     function testFailExpectRevertErrorDoesNotMatch() public {

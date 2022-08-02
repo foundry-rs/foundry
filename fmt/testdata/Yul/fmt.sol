@@ -23,8 +23,8 @@ contract Yul {
             returndatacopy(0, 0, returndatasize())
 
             switch result
-                case 0 { revert(0, returndatasize()) }
-                default { return(0, returndatasize()) }
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
         }
 
         // https://github.com/libevm/subway/blob/8ea4e86c65ad76801c72c681138b0a150f7e2dbd/contracts/src/Sandwich.sol#L51
@@ -82,23 +82,21 @@ contract Yul {
             mstore(0x7c, PAIR_SWAP_ID)
             // tokenOutNo == 0 ? ....
             switch tokenOutNo
-                case 0 {
-                    mstore(0x80, amountOut)
-                    mstore(0xa0, 0)
-                }
-                case 1 {
-                    mstore(0x80, 0)
-                    mstore(0xa0, amountOut)
-                }
+            case 0 {
+                mstore(0x80, amountOut)
+                mstore(0xa0, 0)
+            }
+            case 1 {
+                mstore(0x80, 0)
+                mstore(0xa0, amountOut)
+            }
             // address(this)
             mstore(0xc0, address())
             // empty bytes
             mstore(0xe0, 0x80)
 
             let s2 := call(sub(gas(), 5000), pair, 0, 0x7c, 0xa4, 0, 0)
-            if iszero(s2) {
-                revert(3, 3)
-            }
+            if iszero(s2) { revert(3, 3) }
         }
 
         // https://github.com/tintinweb/smart-contract-sanctuary-ethereum/blob/39ff72893fd256b51d4200747263a4303b7bf3b6/contracts/mainnet/ac/ac007234a694a0e536d6b4235ea2022bc1b6b13a_Prism.sol#L147

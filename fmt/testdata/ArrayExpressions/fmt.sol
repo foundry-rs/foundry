@@ -22,8 +22,7 @@ contract ArrayExpressions {
         ];
         msg.data[
             // comment4
-            4:
-                    // comment5
+            4: // comment5
                 msg.data.length /* comment6 */
         ];
 

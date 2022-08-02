@@ -54,7 +54,11 @@ impl GasReport {
         }
 
         if let Some(name) = &trace.contract {
-            let report_for = self.report_for.iter().any(|s| s == name);
+            // checking contract allowlist for reporting by extracting name out of identifier
+            let report_for = self
+                .report_for
+                .iter()
+                .any(|s| s == name.rsplit(':').next().unwrap_or(name.as_str()));
             if report_for || report_for_all {
                 let mut contract_report =
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);

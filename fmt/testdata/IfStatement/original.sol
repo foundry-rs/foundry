@@ -6,6 +6,8 @@ function execute() returns (bool) {
     return false;
 }
 
+function executeElse() {}
+
 contract IfStatement {
 
     function test() external {
@@ -43,5 +45,14 @@ contract IfStatement {
             execute() ;
           } // comment13
           /* comment14 */ else { } // comment15
+
+          if (condition)
+            execute();
+        else
+            executeElse();
+
+        if (condition)
+            if (anotherLongCondition)
+                execute();
     }
 }

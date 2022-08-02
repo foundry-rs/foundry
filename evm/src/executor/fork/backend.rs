@@ -1,6 +1,4 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
-
 use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
@@ -14,6 +12,7 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
+use revm::{db::DatabaseRef, AccountInfo, Bytecode, KECCAK_EMPTY};
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
@@ -22,7 +21,7 @@ use std::{
         Arc,
     },
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
@@ -208,13 +207,22 @@ where
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
-                    let res = provider.get_block(number).await;
-                    let block = res.ok().flatten();
+                    let block = provider.get_block(number).await;
+
                     let block_hash = match block {
-                        Some(block) => Ok(block
+                        Ok(Some(block)) => Ok(block
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
-                        None => Err(eyre::eyre!("block {number} not found")),
+                        Ok(None) => {
+                            warn!(target: "backendhandler", ?number, "block not found");
+                            // if no block was returned then the block does not exist, in which case
+                            // we return empty hash
+                            Ok(KECCAK_EMPTY)
+                        }
+                        Err(_) => {
+                            error!(target: "backendhandler", ?number, "failed to get block");
+                            Err(eyre::eyre!("block {number} not found"))
+                        }
                     };
                     (block_hash, number)
                 });
@@ -271,8 +279,12 @@ where
                             };
 
                             // update the cache
-                            let acc =
-                                AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
+                            let acc = AccountInfo {
+                                nonce: nonce.as_u64(),
+                                balance,
+                                code: code.map(|bytes| Bytecode::new_raw(bytes).to_checked()),
+                                code_hash,
+                            };
                             pin.db.accounts().write().insert(addr, acc.clone());
 
                             // notify all listeners
@@ -482,21 +494,18 @@ impl DatabaseRef for SharedBackend {
     fn basic(&self, address: H160) -> AccountInfo {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(address).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
-            Default::default()
+            panic!("Failed to send/recv `basic` for {address}");
         })
     }
 
-    fn code_by_hash(&self, _address: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, _address: H256) -> Bytecode {
         panic!("Should not be called. Code is already loaded.")
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index)
-            .unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
-            Default::default()
+        self.do_get_storage(address, index).unwrap_or_else(|_| {
+            panic!("Failed to send/recv `storage` for {address} at {index}");
         })
     }
 
@@ -507,8 +516,7 @@ impl DatabaseRef for SharedBackend {
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
         self.do_get_block_hash(number).unwrap_or_else(|_| {
-            warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
-            Default::default()
+            panic!("Failed to send/recv `block_hash` for {number}");
         })
     }
 }
