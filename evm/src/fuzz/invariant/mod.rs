@@ -10,7 +10,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 pub use executor::{InvariantExecutor, InvariantFailures};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 pub use proptest::test_runner::Config as FuzzConfig;
 use proptest::{
     option::weighted,
@@ -20,7 +20,7 @@ use proptest::{
 use std::{collections::BTreeMap, sync::Arc};
 
 pub type TargetedContracts = BTreeMap<Address, (String, Abi, Vec<Function>)>;
-pub type FuzzRunIdentifiedContracts = Arc<RwLock<TargetedContracts>>;
+pub type FuzzRunIdentifiedContracts = Arc<Mutex<TargetedContracts>>;
 
 /// (Sender, (TargetContract, Calldata))
 pub type BasicTxDetails = (Address, (Address, Bytes));

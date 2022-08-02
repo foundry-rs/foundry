@@ -24,7 +24,7 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
 
     let random_contract = any::<prop::sample::Selector>()
-        .prop_map(move |selector| *selector.select(contracts_ref.read().keys()));
+        .prop_map(move |selector| *selector.select(contracts_ref.lock().keys()));
     let target = any::<prop::sample::Selector>().prop_map(move |_| *target.read());
 
     proptest::strategy::Union::new_weighted(vec![
@@ -33,7 +33,7 @@ pub fn override_call_strat(
     ])
     .prop_flat_map(move |target_address| {
         let fuzz_state = fuzz_state.clone();
-        let (_, abi, functions) = contracts.read().get(&target_address).unwrap().clone();
+        let (_, abi, functions) = contracts.lock().get(&target_address).unwrap().clone();
 
         let func = select_random_function(abi, functions);
         func.prop_flat_map(move |func| {
@@ -109,7 +109,7 @@ fn select_random_contract(
     let selectors = any::<prop::sample::Selector>();
 
     selectors.prop_map(move |selector| {
-        let contracts = contracts.read();
+        let contracts = contracts.lock();
         let (addr, (_, abi, functions)) = selector.select(contracts.iter());
         (*addr, abi.clone(), functions.clone())
     })

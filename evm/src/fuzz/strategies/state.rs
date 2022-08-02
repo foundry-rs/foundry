@@ -173,7 +173,7 @@ pub fn collect_created_contracts(
     targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> bool {
-    let mut writable_targeted = targeted_contracts.write();
+    let mut writable_targeted = targeted_contracts.lock();
     let before = created_contracts.len();
 
     for (address, account) in state_changeset {

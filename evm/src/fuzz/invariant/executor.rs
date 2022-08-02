@@ -21,7 +21,7 @@ use ethers::{
     prelude::{ArtifactId, U256},
 };
 use eyre::ContextCompat;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
@@ -180,7 +180,7 @@ impl<'a> InvariantExecutor<'a> {
 
                 // We clear all the targeted contracts created during this run.
                 if !created_contracts.is_empty() {
-                    let mut writable_targeted = targeted_contracts.write();
+                    let mut writable_targeted = targeted_contracts.lock();
                     for addr in created_contracts.iter() {
                         writable_targeted.remove(addr);
                     }
@@ -220,7 +220,7 @@ impl<'a> InvariantExecutor<'a> {
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
         let targeted_contracts: FuzzRunIdentifiedContracts =
-            Arc::new(RwLock::new(targeted_contracts));
+            Arc::new(Mutex::new(targeted_contracts));
 
         // Creates the invariant strategy.
         let strat =
