@@ -317,10 +317,11 @@ impl<'a> InvariantExecutor<'a> {
                     "[targetSelectors] address does not have an associated contract: {}",
                     address
                 ))?;
-                let mut functions = vec![];
-                for selector in bytes4_array {
-                    functions.push(get_function(name, selector, abi)?);
-                }
+
+                let functions = bytes4_array
+                    .into_iter()
+                    .map(|selector| get_function(name, selector, abi))
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
             }
