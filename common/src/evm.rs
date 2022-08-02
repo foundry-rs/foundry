@@ -33,7 +33,7 @@ use serde::Serialize;
 /// let opts = figment.extract::<EvmOpts>().unwrap();
 /// # }
 /// ```
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -194,15 +194,17 @@ mod tests {
 
     #[test]
     fn can_parse_chain_id() {
-        let env = EnvArgs {
-            chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
-
-        let config = Config::from_provider(env);
+        let config = Config::from_provider(Config::figment().merge(args));
         assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
 
-        let env = EnvArgs::parse_from(["--chain-id", "goerli"]);
-        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
+        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
     }
 }
