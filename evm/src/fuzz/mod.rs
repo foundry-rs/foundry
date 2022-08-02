@@ -220,27 +220,25 @@ impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
 
-        let mut msg = String::new();
-
         if let Some(sender) = self.sender {
-            msg += format!("sender={:?} addr=", sender).as_str();
+            write!(f, "sender={:?} addr=", sender)?
         }
 
         if let Some(name) = &self.contract_name {
-            msg += format!("[{}]", name).as_str();
+            write!(f, "[{}]", name)?
         }
 
         if let Some(addr) = &self.addr {
-            msg += format!("{:?} ", addr).as_str();
+            write!(f, "{:?} ", addr)?
         }
 
         if let Some(sig) = &self.signature {
-            msg += format!("calldata={}", &sig).as_str();
+            write!(f, "calldata={}", &sig)?
         } else {
-            msg += format!("calldata=0x{}", hex::encode(&self.calldata)).as_str();
+            write!(f, "calldata=0x{}", hex::encode(&self.calldata))?
         }
 
-        write!(f, "{msg}, args=[{}]", args)
+        write!(f, ", args=[{}]", args)
     }
 }
 
