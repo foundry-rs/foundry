@@ -2,10 +2,10 @@
 
 use crate::cmd::{
     forge::build::{CoreBuildArgs, ProjectPathsArgs},
-    RetryArgs,
+    LoadConfig, RetryArgs,
 };
 use cast::SimpleCast;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use ethers::{
     abi::Address,
     etherscan::{
@@ -22,7 +22,7 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
+use foundry_config::{impl_figment_convert_basic, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -113,7 +113,17 @@ pub struct VerifyArgs {
         value_name = "LIBRARIES"
     )]
     pub libraries: Vec<String>,
+
+    #[clap(
+        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
+        long,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
+    )]
+    pub root: Option<PathBuf>,
 }
+
+impl_figment_convert_basic!(VerifyArgs);
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
@@ -204,7 +214,7 @@ impl VerifyArgs {
         };
 
         let project = build_args.project()?;
-        let config = Config::load_with_root(find_project_root_path().unwrap());
+        let config = self.load_config_emit_warnings();
 
         if self.contract.path.is_none() && !config.cache {
             eyre::bail!(

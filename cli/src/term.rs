@@ -231,6 +231,19 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     report::with_scoped(&reporter, f)
 }
 
+macro_rules! cli_warn {
+    ($($arg:tt)*) => {
+        eprintln!(
+            "{}{} {}",
+            yansi::Paint::yellow("warning").bold(),
+            yansi::Paint::new(":").bold(),
+            format_args!($($arg)*)
+        )
+    }
+}
+
+pub(crate) use cli_warn;
+
 #[cfg(test)]
 mod tests {
     use super::*;

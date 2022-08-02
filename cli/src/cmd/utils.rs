@@ -1,5 +1,6 @@
 use crate::suggestions;
 
+use crate::term::cli_warn;
 use clap::Parser;
 use ethers::{
     abi::Abi,
@@ -12,8 +13,9 @@ use ethers::{
         Artifact, ProjectCompileOutput,
     },
 };
+use forge::executor::opts::EvmOpts;
 use foundry_common::TestFunctionExt;
-use foundry_config::Chain as ConfigChain;
+use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
@@ -227,4 +229,34 @@ pub fn has_batch_support(chain: u64) -> bool {
         )
     }
     true
+}
+
+pub trait LoadConfig {
+    fn load_config_emit_warnings(self) -> Config;
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    fn load_config_unsanitized_emit_warnings(self) -> Config;
+}
+
+impl<T> LoadConfig for T
+where
+    T: Into<Config> + Into<Figment>,
+{
+    fn load_config_emit_warnings(self) -> Config {
+        let config: Config = self.into();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized_emit_warnings(self) -> Config {
+        let figment: Figment = self.into();
+        let config = Config::from_provider(figment);
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
 }

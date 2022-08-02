@@ -35,7 +35,6 @@ pub(crate) use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
-pub(crate) use macros::{config_warn, config_warn_if};
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
@@ -55,6 +54,9 @@ pub use fmt::FormatterConfig;
 
 mod error;
 pub use error::SolidityErrorCode;
+
+mod warning;
+pub use warning::*;
 
 // helpers for fixing configuration warnings
 pub mod fix;
@@ -327,9 +329,9 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
-    /// Emit warnings to stderr
-    #[serde(default, skip)]
-    pub __emit_warnings: bool,
+    /// Warnings gathered when loading the Config. See [`WarningsProvicer`] for more information
+    #[serde(default, skip_serializing)]
+    pub __warnings: Vec<Warning>,
 }
 
 impl Config {
@@ -844,15 +846,6 @@ impl Config {
         Self::with_root(root).into()
     }
 
-    /// Returns the loaded figment but emits warnings.
-    ///
-    /// See `Config::figment_with_root` and `Config::__emit_warnings`
-    pub fn figment_with_root_emit_warnings(root: impl Into<PathBuf>) -> Figment {
-        let mut config = Self::with_root(root);
-        config.__emit_warnings = true;
-        config.into()
-    }
-
     /// Creates a new Config that adds additional context extracted from the provided root.
     ///
     /// # Example
@@ -957,8 +950,16 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let libs: toml_edit::Value =
-                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let root = &self.__root.0;
+            let libs: toml_edit::Value = self
+                .libs
+                .iter()
+                .map(|path| {
+                    let path =
+                        if let Ok(relative) = path.strip_prefix(root) { relative } else { path };
+                    toml_edit::Value::from(&*path.to_string_lossy())
+                })
+                .collect();
             let libs = toml_edit::value(libs);
             doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
             true
@@ -1242,22 +1243,19 @@ impl Config {
         dir_size_recursive(fs::read_dir(chain_path)?)
     }
 
-    /// Collect warnings for unknown or malformed sections in toml provider
-    fn lint_toml_provider(toml_provider: impl Provider) -> Vec<String> {
-        toml_provider.data().unwrap_or_default().keys().filter(|k| {
-            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
-        }).map(|unknown_key| {
-            let src =
-                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            format!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{unknown_key}] instead or run `forge config --fix`.")
-        }).collect()
-    }
-
     fn merge_toml_provider(
         mut figment: Figment,
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
+        figment = figment.select(profile.clone());
+
+        // add warnings
+        figment = {
+            let warnings = WarningsProvicer::for_figment(&toml_provider, &figment);
+            figment.merge(warnings)
+        };
+
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -1289,22 +1287,19 @@ impl From<Config> for Figment {
 
         // merge global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            let provider = TomlFileProvider::new(None, global_toml).cached();
-            for warning in Config::lint_toml_provider(&provider) {
-                config_warn_if!(c.__emit_warnings, "{warning}");
-            }
-            figment = Config::merge_toml_provider(figment, provider, profile.clone());
+            figment = Config::merge_toml_provider(
+                figment,
+                TomlFileProvider::new(None, global_toml).cached(),
+                profile.clone(),
+            );
         }
         // merge local foundry.toml file
-        figment = {
-            let provider =
-                TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
-                    .cached();
-            for warning in Config::lint_toml_provider(&provider) {
-                config_warn_if!(c.__emit_warnings, "{warning}");
-            }
-            Config::merge_toml_provider(figment, provider, profile.clone())
-        };
+        figment = Config::merge_toml_provider(
+            figment,
+            TomlFileProvider::new(Some("FOUNDRY_CONFIG"), c.__root.0.join(Config::FILE_NAME))
+                .cached(),
+            profile.clone(),
+        );
 
         // merge environment variables
         figment = figment
@@ -1532,7 +1527,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             __non_exhaustive: (),
-            __emit_warnings: false,
+            __warnings: vec![],
         }
     }
 }
@@ -2038,6 +2033,80 @@ impl<'a> Provider for RemappingsProvider<'a> {
 
     fn profile(&self) -> Option<Profile> {
         Some(Config::selected_profile())
+    }
+}
+
+/// Generate warnings for unknown sections
+struct WarningsProvicer<P> {
+    provider: P,
+    profile: Profile,
+    old_warnings: Result<Vec<Warning>, Error>,
+}
+
+impl<P> WarningsProvicer<P> {
+    const WARNINGS_KEY: &'static str = "__warnings";
+
+    fn new(
+        provider: P,
+        profile: impl Into<Profile>,
+        old_warnings: Result<Vec<Warning>, Error>,
+    ) -> Self {
+        Self { provider, profile: profile.into(), old_warnings }
+    }
+
+    fn for_figment(provider: P, figment: &Figment) -> Self {
+        let old_warnings = {
+            let warnings_res = figment.extract_inner(Self::WARNINGS_KEY);
+            if warnings_res.as_ref().err().map(|err| err.missing()).unwrap_or(false) {
+                Ok(vec![])
+            } else {
+                warnings_res
+            }
+        };
+        Self::new(provider, figment.profile().clone(), old_warnings)
+    }
+}
+
+impl<P: Provider> WarningsProvicer<P> {
+    pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
+        let mut out = self.old_warnings.clone()?;
+        out.extend(
+            self.provider
+                .data()
+                .unwrap_or_default()
+                .keys()
+                .filter(|k| {
+                    k != &Config::PROFILE_SECTION &&
+                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                })
+                .map(|unknown_section| {
+                    let source = self.provider.metadata().source.map(|s| s.to_string());
+                    Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+                }),
+        );
+        Ok(out)
+    }
+}
+
+impl<P: Provider> Provider for WarningsProvicer<P> {
+    fn metadata(&self) -> Metadata {
+        if let Some(source) = self.provider.metadata().source {
+            Metadata::from("Warnings", source)
+        } else {
+            Metadata::named("Warnings")
+        }
+    }
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        Ok(Map::from([(
+            self.profile.clone(),
+            Dict::from([(
+                Self::WARNINGS_KEY.to_string(),
+                Value::serialize(self.collect_warnings()?)?,
+            )]),
+        )]))
+    }
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
     }
 }
 
@@ -3486,7 +3555,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [profile.default]
+                [default]
                 src = 'my-src'
                 out = 'my-out'
             "#,
@@ -3494,6 +3563,13 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+            assert_eq!(
+                loaded.__warnings,
+                vec![Warning::UnknownSection {
+                    unknown_section: Profile::new("default"),
+                    source: Some("foundry.toml".into())
+                }]
+            );
 
             Ok(())
         });

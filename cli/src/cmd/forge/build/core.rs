@@ -1,4 +1,7 @@
-use crate::{cmd::forge::build::ProjectPathsArgs, opts::forge::CompilerArgs};
+use crate::{
+    cmd::{forge::build::ProjectPathsArgs, LoadConfig},
+    opts::forge::CompilerArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::solc::{
     artifacts::RevertStrings, remappings::Remapping, utils::canonicalized, Project,
@@ -128,7 +131,7 @@ impl CoreBuildArgs {
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
-        let config: Config = self.into();
+        let config = self.load_config_emit_warnings();
         Ok(config.project()?)
     }
 
@@ -150,9 +153,9 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
                 panic!("error: the config-path must be a path to a foundry.toml file")
             }
             let config_path = canonicalized(config_path);
-            Config::figment_with_root_emit_warnings(config_path.parent().unwrap())
+            Config::figment_with_root(config_path.parent().unwrap())
         } else {
-            Config::figment_with_root_emit_warnings(args.project_paths.project_root())
+            Config::figment_with_root(args.project_paths.project_root())
         };
 
         // remappings should stack

@@ -106,10 +106,7 @@ impl ProjectPathsArgs {
     }
 }
 
-foundry_config::impl_figment_convert!(
-    #[emit_warnings]
-    ProjectPathsArgs
-);
+foundry_config::impl_figment_convert!(ProjectPathsArgs);
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`
 impl Provider for ProjectPathsArgs {

@@ -1,9 +1,12 @@
-use crate::{cmd::Cmd, utils::FoundryPathExt};
+use crate::{
+    cmd::{Cmd, LoadConfig},
+    utils::FoundryPathExt,
+};
 use clap::{Parser, ValueHint};
 use console::{style, Style};
 use forge_fmt::{Comments, Formatter, Visitable};
 use foundry_common::fs;
-use foundry_config::{load_config_with_root, Config};
+use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -43,6 +46,8 @@ pub struct FmtArgs {
     raw: bool,
 }
 
+impl_figment_convert_basic!(FmtArgs);
+
 // === impl FmtArgs ===
 
 impl FmtArgs {
@@ -70,7 +75,7 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = load_config_with_root(self.root.clone());
+        let config = self.load_config_emit_warnings();
         let inputs = self.inputs(&config);
 
         let diffs = inputs

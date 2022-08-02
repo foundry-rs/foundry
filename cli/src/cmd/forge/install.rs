@@ -1,13 +1,13 @@
 //! Install command
 use crate::{
-    cmd::Cmd,
+    cmd::{Cmd, LoadConfig},
     opts::forge::Dependency,
     utils::{p_println, CommandUtils},
 };
 use atty::{self, Stream};
 use clap::{Parser, ValueHint};
 use foundry_common::fs;
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::{impl_figment_convert_basic, Config};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -56,13 +56,14 @@ pub struct InstallArgs {
     pub root: Option<PathBuf>,
 }
 
+impl_figment_convert_basic!(InstallArgs);
+
 impl Cmd for InstallArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let InstallArgs { root, .. } = self;
-        let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
-        install(&root, self.dependencies, self.opts)?;
+        let mut config = self.load_config_emit_warnings();
+        install(&mut config, self.dependencies, self.opts)?;
         Ok(())
     }
 }
@@ -79,12 +80,11 @@ pub struct DependencyInstallOpts {
 
 /// Installs all dependencies
 pub(crate) fn install(
-    root: impl AsRef<Path>,
+    config: &mut Config,
     dependencies: Vec<Dependency>,
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
-    let root = root.as_ref();
-    let mut config = Config::load_with_root(root);
+    let root = config.__root.0.clone();
 
     let install_lib_dir = config.install_lib_dir();
     let libs = root.join(&install_lib_dir);
@@ -113,7 +113,7 @@ pub(crate) fn install(
             install_as_folder(&dep, &libs, target_dir)?;
         } else {
             if !no_commit {
-                ensure_git_status_clean(root)?;
+                ensure_git_status_clean(&root)?;
             }
             let tag = install_as_submodule(&dep, &libs, target_dir, no_commit)?;
 

@@ -205,6 +205,7 @@ impl ScriptSequence {
                                 watch: true,
                                 retry: verify.retry.clone(),
                                 libraries: self.libraries.clone(),
+                                root: None,
                             };
 
                             future_verifications.push(verify.run());

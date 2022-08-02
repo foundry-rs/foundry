@@ -102,7 +102,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         build_info_path: None,
         fmt: Default::default(),
         __non_exhaustive: (),
-        __emit_warnings: false,
+        __warnings: vec![],
     };
     prj.write_config(input.clone());
     let config = cmd.config();

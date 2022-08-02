@@ -122,10 +122,10 @@ impl Cmd for InitArgs {
             fs::write(contract_path, include_str!("../../../assets/ContractTemplate.s.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
+            let mut config = Config::load_with_root(&root);
             if !dest.exists() {
                 // write foundry.toml
-                let config = Config::load_with_root(&root).into_basic();
-                fs::write(dest, config.to_string_pretty()?)?;
+                fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
 
             // sets up git
@@ -138,10 +138,10 @@ impl Cmd for InitArgs {
 
                 if root.join("lib/forge-std").exists() {
                     println!("\"lib/forge-std\" already exists, skipping install....");
-                    install(&root, vec![], opts)?;
+                    install(&mut config, vec![], opts)?;
                 } else {
                     Dependency::from_str("https://github.com/foundry-rs/forge-std")
-                        .and_then(|dependency| install(&root, vec![dependency], opts))?;
+                        .and_then(|dependency| install(&mut config, vec![dependency], opts))?;
                 }
             }
             // vscode init

@@ -75,25 +75,6 @@ macro_rules! impl_figment_convert {
             }
         }
     };
-    (#[emit_warnings] $name:ty) => {
-        impl<'a> From<&'a $name> for $crate::figment::Figment {
-            fn from(args: &'a $name) -> Self {
-                if let Some(root) = args.root.clone() {
-                    $crate::Config::figment_with_root_emit_warnings(root)
-                } else {
-                    $crate::Config::figment_with_root_emit_warnings($crate::find_project_root_path().unwrap())
-                }
-                .merge(args)
-            }
-        }
-
-        impl<'a> From<&'a $name> for $crate::Config {
-            fn from(args: &'a $name) -> Self {
-                let figment: $crate::figment::Figment = args.into();
-                $crate::Config::from_provider(figment).sanitized()
-            }
-        }
-    };
     ($name:ty, $start:ident $(, $more:ident)*) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {
@@ -221,44 +202,34 @@ macro_rules! impl_figment_convert_cast {
             }
         }
     };
-    (#[emit_warnings] $name:ty) => {
-        impl<'a> From<&'a $name> for $crate::figment::Figment {
-            fn from(args: &'a $name) -> Self {
-                $crate::Config::figment_with_root_emit_warnings(
-                    $crate::find_project_root_path().unwrap(),
-                )
-                .merge(args)
-            }
-        }
+}
 
-        impl<'a> From<&'a $name> for $crate::Config {
-            fn from(args: &'a $name) -> Self {
-                let figment: $crate::figment::Figment = args.into();
-                $crate::Config::from_provider(figment).sanitized()
+/// Same as `impl_figment_convert` but also implies `Provider` for the given `Serialize` type for
+/// convenience. The `Provider` only provides the "root" value for the current profile
+#[macro_export]
+macro_rules! impl_figment_convert_basic {
+    ($name:ty) => {
+        $crate::impl_figment_convert!($name);
+
+        impl $crate::figment::Provider for $name {
+            fn metadata(&self) -> $crate::figment::Metadata {
+                $crate::figment::Metadata::named(stringify!($name))
+            }
+            fn data(
+                &self,
+            ) -> Result<
+                $crate::figment::value::Map<$crate::figment::Profile, $crate::figment::value::Dict>,
+                $crate::figment::Error,
+            > {
+                let mut dict = $crate::figment::value::Dict::new();
+                if let Some(root) = self.root.as_ref() {
+                    dict.insert(
+                        "root".to_string(),
+                        $crate::figment::value::Value::serialize(root)?,
+                    );
+                }
+                Ok($crate::figment::value::Map::from([($crate::Config::selected_profile(), dict)]))
             }
         }
     };
 }
-
-macro_rules! config_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            ansi_term::Color::Yellow.bold().paint("warning"),
-            ansi_term::Style::new().bold().paint(":"),
-            format_args!($($arg)*)
-        )
-    }
-}
-macro_rules! config_warn_if {
-    ($condition:expr, $($arg:tt)*) => {
-        if $condition {
-            $crate::macros::config_warn!($($arg)*);
-        } else {
-            $crate::trace!("(supressed warning): {}", format_args!($($arg)*));
-        }
-    }
-}
-
-pub(crate) use config_warn;
-pub(crate) use config_warn_if;
