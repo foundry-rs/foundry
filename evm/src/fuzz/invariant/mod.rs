@@ -1,7 +1,11 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::{fuzz::*, CALLER};
+use crate::{
+    fuzz::*,
+    trace::{load_contracts, TraceKind},
+    CALLER,
+};
 mod call_override;
-pub use call_override::RandomCallGenerator;
+pub use call_override::{set_up_inner_replay, RandomCallGenerator};
 
 mod executor;
 use crate::{
@@ -10,6 +14,7 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
+    solc::ArtifactId,
     types::{Address, Bytes, U256},
 };
 pub use executor::{InvariantExecutor, InvariantFailures};
@@ -202,5 +207,66 @@ impl InvariantFuzzError {
             func,
             inner_sequence: inner_sequence.to_vec(),
         }
+    }
+
+    /// Replays the error case and collects all necessary traces.
+    pub fn replay(
+        &self,
+        mut executor: Executor,
+        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        mut ided_contracts: BTreeMap<Address, (String, Abi)>,
+        logs: &mut Vec<Log>,
+        traces: &mut Vec<(TraceKind, CallTraceArena)>,
+    ) -> Option<CounterExample> {
+        let mut counterexample_sequence = vec![];
+        let calls = match self.test_error {
+            // Don't use at the moment.
+            TestError::Abort(_) => return None,
+            TestError::Fail(_, ref calls) => calls,
+        };
+
+        // We want traces for a failed case.
+        executor.set_tracing(true);
+
+        set_up_inner_replay(&mut executor, &self.inner_sequence);
+
+        // Replay each call from the sequence until we break the invariant.
+        for (sender, (addr, bytes)) in calls.iter() {
+            let call_result = executor
+                .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
+                .expect("bad call to evm");
+
+            logs.extend(call_result.logs);
+            traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
+
+            // Identify newly generated contracts, if they exist.
+            ided_contracts.extend(load_contracts(
+                vec![(TraceKind::Execution, call_result.traces.unwrap())],
+                known_contracts,
+            ));
+
+            counterexample_sequence.push(BaseCounterExample::create(
+                *sender,
+                *addr,
+                bytes,
+                &ided_contracts,
+            ));
+
+            // Checks the invariant.
+            if let Some(func) = &self.func {
+                let error_call_result = executor
+                    .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
+                    .expect("bad call to evm");
+
+                if error_call_result.reverted {
+                    logs.extend(error_call_result.logs);
+                    traces.push((TraceKind::Execution, error_call_result.traces.unwrap()));
+                    break
+                }
+            }
+        }
+
+        (!counterexample_sequence.is_empty())
+            .then_some(CounterExample::Sequence(counterexample_sequence))
     }
 }

@@ -14,15 +14,14 @@ use foundry_evm::{
         invariant::{
             InvariantContract, InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions,
         },
-        BaseCounterExample, CounterExample, FuzzedExecutor,
+        FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
     CALLER,
 };
-use parking_lot::RwLock;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, time::Instant};
 use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
@@ -471,7 +470,6 @@ impl<'a> ContractRunner<'a> {
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
-        let start = Instant::now();
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
@@ -492,89 +490,29 @@ impl<'a> ContractRunner<'a> {
         )? {
             let results = invariants
                 .iter()
-                .map(|(_k, test_error)| {
-                    let mut counterexample_sequence = vec![];
+                .map(|(_, test_error)| {
+                    let mut counterexample = None;
                     let mut logs = logs.clone();
                     let mut traces = traces.clone();
 
                     if let Some(ref error) = test_error {
-                        // we want traces for a failed fuzz
-                        let mut ided_contracts = identified_contracts.clone();
-                        if let TestError::Fail(_reason, vec_addr_bytes) = &error.test_error {
-                            // Reset state
-                            let mut executor = self.executor.clone();
-                            executor.set_tracing(true);
-
-                            if let Some(ref mut fuzzer) = executor.inspector_config_mut().fuzzer {
-                                if let Some(ref mut call_generator) = fuzzer.call_generator {
-                                    call_generator.last_sequence =
-                                        Arc::new(RwLock::new(error.inner_sequence.clone()));
-                                    call_generator.set_replay(true);
-                                }
-                            }
-
-                            for (sender, (addr, bytes)) in vec_addr_bytes.iter() {
-                                let call_result = executor
-                                    .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
-                                    .expect("bad call to evm");
-
-                                logs.extend(call_result.logs);
-                                traces.push((
-                                    TraceKind::Execution,
-                                    call_result.traces.clone().unwrap(),
-                                ));
-
-                                // In case the call created more.
-                                ided_contracts.extend(load_contracts(
-                                    vec![(TraceKind::Execution, call_result.traces.unwrap())],
-                                    known_contracts,
-                                ));
-                                counterexample_sequence.push(BaseCounterExample::create(
-                                    *sender,
-                                    *addr,
-                                    bytes,
-                                    &ided_contracts,
-                                ));
-
-                                if let Some(func) = &error.func {
-                                    let error_call_result = executor
-                                        .call_raw(self.sender, error.addr, func.0.clone(), 0.into())
-                                        .expect("bad call to evm");
-
-                                    if error_call_result.reverted {
-                                        logs.extend(error_call_result.logs);
-                                        traces.push((
-                                            TraceKind::Execution,
-                                            error_call_result.traces.unwrap(),
-                                        ));
-                                        break
-                                    }
-                                }
-                            }
+                        if let TestError::Fail(_, _) = &error.test_error {
+                            counterexample = error.replay(
+                                self.executor.clone(),
+                                known_contracts,
+                                identified_contracts.clone(),
+                                &mut logs,
+                                &mut traces,
+                            );
                         }
                     }
-
-                    let success = test_error.is_none();
-                    let mut reason = None;
-
-                    if let Some(err) = test_error {
-                        if !err.revert_reason.is_empty() {
-                            reason = Some(err.revert_reason.clone());
-                        }
-                    }
-
-                    let duration = Instant::now().duration_since(start);
-                    tracing::debug!(?duration, %success);
-
-                    let mut sequence = None;
-                    if !counterexample_sequence.is_empty() {
-                        sequence = Some(CounterExample::Sequence(counterexample_sequence));
-                    };
 
                     TestResult {
-                        success,
-                        reason,
-                        counterexample: sequence,
+                        success: test_error.is_none(),
+                        reason: test_error.as_ref().and_then(|err| {
+                            (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
+                        }),
+                        counterexample,
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),
                         coverage: None, // todo?
