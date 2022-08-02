@@ -213,7 +213,7 @@ pub struct RandomCallGenerator {
     /// Address of the test contract.
     pub test_address: Address,
     /// Runner that will generate the call from the strategy.
-    pub runner: Arc<RwLock<TestRunner>>,
+    pub runner: Arc<Mutex<TestRunner>>,
     /// Strategy to be used to generate calls from `target_reference`.
     pub strategy: SBoxedStrategy<Option<(Address, Bytes)>>,
     /// Reference to which contract we want a fuzzed calldata from.
@@ -238,7 +238,7 @@ impl RandomCallGenerator {
 
         RandomCallGenerator {
             test_address,
-            runner: Arc::new(RwLock::new(runner)),
+            runner: Arc::new(Mutex::new(runner)),
             strategy,
             target_reference,
             last_sequence: Arc::new(RwLock::new(vec![])),
@@ -277,7 +277,7 @@ impl RandomCallGenerator {
             // `original_caller` has a 80% chance of being the `new_target`.
             let choice = self
                 .strategy
-                .new_tree(&mut self.runner.write())
+                .new_tree(&mut self.runner.lock())
                 .unwrap()
                 .current()
                 .map(|(new_target, calldata)| (new_caller, (new_target, calldata)));
