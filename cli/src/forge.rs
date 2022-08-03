@@ -19,6 +19,7 @@ use opts::forge::{Opts, Subcommands};
 use std::process::Command;
 
 fn main() -> eyre::Result<()> {
+    utils::load_dotenv();
     handler::install()?;
     utils::subscriber();
     utils::enable_paint();
