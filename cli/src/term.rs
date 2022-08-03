@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use yansi::Paint;
+use yansi::{Color, Paint, Style};
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -70,33 +70,33 @@ impl Spinner {
     }
 
     pub fn tick(&mut self) {
-        if self.no_progress {
-            return
+        if self.indicate_progress(Color::Green, self.indicator[self.idx]) {
+            self.idx += 1;
+            if self.idx >= self.indicator.len() {
+                self.idx = 0;
+            }
         }
-        print!("{}", self.tick_bytes());
-        io::stdout().flush().unwrap();
     }
 
-    fn tick_bytes(&mut self) -> String {
-        if self.idx >= self.indicator.len() {
-            self.idx = 0;
+    fn indicate_progress(&self, color: Color, icon: &'static str) -> bool {
+        if self.no_progress {
+            return false
         }
 
-        let s = format!(
-            "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}",
-            self.indicator[self.idx], self.message
+        self.clear_line();
+        print!(
+            "{} {}",
+            Paint::new(format!("[{}]", Style::new(color).paint(icon))).bold(),
+            self.message
         );
-        self.idx += 1;
+        io::stdout().flush().unwrap();
 
-        s
+        true
     }
 
     pub fn done(&self) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[32m+\x1b[0;1m]\x1b[0m {}", self.message);
-        io::stdout().flush().unwrap();
+        self.indicate_progress(Color::Green, "+");
+        println!();
     }
 
     pub fn finish(&mut self, msg: impl Into<String>) {
@@ -130,10 +130,8 @@ impl Spinner {
     }
 
     pub fn error(&mut self, line: &str) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {line}");
+        self.indicate_progress(Color::Red, "-");
+        println!();
     }
 }
 
