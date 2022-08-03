@@ -226,7 +226,7 @@ impl<'a> ContractRunner<'a> {
         }
 
         let has_invariants =
-            self.contract.functions().into_iter().any(|func| func.name.starts_with("invariant"));
+            self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
 
         if has_invariants && needs_setup {
             // invariant testing requires tracing to figure
@@ -333,7 +333,7 @@ impl<'a> ContractRunner<'a> {
                 .functions()
                 .into_iter()
                 .filter(|func| {
-                    func.name.starts_with("invariant") && filter.matches_test(func.signature())
+                    func.name.is_invariant_test() && filter.matches_test(func.signature())
                 })
                 .collect();
 
