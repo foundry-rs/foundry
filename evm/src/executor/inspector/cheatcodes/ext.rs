@@ -43,11 +43,12 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
     let output = String::from_utf8(stdout)
         .map_err(|err| util::encode_error(format!("Failed to decode non utf-8 output: {}", err)))?;
 
-    if let Ok(hex_decoded) = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(&output)) {
+    let trim_out = output.trim();
+    if let Ok(hex_decoded) = hex::decode(trim_out.strip_prefix("0x").unwrap_or(trim_out)) {
         return Ok(abi::encode(&[Token::Bytes(hex_decoded.to_vec())]).into())
     }
 
-    Ok(output.encode().into())
+    Ok(trim_out.to_string().encode().into())
 }
 
 /// An enum which unifies the deserialization of Hardhat-style artifacts with Forge-style artifacts
@@ -315,7 +316,7 @@ mod tests {
     fn test_ffi_hex() {
         let msg = "gm";
         let cheats = cheats();
-        let args = ["echo".to_string(), "-n".to_string(), hex::encode(msg)];
+        let args = ["echo".to_string(), hex::encode(msg)];
         let output = ffi(&cheats, &args).unwrap();
 
         let output = String::decode(&output).unwrap();
@@ -326,7 +327,8 @@ mod tests {
     fn test_ffi_string() {
         let msg = "gm";
         let cheats = cheats();
-        let args = ["echo".to_string(), "-n".to_string(), msg.to_string()];
+
+        let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
 
         let output = String::decode(&output).unwrap();
