@@ -6,6 +6,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_common::TestFunctionExt;
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
@@ -74,7 +75,7 @@ impl MultiContractRunner {
                     filter.matches_contract(&id.name)
             })
             .flat_map(|(_, (abi, _, _))| abi.functions().map(|func| func.name.clone()))
-            .filter(|sig| sig.starts_with("test"))
+            .filter(|sig| sig.is_test())
             .collect()
     }
 
@@ -95,7 +96,7 @@ impl MultiContractRunner {
                 let name = id.name.clone();
                 let tests = abi
                     .functions()
-                    .filter(|func| func.name.starts_with("test"))
+                    .filter(|func| func.name.is_test())
                     .filter(|func| filter.matches_test(func.signature()))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
@@ -282,7 +283,7 @@ impl MultiContractRunnerBuilder {
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions().any(|func| func.name.starts_with("test"))
+                    abi.functions().any(|func| func.name.is_test())
                 {
                     deployable_contracts.insert(
                         id.clone(),

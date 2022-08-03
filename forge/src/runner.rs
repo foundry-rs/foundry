@@ -7,6 +7,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_common::TestFunctionExt;
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::FuzzedExecutor,
@@ -182,7 +183,7 @@ impl<'a> ContractRunner<'a> {
         let mut warnings = Vec::new();
 
         let setup_fns: Vec<_> =
-            self.contract.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+            self.contract.functions().filter(|func| func.name.is_setup()).collect();
 
         let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
 
@@ -247,11 +248,11 @@ impl<'a> ContractRunner<'a> {
             .functions()
             .into_iter()
             .filter(|func| {
-                func.name.starts_with("test") &&
+                func.name.is_test() &&
                     filter.matches_test(func.signature()) &&
                     (include_fuzz_tests || func.inputs.is_empty())
             })
-            .map(|func| (func, func.name.starts_with("testFail")))
+            .map(|func| (func, func.name.is_test_fail()))
             .collect();
 
         let test_results = tests

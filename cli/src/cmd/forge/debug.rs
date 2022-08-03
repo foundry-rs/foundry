@@ -51,6 +51,8 @@ impl DebugArgs {
             sig: self.sig,
             legacy: false,
             broadcast: false,
+            skip_simulation: false,
+            gas_estimate_multiplier: 130,
             opts: BuildArgs {
                 args: self.opts,
                 names: false,
