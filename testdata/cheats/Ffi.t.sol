@@ -17,4 +17,14 @@ contract FfiTest is DSTest {
         (string memory output) = abi.decode(res, (string));
         assertEq(output, "ffi works", "ffi failed");
     }
+
+    function testFfiString() public {
+        string[] memory inputs = new string[](3);
+        inputs[0] = "echo";
+        inputs[1] = "-n";
+        inputs[2] = "gm";
+
+        bytes memory res = cheats.ffi(inputs);
+        assertEq(string(res), "gm");
+    }
 }

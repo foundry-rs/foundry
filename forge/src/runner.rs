@@ -8,6 +8,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_common::TestFunctionExt;
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
@@ -188,7 +189,7 @@ impl<'a> ContractRunner<'a> {
         let mut warnings = Vec::new();
 
         let setup_fns: Vec<_> =
-            self.contract.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+            self.contract.functions().filter(|func| func.name.is_setup()).collect();
 
         let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
 
@@ -262,11 +263,11 @@ impl<'a> ContractRunner<'a> {
             .functions()
             .into_iter()
             .filter(|func| {
-                func.name.starts_with("test") &&
+                func.name.is_test() &&
                     filter.matches_test(func.signature()) &&
                     (test_options.include_fuzz_tests || func.inputs.is_empty())
             })
-            .map(|func| (func, func.name.starts_with("testFail")))
+            .map(|func| (func, func.name.is_test_fail()))
             .collect();
 
         let mut test_results = BTreeMap::new();
@@ -283,6 +284,7 @@ impl<'a> ContractRunner<'a> {
             let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
                 let mut bytes: [u8; 32] = [0; 32];
                 fuzz_seed.to_big_endian(&mut bytes);
+                trace!(target: "forge::test", "executing test command");
                 let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
                 proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
             } else {
@@ -318,6 +320,7 @@ impl<'a> ContractRunner<'a> {
             let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
                 let mut bytes: [u8; 32] = [0; 32];
                 fuzz_seed.to_big_endian(&mut bytes);
+                trace!(target: "forge::test", "executing invariant test command");
                 let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
                 proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
             } else {

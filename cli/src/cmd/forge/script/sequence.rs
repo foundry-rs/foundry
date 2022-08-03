@@ -265,6 +265,11 @@ fn default_vec_of_strings() -> Option<Vec<String>> {
 }
 
 impl TransactionWithMetadata {
+    pub fn from_typed_transaction(transaction: TypedTransaction) -> eyre::Result<Self> {
+        let metadata = Self { transaction, ..Default::default() };
+        Ok(metadata)
+    }
+
     pub fn new(
         transaction: TypedTransaction,
         result: &ScriptResult,

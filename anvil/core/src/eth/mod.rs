@@ -282,7 +282,7 @@ pub enum EthRequest {
         /// slot
         U256,
         /// value
-        U256,
+        H256,
     ),
 
     /// Sets the coinbase address
@@ -697,7 +697,11 @@ mod tests {
 
     #[test]
     fn test_serde_custom_set_storage_at() {
-        let s = r#"{"method": "anvil_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x00"]}"#;
+        let s = r#"{"method": "anvil_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "hardhat_setStorageAt", "params": ["0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56", "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

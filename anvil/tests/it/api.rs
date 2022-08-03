@@ -4,7 +4,7 @@ use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use ethers::{
     prelude::Middleware,
     signers::Signer,
-    types::{Block, BlockNumber, Transaction, TransactionRequest, U256},
+    types::{Block, BlockNumber, Chain, Transaction, TransactionRequest, U256},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -64,6 +64,18 @@ async fn can_get_chain_id() {
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_modify_chain_id() {
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(Chain::Goerli))).await;
+    let provider = handle.http_provider();
+
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, Chain::Goerli.into());
+
+    let chain_id = provider.get_net_version().await.unwrap();
+    assert_eq!(chain_id, (Chain::Goerli as u64).to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]

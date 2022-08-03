@@ -13,8 +13,8 @@ pub use runner::ContractRunner;
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-mod traits;
-pub use traits::*;
+/// reexport
+pub use foundry_common::traits::TestFilter;
 
 pub mod result;
 

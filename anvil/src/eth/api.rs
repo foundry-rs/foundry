@@ -1260,7 +1260,7 @@ impl EthApi {
         &self,
         address: Address,
         slot: U256,
-        val: U256,
+        val: H256,
     ) -> Result<()> {
         node_info!("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val);

@@ -12,6 +12,7 @@ use ethers::{
         Artifact, ProjectCompileOutput,
     },
 };
+use foundry_common::TestFunctionExt;
 use foundry_config::Chain as ConfigChain;
 use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -148,8 +149,7 @@ impl From<RetryArgs> for Retry {
 }
 
 pub fn needs_setup(abi: &Abi) -> bool {
-    let setup_fns: Vec<_> =
-        abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+    let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {

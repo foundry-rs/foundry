@@ -8,7 +8,7 @@ use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{return_ok, Database, EVMData, Return};
+use revm::{return_ok, Bytecode, Database, EVMData, Return};
 use std::cmp::Ordering;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
@@ -259,6 +259,24 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall0(inner) => {
+            // TODO: Does this increase gas usage?
+            data.subroutine.load_account(inner.0, data.db);
+
+            // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
+            // check Solidity might perform.
+            if data
+                .subroutine
+                .account(inner.0)
+                .info
+                .code
+                .as_ref()
+                .map(|code| code.is_empty())
+                .unwrap_or(true)
+            {
+                let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+                let code_hash = code.hash();
+                data.subroutine.set_code(inner.0, code, code_hash);
+            }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
                 inner.2.to_vec().into(),
