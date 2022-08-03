@@ -5,17 +5,23 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    utils::{self, p_println, FoundryPathExt},
+    utils::{self, p_println},
 };
 use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
-    prelude::{Artifact, Bytes, Project, ProjectCompileOutput},
-    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap, ArtifactId},
+    abi::Address,
+    prelude::{
+        artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
+        Artifact, Bytes, Project, ProjectCompileOutput,
+    },
+    solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
+use eyre::Context;
 use forge::{
     coverage::{
-        CoverageMap, CoverageReporter, DebugReporter, LcovReporter, SummaryReporter, Visitor,
+        analysis::SourceAnalyzer, anchors::find_anchors, ContractId, CoverageReport,
+        CoverageReporter, DebugReporter, ItemAnchor, LcovReporter, SummaryReporter,
     },
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
@@ -24,7 +30,8 @@ use forge::{
 };
 use foundry_common::{evm::EvmArgs, fs};
 use foundry_config::{figment::Figment, Config};
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::channel, thread};
+use semver::Version;
+use std::{collections::HashMap, sync::mpsc::channel, thread};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -75,15 +82,15 @@ impl Cmd for CoverageArgs {
         let (config, evm_opts) = self.configure()?;
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
-        let (map, source_maps) = self.prepare(output.clone())?;
+        let report = self.prepare(&config, output.clone())?;
 
         p_println!(!self.opts.silent => "Running tests...");
-        self.collect(project, output, source_maps, map, config, evm_opts)
+        self.collect(project, output, report, config, evm_opts)
     }
 }
 
-/// A map, keyed by artifact ID, to a tuple of the deployment source map and the runtime source map.
-type SourceMaps = HashMap<ArtifactId, (SourceMap, SourceMap)>;
+/// A map, keyed by contract ID, to a tuple of the deployment source map and the runtime source map.
+type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 
 // The main flow of the command itself
 impl CoverageArgs {
@@ -117,101 +124,122 @@ impl CoverageArgs {
         Ok((project, output))
     }
 
-    /// Builds the coverage map.
-    fn prepare(&self, output: ProjectCompileOutput) -> eyre::Result<(CoverageMap, SourceMaps)> {
+    /// Builds the coverage report.
+    fn prepare(
+        &self,
+        config: &Config,
+        output: ProjectCompileOutput,
+    ) -> eyre::Result<CoverageReport> {
+        let project_paths = config.project_paths();
+
         // Extract artifacts
         let (artifacts, sources) = output.into_artifacts_with_sources();
-        let artifacts: HashMap<ArtifactId, CompactContractBytecode> = artifacts
-            .into_iter()
-            .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
-            .collect();
+        let mut report = CoverageReport::default();
 
-        // Get source maps
-        let source_maps: SourceMaps = artifacts
-            .iter()
-            .filter_map(|(id, artifact)| {
-                Some((
-                    id.clone(),
-                    (
-                        artifact.get_source_map()?.ok()?,
-                        artifact
-                            .get_deployed_bytecode()
-                            .as_ref()?
-                            .bytecode
-                            .as_ref()?
-                            .source_map()?
-                            .ok()?,
-                    ),
-                ))
-            })
-            .collect();
-
-        // Get bytecodes
-        let bytecodes: HashMap<ArtifactId, (Bytes, Bytes)> = artifacts
-            .iter()
-            .filter_map(|(id, artifact)| {
-                Some((
-                    id.clone(),
-                    (
-                        artifact.get_bytecode_bytes()?.into_owned(),
-                        artifact.get_deployed_bytecode_bytes()?.into_owned(),
-                    ),
-                ))
-            })
-            .collect();
-
-        let mut map = CoverageMap::default();
-        for (path, versioned_sources) in sources.0.into_iter() {
-            // TODO: Make these checks robust
-            // NOTE: We should actually filter out test contracts in the AST
-            // instead of on a source file level. Repositories like Solmate
-            // have a lot of abstract contracts that are being tested, and these
-            // are usually defined in the test files themselves.
-            let is_test = path.is_sol_test();
-            let is_dependency = path.starts_with("lib");
-            if is_test || is_dependency {
+        // Collect ASTs and sources
+        let mut versioned_asts: HashMap<Version, HashMap<usize, Ast>> = HashMap::new();
+        let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
+        for (path, mut source_file, version) in sources.into_sources_with_version() {
+            // Filter out dependencies
+            if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
                 continue
             }
 
-            for mut versioned_source in versioned_sources {
-                let source = &mut versioned_source.source_file;
-                if let Some(ast) = source.ast.take() {
-                    let source_maps: HashMap<String, SourceMap> = source_maps
-                        .iter()
-                        .filter(|(id, _)| {
-                            id.version == versioned_source.version &&
-                                id.source == PathBuf::from(&path)
-                        })
-                        .map(|(id, (_, source_map))| {
-                            // TODO: Deploy source map too
-                            (id.name.clone(), source_map.clone())
-                        })
-                        .collect();
-                    let bytecodes: HashMap<String, Bytes> = bytecodes
-                        .iter()
-                        .filter(|(id, _)| {
-                            id.version == versioned_source.version &&
-                                id.source == PathBuf::from(&path)
-                        })
-                        .map(|(id, (_, bytecode))| {
-                            // TODO: Deploy bytecode too
-                            (id.name.clone(), bytecode.clone())
-                        })
-                        .collect();
-
-                    let items = Visitor::new(fs::read_to_string(&path)?, source_maps, bytecodes)
-                        .visit_ast(ast)?;
-
-                    if items.is_empty() {
-                        continue
-                    }
-
-                    map.add_source(path.clone(), versioned_source, items);
-                }
+            if let Some(ast) = source_file.ast.take() {
+                versioned_asts
+                    .entry(version.clone())
+                    .or_default()
+                    .insert(source_file.id as usize, ast);
+                versioned_sources.entry(version.clone()).or_default().insert(
+                    source_file.id as usize,
+                    fs::read_to_string(&path)
+                        .wrap_err("Could not read source code for analysis")?,
+                );
+                report.add_source(version, source_file.id as usize, path);
             }
         }
 
-        Ok((map, source_maps))
+        // Get source maps and bytecodes
+        let (source_maps, bytecodes): (SourceMaps, HashMap<ContractId, (Bytes, Bytes)>) = artifacts
+            .into_iter()
+            .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
+            .filter_map(|(id, artifact)| {
+                Some((
+                    (
+                        ContractId {
+                            version: id.version.clone(),
+                            source_id: *report.get_source_id(
+                                id.version.clone(),
+                                id.source.to_string_lossy().to_string(),
+                            )?,
+                            contract_name: id.name.clone(),
+                        },
+                        (
+                            artifact.get_source_map()?.ok()?,
+                            artifact
+                                .get_deployed_bytecode()
+                                .as_ref()?
+                                .bytecode
+                                .as_ref()?
+                                .source_map()?
+                                .ok()?,
+                        ),
+                    ),
+                    (
+                        ContractId {
+                            version: id.version.clone(),
+                            source_id: *report.get_source_id(
+                                id.version.clone(),
+                                id.source.to_string_lossy().to_string(),
+                            )?,
+                            contract_name: id.name.clone(),
+                        },
+                        (
+                            artifact
+                                .get_bytecode()
+                                .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
+                            artifact.get_deployed_bytecode().and_then(|bytecode| {
+                                dummy_link_deployed_bytecode(bytecode.into_owned())
+                            })?,
+                        ),
+                    ),
+                ))
+            })
+            .unzip();
+
+        // Add coverage items
+        for (version, asts) in versioned_asts.into_iter() {
+            let source_analysis = SourceAnalyzer::new(
+                version.clone(),
+                asts,
+                versioned_sources.remove(&version).ok_or_else(|| {
+                    eyre::eyre!(
+                        "File tree is missing source code, cannot perform coverage analysis"
+                    )
+                })?,
+            )?
+            .analyze()?;
+            let anchors: HashMap<ContractId, Vec<ItemAnchor>> = source_analysis
+                .contract_items
+                .iter()
+                .filter_map(|(contract_id, item_ids)| {
+                    // TODO: Creation source map/bytecode as well
+                    Some((
+                        contract_id.clone(),
+                        find_anchors(
+                            &bytecodes.get(contract_id)?.1,
+                            &source_maps.get(contract_id)?.1,
+                            item_ids,
+                            &source_analysis.items,
+                        ),
+                    ))
+                })
+                .collect();
+            report.add_items(version, source_analysis.items);
+            report.add_anchors(anchors);
+        }
+
+        Ok(report)
     }
 
     /// Runs tests, collects coverage data and generates the final report.
@@ -219,8 +247,7 @@ impl CoverageArgs {
         self,
         project: Project,
         output: ProjectCompileOutput,
-        source_maps: SourceMaps,
-        mut map: CoverageMap,
+        mut report: CoverageReport,
         config: Config,
         evm_opts: EvmOpts,
     ) -> eyre::Result<()> {
@@ -263,21 +290,24 @@ impl CoverageArgs {
                     local_identifier
                         .identify_addresses(trace.addresses().into_iter().collect())
                         .into_iter()
-                        .filter_map(|identity| {
-                            let artifact_id = identity.artifact_id?;
-                            let source_map = source_maps.get(&artifact_id)?;
+                        .for_each(|identity| {
+                            if let Some((artifact_id, hits)) =
+                                identity.artifact_id.zip(hit_map.get(&identity.address))
+                            {
+                                if let Some(source_id) = report.get_source_id(
+                                    artifact_id.version.clone(),
+                                    artifact_id.source.to_string_lossy().to_string(),
+                                ) {
+                                    let contract_id = ContractId {
+                                        version: artifact_id.version,
+                                        source_id: *source_id,
+                                        contract_name: artifact_id.name,
+                                    };
 
-                            Some((artifact_id, source_map, hit_map.get(&identity.address)?))
-                        })
-                        .for_each(|(id, source_map, hits)| {
-                            // TODO: Distinguish between creation/runtime in a smart way
-                            map.add_hit_map(
-                                id.version.clone(),
-                                &source_map.0,
-                                &id.name,
-                                hits.clone(),
-                            );
-                            map.add_hit_map(id.version, &source_map.1, &id.name, hits.clone())
+                                    // TODO: Distinguish between creation/runtime in a smart way
+                                    report.add_hit_map(&contract_id, hits);
+                                }
+                            }
                         });
                 }
             }
@@ -287,12 +317,12 @@ impl CoverageArgs {
         let _ = handle.join();
 
         match self.report {
-            CoverageReportKind::Summary => SummaryReporter::default().report(map),
+            CoverageReportKind::Summary => SummaryReporter::default().report(report),
             // TODO: Sensible place to put the LCOV file
             CoverageReportKind::Lcov => {
-                LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(map)
+                LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?).report(report)
             }
-            CoverageReportKind::Debug => DebugReporter::default().report(map),
+            CoverageReportKind::Debug => DebugReporter::default().report(report),
         }
     }
 }
@@ -303,4 +333,26 @@ pub enum CoverageReportKind {
     Summary,
     Lcov,
     Debug,
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
+    let link_references = std::mem::take(&mut obj.link_references);
+    for (file, libraries) in link_references {
+        for library in libraries.keys() {
+            obj.link(&file, library, Address::zero());
+        }
+    }
+
+    obj.object.resolve();
+    obj.object.into_bytes()
+}
+
+/// Helper function that will link references in unlinked bytecode to the 0 address.
+///
+/// This is needed in order to analyze the bytecode for contracts that use libraries.
+fn dummy_link_deployed_bytecode(obj: CompactDeployedBytecode) -> Option<Bytes> {
+    obj.bytecode.and_then(dummy_link_bytecode)
 }

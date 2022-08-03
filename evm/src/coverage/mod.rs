@@ -1,102 +1,114 @@
-mod visitor;
-pub use visitor::Visitor;
+pub mod analysis;
+pub mod anchors;
 
-use ethers::{
-    prelude::{sourcemap::SourceMap, sources::VersionedSourceFile},
-    types::Address,
-};
+use ethers::types::Address;
 use semver::Version;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::AddAssign,
-    path::PathBuf,
-    usize,
 };
 
-/// A coverage map.
+/// A coverage report.
 ///
-/// The coverage map collects coverage items for sources. It also converts hit data from
-/// [HitMap]s into their appropriate coverage items.
-///
-/// You **MUST** add all the sources before you start adding hit data.
+/// A coverage report contains coverage items and opcodes corresponding to those items (called
+/// "anchors"). A single coverage item may be referred to by multiple anchors.
 #[derive(Default, Debug, Clone)]
-pub struct CoverageMap {
-    /// A map of `(version, source id)` -> `source file`
-    sources: HashMap<(Version, u32), SourceFile>,
+pub struct CoverageReport {
+    /// A map of source IDs to the source path
+    pub source_paths: HashMap<(Version, usize), String>,
+    /// A map of source paths to source IDs
+    pub source_paths_to_ids: HashMap<(Version, String), usize>,
+    /// All coverage items for the codebase, keyed by the compiler version.
+    pub items: HashMap<Version, Vec<CoverageItem>>,
+    /// All item anchors for the codebase, keyed by their contract ID.
+    pub anchors: HashMap<ContractId, Vec<ItemAnchor>>,
 }
 
-impl CoverageMap {
-    /// Adds coverage items and a source map for the given source.
-    ///
-    /// Sources are identified by path, and then by source ID and version.
-    ///
-    /// We need both the version and the source ID in case the project has distinct file
-    /// hierarchies that use different compiler versions, as that will result in multiple compile
-    /// jobs, and source IDs are only guaranteed to be stable across a single compile job.
-    pub fn add_source(
-        &mut self,
-        path: impl Into<PathBuf>,
-        source: VersionedSourceFile,
-        items: Vec<CoverageItem>,
-    ) {
-        let VersionedSourceFile { version, source_file: source } = source;
+impl CoverageReport {
+    /// Add a source file path.
+    pub fn add_source(&mut self, version: Version, source_id: usize, path: String) {
+        self.source_paths.insert((version.clone(), source_id), path.clone());
+        self.source_paths_to_ids.insert((version, path), source_id);
+    }
 
-        self.sources.insert((version, source.id), SourceFile { path: path.into(), items });
+    /// Get the source ID for a specific source file path.
+    pub fn get_source_id(&self, version: Version, path: String) -> Option<&usize> {
+        self.source_paths_to_ids.get(&(version, path))
+    }
+
+    /// Add coverage items to this report
+    pub fn add_items(&mut self, version: Version, items: Vec<CoverageItem>) {
+        self.items.entry(version).or_default().extend(items);
+    }
+
+    /// Add anchors to this report
+    pub fn add_anchors(&mut self, anchors: HashMap<ContractId, Vec<ItemAnchor>>) {
+        self.anchors.extend(anchors);
+    }
+
+    /// Get coverage summaries by source file path
+    pub fn summary_by_file(&self) -> impl Iterator<Item = (String, CoverageSummary)> {
+        let mut summaries: BTreeMap<String, CoverageSummary> = BTreeMap::new();
+
+        for (version, items) in self.items.iter() {
+            for item in items {
+                let mut summary = summaries
+                    .entry(
+                        self.source_paths
+                            .get(&(version.clone(), item.loc.source_id))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                format!("Unknown (ID: {}, solc: {})", item.loc.source_id, version)
+                            }),
+                    )
+                    .or_default();
+                summary += item;
+            }
+        }
+
+        summaries.into_iter()
+    }
+
+    /// Get coverage items by source file path
+    pub fn items_by_source(&self) -> impl Iterator<Item = (String, Vec<CoverageItem>)> {
+        let mut items_by_source: BTreeMap<String, Vec<CoverageItem>> = BTreeMap::new();
+
+        for (version, items) in self.items.iter() {
+            for item in items {
+                items_by_source
+                    .entry(
+                        self.source_paths
+                            .get(&(version.clone(), item.loc.source_id))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                format!("Unknown (ID: {}, solc: {})", item.loc.source_id, version)
+                            }),
+                    )
+                    .or_default()
+                    .push(item.clone());
+            }
+        }
+
+        items_by_source.into_iter()
     }
 
     /// Processes data from a [HitMap] and sets hit counts for coverage items in this coverage map.
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
     /// added to the map (see [add_source]).
-    ///
-    /// NOTE(onbjerg): I've made an assumption here that the coverage items are laid out in
-    /// sorted order, ordered by their anchors.
-    ///
-    /// This assumption is based on the way we process the AST - we start at the root node,
-    /// and work our way down. If we change up how we process the AST, we *have* to either
-    /// change this logic to work with unsorted data, or sort the data prior to calling
-    /// this function.
-    pub fn add_hit_map(
-        &mut self,
-        source_version: Version,
-        source_map: &SourceMap,
-        contract_name: &str,
-        hit_map: HitMap,
-    ) {
-        for (ic, instruction_hits) in hit_map.hits.into_iter() {
-            if instruction_hits == 0 {
-                continue
-            }
-
-            // Get the source ID in the source map.
-            let source_id =
-                if let Some(source_id) = source_map.get(ic).and_then(|element| element.index) {
-                    source_id
-                } else {
-                    continue
-                };
-
-            // Get the coverage items corresponding to the source ID in the source map.
-            if let Some(source) = self.sources.get_mut(&(source_version.clone(), source_id)) {
-                for item in source.items.iter_mut() {
-                    // We found a matching coverage item, but there may be more
-                    let anchor = item.anchor();
-                    if ic == anchor.instruction && contract_name == anchor.contract {
-                        item.increment_hits(instruction_hits);
-                    }
+    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) {
+        if let Some(anchors) = self.anchors.get(contract_id) {
+            for anchor in anchors {
+                if let Some(hits) = hit_map.hits.get(&anchor.instruction) {
+                    self.items
+                        .get_mut(&contract_id.version)
+                        .and_then(|items| items.get_mut(anchor.item_id))
+                        .expect("Anchor refers to non-existent coverage item")
+                        .hits += hits;
                 }
             }
         }
-    }
-}
-
-impl IntoIterator for CoverageMap {
-    type Item = SourceFile;
-    type IntoIter = std::collections::hash_map::IntoValues<(Version, u32), Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.sources.into_values()
     }
 }
 
@@ -118,92 +130,47 @@ impl HitMap {
     }
 }
 
-/// A source file.
-#[derive(Default, Debug, Clone)]
-pub struct SourceFile {
-    pub path: PathBuf,
-    pub items: Vec<CoverageItem>,
+/// A unique identifier for a contract
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ContractId {
+    pub version: Version,
+    pub source_id: usize,
+    pub contract_name: String,
 }
 
-impl SourceFile {
-    /// Get a simple summary of the coverage for the file.
-    pub fn summary(&self) -> CoverageSummary {
-        self.items.iter().fold(CoverageSummary::default(), |mut summary, item| match item {
-            CoverageItem::Line { hits, .. } => {
-                summary.line_count += 1;
-                if *hits > 0 {
-                    summary.line_hits += 1;
-                }
-                summary
-            }
-            CoverageItem::Statement { hits, .. } => {
-                summary.statement_count += 1;
-                if *hits > 0 {
-                    summary.statement_hits += 1;
-                }
-                summary
-            }
-            CoverageItem::Branch { hits, .. } => {
-                summary.branch_count += 1;
-                if *hits > 0 {
-                    summary.branch_hits += 1;
-                }
-                summary
-            }
-            CoverageItem::Function { hits, .. } => {
-                summary.function_count += 1;
-                if *hits > 0 {
-                    summary.function_hits += 1;
-                }
-                summary
-            }
-        })
+impl Display for ContractId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Contract \"{}\" (solc {}, source ID {})",
+            self.contract_name, self.version, self.source_id
+        )
     }
 }
 
-/// An item anchor describes what instruction (and what contract) marks a [CoverageItem] as covered.
+/// An item anchor describes what instruction marks a [CoverageItem] as covered.
 #[derive(Clone, Debug)]
 pub struct ItemAnchor {
-    /// The instruction counter that constitutes this anchor
+    /// The instruction counter for the opcode of this anchor
     pub instruction: usize,
-    /// The contract in which the instruction is in
-    pub contract: String,
+    /// The item ID this anchor points to
+    pub item_id: usize,
 }
 
 impl Display for ItemAnchor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.contract, self.instruction)
+        write!(f, "IC {} -> Item {}", self.instruction, self.item_id)
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum CoverageItem {
+pub enum CoverageItemKind {
     /// An executable line in the code.
-    Line {
-        /// The location of the line in the source code.
-        loc: SourceLocation,
-        /// The instruction counter that covers this line.
-        anchor: ItemAnchor,
-        /// The number of times this item was hit.
-        hits: u64,
-    },
-
+    Line,
     /// A statement in the code.
-    Statement {
-        /// The location of the statement in the source code.
-        loc: SourceLocation,
-        /// The instruction counter that covers this statement.
-        anchor: ItemAnchor,
-        /// The number of times this statement was hit.
-        hits: u64,
-    },
-
+    Statement,
     /// A branch in the code.
     Branch {
-        /// The location of the branch in the source code.
-        loc: SourceLocation,
-        /// The instruction counter that covers this branch.
-        anchor: ItemAnchor,
         /// The ID that identifies the branch.
         ///
         /// There may be multiple items with the same branch ID - they belong to the same branch,
@@ -213,82 +180,50 @@ pub enum CoverageItem {
         ///
         /// The first path has ID 0, the next ID 1, and so on.
         path_id: usize,
-        /// The number of times this item was hit.
-        hits: u64,
     },
-
     /// A function in the code.
     Function {
-        /// The location of the function in the source code.
-        loc: SourceLocation,
-        /// The instruction counter that covers this function.
-        anchor: ItemAnchor,
         /// The name of the function.
         name: String,
-        /// The number of times this item was hit.
-        hits: u64,
     },
 }
 
-impl CoverageItem {
-    pub fn source_location(&self) -> &SourceLocation {
-        match self {
-            Self::Line { loc, .. } |
-            Self::Statement { loc, .. } |
-            Self::Branch { loc, .. } |
-            Self::Function { loc, .. } => loc,
-        }
-    }
-
-    pub fn anchor(&self) -> &ItemAnchor {
-        match self {
-            Self::Line { anchor, .. } |
-            Self::Statement { anchor, .. } |
-            Self::Branch { anchor, .. } |
-            Self::Function { anchor, .. } => anchor,
-        }
-    }
-
-    pub fn increment_hits(&mut self, delta: u64) {
-        match self {
-            Self::Line { hits, .. } |
-            Self::Statement { hits, .. } |
-            Self::Branch { hits, .. } |
-            Self::Function { hits, .. } => *hits += delta,
-        }
-    }
-
-    pub fn hits(&self) -> u64 {
-        match self {
-            Self::Line { hits, .. } |
-            Self::Statement { hits, .. } |
-            Self::Branch { hits, .. } |
-            Self::Function { hits, .. } => *hits,
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct CoverageItem {
+    /// The coverage item kind.
+    pub kind: CoverageItemKind,
+    /// The location of the item in the source code.
+    pub loc: SourceLocation,
+    /// The number of times this item was hit.
+    pub hits: u64,
 }
 
 impl Display for CoverageItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self {
-            CoverageItem::Line { loc, anchor, hits } => {
-                write!(f, "Line (location: {loc}, anchor: {anchor}, hits: {hits})")
+        match &self.kind {
+            CoverageItemKind::Line => {
+                write!(f, "Line")?;
             }
-            CoverageItem::Statement { loc, anchor, hits } => {
-                write!(f, "Statement (location: {loc}, anchor: {anchor}, hits: {hits})")
+            CoverageItemKind::Statement => {
+                write!(f, "Statement")?;
             }
-            CoverageItem::Branch { loc, anchor, hits, branch_id, path_id } => {
-                write!(f, "Branch (branch: {branch_id}, path: {path_id}) (location: {loc}, anchor: {anchor}, hits: {hits})")
+            CoverageItemKind::Branch { branch_id, path_id } => {
+                write!(f, "Branch (branch: {branch_id}, path: {path_id})")?;
             }
-            CoverageItem::Function { loc, anchor, hits, name } => {
-                write!(f, r#"Function "{name}" (location: {loc}, anchor: {anchor}, hits: {hits})"#)
+            CoverageItemKind::Function { name } => {
+                write!(f, r#"Function "{name}""#)?;
             }
         }
+        write!(f, " (location: {}, hits: {})", self.loc, self.hits)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
+    /// The source ID.
+    pub source_id: usize,
+    /// The contract this source range is in.
+    pub contract_name: String,
     /// Start byte in the source code.
     pub start: usize,
     /// Number of bytes in the source code.
@@ -301,7 +236,8 @@ impl Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "L{}, C{}-{}",
+            "source ID {}, line {}, chars {}-{}",
+            self.source_id,
             self.line,
             self.start,
             self.length.map_or(self.start, |length| self.start + length)
@@ -340,5 +276,67 @@ impl AddAssign<&Self> for CoverageSummary {
         self.branch_hits += other.branch_hits;
         self.function_count += other.function_count;
         self.function_hits += other.function_hits;
+    }
+}
+
+impl AddAssign<&CoverageItem> for CoverageSummary {
+    fn add_assign(&mut self, item: &CoverageItem) {
+        match item.kind {
+            CoverageItemKind::Line => {
+                self.line_count += 1;
+                if item.hits > 0 {
+                    self.line_hits += 1;
+                }
+            }
+            CoverageItemKind::Statement => {
+                self.statement_count += 1;
+                if item.hits > 0 {
+                    self.statement_hits += 1;
+                }
+            }
+            CoverageItemKind::Branch { .. } => {
+                self.branch_count += 1;
+                if item.hits > 0 {
+                    self.branch_hits += 1;
+                }
+            }
+            CoverageItemKind::Function { .. } => {
+                self.function_count += 1;
+                if item.hits > 0 {
+                    self.function_hits += 1;
+                }
+            }
+        }
+    }
+}
+
+impl AddAssign<&CoverageItem> for &mut CoverageSummary {
+    fn add_assign(&mut self, item: &CoverageItem) {
+        match item.kind {
+            CoverageItemKind::Line => {
+                self.line_count += 1;
+                if item.hits > 0 {
+                    self.line_hits += 1;
+                }
+            }
+            CoverageItemKind::Statement => {
+                self.statement_count += 1;
+                if item.hits > 0 {
+                    self.statement_hits += 1;
+                }
+            }
+            CoverageItemKind::Branch { .. } => {
+                self.branch_count += 1;
+                if item.hits > 0 {
+                    self.branch_hits += 1;
+                }
+            }
+            CoverageItemKind::Function { .. } => {
+                self.function_count += 1;
+                if item.hits > 0 {
+                    self.function_hits += 1;
+                }
+            }
+        }
     }
 }
