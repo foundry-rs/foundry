@@ -141,9 +141,7 @@ impl CoverageArgs {
         let mut versioned_sources: HashMap<Version, HashMap<usize, String>> = HashMap::new();
         for (path, mut source_file, version) in sources.into_sources_with_version() {
             // Filter out dependencies
-            // NOTE(onbjerg): For some reason this only returns Some for non-library imports... Is
-            // there a better way?
-            if project_paths.resolve_library_import(std::path::Path::new(&path)).is_none() {
+            if project_paths.has_library_ancestor(std::path::Path::new(&path)) {
                 continue
             }
 
