@@ -96,7 +96,11 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
 
-    #[clap(long, help = "Set seed used to generate randomness during your fuzz runs",   parse(try_from_str = utils::parse_u256))]
+    #[clap(
+        long,
+        help = "Set seed used to generate randomness during your fuzz runs",
+        parse(try_from_str = utils::parse_u256)
+    )]
     pub fuzz_seed: Option<U256>,
 }
 
@@ -159,7 +163,7 @@ impl Cmd for TestArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         trace!(target: "forge::test", "executing test command");
-        custom_run(self, true)
+        custom_run(self)
     }
 }
 
@@ -295,7 +299,7 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
-pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
@@ -359,7 +363,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
         match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, true)?;
+                    let results = runner.test(&filter, None)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -403,16 +407,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     } else if args.list {
         list(runner, filter, args.json)
     } else {
-        test(
-            config,
-            runner,
-            verbosity,
-            filter,
-            args.json,
-            args.allow_failure,
-            include_fuzz_tests,
-            args.gas_report,
-        )
+        test(config, runner, verbosity, filter, args.json, args.allow_failure, args.gas_report)
     }
 }
 
@@ -443,7 +438,6 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    include_fuzz_tests: bool,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
@@ -468,7 +462,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, include_fuzz_tests)?;
+        let results = runner.test(&filter, None)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -489,8 +483,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle =
-            thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports);

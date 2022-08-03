@@ -176,7 +176,6 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
-        include_fuzz_tests: bool,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -247,23 +246,19 @@ impl<'a> ContractRunner<'a> {
             .contract
             .functions()
             .into_iter()
-            .filter(|func| {
-                func.name.is_test() &&
-                    filter.matches_test(func.signature()) &&
-                    (include_fuzz_tests || func.inputs.is_empty())
-            })
-            .map(|func| (func, func.name.is_test_fail()))
+            .filter(|func| func.is_test() && filter.matches_test(func.signature()))
+            .map(|func| (func, func.is_test_fail()))
             .collect();
 
         let test_results = tests
             .par_iter()
             .filter_map(|(func, should_fail)| {
-                let result = if func.inputs.is_empty() {
-                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
-                } else {
+                let result = if func.is_fuzz_test() {
                     fuzzer.as_ref().map(|fuzzer| {
                         self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
                     })
+                } else {
+                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
                 };
 
                 result.map(|result| Ok((func.signature(), result?)))

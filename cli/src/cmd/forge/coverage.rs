@@ -283,7 +283,7 @@ impl CoverageArgs {
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
 
         // TODO: Coverage for fuzz tests
-        let handle = thread::spawn(move || runner.test(&self.filter, Some(tx), false).unwrap());
+        let handle = thread::spawn(move || runner.test(&self.filter, Some(tx)).unwrap());
         for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
             if let Some(hit_map) = result.coverage.take() {
                 for (_, trace) in &mut result.traces {
