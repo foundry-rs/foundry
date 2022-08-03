@@ -1,6 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{revm::AccountInfo, U256};
+use crate::{mem::state::trie_hash_db, revm::AccountInfo, U256};
+use anvil_core::eth::trie::KeccakHasher;
 use ethers::{
     prelude::{Address, Bytes, H160},
     types::H256,
@@ -8,15 +9,11 @@ use ethers::{
 };
 use forge::revm::KECCAK_EMPTY;
 use foundry_evm::{
-    executor::DatabaseRef,
-    revm::{db::CacheDB, Database, DatabaseCommit},
+    executor::{backend::MemDb, DatabaseRef},
+    revm::{db::CacheDB, Bytecode, Database, DatabaseCommit},
     HashMap,
 };
 use hash_db::HashDB;
-
-use crate::mem::state::trie_hash_db;
-use anvil_core::eth::trie::KeccakHasher;
-use foundry_evm::executor::backend::MemDb;
 use serde::{Deserialize, Serialize};
 
 /// Type alias for the `HashDB` representation of the Database
@@ -63,7 +60,7 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send
             H256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(code.to_vec().into());
+        info.code = Some(Bytecode::new_raw(code.0).to_checked());
         self.insert_account(address, info);
     }
 
@@ -149,7 +146,7 @@ impl DatabaseRef for StateDb {
         self.0.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.0.code_by_hash(code_hash)
     }
 

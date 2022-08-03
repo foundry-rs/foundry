@@ -9,7 +9,7 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
-use forge::revm::KECCAK_EMPTY;
+use forge::revm::{Bytecode, KECCAK_EMPTY};
 use tracing::{trace, warn};
 
 // reexport for convenience
@@ -32,16 +32,17 @@ impl Db for MemDb {
             .clone()
             .into_iter()
             .map(|(k, v)| {
+                let code = v
+                    .info
+                    .code
+                    .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
+                    .to_checked();
                 (
                     k,
                     SerializableAccountRecord {
                         nonce: v.info.nonce,
                         balance: v.info.balance,
-                        code: v
-                            .info
-                            .code
-                            .unwrap_or_else(|| self.inner.code_by_hash(v.info.code_hash))
-                            .into(),
+                        code: code.bytes()[..code.len()].to_vec().into(),
                         storage: v.storage.into_iter().collect(),
                     },
                 )
@@ -60,7 +61,11 @@ impl Db for MemDb {
                 AccountInfo {
                     balance: account.balance,
                     code_hash: KECCAK_EMPTY, // will be set automatically
-                    code: if account.code.0.is_empty() { None } else { Some(account.code.0) },
+                    code: if account.code.0.is_empty() {
+                        None
+                    } else {
+                        Some(Bytecode::new_raw(account.code.0).to_checked())
+                    },
                     // use max nonce in case account is imported multiple times with difference
                     // nonces to prevent collisions
                     nonce: std::cmp::max(
@@ -127,7 +132,7 @@ mod tests {
         Address,
     };
     use bytes::Bytes;
-    use forge::revm::KECCAK_EMPTY;
+    use forge::revm::{Bytecode, KECCAK_EMPTY};
     use foundry_evm::{
         executor::{backend::MemDb, DatabaseRef},
         HashMap,
@@ -143,7 +148,8 @@ mod tests {
 
         let mut dump_db = MemDb::default();
 
-        let contract_code: Bytes = Bytes::from("fake contract code");
+        let contract_code: Bytecode =
+            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         dump_db.insert_account(
             test_addr,
@@ -180,7 +186,8 @@ mod tests {
         let test_addr2: Address =
             Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
 
-        let contract_code: Bytes = Bytes::from("fake contract code");
+        let contract_code: Bytecode =
+            Bytecode::new_raw(Bytes::from("fake contract code")).to_checked();
 
         let mut db = MemDb::default();
 
@@ -216,7 +223,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: 100100.into(),
-                code: contract_code.clone().into(),
+                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
                 nonce: 100,
                 storage: new_storage,
             },

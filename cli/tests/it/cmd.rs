@@ -535,12 +535,7 @@ contract Foo {
     cmd.arg("inspect").arg(contract_name).arg("bytecode");
     check_output(cmd.stdout_lossy());
 
-    let info = format!(
-        "src{}{}:{}",
-        std::path::MAIN_SEPARATOR,
-        path.file_name().unwrap().to_string_lossy(),
-        contract_name
-    );
+    let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
     cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
     check_output(cmd.stdout_lossy());
 });

@@ -207,15 +207,30 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let gas_filled_txs = self
-                    .execute_transactions(txs, &mut script_config, decoder, &verify.known_contracts)
-                    .await
-                    .map_err(|_| {
-                        eyre::eyre!(
-                            "One or more transactions failed when simulating the
-                on-chain version. Check the trace by re-running with `-vvv`"
+                let mut gas_filled_txs;
+                if self.skip_simulation {
+                    println!("\nSKIPPING ON CHAIN SIMULATION.");
+                    gas_filled_txs = VecDeque::new();
+                    for tx in txs.into_iter() {
+                        gas_filled_txs
+                            .push_back(TransactionWithMetadata::from_typed_transaction(tx)?);
+                    }
+                } else {
+                    gas_filled_txs = self
+                        .execute_transactions(
+                            txs,
+                            &mut script_config,
+                            decoder,
+                            &verify.known_contracts,
                         )
-                    })?;
+                        .await
+                        .map_err(|_| {
+                            eyre::eyre!(
+                                "One or more transactions failed when simulating the
+                    on-chain version. Check the trace by re-running with `-vvv`"
+                            )
+                        })?;
+                }
 
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
@@ -272,8 +287,10 @@ impl ScriptArgs {
 
             let typed_tx = tx.typed_tx_mut();
 
-            if has_different_gas_calc(chain) {
-                typed_tx.set_gas(provider.estimate_gas(typed_tx).await?);
+            if has_different_gas_calc(chain) || self.skip_simulation {
+                typed_tx.set_gas(
+                    provider.estimate_gas(typed_tx).await? * self.gas_estimate_multiplier / 100,
+                );
             }
 
             total_gas += *typed_tx.gas().expect("gas is set");

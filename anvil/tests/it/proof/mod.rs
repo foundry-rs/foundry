@@ -24,7 +24,7 @@ async fn can_get_proof() {
     let key = U256::zero();
     let value = U256::one();
 
-    api.anvil_set_storage_at(acc, key, value).await.unwrap();
+    api.anvil_set_storage_at(acc, key, H256::from_uint(&value)).await.unwrap();
 
     let proof: AccountProof = api.get_proof(acc, vec![key], None).await.unwrap();
 

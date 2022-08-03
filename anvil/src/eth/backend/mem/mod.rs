@@ -1,5 +1,4 @@
 //! In memory blockchain backend
-
 use crate::{
     eth::{
         backend::{
@@ -338,8 +337,8 @@ impl Backend {
     }
 
     /// Sets the value for the given slot of the given address
-    pub fn set_storage_at(&self, address: Address, slot: U256, val: U256) {
-        self.db.write().set_storage_at(address, slot, val);
+    pub fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
+        self.db.write().set_storage_at(address, slot, val.into_uint());
     }
 
     /// Returns true for post London
@@ -1106,11 +1105,11 @@ impl Backend {
             trace!(target: "backend", "get code for {:?}", address);
             let account = db.basic(address);
             let code = if let Some(code) = account.code {
-                code.into()
+                code
             } else {
-                db.code_by_hash(account.code_hash).into()
+                db.code_by_hash(account.code_hash)
             };
-            Ok(code)
+            Ok(code.bytes()[..code.len()].to_vec().into())
         })
     }
 

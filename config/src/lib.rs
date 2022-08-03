@@ -199,7 +199,7 @@ pub struct Config {
     pub block_number: u64,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
-    /// the chainid opcode value
+    /// The chain id to use
     pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: GasLimit,
