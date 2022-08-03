@@ -207,6 +207,14 @@ impl Backend {
         }
     }
 
+    pub fn clear_cached_storage(&self)
+    {
+        if let Some(fork) = &self.fork
+        {
+            fork.clear_cached_storage();
+        }
+    }
+
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<&ClientFork> {
         self.fork.as_ref()

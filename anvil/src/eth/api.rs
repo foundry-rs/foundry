@@ -1226,6 +1226,12 @@ impl EthApi {
         }
     }
 
+    pub fn anvil_cache_clear(&self)
+    {
+        node_info!("reseting cache");
+        self.backend.clear_cached_storage();
+    }
+
     /// Modifies the balance of an account.
     ///
     /// Handler for RPC call: `anvil_setBalance`
