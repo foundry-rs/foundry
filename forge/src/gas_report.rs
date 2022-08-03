@@ -4,7 +4,7 @@ use crate::{
 };
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers::types::U256;
-use foundry_common::TestFunctionExt;
+use foundry_common::{calc, TestFunctionExt};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -96,22 +96,11 @@ impl GasReport {
         self.contracts.iter_mut().for_each(|(_, contract)| {
             contract.functions.iter_mut().for_each(|(_, sigs)| {
                 sigs.iter_mut().for_each(|(_, func)| {
-                    func.calls.sort();
-                    func.min = func.calls.first().cloned().unwrap_or_default();
-                    func.max = func.calls.last().cloned().unwrap_or_default();
-                    func.mean =
-                        func.calls.iter().fold(U256::zero(), |acc, x| acc + x) / func.calls.len();
-
-                    let len = func.calls.len();
-                    func.median = if len > 0 {
-                        if len % 2 == 0 {
-                            (func.calls[len / 2 - 1] + func.calls[len / 2]) / 2
-                        } else {
-                            func.calls[len / 2]
-                        }
-                    } else {
-                        0.into()
-                    };
+                    func.calls.sort_unstable();
+                    func.min = func.calls.first().copied().unwrap_or_default();
+                    func.max = func.calls.last().copied().unwrap_or_default();
+                    func.mean = calc::mean(&func.calls);
+                    func.median = calc::median_sorted(&func.calls);
                 });
             });
         });
