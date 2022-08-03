@@ -119,10 +119,7 @@ impl MultiContractRunner {
         &mut self,
         filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
-        include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        tracing::info!(include_fuzz_tests= ?include_fuzz_tests, "running all tests");
-
         let db = Backend::spawn(self.fork.take());
 
         let results =
@@ -156,7 +153,7 @@ impl MultiContractRunner {
                         executor,
                         deploy_code.clone(),
                         libs,
-                        (filter, include_fuzz_tests),
+                        filter
                     )?;
 
                     tracing::trace!(contract= ?identifier, "executed all tests in contract");
@@ -190,7 +187,7 @@ impl MultiContractRunner {
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        (filter, include_fuzz_tests): (&impl TestFilter, bool),
+        filter: &impl TestFilter,
     ) -> Result<SuiteResult> {
         let runner = ContractRunner::new(
             executor,
@@ -201,7 +198,7 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
+        runner.run_tests(filter, self.fuzzer.clone())
     }
 }
 
@@ -519,7 +516,7 @@ mod tests {
     #[test]
     fn test_core() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None, true).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None).unwrap();
 
         assert_multiple(
             &results,
@@ -594,7 +591,7 @@ mod tests {
     #[test]
     fn test_logs() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, true).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None).unwrap();
 
         assert_multiple(
             &results,
@@ -1157,7 +1154,7 @@ mod tests {
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,
         // so that we can use it in subsequent `env*` tests
-        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, true).unwrap();
+        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None).unwrap();
         let env_var_key = "_foundryCheatcodeSetEnvTestKey";
         let env_var_val = "_foundryCheatcodeSetEnvTestVal";
         let res = env::var(env_var_key);
@@ -1182,7 +1179,6 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                     &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
                 ),
                 None,
-                true,
             )
             .unwrap();
         assert_eq!(suite_result.len(), 1);
@@ -1206,7 +1202,6 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                 &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
                     .exclude_tests(".*Revert"),
                 None,
-                true,
             )
             .unwrap();
         assert!(!suite_result.is_empty());
@@ -1230,11 +1225,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_cheats_local() {
         let mut runner = runner();
         let suite_result = runner
-            .test(
-                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)),
-                None,
-                true,
-            )
+            .test(&Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)), None)
             .unwrap();
         assert!(!suite_result.is_empty());
 
@@ -1258,7 +1249,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
 
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
 
         assert!(!suite_result.is_empty());
 
@@ -1292,7 +1283,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_trace() {
         let mut runner = tracing_runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None, true).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
 
         // TODO: This trace test is very basic - it is probably a good candidate for snapshot
         // testing.
@@ -1330,7 +1321,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_fork() {
         let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
         let mut runner = forked_runner(&rpc_url);
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
@@ -1351,7 +1342,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner
-            .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None, true)
+            .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None)
             .unwrap();
         assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
         assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
