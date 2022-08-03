@@ -7,6 +7,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
+use foundry_config::Chain;
 use std::{
     net::IpAddr,
     str::FromStr,
@@ -147,7 +148,7 @@ impl NodeArgs {
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID));
+            .chain_id(self.evm_opts.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }
@@ -240,8 +241,8 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
-    pub chain_id: Option<u64>,
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
+    pub chain_id: Option<Chain>,
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:
