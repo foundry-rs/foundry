@@ -30,7 +30,10 @@ pub async fn wait_for_receipts(
 ) -> eyre::Result<()> {
     trace!("waiting for receipts of {} transactions", tx_hashes.len());
     let mut tasks = futures::stream::iter(
-        tx_hashes.iter().map(|tx| PendingTransaction::new(*tx, &provider)).collect::<Vec<_>>(),
+        tx_hashes
+            .iter()
+            .map(|tx| PendingTransaction::new(*tx, &provider).interval(provider.get_interval()))
+            .collect::<Vec<_>>(),
     )
     .buffer_unordered(10);
 
