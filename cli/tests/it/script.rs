@@ -11,9 +11,6 @@ use foundry_utils::rpc;
 use regex::Regex;
 use std::{env, path::PathBuf, str::FromStr};
 
-/// A randomly chosen block number, a constant block number increases the probability that the data is already cached and therefore speeds up the tests. <https://etherscan.io/block/15272118>
-const RNG_MAINNET_BLOCK_NUMBER: u64 = 15_272_118;
-
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
     #[ignore]
@@ -254,7 +251,6 @@ contract Demo is Script {
 
         let node_config = NodeConfig::test()
             .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
-            .with_fork_block_number(Some(RNG_MAINNET_BLOCK_NUMBER))
             .silent();
 
         let (_api, handle) = spawn(node_config).await;

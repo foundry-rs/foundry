@@ -22,6 +22,10 @@ impl Db for MemDb {
         self.inner.insert_account_storage(address, slot, val)
     }
 
+    fn insert_block_hash(&mut self, number: U256, hash: H256) {
+        self.inner.block_hashes.insert(number, hash);
+    }
+
     fn dump_state(&self) -> Option<SerializableState> {
         let accounts = self
             .inner
