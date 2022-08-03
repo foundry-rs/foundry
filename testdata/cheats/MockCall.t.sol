@@ -5,6 +5,8 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Mock {
+    uint256 state = 0;
+
     function numberA() public pure returns (uint256) {
         return 1;
     }
@@ -19,6 +21,12 @@ contract Mock {
 
     function pay(uint256 a) public payable returns (uint256) {
         return a;
+    }
+
+    function noReturnValue() public {
+        // Does nothing of value, but also ensures that Solidity will 100%
+        // generate an `extcodesize` check.
+        state += 1;
     }
 }
 
@@ -187,5 +195,23 @@ contract MockCallTest is DSTest {
         assertEq(mock.pay{value: 10}(1), 10);
         assertEq(mock.pay{value: 10}(2), 2);
         assertEq(mock.pay(2), 2);
+    }
+
+    function testMockCallEmptyAccount() public {
+        Mock mock = Mock(address(100));
+
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(10)
+        );
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.noReturnValue.selector),
+            abi.encode()
+        );
+
+        assertEq(mock.add(1, 2), 10);
+        mock.noReturnValue();
     }
 }
