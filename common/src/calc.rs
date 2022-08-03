@@ -20,10 +20,11 @@ where
 {
     let len = values.len();
     if len > 0 {
+        let mid = len / 2;
         if len % 2 == 0 {
-            (values[len / 2 - 1] + values[len / 2]) / 2u64
+            (values[mid - 1] + values[mid]) / 2u64
         } else {
-            values[len / 2]
+            values[mid]
         }
     } else {
         0u64.into()
@@ -39,5 +40,21 @@ mod tests {
         let values = [0u64, 1u64, 2u64, 3u64, 4u64, 5u64, 6u64];
         let m = mean(&values);
         assert_eq!(m, 3u64.into());
+    }
+
+    #[test]
+    fn calc_median() {
+        let mut values = vec![29, 30, 31, 40, 59, 61, 71];
+        values.sort();
+        let m = median_sorted(&values);
+        assert_eq!(m, 40);
+    }
+
+    #[test]
+    fn calc_median_even() {
+        let mut values = vec![80, 90, 30, 40, 50, 60, 10, 20];
+        values.sort();
+        let m = median_sorted(&values);
+        assert_eq!(m, 45);
     }
 }
