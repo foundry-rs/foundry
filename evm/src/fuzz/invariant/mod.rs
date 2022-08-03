@@ -6,7 +6,6 @@ use crate::{
 };
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
-
 mod executor;
 use crate::{
     decode::decode_revert,

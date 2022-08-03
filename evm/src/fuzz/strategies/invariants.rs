@@ -1,19 +1,17 @@
-use parking_lot::RwLock;
-use std::sync::Arc;
-
-use ethers::{
-    abi::{Abi, Function, ParamType},
-    types::{Address, Bytes},
-};
-use proptest::prelude::*;
-pub use proptest::test_runner::Config as FuzzConfig;
-
 use crate::fuzz::{
     fuzz_calldata, fuzz_calldata_from_state,
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
     strategies::fuzz_param,
     EvmFuzzState,
 };
+use ethers::{
+    abi::{Abi, Function, ParamType},
+    types::{Address, Bytes},
+};
+use parking_lot::RwLock;
+use proptest::prelude::*;
+pub use proptest::test_runner::Config as FuzzConfig;
+use std::sync::Arc;
 
 /// Given a target address, we generate random calldata.
 pub fn override_call_strat(
