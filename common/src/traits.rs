@@ -45,7 +45,7 @@ impl TestFunctionExt for Function {
 
 impl<'a> TestFunctionExt for &'a str {
     fn is_fuzz_test(&self) -> bool {
-        self.contains("fuzz")
+        unimplemented!("no naming convention for fuzz tests.")
     }
 
     fn is_test(&self) -> bool {
