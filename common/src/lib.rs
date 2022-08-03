@@ -2,6 +2,7 @@
 
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
+pub mod calc;
 pub mod constants;
 pub mod errors;
 pub mod evm;

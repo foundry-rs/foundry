@@ -7,9 +7,9 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+use foundry_common::calc;
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
@@ -222,25 +222,20 @@ impl FuzzedCases {
 
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mid = self.cases.len() / 2;
-        self.cases
-            .get(mid)
-            .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
-            .unwrap_or_default()
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        if self.cases.is_empty() {
-            return 0
-        }
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::mean(&values).as_u64()
+    }
 
-        (self
-            .cases
-            .iter()
-            .map(|c| if with_stipend { c.gas as u128 } else { (c.gas - c.stipend) as u128 })
-            .sum::<u128>() /
-            self.cases.len() as u128) as u64
+    fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
+        self.cases.iter().map(|c| if with_stipend { c.gas } else { c.gas - c.stipend }).collect()
     }
 
     /// Returns the case with the highest gas usage
