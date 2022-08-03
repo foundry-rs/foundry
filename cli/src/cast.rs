@@ -7,7 +7,8 @@ mod term;
 mod utils;
 
 use cast::{Cast, SimpleCast, TxBuilder};
-use foundry_config::Config;
+use comfy_table::Table;
+use foundry_config::{find_project_root_path, Config};
 use utils::get_http_provider;
 mod opts;
 use crate::{cmd::Cmd, utils::consume_config_rpc_url};
@@ -17,8 +18,9 @@ use clap_complete::generate;
 use ethers::{
     abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
+    prelude::artifacts::output_selection::ContractOutputSelection,
     providers::{Middleware, Provider},
-    types::{Address, NameOrAddress, U256},
+    types::{Address, NameOrAddress, TxHash, U256},
 };
 use eyre::WrapErr;
 use foundry_common::fs;
@@ -38,8 +40,9 @@ use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 #[tokio::main]
@@ -620,12 +623,82 @@ async fn main() -> eyre::Result<()> {
             }
             println!("{name}");
         }
-        Subcommands::Storage { address, slot, rpc_url, block } => {
+        Subcommands::Storage { address, slot, rpc_url, block, contract } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = Provider::try_from(&rpc_url)?;
+            if let Some(slot) = slot {
+                let value = provider.get_storage_at(address, slot, block).await?;
+                println!("{:?}", value);
+            } else if let Some(contract) = contract {
+                let root: PathBuf = if contract.path.is_none() {
+                    find_project_root_path().unwrap()
+                } else {
+                    contract.path.as_ref().unwrap().into()
+                };
+                let figment = Config::figment_with_root(root);
+                let mut config = Config::from_provider(figment).sanitized();
+                if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                    config.extra_output.push(ContractOutputSelection::StorageLayout);
+                }
+                let project = config.project()?;
+                let output = project.compile()?;
+                let artifact = output.find_contract(&contract);
+                let local_bytecode = artifact.unwrap().bytecode.clone();
+                if let Some(local_bytecode) = local_bytecode {
+                    let local_bytecode = format!("{}", local_bytecode.object.as_bytes().unwrap());
+                    let provider = Arc::new(provider);
+                    let code = Cast::new(provider.clone()).code(address.clone(), block).await?;
+                    if !code.eq(&local_bytecode) {
+                        if let Some(storage_layout) = &artifact.unwrap().storage_layout {
+                            let mut table = Table::new();
+                            let mut header =
+                                vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"];
+                            let (provider, contract_addr) = if let (
+                                rpc_url,
+                                NameOrAddress::Address(addr),
+                            ) = (&rpc_url, address)
+                            {
+                                header.push("Value");
+                                (Some(get_http_provider(rpc_url, true)), addr)
+                            } else {
+                                (None, Address::default())
+                            };
 
-            let provider = Provider::try_from(rpc_url)?;
-            let value = provider.get_storage_at(address, slot, block).await?;
-            println!("{:?}", value);
+                            table.set_header(header);
+                            for slot in &storage_layout.storage {
+                                let storage_type = storage_layout.types.get(&slot.storage_type);
+                                let mut row = vec![
+                                    slot.label.clone(),
+                                    storage_type
+                                        .as_ref()
+                                        .map_or("?".to_string(), |t| t.label.clone()),
+                                    slot.slot.clone(),
+                                    slot.offset.to_string(),
+                                    storage_type
+                                        .as_ref()
+                                        .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
+                                    slot.contract.clone(),
+                                ];
+                                if let Some(ref provider) = provider {
+                                    let location =
+                                        TxHash::from_low_u64_be(slot.slot.parse::<u64>()?);
+                                    let value = provider
+                                        .get_storage_at(contract_addr, location, block)
+                                        .await?;
+                                    row.push(format!("{:?}", value));
+                                }
+                                table.add_row(row);
+                            }
+                            println!("{table}");
+                        }
+                    } else {
+                        println!("code mismatch");
+                        // TODO: fetch source from etherscan(see https://github.com/foundry-rs/foundry/pull/1413), compile and get storage value
+                    }
+                }
+            } else {
+                // TODO: fetch source from etherscan(see https://github.com/foundry-rs/foundry/pull/1413), compile and get storage value,
+            }
         }
         Subcommands::Proof { address, slots, rpc_url, block } => {
             let rpc_url = consume_config_rpc_url(rpc_url);

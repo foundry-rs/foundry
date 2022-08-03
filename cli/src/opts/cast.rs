@@ -4,7 +4,10 @@ use crate::{
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
+use ethers::{
+    prelude::info::ContractInfo,
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Parser)]
@@ -664,7 +667,16 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
         address: NameOrAddress,
         #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot), value_name = "SLOT")]
-        slot: H256,
+        slot: Option<H256>,
+
+        #[clap(
+            short,
+            long,
+            help = "The identifier of the contract to inspect in the form `(<path>:)?<contractname>`.",
+            value_name = "CONTRACT"
+        )]
+        contract: Option<ContractInfo>,
+
         #[clap(short, long, env = "ETH_RPC_URL", value_name = "URL")]
         rpc_url: Option<String>,
         #[clap(

@@ -1,8 +1,10 @@
 use crate::{
-    cmd::forge::build::{self, CoreBuildArgs},
+    cmd::{
+        forge::build::{self, CoreBuildArgs},
+        Cmd,
+    },
     compile,
     opts::forge::CompilerArgs,
-    utils::get_http_provider,
 };
 use clap::Parser;
 use comfy_table::Table;
@@ -12,7 +14,6 @@ use ethers::prelude::{
         EvmOutputSelection, EwasmOutputSelection,
     },
     info::ContractInfo,
-    Address, Middleware, TxHash,
 };
 
 use serde_json::{to_value, Value};
@@ -35,22 +36,13 @@ pub struct InspectArgs {
     /// All build arguments are supported
     #[clap(flatten)]
     build: build::CoreBuildArgs,
-
-    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.", value_name = "URL")]
-    pub rpc_url: Option<String>,
-
-    #[clap(
-        short,
-        long,
-        help = "The address of the contract to inspect in the form `0x<address>`.",
-        value_name = "ADDRESS"
-    )]
-    pub address: Option<String>,
 }
 
-impl InspectArgs {
-    pub async fn run(self) -> eyre::Result<()> {
-        let InspectArgs { mut contract, field, build, pretty, rpc_url, address } = self;
+impl Cmd for InspectArgs {
+    type Output = ();
+
+    fn run(self) -> eyre::Result<Self::Output> {
+        let InspectArgs { mut contract, field, build, pretty } = self;
 
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
@@ -133,20 +125,12 @@ impl InspectArgs {
                 if pretty {
                     if let Some(storage_layout) = &artifact.storage_layout {
                         let mut table = Table::new();
-                        let mut header =
-                            vec!["Name", "Type", "Slot", "Offset", "Bytes", "Contract"];
-                        let (provider, contract_addr) =
-                            if let (Some(rpc_url), Some(addr)) = (rpc_url, address) {
-                                header.push("Value");
-                                (Some(get_http_provider(&rpc_url, false)), addr.parse()?)
-                            } else {
-                                (None, Address::default())
-                            };
-
-                        table.set_header(header);
+                        table.set_header(vec![
+                            "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
+                        ]);
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
-                            let mut row = vec![
+                            table.add_row(vec![
                                 slot.label.clone(),
                                 storage_type.as_ref().map_or("?".to_string(), |t| t.label.clone()),
                                 slot.slot.clone(),
@@ -155,14 +139,7 @@ impl InspectArgs {
                                     .as_ref()
                                     .map_or("?".to_string(), |t| t.number_of_bytes.clone()),
                                 slot.contract.clone(),
-                            ];
-                            if let Some(ref provider) = provider {
-                                let location = TxHash::from_low_u64_be(slot.slot.parse::<u64>()?);
-                                let value =
-                                    provider.get_storage_at(contract_addr, location, None).await?;
-                                row.push(format!("{:?}", value));
-                            }
-                            table.add_row(row);
+                            ]);
                         }
                         println!("{table}");
                     }
