@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use yansi::{Color, Paint, Style};
+use yansi::Paint;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -70,68 +70,25 @@ impl Spinner {
     }
 
     pub fn tick(&mut self) {
-        if self.indicate_progress(Color::Green, self.indicator[self.idx]) {
-            self.idx += 1;
-            if self.idx >= self.indicator.len() {
-                self.idx = 0;
-            }
-        }
-    }
-
-    fn indicate_progress(&self, color: Color, icon: &'static str) -> bool {
         if self.no_progress {
-            return false
+            return
         }
 
-        self.clear_line();
         print!(
-            "{} {}",
-            Paint::new(format!("[{}]", Style::new(color).paint(icon))).bold(),
+            "\r\x33[2K\r{} {}",
+            Paint::new(format!("[{}]", Paint::green(self.indicator[self.idx]))).bold(),
             self.message
         );
         io::stdout().flush().unwrap();
 
-        true
-    }
-
-    pub fn done(&self) {
-        self.indicate_progress(Color::Green, "+");
-        println!();
-    }
-
-    pub fn finish(&mut self, msg: impl Into<String>) {
-        self.message(msg);
-        self.done();
+        self.idx += 1;
+        if self.idx >= self.indicator.len() {
+            self.idx = 0;
+        }
     }
 
     pub fn message(&mut self, msg: impl Into<String>) {
         self.message = msg.into();
-    }
-
-    pub fn clear_line(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x33[2K\r");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn clear(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x1b[2K");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn fail(&mut self, err: &str) {
-        self.error(err);
-        self.clear();
-    }
-
-    pub fn error(&mut self, line: &str) {
-        self.indicate_progress(Color::Red, "-");
-        println!();
     }
 }
 
@@ -287,8 +244,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
             s.tick();
         }
-
-        s.finish("Done".to_string());
     }
 
     #[test]
