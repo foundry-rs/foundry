@@ -10,12 +10,12 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, SpecId,
 };
-use std::{cell::RefCell, collections::HashSet, io::Write, rc::Rc};
+use std::{cell::RefCell, collections::BTreeSet, io::Write, rc::Rc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Rc<RefCell<HashSet<[u8; 32]>>>;
+pub type EvmFuzzState = Rc<RefCell<BTreeSet<[u8; 32]>>>;
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
@@ -48,7 +48,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
-    let mut state: HashSet<[u8; 32]> = HashSet::new();
+    let mut state: BTreeSet<[u8; 32]> = BTreeSet::new();
     for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
 

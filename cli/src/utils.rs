@@ -188,6 +188,17 @@ macro_rules! p_println {
 }
 pub(crate) use p_println;
 
+/// Loads a dotenv file, ignoring potential failure.
+///
+/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// the logging behavior of Foundry.
+///
+/// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
+/// to not be able to configure the colors. It would also mess up the JSON output.
+pub fn load_dotenv() {
+    dotenv::dotenv().ok();
+}
+
 /// Disables terminal colours if either:
 /// - Running windows and the terminal does not support colour codes.
 /// - Colour has been disabled by some environment variable.

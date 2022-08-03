@@ -142,12 +142,16 @@ impl IntStrategy {
         // generate random number of bits uniformly
         let bits = rng.gen_range(0..=self.bits);
 
+        if bits == 0 {
+            return Ok(IntValueTree::new(0.into(), false))
+        }
+
         // init 2 128-bit randoms
         let mut higher: u128 = rng.gen_range(0..=u128::MAX);
         let mut lower: u128 = rng.gen_range(0..=u128::MAX);
 
         // cut 2 randoms according to bits size
-        match bits {
+        match bits - 1 {
             x if x < 128 => {
                 lower &= (1u128 << x) - 1;
                 higher = 0;
@@ -163,8 +167,10 @@ impl IntStrategy {
         inner[1] = (lower >> 64) as u64;
         inner[2] = (higher & mask64) as u64;
         inner[3] = (higher >> 64) as u64;
-        // on overflow it will just go negative
-        let (start, _) = I256::overflowing_from_sign_and_abs(Sign::Positive, U256(inner));
+        let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
+        // we have a small bias here, i.e. intN::min will never be generated
+        // but it's ok since it's generated in `fn generate_edge_tree(...)`
+        let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256(inner));
 
         Ok(IntValueTree::new(start, false))
     }

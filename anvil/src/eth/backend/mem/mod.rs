@@ -36,6 +36,7 @@ use anvil_core::{
 };
 use anvil_rpc::error::RpcError;
 use ethers::{
+    abi::ethereum_types::BigEndianHash,
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         Address, Block as EthersBlock, BlockId, Bytes, Filter, FilteredParams, Log, Trace,
@@ -327,8 +328,8 @@ impl Backend {
     }
 
     /// Sets the value for the given slot of the given address
-    pub fn set_storage_at(&self, address: Address, slot: U256, val: U256) {
-        self.db.write().set_storage_at(address, slot, val);
+    pub fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
+        self.db.write().set_storage_at(address, slot, val.into_uint());
     }
 
     /// Returns true for post London

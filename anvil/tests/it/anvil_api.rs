@@ -1,9 +1,11 @@
 //! tests for custom anvil endpoints
 use crate::abi::*;
 use anvil::{spawn, Hardfork, NodeConfig};
+use anvil_core::eth::EthRequest;
 use ethers::{
+    abi::ethereum_types::BigEndianHash,
     prelude::{Middleware, SignerMiddleware},
-    types::{Address, BlockNumber, TransactionRequest, U256},
+    types::{Address, BlockNumber, TransactionRequest, H256, U256},
 };
 use std::{
     sync::Arc,
@@ -18,6 +20,24 @@ async fn can_set_gas_price() {
     let gas_price = 1337u64.into();
     api.anvil_set_min_gas_price(gas_price).await.unwrap();
     assert_eq!(gas_price, provider.get_gas_price().await.unwrap());
+}
+
+// Ref <https://github.com/foundry-rs/foundry/issues/2341>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_storage() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let s = r#"{"jsonrpc": "2.0", "method": "hardhat_setStorageAt", "id": 1, "params": ["0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56", "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
+    let req = serde_json::from_str::<EthRequest>(s).unwrap();
+    let (addr, slot, val) = match req.clone() {
+        EthRequest::SetStorageAt(addr, slot, val) => (addr, slot, val),
+        _ => unreachable!(),
+    };
+
+    api.execute(req).await;
+
+    let storage_value = api.storage_at(addr, slot, None).await.unwrap();
+    assert_eq!(val, storage_value);
+    assert_eq!(val, H256::from_uint(&U256::from(12345)));
 }
 
 #[tokio::test(flavor = "multi_thread")]

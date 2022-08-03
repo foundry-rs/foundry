@@ -706,32 +706,50 @@ impl<'a, W: Write> Formatter<'a, W> {
             if !is_first && comment.has_newline_before {
                 write_preserved_ln(self)?;
             }
-            let mut lines = comment.comment.splitn(2, '\n');
-            write!(self.buf(), "{}", lines.next().unwrap())?;
-            if let Some(line) = lines.next() {
-                write_preserved_ln(self)?;
-                self.write_raw(line)?;
+            if comment.is_doc_block() {
+                let content = comment
+                    .comment
+                    .trim()
+                    .strip_prefix("/**")
+                    .unwrap()
+                    .strip_suffix("*/")
+                    .unwrap()
+                    .trim();
+                let lines = content.lines().map(|line| line.trim_start()).peekable();
+                writeln!(self.buf(), "/**")?;
+                for line in lines {
+                    let line = line.trim().trim_start_matches('*').trim_start();
+                    writeln!(self.buf(), " * {line}")?;
+                }
+                write!(self.buf(), " */")?;
+            } else {
+                let mut lines = comment.comment.splitn(2, '\n');
+                write!(self.buf(), "{}", lines.next().unwrap())?;
+                if let Some(line) = lines.next() {
+                    write_preserved_ln(self)?;
+                    self.write_raw(line)?;
+                }
             }
             write_preserved_ln(self)?;
-        } else {
-            let indented = self.is_beginning_of_line();
-            self.indented_if(indented, 1, |fmt| {
-                if !indented && fmt.next_char_needs_space('/') {
-                    write!(fmt.buf(), " ")?;
-                }
-                let mut lines = comment.comment.splitn(2, '\n');
-                write!(fmt.buf(), "{}", lines.next().unwrap())?;
-                if let Some(line) = lines.next() {
-                    writeln!(fmt.buf())?;
-                    fmt.write_raw(line)?;
-                }
-                if comment.is_line() {
-                    writeln!(fmt.buf())?;
-                }
-                Ok(())
-            })?;
+            return Ok(())
         }
-        Ok(())
+
+        let indented = self.is_beginning_of_line();
+        self.indented_if(indented, 1, |fmt| {
+            if !indented && fmt.next_char_needs_space('/') {
+                write!(fmt.buf(), " ")?;
+            }
+            let mut lines = comment.comment.splitn(2, '\n');
+            write!(fmt.buf(), "{}", lines.next().unwrap())?;
+            if let Some(line) = lines.next() {
+                writeln!(fmt.buf())?;
+                fmt.write_raw(line)?;
+            }
+            if comment.is_line() {
+                writeln!(fmt.buf())?;
+            }
+            Ok(())
+        })
     }
 
     /// Write multiple comments
@@ -1333,7 +1351,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 SourceUnitPart::VariableDefinition(_) => {
                     !matches!(unit, SourceUnitPart::VariableDefinition(_))
                 }
-                SourceUnitPart::DocComment(_) => false,
                 _ => true,
             },
             None => false,
@@ -1349,47 +1366,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         // EOF newline
         writeln!(self.buf())?;
-
-        Ok(())
-    }
-
-    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> Result<()> {
-        match doc_comment.ty {
-            CommentType::Line => {
-                write!(self.buf(), "///{}", doc_comment.comment.trim_end())?;
-            }
-            CommentType::Block => {
-                let lines = doc_comment
-                    .comment
-                    .trim_end()
-                    .lines()
-                    .map(|line| line.trim_start())
-                    .peekable()
-                    .collect::<Vec<_>>();
-                if lines.iter().skip(1).all(|line| line.starts_with('*')) {
-                    writeln!(self.buf(), "/**")?;
-                    let mut lines = lines.into_iter();
-                    if let Some(first_line) = lines.next() {
-                        if !first_line.is_empty() {
-                            // write the original first line
-                            writeln!(
-                                self.buf(),
-                                " *{}",
-                                doc_comment.comment.lines().next().unwrap().trim_end()
-                            )?;
-                        }
-                    }
-                    for line in lines {
-                        writeln!(self.buf(), " *{}", &line[1..].trim_end())?;
-                    }
-                    write!(self.buf(), " */")?;
-                } else {
-                    write!(self.buf(), "/**")?;
-                    self.write_raw(&doc_comment.comment)?;
-                    write!(self.buf(), "*/")?;
-                }
-            }
-        }
 
         Ok(())
     }
@@ -1465,7 +1441,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                                 true
                             }
                         }
-                        ContractPart::DocComment(_) => false,
                         _ => true,
                     },
                     None => false,
@@ -1479,7 +1454,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let last_byte = contract
                 .parts
                 .last()
-                .map(|p| p.loc())
+                .map(|p| *p.loc())
                 .or_else(|| contract.base.last().map(|b| b.loc))
                 .unwrap_or(contract.loc)
                 .end();

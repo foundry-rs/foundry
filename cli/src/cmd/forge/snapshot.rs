@@ -8,6 +8,7 @@ use crate::cmd::{
     Cmd,
 };
 use clap::{Parser, ValueHint};
+use ethers::types::U256;
 use eyre::Context;
 use forge::result::TestKindGas;
 use once_cell::sync::Lazy;
@@ -29,6 +30,14 @@ use yansi::Paint;
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
 });
+
+/// Deterministic fuzzer seed used for gas snapshots.
+///
+/// The keccak256 hash of "foundry rulez"
+pub static SNAPSHOT_FUZZ_SEED: [u8; 32] = [
+    0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
+    0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
+];
 
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
@@ -75,10 +84,6 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
-
-    /// Include the mean and median gas use of fuzz tests in the snapshot.
-    #[clap(long, env = "FORGE_INCLUDE_FUZZ_TESTS")]
-    pub include_fuzz_tests: bool,
 }
 
 impl SnapshotArgs {
@@ -102,8 +107,11 @@ impl SnapshotArgs {
 impl Cmd for SnapshotArgs {
     type Output = ();
 
-    fn run(self) -> eyre::Result<()> {
-        let outcome = custom_run(self.test, self.include_fuzz_tests)?;
+    fn run(mut self) -> eyre::Result<()> {
+        // Set fuzz seed so gas snapshots are deterministic
+        self.test.fuzz_seed = Some(U256::from_big_endian(&SNAPSHOT_FUZZ_SEED));
+
+        let outcome = custom_run(self.test)?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 

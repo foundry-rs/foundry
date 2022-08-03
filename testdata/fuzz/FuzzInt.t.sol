@@ -21,7 +21,7 @@ contract FuzzNumbersTest is DSTest {
         assertTrue(val != -1);
     }
 
-    function testNegative2(int256 val) public {
+    function testNegative2(int128 val) public {
         assertTrue(val != 1);
     }
 

@@ -6,6 +6,7 @@ use foundry_cli_test_utils::{
     util::{TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
+use foundry_utils::rpc;
 
 use regex::Regex;
 use std::{env, path::PathBuf, str::FromStr};
@@ -210,6 +211,79 @@ result: uint256 255
 "
     ));
 });
+
+forgetest_async!(
+    can_broadcast_script_skipping_simulation,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        foundry_cli_test_utils::util::initialize(prj.root());
+        // This example script would fail in on-chain simulation
+        let script = prj
+            .inner()
+            .add_source(
+                "Foo",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "forge-std/Script.sol";
+
+contract HashChecker {
+    bytes32 public lastHash;
+    function update() public {
+        bytes32 newHash = blockhash(block.number - 1);
+        require(newHash != lastHash, "Hash didn't change");
+        lastHash = newHash;
+    }
+}
+contract Demo is Script {
+    function run() external returns (uint256 result, uint8) {
+        vm.startBroadcast();
+        HashChecker hashChecker = new HashChecker();
+        uint numUpdates = 8;
+        vm.roll(block.number - numUpdates);
+        for(uint i = 0; i < numUpdates; i++) {
+            vm.roll(block.number + 1);
+            hashChecker.update();
+        }
+    }
+}"#,
+            )
+            .unwrap();
+
+        let node_config = NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
+            .silent();
+
+        let (_api, handle) = spawn(node_config).await;
+        let target_contract = script.display().to_string() + ":Demo";
+        let private_key =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+        cmd.set_current_dir(prj.root());
+
+        cmd.args([
+            "script",
+            &target_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--gas-estimate-multiplier",
+            "200",
+            "--private-key",
+            &private_key,
+        ]);
+
+        let output = cmd.stdout_lossy();
+
+        println!("{}", output.to_string());
+
+        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    }
+);
 
 forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
