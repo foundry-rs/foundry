@@ -211,10 +211,9 @@ impl ScriptArgs {
                 if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
                     gas_filled_txs = VecDeque::new();
-                    for tx in txs {
-                        gas_filled_txs.push_back(TransactionWithMetadata::from_typed_transaction(
-                            tx.clone(),
-                        )?);
+                    for tx in txs.into_iter() {
+                        gas_filled_txs
+                            .push_back(TransactionWithMetadata::from_typed_transaction(tx)?);
                     }
                 } else {
                     gas_filled_txs = self
