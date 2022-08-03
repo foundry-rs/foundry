@@ -40,7 +40,6 @@ pub struct InspectArgs {
 
 impl Cmd for InspectArgs {
     type Output = ();
-
     fn run(self) -> eyre::Result<Self::Output> {
         let InspectArgs { mut contract, field, build, pretty } = self;
 
@@ -128,6 +127,7 @@ impl Cmd for InspectArgs {
                         table.set_header(vec![
                             "Name", "Type", "Slot", "Offset", "Bytes", "Contract",
                         ]);
+
                         for slot in &storage_layout.storage {
                             let storage_type = storage_layout.types.get(&slot.storage_type);
                             table.add_row(vec![
