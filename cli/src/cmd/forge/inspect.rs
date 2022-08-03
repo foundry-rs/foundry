@@ -15,7 +15,6 @@ use ethers::prelude::{
     },
     info::ContractInfo,
 };
-
 use serde_json::{to_value, Value};
 use std::{fmt, str::FromStr};
 
