@@ -4,6 +4,7 @@ use crate::{
 };
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers::types::U256;
+use foundry_common::TestFunctionExt;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -70,7 +71,7 @@ impl GasReport {
                     }
                     // TODO: More robust test contract filtering
                     RawOrDecodedCall::Decoded(func, sig, _)
-                        if !func.starts_with("test") && func != "setUp" =>
+                        if !func.is_test() && !func.is_setup() =>
                     {
                         let function_report = contract_report
                             .functions

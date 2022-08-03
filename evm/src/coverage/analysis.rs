@@ -1,5 +1,6 @@
 use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
 use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
+use foundry_common::TestFunctionExt;
 use semver::Version;
 use std::collections::HashMap;
 use tracing::warn;
@@ -482,7 +483,7 @@ impl SourceAnalyzer {
                 )?;
                 let is_test = items.iter().any(|item| {
                     if let CoverageItemKind::Function { name } = &item.kind {
-                        name.starts_with("test")
+                        name.is_test()
                     } else {
                         false
                     }
