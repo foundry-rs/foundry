@@ -648,7 +648,7 @@ async fn main() -> eyre::Result<()> {
                     let local_bytecode = format!("{}", local_bytecode.object.as_bytes().unwrap());
                     let provider = Arc::new(provider);
                     let code = Cast::new(provider.clone()).code(address.clone(), block).await?;
-                    if !code.eq(&local_bytecode) {
+                    if code.eq(&local_bytecode) {
                         if let Some(storage_layout) = &artifact.unwrap().storage_layout {
                             let mut table = Table::new();
                             let mut header =
