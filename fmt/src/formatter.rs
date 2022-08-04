@@ -598,7 +598,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines in source between two byte indexes
     fn blank_lines(&self, start: usize, end: usize) -> usize {
-        self.source[start..end].matches('\n').count()
+        self.source[start..end].trim_comments().matches('\n').count()
     }
 
     /// Find the next instance of the character in source
@@ -771,6 +771,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         })
     }
 
+    // TODO handle whitespace between comments for disabled sections
     /// Write multiple comments
     fn write_comments<'b>(
         &mut self,
@@ -1074,7 +1075,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(())
     }
 
-    // TODO write space between comments and items as is if those lines have formatting disabled
     /// Write each [Visitable] item on a separate line. The function will check if there are any
     /// blank lines between each visitable statement and will apply a single blank line if there
     /// exists any. The `needs_space` callback can force a newline and is given the last_item if
@@ -1085,19 +1085,59 @@ impl<'a, W: Write> Formatter<'a, W> {
         V: Visitable + LineOfCode + 'b,
         F: Fn(&Option<&V>, &V) -> bool,
     {
+        // adjust the last byte written to a writable src code location. this is to account for
+        // locations which do not include the actual end of a statement (usually a semicolon) or may
+        // end after postfix operators that need to be written after the item. This heuristic
+        // simply searches for the next whitespace or comment character in the src between
+        let adjust_last_byte_written = |from: usize, to: usize| {
+            let to = to.max(from);
+            from + self.source[from..to]
+                .char_indices()
+                .find_map(
+                    |(idx, ch)| if ch.is_whitespace() || ch == '/' { Some(idx) } else { None },
+                )
+                .unwrap_or(to - from)
+        };
+
         let mut last_item: Option<&V> = None;
+        let mut last_loc_end = 0;
         let mut last_byte_written = 0;
         let mut is_first_line = true;
         let mut items_iter = items.peekable();
 
         while let Some(item) = items_iter.next() {
+            let loc = item.loc();
+
             // check if the next block requires space
             let mut needs_space = needs_space_fn(&last_item, item);
 
             // write prefix comments
             let comments = self.comments.remove_prefixes_before(item.loc().start());
             let mut is_first_comment = true;
+            if let Some(comment) = comments.first() {
+                last_byte_written =
+                    adjust_last_byte_written(last_byte_written, comment.loc.start());
+            }
             for mut comment in comments {
+                // check if the comment or space between comments should be ignored
+                let unwritten_src_loc =
+                    Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
+                if self.inline_config.is_disabled(unwritten_src_loc) {
+                    is_first_line = false;
+                    if self.inline_config.is_disabled(comment.loc) {
+                        is_first_comment = false;
+                        // re-insert comment and let next iteration handle writing source
+                        self.comments.insert(comment);
+                        continue
+                    } else {
+                        self.visit_source(unwritten_src_loc)?;
+                        needs_space = self
+                            .blank_lines(unwritten_src_loc.start(), unwritten_src_loc.end()) >
+                            1;
+                    }
+                }
+
+                // add a newline before comment if necessary
                 if is_first_line {
                     comment.has_newline_before = false;
                 } else if needs_space || comment.has_newline_before {
@@ -1106,31 +1146,58 @@ impl<'a, W: Write> Formatter<'a, W> {
                     }
                     needs_space = false
                 }
+
                 self.write_comment(&comment, is_first_comment)?;
                 is_first_line = false;
                 is_first_comment = false;
-                last_byte_written = comment.loc.end();
+                last_loc_end = comment.loc.end();
+                last_byte_written = last_loc_end + 1; // increment by 1 to account for newline
             }
 
             // write space if required or if there are blank lines in between
-            if !is_first_line &&
-                (needs_space || self.blank_lines(last_byte_written, item.loc().start()) > 1)
+            let unwritten_src_loc = Loc::File(loc.file_no(), last_byte_written, loc.start());
+            if self.inline_config.is_disabled(unwritten_src_loc) {
+                self.visit_source(unwritten_src_loc)?;
+            } else if !is_first_line &&
+                (needs_space || self.blank_lines(last_loc_end, loc.start()) > 1)
             {
                 writeln!(self.buf())?;
             }
 
             // write source unit part
             item.visit(self)?;
-            last_byte_written = item.loc().end();
+            last_loc_end = loc.end();
+            last_byte_written = last_loc_end;
             last_item = Some(item);
             is_first_line = false;
 
             // write postfix comments
             if let Some(next_item) = items_iter.peek() {
                 let comments = self.comments.remove_postfixes_before(next_item.loc().start());
-                self.write_comments(&comments)?;
-                if let Some(last_comment) = comments.last() {
-                    last_byte_written = last_comment.loc.end();
+                if let Some(comment) = comments.first() {
+                    last_byte_written =
+                        adjust_last_byte_written(last_byte_written, comment.loc.start());
+                }
+                for comment in comments {
+                    // check if the comment or space between comments should be ignored
+                    let unwritten_src_loc =
+                        Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
+                    if self.inline_config.is_disabled(unwritten_src_loc) {
+                        if self.inline_config.is_disabled(comment.loc) {
+                            // re-insert comment and let next iteration handle writing source
+                            self.comments.insert(comment);
+                            continue
+                        } else {
+                            self.visit_source(unwritten_src_loc)?;
+                        }
+                    }
+
+                    self.write_comment(&comment, false)?;
+                    last_loc_end = comment.loc.end();
+                    last_byte_written = last_loc_end;
+                    if comment.is_line() {
+                        last_byte_written += 1; // increment by 1 to account for newline
+                    }
                 }
                 self.write_whitespace_separator(true)?;
             }
@@ -2056,10 +2123,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
-        if let Some(body) = func.body.as_ref() {
-            return_source_if_disabled!(self, func.loc.with_end_from(&LineOfCode::loc(&body)));
+        if func.body.is_some() {
+            return_source_if_disabled!(self, func.loc());
         } else {
-            return_source_if_disabled!(self, func.loc, ';');
+            return_source_if_disabled!(self, func.loc(), ';');
         }
 
         self.with_function_context(func.clone(), |fmt| {
@@ -2599,7 +2666,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
-        return_source_if_disabled!(self, var.loc);
+        return_source_if_disabled!(self, var.loc, ';');
 
         var.ty.visit(self)?;
 
@@ -3365,7 +3432,7 @@ mod tests {
         let mut source_formatted = String::new();
         format(&mut source_formatted, source_parsed, config.clone()).unwrap();
 
-        // println!("{}", source_formatted);
+        println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(

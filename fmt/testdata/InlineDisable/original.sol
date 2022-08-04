@@ -13,6 +13,15 @@ enum States { State1, State2, State3, State4, State5, State6, State7, State8, St
 // forgefmt: disable-next-line
 enum States { State1, State2, State3, State4, State5, State6, State7, State8, State9 }
 
+// forgefmt: disable-next-line
+bytes32 constant private BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+
+// forgefmt: disable-start
+
+// hello
+
+// forgefmt: disable-end
+
 function test() {
     uint256 pi_approx = 666    /    212;
     uint256 pi_approx = /* forgefmt: disable-start */ 666    /    212; /* forgefmt: disable-end */

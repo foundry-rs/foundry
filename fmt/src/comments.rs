@@ -230,6 +230,19 @@ impl Comments {
         self.postfixes.split_off(self.postfixes.len() - pos).into()
     }
 
+    /// Insert a comment
+    pub(crate) fn insert(&mut self, comment: CommentWithMetadata) {
+        let list = match comment.position {
+            CommentPosition::Prefix => &mut self.prefixes,
+            CommentPosition::Postfix => &mut self.postfixes,
+        };
+        let pos = match list.binary_search(&comment) {
+            Ok(pos) => pos,
+            Err(pos) => pos,
+        };
+        list.insert(pos, comment);
+    }
+
     /// Remove any comments that occur before the byte offset in the src
     pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         self.remove_prefixes_before(byte)

@@ -80,7 +80,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::StructDefinition(structure) => structure.loc,
             SourceUnitPart::EventDefinition(event) => event.loc,
             SourceUnitPart::ErrorDefinition(error) => error.loc,
-            SourceUnitPart::FunctionDefinition(function) => function.loc,
+            SourceUnitPart::FunctionDefinition(function) => function.loc(),
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
             SourceUnitPart::Using(using) => using.loc,
