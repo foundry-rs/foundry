@@ -220,7 +220,7 @@ impl TestOutcome {
 
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
+        self.results.values().flat_map(|suite| suite.tests())
     }
 
     /// Returns an iterator over all `Test`
@@ -235,26 +235,34 @@ impl TestOutcome {
 
     /// Checks if there are any failures and failures are disallowed
     pub fn ensure_ok(&self) -> eyre::Result<()> {
-        if !self.allow_failure {
-            let failures = self.failures().count();
-            if failures > 0 {
-                println!();
-                println!("Failed tests:");
-                for (name, result) in self.failures() {
-                    short_test_result(name, result);
-                }
-                println!();
-
-                let successes = self.successes().count();
-                println!(
-                    "Encountered a total of {} failing tests, {} tests succeeded",
-                    Paint::red(failures.to_string()),
-                    Paint::green(successes.to_string())
-                );
-                std::process::exit(1);
-            }
+        let failures = self.failures().count();
+        if self.allow_failure || failures == 0 {
+            return Ok(())
         }
-        Ok(())
+
+        println!();
+        println!("Failing tests:");
+        for (suite_name, suite) in self.results.iter() {
+            let failures = suite.failures().count();
+            if failures == 0 {
+                continue
+            }
+
+            let term = if failures > 1 { "tests" } else { "test" };
+            println!("Encountered {} failing {} in {}", failures, term, suite_name);
+            for (name, result) in suite.failures() {
+                short_test_result(name, result);
+            }
+            println!();
+        }
+
+        let successes = self.successes().count();
+        println!(
+            "Encountered a total of {} failing tests, {} tests succeeded",
+            Paint::red(failures.to_string()),
+            Paint::green(successes.to_string())
+        );
+        std::process::exit(1);
     }
 
     pub fn duration(&self) -> Duration {
