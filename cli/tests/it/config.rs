@@ -506,3 +506,31 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
 });
+
+// test to check that loading the config emits warnings on the root foundry.toml and
+// is silent for any libs
+forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
+    cmd.assert_non_empty_stdout();
+
+    let faulty_toml = r#"[default]
+    src = 'src'
+    out = 'out'
+    libs = ['lib']"#;
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
+
+    cmd.forge_fuse().args(["config"]);
+    let output = cmd.execute();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| { line.contains("Unknown section [default]") })
+            .count(),
+        1
+    )
+});

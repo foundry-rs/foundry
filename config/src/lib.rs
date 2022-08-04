@@ -64,6 +64,9 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 
+mod providers;
+use providers::*;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -329,7 +332,7 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
-    /// Warnings gathered when loading the Config. See [`WarningsProvicer`] for more information
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
     #[serde(default, skip_serializing)]
     pub __warnings: Vec<Warning>,
 }
@@ -1252,7 +1255,7 @@ impl Config {
 
         // add warnings
         figment = {
-            let warnings = WarningsProvicer::for_figment(&toml_provider, &figment);
+            let warnings = WarningsProvider::for_figment(&toml_provider, &figment);
             figment.merge(warnings)
         };
 
@@ -2033,80 +2036,6 @@ impl<'a> Provider for RemappingsProvider<'a> {
 
     fn profile(&self) -> Option<Profile> {
         Some(Config::selected_profile())
-    }
-}
-
-/// Generate warnings for unknown sections
-struct WarningsProvicer<P> {
-    provider: P,
-    profile: Profile,
-    old_warnings: Result<Vec<Warning>, Error>,
-}
-
-impl<P> WarningsProvicer<P> {
-    const WARNINGS_KEY: &'static str = "__warnings";
-
-    fn new(
-        provider: P,
-        profile: impl Into<Profile>,
-        old_warnings: Result<Vec<Warning>, Error>,
-    ) -> Self {
-        Self { provider, profile: profile.into(), old_warnings }
-    }
-
-    fn for_figment(provider: P, figment: &Figment) -> Self {
-        let old_warnings = {
-            let warnings_res = figment.extract_inner(Self::WARNINGS_KEY);
-            if warnings_res.as_ref().err().map(|err| err.missing()).unwrap_or(false) {
-                Ok(vec![])
-            } else {
-                warnings_res
-            }
-        };
-        Self::new(provider, figment.profile().clone(), old_warnings)
-    }
-}
-
-impl<P: Provider> WarningsProvicer<P> {
-    pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
-        let mut out = self.old_warnings.clone()?;
-        out.extend(
-            self.provider
-                .data()
-                .unwrap_or_default()
-                .keys()
-                .filter(|k| {
-                    k != &Config::PROFILE_SECTION &&
-                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
-                })
-                .map(|unknown_section| {
-                    let source = self.provider.metadata().source.map(|s| s.to_string());
-                    Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
-                }),
-        );
-        Ok(out)
-    }
-}
-
-impl<P: Provider> Provider for WarningsProvicer<P> {
-    fn metadata(&self) -> Metadata {
-        if let Some(source) = self.provider.metadata().source {
-            Metadata::from("Warnings", source)
-        } else {
-            Metadata::named("Warnings")
-        }
-    }
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        Ok(Map::from([(
-            self.profile.clone(),
-            Dict::from([(
-                Self::WARNINGS_KEY.to_string(),
-                Value::serialize(self.collect_warnings()?)?,
-            )]),
-        )]))
-    }
-    fn profile(&self) -> Option<Profile> {
-        Some(self.profile.clone())
     }
 }
 
