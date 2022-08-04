@@ -275,7 +275,19 @@ impl<'a> ContractRunner<'a> {
                 test_results.len()
             );
         }
-        Ok(SuiteResult::new(duration, test_results, warnings))
+
+        // All ignored tests
+        let ignored: Vec<_> = self
+            .contract
+            .functions()
+            .filter(|func| func.is_test_ignore())
+            .filter_map(|func| {
+                let sig = func.signature();
+                filter.matches_test(&sig).then_some(sig)
+            })
+            .collect();
+
+        Ok(SuiteResult::with_ignored(duration, test_results, warnings, ignored))
     }
 
     /// Runs a single test

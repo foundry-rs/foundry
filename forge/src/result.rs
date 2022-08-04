@@ -15,10 +15,12 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 pub struct SuiteResult {
     /// Total duration of the test run for this block of tests
     pub duration: Duration,
-    /// Individual test results. `test method name -> TestResult`
+    /// Individual test results. `test method signature -> TestResult`
     pub test_results: BTreeMap<String, TestResult>,
     // Warnings
     pub warnings: Vec<String>,
+    /// signatures of ignored tests
+    pub ignored: Vec<String>,
 }
 
 impl SuiteResult {
@@ -27,7 +29,16 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
     ) -> Self {
-        Self { duration, test_results, warnings }
+        Self { duration, test_results, warnings, ignored: Default::default() }
+    }
+
+    pub fn with_ignored(
+        duration: Duration,
+        test_results: BTreeMap<String, TestResult>,
+        warnings: Vec<String>,
+        ignored: Vec<String>,
+    ) -> Self {
+        Self { duration, test_results, warnings, ignored }
     }
 
     pub fn is_empty(&self) -> bool {

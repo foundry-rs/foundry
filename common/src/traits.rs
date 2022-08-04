@@ -20,6 +20,8 @@ pub trait TestFunctionExt {
     fn is_test(&self) -> bool;
     /// Whether this function is a test that should fail
     fn is_test_fail(&self) -> bool;
+    /// Whether this function is a test that should be ignored
+    fn is_test_ignore(&self) -> bool;
     /// Whether this function is a `setUp` function
     fn is_setup(&self) -> bool;
 }
@@ -36,6 +38,10 @@ impl TestFunctionExt for Function {
 
     fn is_test_fail(&self) -> bool {
         self.name.is_test_fail()
+    }
+
+    fn is_test_ignore(&self) -> bool {
+        self.name.is_test_ignore()
     }
 
     fn is_setup(&self) -> bool {
@@ -56,6 +62,10 @@ impl<'a> TestFunctionExt for &'a str {
         self.starts_with("testFail")
     }
 
+    fn is_test_ignore(&self) -> bool {
+        self.starts_with("ignoretest")
+    }
+
     fn is_setup(&self) -> bool {
         self.to_lowercase() == "setup"
     }
@@ -72,6 +82,10 @@ impl TestFunctionExt for String {
 
     fn is_test_fail(&self) -> bool {
         self.as_str().is_test_fail()
+    }
+
+    fn is_test_ignore(&self) -> bool {
+        self.as_str().is_test_ignore()
     }
 
     fn is_setup(&self) -> bool {
