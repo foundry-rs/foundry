@@ -1,5 +1,6 @@
 use crate::cmd::utils::Cmd;
 
+use crate::{cmd::forge::build::CoreBuildArgs, compile};
 use clap::{Parser, ValueHint};
 use ethers::contract::MultiAbigen;
 use foundry_config::{
@@ -14,22 +15,13 @@ use foundry_config::{
 use serde::Serialize;
 use std::{fs, path::PathBuf};
 
-impl_figment_convert!(BindArgs);
+impl_figment_convert!(BindArgs, build_args);
 
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BindArgs {
-    #[clap(
-        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    #[serde(skip)]
-    pub root: Option<PathBuf>,
-
     #[clap(
         help = "Path to where the contract artifacts are stored",
         long = "bindings-path",
@@ -74,6 +66,14 @@ pub struct BindArgs {
     #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml consistency checks.")]
     #[serde(skip)]
     skip_cargo_toml: bool,
+
+    #[clap(long, help = "Skips running forge build before generating binding")]
+    #[serde(skip)]
+    skip_build: bool,
+
+    #[clap(flatten)]
+    #[serde(skip)]
+    build_args: CoreBuildArgs,
 }
 
 impl BindArgs {
@@ -147,6 +147,12 @@ impl Cmd for BindArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        if !self.skip_build {
+            // run `forge build`
+            let project = self.build_args.project()?;
+            compile::compile(&project, false, false)?;
+        }
+
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
             return self.check_existing_bindings()
