@@ -719,7 +719,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
                     let line = line.trim().trim_start_matches('*').trim_start();
-                    writeln!(self.buf(), " * {line}")?;
+                    writeln!(self.buf(), "{}", format!(" * {line}").trim_end())?;
                 }
                 write!(self.buf(), " */")?;
             } else {
