@@ -8,6 +8,7 @@ use crate::{
     compile::ProjectCompiler,
     suggestions, utils,
 };
+use cast::fuzz::CounterExample;
 use clap::{AppSettings, Parser};
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
@@ -19,11 +20,10 @@ use forge::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment, figment::Figment, Config};
-use proptest::test_runner::{RngAlgorithm, TestRng};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -181,7 +181,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used().gas()
+        self.result.kind.report().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -280,47 +280,47 @@ fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
-        let txt = match (&result.reason, &result.counterexample) {
-            (Some(ref reason), Some(ref counterexample)) => {
-                format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
-            }
-            (None, Some(ref counterexample)) => {
-                format!("[FAIL. Counterexample: {counterexample}]")
-            }
-            (Some(ref reason), None) => {
-                format!("[FAIL. Reason: {reason}]")
-            }
-            (None, None) => "[FAIL]".to_string(),
-        };
+        let reason = result
+            .reason
+            .as_ref()
+            .map(|reason| format!("Reason: {reason}"))
+            .unwrap_or_else(|| "Reason: Undefined.".to_string());
 
-        Paint::red(txt)
+        let counterexample = result
+            .counterexample
+            .as_ref()
+            .map(|example| match example {
+                CounterExample::Single(eg) => format!(" Counterexample: {eg}]"),
+                CounterExample::Sequence(sequence) => {
+                    let mut inner_txt = String::new();
+
+                    for checkpoint in sequence {
+                        inner_txt += format!("\t\t{checkpoint}\n").as_str();
+                    }
+                    format!("]\n\t[Sequence]\n{inner_txt}\n")
+                }
+            })
+            .unwrap_or_else(|| "]".to_string());
+
+        Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used());
+    println!("{} {} {}", status, name, result.kind.report());
 }
 
 pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
-    // Setup the fuzzer
-    // TODO: Add CLI Options to modify the persistence
-    let cfg = proptest::test_runner::Config {
-        failure_persistence: None,
-        cases: config.fuzz_runs,
-        max_local_rejects: config.fuzz_max_local_rejects,
-        max_global_rejects: config.fuzz_max_global_rejects,
-        ..Default::default()
-    };
-
-    let fuzzer = if let Some(ref fuzz_seed) = config.fuzz_seed {
-        let mut bytes: [u8; 32] = [0; 32];
-        fuzz_seed.to_big_endian(&mut bytes);
-        trace!(target: "forge::test", "executing test command");
-        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
-        proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
-    } else {
-        proptest::test_runner::TestRunner::new(cfg)
+    let test_options = TestOptions {
+        fuzz_runs: config.fuzz_runs,
+        fuzz_max_local_rejects: config.fuzz_max_local_rejects,
+        fuzz_max_global_rejects: config.fuzz_max_global_rejects,
+        fuzz_seed: config.fuzz_seed,
+        invariant_runs: config.invariant_runs,
+        invariant_depth: config.invariant_depth,
+        invariant_fail_on_revert: config.invariant_fail_on_revert,
+        invariant_call_override: config.invariant_call_override,
     };
 
     let mut filter = args.filter(&config);
@@ -350,20 +350,21 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     let evm_spec = utils::evm_spec(&config.evm_version);
 
     let mut runner = MultiContractRunnerBuilder::default()
-        .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(evm_opts.get_fork(&config, env.clone()))
         .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+        .with_test_options(test_options)
         .build(project.paths.root, output, env, evm_opts)?;
 
     if args.debug.is_some() {
         filter.test_pattern = args.debug;
+
         match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None)?;
+                    let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -375,7 +376,7 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
                     // Build debugger args if this is a fuzz test
                     let sig = match test_kind {
                         TestKind::Fuzz(cases) => {
-                            if let Some(counterexample) = counterexample {
+                            if let Some(CounterExample::Single(counterexample)) = counterexample {
                                 counterexample.calldata.to_string()
                             } else {
                                 cases.cases().first().expect("no fuzz cases run").calldata.to_string()
@@ -407,7 +408,16 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     } else if args.list {
         list(runner, filter, args.json)
     } else {
-        test(config, runner, verbosity, filter, args.json, args.allow_failure, args.gas_report)
+        test(
+            config,
+            runner,
+            verbosity,
+            filter,
+            args.json,
+            args.allow_failure,
+            test_options,
+            args.gas_report,
+        )
     }
 }
 
@@ -438,6 +448,7 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
+    test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
@@ -462,7 +473,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None)?;
+        let results = runner.test(&filter, None, test_options)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -483,7 +494,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports);

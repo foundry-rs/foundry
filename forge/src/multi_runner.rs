@@ -1,4 +1,4 @@
-use crate::{result::SuiteResult, ContractRunner, TestFilter};
+use crate::{result::SuiteResult, ContractRunner, TestFilter, TestOptions};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -15,7 +15,6 @@ use foundry_evm::{
     revm,
 };
 use foundry_utils::PostLinkInput;
-use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
@@ -37,8 +36,6 @@ pub struct MultiContractRunner {
     pub evm_spec: SpecId,
     /// All known errors, used for decoding reverts
     pub errors: Option<Abi>,
-    /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
-    fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
@@ -49,6 +46,8 @@ pub struct MultiContractRunner {
     pub cheats_config: CheatsConfig,
     /// Whether to collect coverage info
     pub coverage: bool,
+    /// Settings related to fuzz and/or invariant tests
+    pub test_options: TestOptions,
 }
 
 impl MultiContractRunner {
@@ -119,6 +118,7 @@ impl MultiContractRunner {
         &mut self,
         filter: &impl TestFilter,
         stream_result: Option<Sender<(String, SuiteResult)>>,
+        test_options: TestOptions,
     ) -> Result<BTreeMap<String, SuiteResult>> {
         let db = Backend::spawn(self.fork.take());
 
@@ -153,7 +153,7 @@ impl MultiContractRunner {
                         executor,
                         deploy_code.clone(),
                         libs,
-                        filter
+                        (filter, test_options),
                     )?;
 
                     tracing::trace!(contract= ?identifier, "executed all tests in contract");
@@ -187,7 +187,7 @@ impl MultiContractRunner {
         executor: Executor,
         deploy_code: Bytes,
         libs: &[Bytes],
-        filter: &impl TestFilter,
+        (filter, test_options): (&impl TestFilter, TestOptions),
     ) -> Result<SuiteResult> {
         let runner = ContractRunner::new(
             executor,
@@ -198,15 +198,13 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone())
+        runner.run_tests(filter, test_options, Some(&self.known_contracts))
     }
 }
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
 pub struct MultiContractRunnerBuilder {
-    /// The fuzzer to be used for running fuzz tests
-    pub fuzzer: Option<TestRunner>,
     /// The address which will be used to deploy the initial contracts and send all
     /// transactions
     pub sender: Option<Address>,
@@ -220,6 +218,8 @@ pub struct MultiContractRunnerBuilder {
     pub cheats_config: Option<CheatsConfig>,
     /// Whether or not to collect coverage info
     pub coverage: bool,
+    /// Settings related to fuzz and/or invariant tests
+    pub test_options: Option<TestOptions>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -280,7 +280,8 @@ impl MultiContractRunnerBuilder {
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions().any(|func| func.name.is_test())
+                    abi.functions()
+                        .any(|func| func.name.is_test() || func.name.is_invariant_test())
                 {
                     deployable_contracts.insert(
                         id.clone(),
@@ -312,12 +313,12 @@ impl MultiContractRunnerBuilder {
             env,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
-            fuzzer: self.fuzzer,
             errors: Some(execution_info.2),
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default(),
             coverage: self.coverage,
+            test_options: self.test_options.unwrap_or_default(),
         })
     }
 
@@ -330,12 +331,6 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
-        self
-    }
-
-    #[must_use]
-    pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
-        self.fuzzer = Some(fuzzer);
         self
     }
 
@@ -354,6 +349,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn with_cheats_config(mut self, cheats_config: CheatsConfig) -> Self {
         self.cheats_config = Some(cheats_config);
+        self
+    }
+
+    #[must_use]
+    pub fn with_test_options(mut self, test_options: TestOptions) -> Self {
+        self.test_options = Some(test_options);
         self
     }
 
@@ -377,6 +378,17 @@ mod tests {
     use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
     use foundry_evm::trace::TraceKind;
     use std::env;
+
+    static TEST_OPTS: TestOptions = TestOptions {
+        fuzz_runs: 256,
+        fuzz_max_local_rejects: 1024,
+        fuzz_max_global_rejects: 65536,
+        fuzz_seed: None,
+        invariant_runs: 256,
+        invariant_depth: 15,
+        invariant_fail_on_revert: false,
+        invariant_call_override: false,
+    };
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
@@ -516,7 +528,7 @@ mod tests {
     #[test]
     fn test_core() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None, TEST_OPTS).unwrap();
 
         assert_multiple(
             &results,
@@ -591,7 +603,7 @@ mod tests {
     #[test]
     fn test_logs() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, TEST_OPTS).unwrap();
 
         assert_multiple(
             &results,
@@ -1154,7 +1166,7 @@ mod tests {
 
         // test `setEnv` first, and confirm that it can correctly set environment variables,
         // so that we can use it in subsequent `env*` tests
-        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None).unwrap();
+        runner.test(&Filter::new("testSetEnv", ".*", ".*"), None, TEST_OPTS).unwrap();
         let env_var_key = "_foundryCheatcodeSetEnvTestKey";
         let env_var_val = "_foundryCheatcodeSetEnvTestVal";
         let res = env::var(env_var_key);
@@ -1179,6 +1191,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                     &format!(".*cheats{}Fork", RE_PATH_SEPARATOR),
                 ),
                 None,
+                TEST_OPTS,
             )
             .unwrap();
         assert_eq!(suite_result.len(), 1);
@@ -1202,6 +1215,7 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                 &Filter::new(".*", ".*", &format!(".*cheats{}Fork", RE_PATH_SEPARATOR))
                     .exclude_tests(".*Revert"),
                 None,
+                TEST_OPTS,
             )
             .unwrap();
         assert!(!suite_result.is_empty());
@@ -1225,7 +1239,11 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_cheats_local() {
         let mut runner = runner();
         let suite_result = runner
-            .test(&Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)), None)
+            .test(
+                &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)),
+                None,
+                TEST_OPTS,
+            )
             .unwrap();
         assert!(!suite_result.is_empty());
 
@@ -1246,10 +1264,9 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
-        runner.fuzzer = Some(proptest::test_runner::TestRunner::new(cfg));
 
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*fuzz/[^invariant]"), None, TEST_OPTS).unwrap();
 
         assert!(!suite_result.is_empty());
 
@@ -1283,7 +1300,8 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     #[test]
     fn test_trace() {
         let mut runner = tracing_runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*trace"), None, TEST_OPTS).unwrap();
 
         // TODO: This trace test is very basic - it is probably a good candidate for snapshot
         // testing.
@@ -1321,7 +1339,8 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_fork() {
         let rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
         let mut runner = forked_runner(&rpc_url);
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None).unwrap();
+        let suite_result =
+            runner.test(&Filter::new(".*", ".*", ".*fork"), None, TEST_OPTS).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
@@ -1342,9 +1361,59 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner
-            .test(&Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()), None)
+            .test(
+                &Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str()),
+                None,
+                TEST_OPTS,
+            )
             .unwrap();
         assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
         assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
+    }
+
+    #[test]
+    fn test_invariant() {
+        let mut runner = runner();
+
+        let mut opts = TEST_OPTS;
+        opts.invariant_call_override = true;
+        runner.test_options = opts;
+
+        let results =
+            runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, opts).unwrap();
+
+        assert_multiple(
+            &results,
+            BTreeMap::from([
+                (
+                    "fuzz/invariant/InvariantInnerContract.t.sol:InvariantInnerContract",
+                    vec![("invariantHideJesus", false, Some("jesus betrayed.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/InvariantReentrancy.t.sol:InvariantReentrancy",
+                    vec![("invariantNotStolen", false, Some("stolen.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/InvariantTest1.t.sol:InvariantTest",
+                    vec![("invariant_neverFalse", false, Some("false.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetContracts.t.sol:TargetContracts",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
+                    vec![("invariantTrueWorld", false, Some("false world.".into()), None, None)],
+                ),
+                (
+                    "fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+            ]),
+        );
     }
 }

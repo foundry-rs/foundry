@@ -14,6 +14,8 @@ pub trait TestFilter: Send + Sync {
 
 /// Extension trait for `Function`
 pub trait TestFunctionExt {
+    /// Whether this function should be executed as invariant test
+    fn is_invariant_test(&self) -> bool;
     /// Whether this function should be executed as fuzz test
     fn is_fuzz_test(&self) -> bool;
     /// Whether this function is a test
@@ -25,6 +27,10 @@ pub trait TestFunctionExt {
 }
 
 impl TestFunctionExt for Function {
+    fn is_invariant_test(&self) -> bool {
+        self.name.is_invariant_test()
+    }
+
     fn is_fuzz_test(&self) -> bool {
         // test functions that have inputs are considered fuzz tests as those inputs will be fuzzed
         !self.inputs.is_empty()
@@ -44,6 +50,10 @@ impl TestFunctionExt for Function {
 }
 
 impl<'a> TestFunctionExt for &'a str {
+    fn is_invariant_test(&self) -> bool {
+        self.starts_with("invariant")
+    }
+
     fn is_fuzz_test(&self) -> bool {
         unimplemented!("no naming convention for fuzz tests.")
     }
@@ -62,6 +72,10 @@ impl<'a> TestFunctionExt for &'a str {
 }
 
 impl TestFunctionExt for String {
+    fn is_invariant_test(&self) -> bool {
+        self.as_str().is_invariant_test()
+    }
+
     fn is_fuzz_test(&self) -> bool {
         self.as_str().is_fuzz_test()
     }

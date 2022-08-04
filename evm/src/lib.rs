@@ -41,6 +41,11 @@ pub const CALLER: Address = H160([
     0x30, 0x9D, 0x1F, 0x38,
 ]);
 
+/// Stores the default test contract address: 0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84
+pub const TEST_CONTRACT_ADDRESS: Address = H160([
+    180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100, 34, 126, 132,
+]);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CallKind {
     Call,

@@ -1,21 +1,28 @@
 use super::fuzz_param_from_state;
-use crate::{executor::StateChangeset, utils};
+use crate::{executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts, utils};
 use bytes::Bytes;
 use ethers::{
-    abi::Function,
+    abi::{Abi, Function},
+    prelude::ArtifactId,
     types::{Address, Log, H256, U256},
 };
+use foundry_utils::diff_score;
+use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, SpecId,
+    opcode, spec_opcode_gas, Filth, SpecId,
 };
-use std::{cell::RefCell, collections::BTreeSet, io::Write, rc::Rc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Write,
+    sync::Arc,
+};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Rc<RefCell<BTreeSet<[u8; 32]>>>;
+pub type EvmFuzzState = Arc<RwLock<BTreeSet<[u8; 32]>>>;
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
@@ -71,7 +78,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         state.insert(H256::from(Address::random()).into());
     }
 
-    Rc::new(RefCell::new(state))
+    Arc::new(RwLock::new(state))
 }
 
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
@@ -80,7 +87,7 @@ pub fn collect_state_from_call(
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
 ) {
-    let state = &mut *state.borrow_mut();
+    let mut state = state.write();
 
     for (address, account) in state_changeset {
         // Insert basic account information
@@ -156,4 +163,36 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     }
 
     bytes
+}
+
+/// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores
+/// them at `targeted_contracts` and `created_contracts`.
+pub fn collect_created_contracts(
+    state_changeset: &StateChangeset,
+    project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    setup_contracts: &BTreeMap<Address, (String, Abi)>,
+    targeted_contracts: FuzzRunIdentifiedContracts,
+    created_contracts: &mut Vec<Address>,
+) -> bool {
+    let mut writable_targeted = targeted_contracts.lock();
+    let before = created_contracts.len();
+
+    for (address, account) in state_changeset {
+        if !setup_contracts.contains_key(address) {
+            if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
+                if !code.is_empty() {
+                    if let Some((artifact, (abi, _))) = project_contracts
+                        .iter()
+                        .find(|(_, (_, known_code))| diff_score(known_code, code.bytes()) < 0.1)
+                    {
+                        created_contracts.push(*address);
+                        writable_targeted
+                            .insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
+                    }
+                }
+            }
+        }
+    }
+
+    created_contracts.len() > before
 }
