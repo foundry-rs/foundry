@@ -22,6 +22,6 @@ clap = { version = "3.0.10", features = [
 ] }
 
 # misc
-solang-parser = { git = "https://github.com/hyperledger-labs/solang" }
+solang-parser = "0.1.17"
 eyre = "0.6"
 thiserror = "1.0.30"
