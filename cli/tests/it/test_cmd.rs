@@ -289,3 +289,13 @@ contract ContractTest is DSTest {
             ));
     }
 );
+
+// checks that we can test forge std successfully
+// `forgetest_init!` will install with `forge-std` under `lib/forge-std`
+forgetest_init!(can_test_forge_std, |prj: TestProject, mut cmd: TestCommand| {
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    cmd.cmd().current_dir(forge_std_dir);
+    cmd.args(["test", "--root", "."]);
+
+    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+});

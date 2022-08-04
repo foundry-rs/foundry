@@ -262,12 +262,8 @@ impl<'a> ContractRunner<'a> {
             .contract
             .functions()
             .into_iter()
-            .filter(|func| {
-                func.name.is_test() &&
-                    filter.matches_test(func.signature()) &&
-                    (test_options.include_fuzz_tests || func.inputs.is_empty())
-            })
-            .map(|func| (func, func.name.is_test_fail()))
+            .filter(|func| func.is_test() && filter.matches_test(func.signature()))
+            .map(|func| (func, func.is_test_fail()))
             .collect();
 
         let mut test_results = BTreeMap::new();
@@ -295,10 +291,10 @@ impl<'a> ContractRunner<'a> {
                 tests
                     .par_iter()
                     .flat_map(|(func, should_fail)| {
-                        let result = if func.inputs.is_empty() {
-                            self.clone().run_test(func, *should_fail, setup.clone())
-                        } else {
+                        let result = if func.is_fuzz_test() {
                             self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+                        } else {
+                            self.clone().run_test(func, *should_fail, setup.clone())
                         };
 
                         result.map(|result| Ok((func.signature(), result)))
@@ -307,7 +303,7 @@ impl<'a> ContractRunner<'a> {
             );
         }
 
-        if has_invariants && test_options.include_fuzz_tests {
+        if has_invariants {
             // TODO: Add Options to modify the persistence
             let cfg = proptest::test_runner::Config {
                 failure_persistence: None,

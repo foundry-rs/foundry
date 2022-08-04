@@ -252,7 +252,6 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> eyre::Result<()> {
         let test_options = TestOptions {
-            include_fuzz_tests: true,
             fuzz_runs: config.fuzz_runs,
             fuzz_max_local_rejects: config.fuzz_max_local_rejects,
             fuzz_max_global_rejects: config.fuzz_max_global_rejects,

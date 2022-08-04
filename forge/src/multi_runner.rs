@@ -120,8 +120,6 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, SuiteResult)>>,
         test_options: TestOptions,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        tracing::info!(include_fuzz_tests= ?test_options.include_fuzz_tests, "running all tests");
-
         let db = Backend::spawn(self.fork.take());
 
         let results =
@@ -382,7 +380,6 @@ mod tests {
     use std::env;
 
     static TEST_OPTS: TestOptions = TestOptions {
-        include_fuzz_tests: true,
         fuzz_runs: 256,
         fuzz_max_local_rejects: 1024,
         fuzz_max_global_rejects: 65536,

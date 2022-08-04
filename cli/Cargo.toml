@@ -44,6 +44,7 @@ console = "0.15.0"
 watchexec = "2.0.0"
 atty = "0.2.14"
 comfy-table = "5.0.0"
+dotenv = "0.15.0"
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }

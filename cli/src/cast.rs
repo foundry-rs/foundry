@@ -44,6 +44,7 @@ use std::{
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    utils::load_dotenv();
     handler::install()?;
     utils::subscriber();
     utils::enable_paint();

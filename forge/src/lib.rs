@@ -27,8 +27,6 @@ pub use foundry_evm::*;
 /// Metadata on how to run fuzz/invariant tests
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TestOptions {
-    /// Whether fuzz tests should be run
-    pub include_fuzz_tests: bool,
     /// The number of test cases that must execute for each fuzz test
     pub fuzz_runs: u32,
     /// The maximum number of global test case rejections allowed

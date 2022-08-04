@@ -96,7 +96,11 @@ pub struct TestArgs {
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
 
-    #[clap(long, help = "Set seed used to generate randomness during your fuzz runs",   parse(try_from_str = utils::parse_u256))]
+    #[clap(
+        long,
+        help = "Set seed used to generate randomness during your fuzz runs",
+        parse(try_from_str = utils::parse_u256)
+    )]
     pub fuzz_seed: Option<U256>,
 }
 
@@ -159,7 +163,7 @@ impl Cmd for TestArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         trace!(target: "forge::test", "executing test command");
-        custom_run(self, true)
+        custom_run(self)
     }
 }
 
@@ -304,12 +308,11 @@ fn short_test_result(name: &str, result: &TestResult) {
     println!("{} {} {}", status, name, result.kind.report());
 }
 
-pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
-    let mut test_options = TestOptions {
-        include_fuzz_tests,
+    let test_options = TestOptions {
         fuzz_runs: config.fuzz_runs,
         fuzz_max_local_rejects: config.fuzz_max_local_rejects,
         fuzz_max_global_rejects: config.fuzz_max_global_rejects,
@@ -357,7 +360,6 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
 
     if args.debug.is_some() {
         filter.test_pattern = args.debug;
-        test_options.include_fuzz_tests = true;
 
         match runner.count_filtered_tests(&filter) {
                 1 => {
