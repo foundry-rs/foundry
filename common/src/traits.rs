@@ -65,8 +65,8 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test(&self) -> bool {
-        if self.starts_with("test") {
-            return if self.len() > 4 { !self[4..].starts_with("Skip") } else { true }
+        if let Some(s) = self.strip_prefix("test") {
+            return !s.starts_with("Skip")
         }
         false
     }
