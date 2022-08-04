@@ -375,7 +375,7 @@ mod tests {
             RE_PATH_SEPARATOR,
         },
     };
-    use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
+    use foundry_config::{Config, Endpoint, Endpoints};
     use foundry_evm::trace::TraceKind;
     use std::env;
 
@@ -437,16 +437,16 @@ mod tests {
     }
 
     /// the RPC endpoints used during tests
-    fn rpc_endpoints() -> RpcEndpoints {
-        RpcEndpoints::new([
+    fn rpc_endpoints() -> Endpoints {
+        Endpoints::new([
             (
                 "rpcAlias",
-                RpcEndpoint::Url(
+                Endpoint::Url(
                     "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf"
                         .to_string(),
                 ),
             ),
-            ("rpcEnvAlias", RpcEndpoint::Env("${RPC_ENV_ALIAS}".to_string())),
+            ("rpcEnvAlias", Endpoint::Env("${RPC_ENV_ALIAS}".to_string())),
         ])
     }
 

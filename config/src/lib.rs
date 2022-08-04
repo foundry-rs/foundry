@@ -41,8 +41,8 @@ pub(crate) use macros::config_warn;
 pub mod utils;
 pub use crate::utils::*;
 
-mod rpc;
-pub use rpc::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
+mod endpoints;
+pub use endpoints::{Endpoint, Endpoints, ResolvedRpcEndpoints, UnresolvedEnvVarError};
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -282,7 +282,7 @@ pub struct Config {
     pub no_storage_caching: bool,
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
-    pub rpc_endpoints: RpcEndpoints,
+    pub rpc_endpoints: Endpoints,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -2332,7 +2332,7 @@ mod tests {
 
     use super::*;
 
-    use crate::rpc::RpcEndpoint;
+    use crate::endpoints::Endpoint;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -2724,19 +2724,19 @@ mod tests {
 
             assert_eq!(
                 endpoints,
-                RpcEndpoints::new([
-                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                Endpoints::new([
+                    ("optimism", Endpoint::Url("https://example.com/".to_string())),
                     (
                         "mainnet",
-                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                        Endpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
                     ),
                     (
                         "mainnet_2",
-                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                        Endpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
                     ),
                     (
                         "mainnet_3",
-                        RpcEndpoint::Url(
+                        Endpoint::Url(
                             "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
                         )
                     ),
@@ -2798,18 +2798,18 @@ mod tests {
                     bytecode_hash: BytecodeHash::Ipfs,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
-                    rpc_endpoints: RpcEndpoints::new([
-                        ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                        ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                    rpc_endpoints: Endpoints::new([
+                        ("optimism", Endpoint::Url("https://example.com/".to_string())),
+                        ("mainnet", Endpoint::Env("${RPC_MAINNET}".to_string())),
                         (
                             "mainnet_2",
-                            RpcEndpoint::Env(
+                            Endpoint::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                             )
                         ),
                         (
                             "mainnet_3",
-                            RpcEndpoint::Env(
+                            Endpoint::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
                                     .to_string()
                             )
@@ -2920,12 +2920,12 @@ mod tests {
 
             assert_eq!(
                 config.rpc_endpoints,
-                RpcEndpoints::new([
-                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
-                    ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
+                Endpoints::new([
+                    ("optimism", Endpoint::Url("https://example.com/".to_string())),
+                    ("mainnet", Endpoint::Env("${RPC_MAINNET}".to_string())),
                     (
                         "mainnet_2",
-                        RpcEndpoint::Env(
+                        Endpoint::Env(
                             "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                         )
                     ),
