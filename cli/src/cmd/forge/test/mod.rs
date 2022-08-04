@@ -218,6 +218,11 @@ impl TestOutcome {
         self.tests().filter(|(_, t)| !t.success)
     }
 
+    /// Iterator over all skipped tests and their signatures
+    pub fn skipped(&self) -> impl Iterator<Item = &String> {
+        self.results.values().flat_map(|res| res.skipped.iter())
+    }
+
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
@@ -246,10 +251,13 @@ impl TestOutcome {
                 println!();
 
                 let successes = self.successes().count();
+                let skipped = self.skipped().count();
+
                 println!(
-                    "Encountered a total of {} failing tests, {} tests succeeded",
+                    "Encountered a total of {} failing tests, {} tests succeeded, {} skipped",
                     Paint::red(failures.to_string()),
-                    Paint::green(successes.to_string())
+                    Paint::green(successes.to_string()),
+                    Paint::yellow(skipped.to_string())
                 );
                 std::process::exit(1);
             }
@@ -267,10 +275,11 @@ impl TestOutcome {
         let failed = self.failures().count();
         let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
-            "Test result: {}. {} passed; {} failed; finished in {:.2?}",
+            "Test result: {}. {} passed; {} failed; {} skipped; finished in {:.2?}",
             result,
             self.successes().count(),
             failed,
+            self.skipped().count(),
             self.duration()
         )
     }
@@ -508,6 +517,12 @@ fn test(
                 let term = if tests.len() > 1 { "tests" } else { "test" };
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
+
+            // Show test functions that were skipped
+            for skipped in &suite_result.skipped {
+                println!("{} {}", Paint::yellow("[SKIP]".to_string()), skipped);
+            }
+
             for (name, result) in &mut tests {
                 short_test_result(name, result);
 

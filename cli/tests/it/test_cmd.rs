@@ -110,6 +110,41 @@ contract TestC {
     );
 });
 
+// ensures that tests that should be skipped are handled correctly
+forgetest!(can_skip_tests, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "dummy",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity =0.8.13;
+import "./test.sol";
+contract DummyTest is DSTest {
+
+    function testCall() external {
+        assertTrue(true);
+    }
+
+    function skiptestCall() external {
+        assertTrue(false);
+    }
+
+    function skipTestAnother() external {
+        assertTrue(false);
+    }
+}
+"#,
+        )
+        .unwrap();
+    cmd.args(["test"]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/can_skip_tests.stdout"),
+    );
+});
+
 // tests that direct import paths are handled correctly
 forgetest!(can_fuzz_array_params, |prj: TestProject, mut cmd: TestCommand| {
     prj.insert_ds_test();
