@@ -65,7 +65,10 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test(&self) -> bool {
-        self.starts_with("test") && !(self.ends_with("Skip") || self.ends_with("skip"))
+        if self.starts_with("test") {
+            return if self.len() > 4 { !self[4..].starts_with("Skip") } else { true }
+        }
+        false
     }
 
     fn is_test_fail(&self) -> bool {
@@ -73,7 +76,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test_skipped(&self) -> bool {
-        self.starts_with("test") && (self.ends_with("Skip") || self.ends_with("skip"))
+        self.starts_with("testSkip")
     }
 
     fn is_setup(&self) -> bool {
@@ -112,11 +115,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_is_test() {
+        assert!("test".is_test());
+        assert!("testFuzz".is_test());
+        assert!(!"testSkip".is_test());
+    }
+
+    #[test]
     fn test_skipped() {
-        assert!("testFskip".is_test_skipped());
-        assert!("testfunctionFuzzSkip".is_test_skipped());
+        assert!("testSkipF".is_test_skipped());
+        assert!("testSkippFuzzF".is_test_skipped());
         assert!(!"skip".is_test_skipped());
-        assert!(!"testGreeters".is_test_skipped());
-        assert!(!"skipF".is_test_skipped());
+        assert!(!"testGreetersSkip".is_test_skipped());
+        assert!(!"testFuzzGreetersSkip".is_test_skipped());
     }
 }

@@ -3,7 +3,7 @@ Solc 0.8.13 finished in 226.31ms
 Compiler run successful
 
 Running 1 test for src/dummy.sol:DummyTest
-[SKIP] testAnotherSkip()
-[SKIP] testCallskip()
+[SKIP] testSkipCall()
+[SKIP] testSkipFailFuzz(uint256)
 [PASS] testCall() (gas: 201)
 Test result: ok. 1 passed; 0 failed; 2 skipped; finished in 3.27ms
