@@ -65,7 +65,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test(&self) -> bool {
-        self.starts_with("test")
+        self.starts_with("test") && !(self.ends_with("Skip") || self.ends_with("skip"))
     }
 
     fn is_test_fail(&self) -> bool {
@@ -73,11 +73,7 @@ impl<'a> TestFunctionExt for &'a str {
     }
 
     fn is_test_skipped(&self) -> bool {
-        if self.len() > 4 && self.starts_with("skip") {
-            let rem = &self[4..];
-            return rem.starts_with("test") || rem.starts_with("Test")
-        }
-        false
+        self.starts_with("test") && (self.ends_with("Skip") || self.ends_with("skip"))
     }
 
     fn is_setup(&self) -> bool {
@@ -117,9 +113,10 @@ mod tests {
 
     #[test]
     fn test_skipped() {
-        assert!("skiptest".is_test_skipped());
-        assert!("skipTest".is_test_skipped());
+        assert!("testFskip".is_test_skipped());
+        assert!("testfunctionFuzzSkip".is_test_skipped());
         assert!(!"skip".is_test_skipped());
+        assert!(!"testGreeters".is_test_skipped());
         assert!(!"skipF".is_test_skipped());
     }
 }

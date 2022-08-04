@@ -127,11 +127,11 @@ contract DummyTest is DSTest {
         assertTrue(true);
     }
 
-    function skiptestCall() external {
+    function testCallskip() external {
         assertTrue(false);
     }
 
-    function skipTestAnother() external {
+    function testAnotherSkip() external {
         assertTrue(false);
     }
 }
