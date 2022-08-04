@@ -4,7 +4,7 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
-    utils::build_ic_map,
+    utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
 use bytes::Bytes;
@@ -30,7 +30,7 @@ pub struct Debugger {
     /// including push bytes, while the instruction counter ignores push bytes.
     ///
     /// The instruction counter is used in Solidity source maps.
-    pub ic_map: BTreeMap<Address, BTreeMap<usize, usize>>,
+    pub ic_map: BTreeMap<Address, PCICMap>,
     /// The amount of gas spent in the current gas block.
     ///
     /// REVM adds gas in blocks, so we need to keep track of this separately to get accurate gas
@@ -105,7 +105,7 @@ where
         // code given by the interpreter may either be the contract init code, or the runtime code.
         self.ic_map.insert(
             self.context,
-            build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
+            build_pc_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
         );
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue

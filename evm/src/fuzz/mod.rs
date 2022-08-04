@@ -78,9 +78,9 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("could not make raw evm call");
+                .expect("Could not call contract with fuzzed input.");
             let state_changeset =
-                call.state_changeset.as_ref().expect("we should have a state changeset");
+                call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
             collect_state_from_call(&call.logs, state_changeset, state.clone());
