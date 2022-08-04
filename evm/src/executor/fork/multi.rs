@@ -425,11 +425,8 @@ async fn create_fork(
     retries: u32,
     backoff: u64,
 ) -> eyre::Result<(CreatedFork, Handler)> {
-    let provider = Arc::new(Provider::<RetryClient<Http>>::new_client(
-        fork.url.clone().as_str(),
-        retries,
-        backoff,
-    )?);
+    let provider =
+        Arc::new(Provider::<RetryClient<Http>>::new_client(fork.url.as_str(), retries, backoff)?);
 
     // initialise the fork environment
     fork.env = fork.evm_opts.fork_evm_env(&fork.url).await?;
