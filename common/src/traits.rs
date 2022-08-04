@@ -23,7 +23,7 @@ pub trait TestFunctionExt {
     /// Whether this function is a test that should fail
     fn is_test_fail(&self) -> bool;
     /// Whether this function is a test that should be ignored
-    fn is_test_ignore(&self) -> bool;
+    fn is_test_skipped(&self) -> bool;
     /// Whether this function is a `setUp` function
     fn is_setup(&self) -> bool;
 }
@@ -46,8 +46,8 @@ impl TestFunctionExt for Function {
         self.name.is_test_fail()
     }
 
-    fn is_test_ignore(&self) -> bool {
-        self.name.is_test_ignore()
+    fn is_test_skipped(&self) -> bool {
+        self.name.is_test_skipped()
     }
 
     fn is_setup(&self) -> bool {
@@ -72,8 +72,12 @@ impl<'a> TestFunctionExt for &'a str {
         self.starts_with("testFail")
     }
 
-    fn is_test_ignore(&self) -> bool {
-        self.starts_with("ignoretest")
+    fn is_test_skipped(&self) -> bool {
+        if self.len() > 4 && self.starts_with("skip") {
+            let rem = &self[4..];
+            return rem.starts_with("test") || rem.starts_with("Test")
+        }
+        false
     }
 
     fn is_setup(&self) -> bool {
@@ -98,11 +102,24 @@ impl TestFunctionExt for String {
         self.as_str().is_test_fail()
     }
 
-    fn is_test_ignore(&self) -> bool {
-        self.as_str().is_test_ignore()
+    fn is_test_skipped(&self) -> bool {
+        self.as_str().is_test_skipped()
     }
 
     fn is_setup(&self) -> bool {
         self.as_str().is_setup()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_skipped() {
+        assert!("skiptest".is_test_skipped());
+        assert!("skipTest".is_test_skipped());
+        assert!(!"skip".is_test_skipped());
+        assert!(!"skipF".is_test_skipped());
     }
 }

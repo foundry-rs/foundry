@@ -8,7 +8,11 @@ use foundry_evm::{
     trace::{CallTraceArena, TraceKind},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    time::Duration,
+};
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
@@ -19,8 +23,8 @@ pub struct SuiteResult {
     pub test_results: BTreeMap<String, TestResult>,
     // Warnings
     pub warnings: Vec<String>,
-    /// signatures of ignored tests
-    pub ignored: Vec<String>,
+    /// Signatures of skipped tests
+    pub skipped: BTreeSet<String>,
 }
 
 impl SuiteResult {
@@ -29,16 +33,16 @@ impl SuiteResult {
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
     ) -> Self {
-        Self { duration, test_results, warnings, ignored: Default::default() }
+        Self { duration, test_results, warnings, skipped: Default::default() }
     }
 
-    pub fn with_ignored(
+    pub fn with_skipped(
         duration: Duration,
         test_results: BTreeMap<String, TestResult>,
         warnings: Vec<String>,
-        ignored: Vec<String>,
+        skipped: BTreeSet<String>,
     ) -> Self {
-        Self { duration, test_results, warnings, ignored }
+        Self { duration, test_results, warnings, skipped }
     }
 
     pub fn is_empty(&self) -> bool {

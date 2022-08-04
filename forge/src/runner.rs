@@ -22,7 +22,10 @@ use foundry_evm::{
 };
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::BTreeMap, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Instant,
+};
 use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
@@ -364,17 +367,17 @@ impl<'a> ContractRunner<'a> {
         }
 
         // All ignored tests
-        let ignored: Vec<_> = self
+        let skipped: BTreeSet<_> = self
             .contract
             .functions()
-            .filter(|func| func.is_test_ignore())
+            .filter(|func| func.is_test_skipped())
             .filter_map(|func| {
                 let sig = func.signature();
                 filter.matches_test(&sig).then_some(sig)
             })
             .collect();
 
-        Ok(SuiteResult::with_ignored(duration, test_results, warnings, ignored))
+        Ok(SuiteResult::with_skipped(duration, test_results, warnings, skipped))
     }
 
     /// Runs a single test
