@@ -1897,6 +1897,7 @@ dependencies = [
  "glob",
  "hex",
  "once_cell",
+ "parking_lot 0.12.0",
  "proptest",
  "rayon",
  "regex",
