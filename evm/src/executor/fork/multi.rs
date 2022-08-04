@@ -367,6 +367,7 @@ impl Future for MultiForkHandler {
 }
 
 /// Tracks the created Fork
+#[derive(Debug)]
 struct CreatedFork {
     /// How the fork was initially created
     opts: CreateFork,
