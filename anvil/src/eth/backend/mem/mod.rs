@@ -520,7 +520,7 @@ impl Backend {
             // store current state before executing all transactions
             self.states.write().insert(best_hash, self.db.read().current_state());
 
-            let executed_tx = {
+            let (executed_tx, block_hash) = {
                 let mut db = self.db.write();
                 let executor = TransactionExecutor {
                     db: &mut *db,
@@ -531,7 +531,13 @@ impl Backend {
                     parent_hash: best_hash,
                     gas_used: U256::zero(),
                 };
-                executor.execute()
+                let executed_tx = executor.execute();
+
+                // we also need to update the new blockhash in the db itself
+                let block_hash = executed_tx.block.block.header.hash();
+                db.insert_block_hash(executed_tx.block.block.header.number, block_hash);
+
+                (executed_tx, block_hash)
             };
 
             // create the new block with the current timestamp
@@ -539,8 +545,6 @@ impl Backend {
             let BlockInfo { block, transactions, receipts } = block;
 
             let header = block.header.clone();
-
-            let block_hash = block.header.hash();
             let block_number: U64 = env.block.number.as_u64().into();
 
             trace!(

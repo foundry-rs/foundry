@@ -255,8 +255,9 @@ contract Demo is Script {
 
         let (_api, handle) = spawn(node_config).await;
         let target_contract = script.display().to_string() + ":Demo";
-        let private_key =
-            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+
+        let wallet = handle.dev_wallets().next().unwrap();
+        let private_key = hex::encode(wallet.signer().to_bytes());
         cmd.set_current_dir(prj.root());
 
         cmd.args([
@@ -277,8 +278,6 @@ contract Demo is Script {
         ]);
 
         let output = cmd.stdout_lossy();
-
-        println!("{}", output.to_string());
 
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));

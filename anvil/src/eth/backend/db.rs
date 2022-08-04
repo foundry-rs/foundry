@@ -50,6 +50,9 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {
     /// Sets the balance of the given address
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
 
+    /// inserts a blockhash for the given number
+    fn insert_block_hash(&mut self, number: U256, hash: H256);
+
     /// Write all chain data to serialized bytes buffer
     fn dump_state(&self) -> Option<SerializableState>;
 
@@ -84,6 +87,10 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
         self.insert_account_storage(address, slot, val)
+    }
+
+    fn insert_block_hash(&mut self, number: U256, hash: H256) {
+        self.block_hashes.insert(number, hash);
     }
 
     fn dump_state(&self) -> Option<SerializableState> {
