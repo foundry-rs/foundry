@@ -2,7 +2,7 @@ use crate::cmd::utils::Cmd;
 
 use crate::{cmd::forge::build::CoreBuildArgs, compile};
 use clap::{Parser, ValueHint};
-use ethers::contract::MultiAbigen;
+use ethers::contract::{ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use foundry_config::{
     figment::{
         self,
@@ -31,6 +31,29 @@ pub struct BindArgs {
     )]
     #[serde(skip)]
     pub bindings: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Create bindings only for contracts whose names match the specified filter(s)"
+    )]
+    #[serde(skip)]
+    pub select: Vec<regex::Regex>,
+
+    #[clap(
+        long,
+        help = "Create bindings only for contracts whose names do not match the specified filter(s)",
+        conflicts_with = "select"
+    )]
+    #[serde(skip)]
+    pub skip: Vec<regex::Regex>,
+
+    #[clap(
+        long,
+        help ="By default all contracts ending with `Test` or `Script` are excluded. This will explicitly generate bindings for all contracts",
+        conflicts_with_all = &["select", "skip"]
+    )]
+    #[serde(skip)]
+    pub select_all: bool,
 
     #[clap(
         long = "crate-name",
@@ -93,9 +116,23 @@ impl BindArgs {
         self.bindings_root().is_dir()
     }
 
+    /// Returns the filter to use for `MultiAbigen`
+    fn get_filter(&self) -> ContractFilter {
+        if self.select_all {
+            return ContractFilter::All
+        }
+        if !self.select.is_empty() {
+            return SelectContracts::default().extend_regex(self.select.clone()).into()
+        }
+        if !self.skip.is_empty() {
+            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+        }
+        ExcludeContracts::default().add_pattern(".*Test").add_pattern(".*Script").into()
+    }
+
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        let multi = MultiAbigen::from_json_files(self.artifacts())?;
+        let multi = MultiAbigen::from_json_files(self.artifacts())?.with_filter(self.get_filter());
 
         eyre::ensure!(
             !multi.is_empty(),
