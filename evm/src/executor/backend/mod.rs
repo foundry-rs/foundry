@@ -1,12 +1,19 @@
-use crate::executor::{
-    fork::{CreateFork, ForkId, MultiFork, SharedBackend},
-    snapshot::Snapshots,
+use crate::{
+    abi::CHEATCODE_ADDRESS,
+    executor::{
+        backend::snapshot::BackendSnapshot,
+        fork::{CreateFork, ForkId, MultiFork, SharedBackend},
+        inspector::DEFAULT_CREATE2_DEPLOYER,
+        snapshot::Snapshots,
+    },
+    CALLER,
 };
 use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
 };
 use hashbrown::HashMap as Map;
+pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log,
@@ -21,13 +28,6 @@ pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 mod in_memory_db;
-
-use crate::{
-    abi::CHEATCODE_ADDRESS,
-    executor::{backend::snapshot::BackendSnapshot, inspector::DEFAULT_CREATE2_DEPLOYER},
-    CALLER,
-};
-pub use in_memory_db::MemDb;
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -284,7 +284,8 @@ impl Backend {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork) = backend.forks.create_fork(fork).expect("Unable to create fork");
+            let (fork_id, fork, _) =
+                backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
             backend.active_fork_ids =
                 Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
@@ -563,7 +564,7 @@ impl DatabaseExt for Backend {
         subroutine: &SubRoutine,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork) = self.forks.create_fork(fork)?;
+        let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
         let (id, _) = self.inner.insert_new_fork(fork_id, fork_db, subroutine.clone());
         Ok(id)
@@ -613,13 +614,14 @@ impl DatabaseExt for Backend {
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
-        let (fork_id, backend) =
+        let (fork_id, backend, fork_env) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
         if self.active_fork_id() == Some(id) {
-            // need to update the block number right away
-            env.block.number = block_number;
+            // need to update the block's env settings right away, which is otherwise set when forks
+            // are selected `select_fork`
+            update_current_env_with_fork_env(env, fork_env);
         }
         Ok(())
     }
