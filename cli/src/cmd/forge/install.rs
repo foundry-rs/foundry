@@ -144,7 +144,22 @@ pub(crate) fn install(
     Ok(())
 }
 
-/// installs the dependency as an ordinary folder instead of a submodule
+/// Checks if any submodules have not been initialized yet.
+///
+/// `git submodule status` will return a new line per submodule in the repository. If any line
+/// starts with `-` then it has not been initialized yet.
+pub fn has_missing_dependencies(root: impl AsRef<Path>) -> bool {
+    Command::new("git")
+        .args(&["submodule", "status"])
+        .current_dir(root)
+        .output()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| line.starts_with('-'))
+        })
+        .unwrap_or(false)
+}
+
+/// Installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::Result<()> {
     // install the dep
     git_clone(dep, libs, target_dir)?;
@@ -158,7 +173,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path, target_dir: &str) -> eyre::R
     Ok(())
 }
 
-/// installs the dependency as new submodule
+/// Installs the dependency as new submodule
 fn install_as_submodule(
     dep: &Dependency,
     libs: &Path,

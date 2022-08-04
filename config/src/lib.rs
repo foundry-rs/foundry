@@ -187,6 +187,15 @@ pub struct Config {
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
+    /// The number of runs that must execute for each invariant test group.
+    pub invariant_runs: u32,
+    /// The number of calls executed to attempt to break invariants in one run.
+    pub invariant_depth: u32,
+    /// Fails the invariant fuzzing if a revert occurs
+    pub invariant_fail_on_revert: bool,
+    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
+    /// checks
+    pub invariant_call_override: bool,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -1466,6 +1475,10 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             fuzz_seed: None,
+            invariant_runs: 256,
+            invariant_depth: 15,
+            invariant_fail_on_revert: false,
+            invariant_call_override: false,
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -2857,6 +2870,10 @@ mod tests {
                 fuzz_max_local_rejects = 1024
                 fuzz_runs = 256
                 fuzz_seed = '0x3e8'
+                invariant_runs = 256
+                invariant_depth = 15
+                invariant_fail_on_revert = false
+                invariant_call_override = false
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']

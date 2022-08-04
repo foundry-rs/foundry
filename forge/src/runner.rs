@@ -1,20 +1,26 @@
 use crate::{
     result::{SuiteResult, TestKind, TestResult, TestSetup},
-    TestFilter,
+    TestFilter, TestOptions,
 };
 use ethers::{
     abi::{Abi, Function},
+    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
 use foundry_common::TestFunctionExt;
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
-    fuzz::FuzzedExecutor,
-    trace::TraceKind,
+    fuzz::{
+        invariant::{
+            InvariantContract, InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions,
+        },
+        FuzzedExecutor,
+    },
+    trace::{load_contracts, TraceKind},
     CALLER,
 };
-use proptest::test_runner::TestRunner;
+use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
 use tracing::{error, trace};
@@ -175,7 +181,8 @@ impl<'a> ContractRunner<'a> {
     pub fn run_tests(
         mut self,
         filter: &impl TestFilter,
-        fuzzer: Option<TestRunner>,
+        test_options: TestOptions,
+        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -218,6 +225,15 @@ impl<'a> ContractRunner<'a> {
             ))
         }
 
+        let has_invariants =
+            self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
+
+        if has_invariants && needs_setup {
+            // invariant testing requires tracing to figure
+            //   out what contracts were created
+            self.executor.set_tracing(true);
+        }
+
         let setup = self.setup(needs_setup)?;
         if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
@@ -250,20 +266,91 @@ impl<'a> ContractRunner<'a> {
             .map(|func| (func, func.is_test_fail()))
             .collect();
 
-        let test_results = tests
-            .par_iter()
-            .filter_map(|(func, should_fail)| {
-                let result = if func.is_fuzz_test() {
-                    fuzzer.as_ref().map(|fuzzer| {
-                        self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
-                    })
-                } else {
-                    Some(self.clone().run_test(func, *should_fail, setup.clone()))
-                };
+        let mut test_results = BTreeMap::new();
+        if !tests.is_empty() {
+            // TODO: Add Options to modify the persistence
+            let cfg = proptest::test_runner::Config {
+                failure_persistence: None,
+                cases: test_options.fuzz_runs,
+                max_local_rejects: test_options.fuzz_max_local_rejects,
+                max_global_rejects: test_options.fuzz_max_global_rejects,
+                ..Default::default()
+            };
 
-                result.map(|result| Ok((func.signature(), result?)))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
+                let mut bytes: [u8; 32] = [0; 32];
+                fuzz_seed.to_big_endian(&mut bytes);
+                trace!(target: "forge::test", "executing test command");
+                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            } else {
+                proptest::test_runner::TestRunner::new(cfg)
+            };
+
+            test_results.extend(
+                tests
+                    .par_iter()
+                    .flat_map(|(func, should_fail)| {
+                        let result = if func.is_fuzz_test() {
+                            self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+                        } else {
+                            self.clone().run_test(func, *should_fail, setup.clone())
+                        };
+
+                        result.map(|result| Ok((func.signature(), result)))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?,
+            );
+        }
+
+        if has_invariants {
+            // TODO: Add Options to modify the persistence
+            let cfg = proptest::test_runner::Config {
+                failure_persistence: None,
+                cases: test_options.invariant_runs,
+                max_local_rejects: test_options.fuzz_max_local_rejects,
+                max_global_rejects: test_options.fuzz_max_global_rejects,
+                ..Default::default()
+            };
+
+            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
+                let mut bytes: [u8; 32] = [0; 32];
+                fuzz_seed.to_big_endian(&mut bytes);
+                trace!(target: "forge::test", "executing invariant test command");
+                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+            } else {
+                proptest::test_runner::TestRunner::new(cfg)
+            };
+
+            let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
+            let functions: Vec<&Function> = self
+                .contract
+                .functions()
+                .into_iter()
+                .filter(|func| {
+                    func.name.is_invariant_test() && filter.matches_test(func.signature())
+                })
+                .collect();
+
+            let results = self.run_invariant_test(
+                fuzzer,
+                setup,
+                test_options,
+                functions.clone(),
+                known_contracts,
+                identified_contracts,
+            )?;
+
+            results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
+                match result.kind {
+                    TestKind::Invariant(ref _cases, _) => {
+                        test_results.insert(function.name.clone(), result);
+                    }
+                    _ => unreachable!(),
+                }
+            });
+        }
 
         let duration = start.elapsed();
         if !test_results.is_empty() {
@@ -275,6 +362,7 @@ impl<'a> ContractRunner<'a> {
                 test_results.len()
             );
         }
+
         Ok(SuiteResult::new(duration, test_results, warnings))
     }
 
@@ -365,6 +453,78 @@ impl<'a> ContractRunner<'a> {
             coverage,
             labeled_addresses,
         })
+    }
+
+    #[tracing::instrument(name = "invariant-test", skip_all)]
+    pub fn run_invariant_test(
+        &mut self,
+        runner: TestRunner,
+        setup: TestSetup,
+        test_options: TestOptions,
+        functions: Vec<&Function>,
+        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        identified_contracts: BTreeMap<Address, (String, Abi)>,
+    ) -> Result<Vec<TestResult>> {
+        let empty = BTreeMap::new();
+        let project_contracts = known_contracts.unwrap_or(&empty);
+        let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
+
+        let mut evm = InvariantExecutor::new(
+            &mut self.executor,
+            runner,
+            &identified_contracts,
+            project_contracts,
+        );
+
+        let invariant_contract =
+            InvariantContract { address, invariant_functions: functions, abi: self.contract };
+
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
+            invariant_contract,
+            InvariantTestOptions {
+                depth: test_options.invariant_depth,
+                fail_on_revert: test_options.invariant_fail_on_revert,
+                call_override: test_options.invariant_call_override,
+            },
+        )? {
+            let results = invariants
+                .iter()
+                .map(|(_, test_error)| {
+                    let mut counterexample = None;
+                    let mut logs = logs.clone();
+                    let mut traces = traces.clone();
+
+                    if let Some(ref error) = test_error {
+                        if let TestError::Fail(_, _) = &error.test_error {
+                            counterexample = error.replay(
+                                self.executor.clone(),
+                                known_contracts,
+                                identified_contracts.clone(),
+                                &mut logs,
+                                &mut traces,
+                            );
+                        }
+                    }
+
+                    TestResult {
+                        success: test_error.is_none(),
+                        reason: test_error.as_ref().and_then(|err| {
+                            (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
+                        }),
+                        counterexample,
+                        logs,
+                        kind: TestKind::Invariant(cases.clone(), reverts),
+                        coverage: None, // todo?
+                        traces,
+                        labeled_addresses: labeled_addresses.clone(),
+                    }
+                })
+                .collect();
+
+            Ok(results)
+        } else {
+            Ok(vec![])
+        }
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
