@@ -201,17 +201,13 @@ pub fn load_dotenv() {
     };
 
     // we only want the .env file of the cwd and project root
-    match (std::env::current_dir(), find_project_root_path()) {
-        (Ok(cwd), Ok(prj_root)) => {
-            load(&prj_root);
-            if cwd != prj_root {
-                // prj root and cwd can be identical
-                load(&cwd);
-            }
-        }
-        _ => {
-            // `find_project_root_path` calls `current_dir` internally so both paths are either both
-            // `Ok` or both `Err`
+    // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
+    // both `Err`
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root_path()) {
+        load(&prj_root);
+        if cwd != prj_root {
+            // prj root and cwd can be identical
+            load(&cwd);
         }
     };
 }
