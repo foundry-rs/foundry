@@ -9,12 +9,11 @@ pub fn mean<T>(values: &[T]) -> U256
 where
     T: Into<U256> + Copy,
 {
-    let len = values.len();
-    if len > 0 {
-        values.iter().copied().fold(U256::zero(), |sum, val| sum + val.into()) / len
-    } else {
-        U256::zero()
+    if values.is_empty() {
+        return U256::zero()
     }
+
+    values.iter().copied().fold(U256::zero(), |sum, val| sum + val.into()) / values.len()
 }
 
 /// Returns the median of a _sorted_ slice
