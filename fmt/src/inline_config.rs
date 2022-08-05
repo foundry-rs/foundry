@@ -118,7 +118,7 @@ impl InlineConfig {
                         start += offset;
                         let end = char_indices
                             .find(|(_, ch)| *ch == '\n')
-                            .map(|(idx, _)| offset + idx)
+                            .map(|(idx, _)| offset + idx + 1)
                             .unwrap_or(src.len());
                         disabled_ranges.push(DisabledRange { start, end, loose: false });
                     }
