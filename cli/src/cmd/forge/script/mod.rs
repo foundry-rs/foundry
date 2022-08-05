@@ -426,55 +426,53 @@ impl ScriptArgs {
         transactions: Option<&VecDeque<TypedTransaction>>,
         known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     ) -> eyre::Result<()> {
-        if let Some(txes) = transactions {
-            for tx in txes {
-                if let Some(data) = tx.data() {
-                    if data.len() > CONTRACT_MAX_SIZE {
-                        let mut offset = 0;
+        for (data, to) in transactions.iter().flat_map(|txes| {
+            txes.iter().filter_map(|tx| {
+                tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
+            })
+        }) {
+            let mut offset = 0;
 
-                        // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
-                        if let Some(NameOrAddress::Address(to)) = tx.to() {
-                            if *to == DEFAULT_CREATE2_DEPLOYER {
-                                // Size of the salt prefix.
-                                offset = 32;
-                            }
-                        } else if tx.to().is_some() {
-                            continue
-                        }
+            // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
+            if let Some(NameOrAddress::Address(to)) = to {
+                if *to == DEFAULT_CREATE2_DEPLOYER {
+                    // Size of the salt prefix.
+                    offset = 32;
+                }
+            } else if to.is_some() {
+                continue
+            }
 
-                        // Find artifact with a deployment code same as the data.
-                        if let Some((artifact, bytecode)) =
-                            known_contracts.iter().find(|(_, bytecode)| {
-                                bytecode
-                                    .bytecode
-                                    .object
-                                    .as_bytes()
-                                    .expect("Code should have been linked before.") ==
-                                    &data[offset..]
-                            })
+            // Find artifact with a deployment code same as the data.
+            if let Some((artifact, bytecode)) =
+                known_contracts.iter().find(|(_, bytecode)| {
+                    bytecode
+                        .bytecode
+                        .object
+                        .as_bytes()
+                        .expect("Code should have been linked before.") ==
+                        &data[offset..]
+                })
+            {
+                // Find the deployed code size of the artifact.
+                if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
+                    let deployment_size = deployed_bytecode.object.bytes_len();
+
+                    if deployment_size > CONTRACT_MAX_SIZE {
+                        println!(
+                            "{}",
+                            Paint::red(format!(
+                                "`{}` is above the contract size limit ({} vs {}).",
+                                artifact.name, deployment_size, CONTRACT_MAX_SIZE
+                            ))
+                        );
+
+                        if self.broadcast &&
+                            !Confirm::new()
+                                .with_prompt("Do you wish to continue?".to_string())
+                                .interact()?
                         {
-                            // Find the deployed code size of the artifact.
-                            if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
-                                let deployment_size = deployed_bytecode.object.bytes_len();
-
-                                if deployment_size > CONTRACT_MAX_SIZE {
-                                    println!(
-                                        "{}",
-                                        Paint::red(format!(
-                                            "`{}` is above the contract size limit ({} vs {}).",
-                                            artifact.name, deployment_size, CONTRACT_MAX_SIZE
-                                        ))
-                                    );
-
-                                    if self.broadcast &&
-                                        !Confirm::new()
-                                            .with_prompt("Do you wish to continue?".to_string())
-                                            .interact()?
-                                    {
-                                        eyre::bail!("User canceled the script.");
-                                    }
-                                }
-                            }
+                            eyre::bail!("User canceled the script.");
                         }
                     }
                 }
