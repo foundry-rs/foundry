@@ -76,7 +76,11 @@ impl Cmd for BuildArgs {
         let mut config = self.load_config_emit_warnings();
         let project = config.project()?;
 
-        if install::has_missing_dependencies(&project.root()) {
+        // try to auto install missing submodules in the default install dir but only if git is
+        // installed
+        if which::which("git").is_ok() &&
+            install::has_missing_dependencies(&project.root(), &config.install_lib_dir())
+        {
             // The extra newline is needed, otherwise the compiler output will overwrite the
             // message
             p_println!(!self.args.silent => "Missing dependencies found. Installing now.\n");
