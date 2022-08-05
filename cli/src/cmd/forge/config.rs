@@ -1,9 +1,12 @@
 //! config command
 
-use crate::cmd::{forge::build::BuildArgs, utils::Cmd};
+use crate::{
+    cmd::{forge::build::BuildArgs, utils::Cmd, LoadConfig},
+    term::cli_warn,
+};
 use clap::Parser;
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, fix::fix_tomls, Config};
+use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
@@ -28,11 +31,14 @@ impl Cmd for ConfigArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         if self.fix {
-            fix_tomls();
+            for warning in fix_tomls() {
+                cli_warn!("{warning}");
+            }
             return Ok(())
         }
-        let figment: Figment = From::from(&self);
-        let config = Config::from_provider(figment);
+
+        let config = self.load_config_unsanitized_emit_warnings();
+
         let s = if self.basic {
             let config = config.into_basic();
             if self.json {

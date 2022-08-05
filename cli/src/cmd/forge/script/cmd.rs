@@ -1,11 +1,12 @@
-use crate::{cmd::unwrap_contracts, utils::get_http_provider};
+use crate::{
+    cmd::{unwrap_contracts, LoadConfig},
+    utils::get_http_provider,
+};
 
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use forge::executor::opts::EvmOpts;
-use foundry_config::{figment::Figment, Config};
 use tracing::trace;
 
 use super::{sequence::ScriptSequence, *};
@@ -14,12 +15,12 @@ impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(mut self) -> eyre::Result<()> {
         trace!("executing script command");
-        let figment: Figment = From::from(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
+
+        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         let mut script_config = ScriptConfig {
             // dapptools compatibility
             sender_nonce: U256::one(),
-            config: Config::from_provider(figment).sanitized(),
+            config,
             evm_opts,
             called_function: None,
             backend: None,

@@ -1,5 +1,6 @@
 use crate::suggestions;
 
+use crate::term::cli_warn;
 use clap::Parser;
 use ethers::{
     abi::Abi,
@@ -12,8 +13,9 @@ use ethers::{
         Artifact, ProjectCompileOutput,
     },
 };
+use forge::executor::opts::EvmOpts;
 use foundry_common::TestFunctionExt;
-use foundry_config::Chain as ConfigChain;
+use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
@@ -227,4 +229,62 @@ pub fn has_batch_support(chain: u64) -> bool {
         )
     }
     true
+}
+
+/// Helpers for loading configuration.
+///
+/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
+/// definition on `T: Into<Config> + Into<Figment>` below.
+///
+/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
+/// also prints `Config::__warnings` to stderr
+pub trait LoadConfig {
+    /// Load and sanitize the [`Config`] based on the options provided in self
+    fn load_config(self) -> Config;
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
+    fn load_config_unsanitized(self) -> Config;
+
+    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
+    fn load_config_emit_warnings(self) -> Config;
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
+    fn load_config_unsanitized_emit_warnings(self) -> Config;
+}
+
+impl<T> LoadConfig for T
+where
+    T: Into<Config> + Into<Figment>,
+{
+    fn load_config(self) -> Config {
+        self.into()
+    }
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized(self) -> Config {
+        let figment: Figment = self.into();
+        Config::from_provider(figment)
+    }
+    fn load_config_emit_warnings(self) -> Config {
+        let config = self.load_config();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized_emit_warnings(self) -> Config {
+        let config = self.load_config_unsanitized();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
 }

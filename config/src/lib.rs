@@ -31,11 +31,10 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::trace;
+pub(crate) use tracing::trace;
 
 // Macros useful for creating a figment.
 mod macros;
-pub(crate) use macros::config_warn;
 
 // Utilities for making it easier to handle tests.
 pub mod utils;
@@ -56,11 +55,17 @@ pub use fmt::FormatterConfig;
 mod error;
 pub use error::SolidityErrorCode;
 
+mod warning;
+pub use warning::*;
+
 // helpers for fixing configuration warnings
 pub mod fix;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+
+mod providers;
+use providers::*;
 
 /// Foundry configuration
 ///
@@ -327,6 +332,9 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
+    /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information
+    #[serde(default, skip_serializing)]
+    pub __warnings: Vec<Warning>,
 }
 
 impl Config {
@@ -945,8 +953,16 @@ impl Config {
     pub fn update_libs(&self) -> eyre::Result<()> {
         self.update(|doc| {
             let profile = self.profile.as_str().as_str();
-            let libs: toml_edit::Value =
-                self.libs.iter().map(|p| toml_edit::Value::from(&*p.to_string_lossy())).collect();
+            let root = &self.__root.0;
+            let libs: toml_edit::Value = self
+                .libs
+                .iter()
+                .map(|path| {
+                    let path =
+                        if let Ok(relative) = path.strip_prefix(root) { relative } else { path };
+                    toml_edit::Value::from(&*path.to_string_lossy())
+                })
+                .collect();
             let libs = toml_edit::value(libs);
             doc[Config::PROFILE_SECTION][profile]["libs"] = libs;
             true
@@ -1235,14 +1251,14 @@ impl Config {
         toml_provider: impl Provider,
         profile: Profile,
     ) -> Figment {
-        // provide warnings for unknown sections in toml provider
-        for unknown_key in toml_provider.data().unwrap_or_default().keys().filter(|k| {
-            k != &Config::PROFILE_SECTION && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
-        }) {
-            let src =
-                toml_provider.metadata().source.map(|src| format!(" in {src}")).unwrap_or_default();
-            config_warn!("Unknown section [{unknown_key}] found{src}. This notation for profiles has been deprecated and may result in the profile not being registered in future versions. Please use [profile.{profile}] instead or run `forge config --fix`.");
-        }
+        figment = figment.select(profile.clone());
+
+        // add warnings
+        figment = {
+            let warnings = WarningsProvider::for_figment(&toml_provider, &figment);
+            figment.merge(warnings)
+        };
+
         // use [profile.<profile>] as [<profile>]
         let mut profiles = vec![Config::DEFAULT_PROFILE];
         if profile != Config::DEFAULT_PROFILE {
@@ -1514,6 +1530,7 @@ impl Default for Config {
             build_info_path: None,
             fmt: Default::default(),
             __non_exhaustive: (),
+            __warnings: vec![],
         }
     }
 }
@@ -3467,7 +3484,7 @@ mod tests {
             jail.create_file(
                 "foundry.toml",
                 r#"
-                [profile.default]
+                [default]
                 src = 'my-src'
                 out = 'my-out'
             "#,
@@ -3475,6 +3492,13 @@ mod tests {
             let loaded = Config::load().sanitized();
             assert_eq!(loaded.src.file_name().unwrap(), "my-src");
             assert_eq!(loaded.out.file_name().unwrap(), "my-out");
+            assert_eq!(
+                loaded.__warnings,
+                vec![Warning::UnknownSection {
+                    unknown_section: Profile::new("default"),
+                    source: Some("foundry.toml".into())
+                }]
+            );
 
             Ok(())
         });

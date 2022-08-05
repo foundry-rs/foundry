@@ -2048,7 +2048,6 @@ name = "foundry-config"
 version = "0.2.0"
 dependencies = [
  "Inflector",
- "ansi_term",
  "dirs-next",
  "ethers-core",
  "ethers-solc",
