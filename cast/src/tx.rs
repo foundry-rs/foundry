@@ -61,17 +61,15 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
             Eip1559TransactionRequest::new().from(from_addr).chain_id(chain.id()).into()
         };
 
-        let to_addr = match to {
-            Some(to) => {
-                let addr =
-                    resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
-                        .await?;
-                tx.set_to(addr);
-                Some(addr)
-            }
-            _ => None,
+        let to_addr = if let Some(to) = to {
+            let addr =
+                resolve_ens(provider, foundry_utils::resolve_addr(to, chain.try_into().ok())?)
+                    .await?;
+            tx.set_to(addr);
+            Some(addr)
+        } else {
+            None
         };
-
         Ok(Self { to: to_addr, chain, tx, func: None, etherscan_api_key: None, provider })
     }
 
@@ -183,7 +181,7 @@ impl<'a, M: Middleware> TxBuilder<'a, M> {
                 self.chain.try_into().wrap_err("resolving via etherscan requires a known chain")?;
             get_func_etherscan(
                 sig,
-                self.to.unwrap(),
+                self.to.ok_or_else(|| eyre::eyre!("to value must be set"))?,
                 &args,
                 chain,
                 self.etherscan_api_key.as_ref().unwrap_or_else(|| panic!(r#"Unable to determine the function signature from `{}`. To find the function signature from the deployed contract via its name instead, a valid ETHERSCAN_API_KEY must be set."#, sig)),

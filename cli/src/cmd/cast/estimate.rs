@@ -42,9 +42,9 @@ pub enum EstimateSubcommands {
     Create {
         #[clap(help = "Bytecode of contract.", value_name = "CODE")]
         code: String,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+        #[clap(help = "The signature of the constructor.", value_name = "SIG")]
         sig: Option<String>,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+        #[clap(help = "Constructor arguments", value_name = "ARGS")]
         args: Vec<String>,
         #[clap(
             long,

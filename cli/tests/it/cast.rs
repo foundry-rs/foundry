@@ -49,6 +49,45 @@ casttest!(new_wallet_keystore_with_password, |_: TestProject, mut cmd: TestComma
     assert!(out.contains("Public Address of the key"));
 });
 
+// tests that `cast estimate` is working correctly.
+casttest!(estimate_function_gas, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "estimate",
+        "vitalik.eth",
+        "--value",
+        "100",
+        "deposit()",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ]);
+    let out: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    // ensure we get a positive non-error value for gas estimate
+    assert!(out.ge(&0));
+});
+
+// tests that `cast estimate --create` is working correctly.
+casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    // sample contract code bytecode. Wouldn't run but is valid bytecode that the estimate method
+    // accepts and could be deployed.
+    cmd.args([
+        "estimate",
+        "--create",
+        "0000",
+        "ERC20(uint256,string,string)",
+        "100",
+        "Test",
+        "TST",
+        "--",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ]);
+    let out: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+    // ensure we get a positive non-error value for gas estimate
+    assert!(out.ge(&0));
+});
+
 // tests that the `cast upload-signatures` command works correctly
 casttest!(upload_signatures, |_: TestProject, mut cmd: TestCommand| {
     // test no prefix is accepted as function
