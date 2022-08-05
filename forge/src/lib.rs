@@ -18,9 +18,6 @@ pub use foundry_common::traits::TestFilter;
 
 pub mod result;
 
-#[cfg(test)]
-mod test_helpers;
-
 /// The Forge EVM backend
 pub use foundry_evm::*;
 

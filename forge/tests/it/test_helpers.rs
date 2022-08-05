@@ -85,6 +85,7 @@ pub const RE_PATH_SEPARATOR: &str = "/";
 
 pub mod filter {
     use super::*;
+    use foundry_common::TestFilter;
     use regex::Regex;
 
     pub struct Filter {
