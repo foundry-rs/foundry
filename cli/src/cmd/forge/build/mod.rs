@@ -5,7 +5,7 @@ use crate::{
             install::{self, DependencyInstallOpts},
             watch::WatchArgs,
         },
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile,
     utils::p_println,
@@ -73,14 +73,15 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = self.project()?;
+        let mut config = self.load_config_emit_warnings();
+        let project = config.project()?;
 
         if install::has_missing_dependencies(&project.root()) {
             // The extra newline is needed, otherwise the compiler output will overwrite the
             // message
             p_println!(!self.args.silent => "Missing dependencies found. Installing now.\n");
             install::install(
-                &project.root(),
+                &mut config,
                 Vec::new(),
                 DependencyInstallOpts {
                     // TODO(onbjerg): We should settle on --quiet or --silent.

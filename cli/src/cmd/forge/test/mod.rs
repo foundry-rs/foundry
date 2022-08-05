@@ -2,7 +2,7 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile,
     compile::ProjectCompiler,
@@ -13,7 +13,7 @@ use clap::{AppSettings, Parser};
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, opts::EvmOpts},
+    executor::inspector::CheatsConfig,
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
@@ -23,7 +23,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment, figment::Figment, Config};
+use foundry_config::{figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -113,15 +113,6 @@ impl TestArgs {
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
     pub fn filter(&self, config: &Config) -> Filter {
         self.filter.with_merged_config(config)
-    }
-
-    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
-    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // merge all configs
-        let figment: Figment = self.into();
-        let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
-        Ok((config, evm_opts))
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -318,7 +309,7 @@ fn short_test_result(name: &str, result: &TestResult) {
 
 pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
-    let (config, mut evm_opts) = args.config_and_evm_opts()?;
+    let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
 
     let test_options = TestOptions {
         fuzz_runs: config.fuzz_runs,

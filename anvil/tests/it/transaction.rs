@@ -102,7 +102,7 @@ async fn can_respect_nonces() {
     // ensure the listener for ready transactions times out
     let mut listener = api.new_ready_transactions();
     let res = timeout(Duration::from_millis(1500), async move { listener.next().await }).await;
-    assert!(res.is_err());
+    res.unwrap_err();
 
     // send with the actual nonce which is mined immediately
     let tx =
@@ -175,7 +175,7 @@ async fn can_reject_too_high_gas_limits() {
     // send transaction with the exact gas limit
     let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
 
-    assert!(pending.is_ok());
+    pending.unwrap();
 
     // send transaction with higher gas limit
     let pending = provider.send_transaction(tx.clone().gas(gas_limit + 1u64), None).await;
@@ -187,7 +187,7 @@ async fn can_reject_too_high_gas_limits() {
     api.anvil_set_balance(from, U256::MAX).await.unwrap();
 
     let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
-    assert!(pending.is_ok());
+    pending.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -2,7 +2,7 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, test::Filter},
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile::ProjectCompiler,
     utils::{self, p_println},
@@ -29,7 +29,7 @@ use forge::{
     MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::{evm::EvmArgs, fs};
-use foundry_config::{figment::Figment, Config};
+use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
 
@@ -63,16 +63,6 @@ impl CoverageArgs {
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
-
-    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
-    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // Merge all configs
-        let figment: Figment = self.into();
-        let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
-
-        Ok((config, evm_opts))
-    }
 }
 
 impl Cmd for CoverageArgs {
@@ -97,7 +87,7 @@ impl CoverageArgs {
     /// Collects and adjusts configuration.
     fn configure(&self) -> eyre::Result<(Config, EvmOpts)> {
         // Merge all configs
-        let (config, mut evm_opts) = self.config_and_evm_opts()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // We always want traces
         evm_opts.verbosity = 3;
