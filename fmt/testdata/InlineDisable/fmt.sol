@@ -33,9 +33,33 @@ bytes32 constant private BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b6
 
 // forgefmt: disable-start
 
-// hello
+// comment1
+
+
+// comment2
+/* comment 3 */ /* 
+    comment4
+     */ // comment 5
+
 
 // forgefmt: disable-end
+
+// forgefmt: disable-start
+
+function test1() {}
+
+function test2() {}
+
+// forgefmt: disable-end
+
+contract Constructors is Ownable, Changeable {
+    //forgefmt: disable-next-item
+    function Constructors(variable1) public Changeable(variable1) Ownable() onlyOwner {
+    }
+
+    //forgefmt: disable-next-item
+    constructor(variable1, variable2, variable3, variable4, variable5, variable6, variable7) public Changeable(variable1, variable2, variable3, variable4, variable5, variable6, variable7) Ownable() onlyOwner {}
+}
 
 function test() {
     uint256 pi_approx = 666 / 212;
@@ -62,3 +86,26 @@ function testParams(uint256   num, bytes32 data  ,    address receiver)
     attr1
     Cool("hello")
 {}
+
+function testDoWhile() external {
+    //forgefmt: disable-start
+    uint256 i;
+    do { "test"; } while (i != 0);
+
+    do 
+    {}
+    while
+    (
+i != 0);
+
+    bool someVeryVeryLongCondition;
+    do { "test"; } while(
+        someVeryVeryLongCondition && !someVeryVeryLongCondition && 
+!someVeryVeryLongCondition &&
+someVeryVeryLongCondition); 
+
+    do i++; while(i < 10);
+
+    do do i++; while (i < 30); while(i < 20);
+    //forgefmt: disable-end
+}

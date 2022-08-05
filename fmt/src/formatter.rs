@@ -1085,20 +1085,6 @@ impl<'a, W: Write> Formatter<'a, W> {
         V: Visitable + LineOfCode + 'b,
         F: Fn(&Option<&V>, &V) -> bool,
     {
-        // adjust the last byte written to a writable src code location. this is to account for
-        // locations which do not include the actual end of a statement (usually a semicolon) or may
-        // end after postfix operators that need to be written after the item. This heuristic
-        // simply searches for the next whitespace or comment character in the src between
-        let adjust_last_byte_written = |from: usize, to: usize| {
-            let to = to.max(from);
-            from + self.source[from..to]
-                .char_indices()
-                .find_map(
-                    |(idx, ch)| if ch.is_whitespace() || ch == '/' { Some(idx) } else { None },
-                )
-                .unwrap_or(to - from)
-        };
-
         let mut last_item: Option<&V> = None;
         let mut last_loc_end = 0;
         let mut last_byte_written = 0;
@@ -1114,10 +1100,6 @@ impl<'a, W: Write> Formatter<'a, W> {
             // write prefix comments
             let comments = self.comments.remove_prefixes_before(item.loc().start());
             let mut is_first_comment = true;
-            if let Some(comment) = comments.first() {
-                last_byte_written =
-                    adjust_last_byte_written(last_byte_written, comment.loc.start());
-            }
             for mut comment in comments {
                 // check if the comment or space between comments should be ignored
                 let unwritten_src_loc =
@@ -1166,18 +1148,30 @@ impl<'a, W: Write> Formatter<'a, W> {
 
             // write source unit part
             item.visit(self)?;
-            last_loc_end = loc.end();
-            last_byte_written = last_loc_end;
             last_item = Some(item);
             is_first_line = false;
+            last_loc_end = loc.end();
+            last_byte_written = last_loc_end;
 
             // write postfix comments
             if let Some(next_item) = items_iter.peek() {
-                let comments = self.comments.remove_postfixes_before(next_item.loc().start());
-                if let Some(comment) = comments.first() {
-                    last_byte_written =
-                        adjust_last_byte_written(last_byte_written, comment.loc.start());
+                let next_loc = next_item.loc();
+                let comments = self.comments.remove_postfixes_before(next_loc.start());
+
+                // sometimes locs do not account for semicolons so we need to shift the last byte
+                // written to the semicolon if there is one
+                if let Some(semi) = self.source[last_byte_written..
+                    comments
+                        .first()
+                        .map(|comment| comment.loc)
+                        .unwrap_or(next_loc)
+                        .start()
+                        .max(last_byte_written)]
+                    .find(';')
+                {
+                    last_byte_written += semi + 1;
                 }
+
                 for comment in comments {
                     // check if the comment or space between comments should be ignored
                     let unwritten_src_loc =
@@ -1199,7 +1193,10 @@ impl<'a, W: Write> Formatter<'a, W> {
                         last_byte_written += 1; // increment by 1 to account for newline
                     }
                 }
-                self.write_whitespace_separator(true)?;
+                if !self.is_beginning_of_line() {
+                    writeln!(self.buf())?;
+                    last_byte_written += 1;
+                }
             }
         }
         Ok(())
@@ -2808,7 +2805,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         body: &mut Statement,
         cond: &mut Expression,
     ) -> Result<(), Self::Error> {
-        return_source_if_disabled!(self, loc);
+        return_source_if_disabled!(self, loc, ';');
         write_chunk!(self, loc.start(), "do ")?;
         self.visit_stmt_as_block(body)?;
         self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
@@ -3432,7 +3429,7 @@ mod tests {
         let mut source_formatted = String::new();
         format(&mut source_formatted, source_parsed, config.clone()).unwrap();
 
-        println!("{}", source_formatted);
+        // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
 
         pretty_assertions::assert_eq!(

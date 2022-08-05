@@ -78,34 +78,46 @@ impl CommentWithMetadata {
         last_comment: Option<&CommentWithMetadata>,
     ) -> Self {
         let src_before = &src[..comment.loc().start()];
+        if src_before.is_empty() {
+            return Self::new(comment, CommentPosition::Prefix, false, 0)
+        }
+
         let mut lines_before = src_before.lines().rev();
         let this_line =
             if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or("") };
         let indent_len = this_line.chars().take_while(|c| c.is_whitespace()).count();
+        let last_line = lines_before.next();
+
+        if matches!(comment, Comment::DocLine(..) | Comment::DocBlock(..)) {
+            return Self::new(
+                comment,
+                CommentPosition::Prefix,
+                last_line.map(|line| line.trim_start().is_empty()).unwrap_or(false),
+                indent_len,
+            )
+        }
+
+        let code_end = src_before
+            .comment_state_char_indices()
+            .filter_map(|(state, idx, ch)| {
+                if matches!(state, CommentState::None) && !ch.is_whitespace() {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .last()
+            .unwrap_or(0);
 
         let (position, has_newline_before) = {
-            if src_before.is_empty() {
-                // beginning of code
-                (CommentPosition::Prefix, false)
-            } else if this_line.trim_start().is_empty() {
-                // comment sits on a new line
-                if let Some(last_line) = lines_before.next() {
+            if src_before[code_end..].contains('\n') {
+                // comment sits on a line without code
+                if let Some(last_line) = last_line {
                     if last_line.trim_start().is_empty() {
                         // line before is empty
                         (CommentPosition::Prefix, true)
                     } else {
                         // line has something
-                        let code_end = src_before
-                            .comment_state_char_indices()
-                            .filter_map(|(state, idx, ch)| {
-                                if matches!(state, CommentState::None) && !ch.is_whitespace() {
-                                    Some(idx)
-                                } else {
-                                    None
-                                }
-                            })
-                            .last()
-                            .unwrap_or(0);
                         // check if the last comment after code was a postfix comment
                         if last_comment
                             .filter(|last_comment| {
@@ -147,7 +159,7 @@ impl CommentWithMetadata {
         Self::new(comment, position, has_newline_before, indent_len)
     }
     pub fn is_line(&self) -> bool {
-        matches!(self.ty, CommentType::Line)
+        matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
     pub fn is_doc_block(&self) -> bool {
         matches!(self.ty, CommentType::DocBlock)
