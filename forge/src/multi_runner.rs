@@ -1435,6 +1435,21 @@ Reason: `setEnv` failed to set an environment variable `{}={}`",
                     "fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
                     vec![("invariantTrueWorld", true, None, None, None)],
                 ),
+                (
+                    "fuzz/invariant/targetAbi/ExcludeAbi.t.sol:ExcludeAbi",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
+                (
+                    "fuzz/invariant/targetAbi/TargetAbi.t.sol:TargetAbi",
+                    vec![
+                        ("invariantTrueWorld", true, None, None, None),
+                        ("invariantFalseWorld", false, Some("false world.".into()), None, None),
+                    ],
+                ),
+                (
+                    "fuzz/invariant/targetAbi/TargetAbiSelectors.t.sol:TargetAbiSelectors",
+                    vec![("invariantTrueWorld", true, None, None, None)],
+                ),
             ]),
         );
     }
