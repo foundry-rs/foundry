@@ -251,6 +251,23 @@ pub struct Backend {
     forks: MultiFork,
     // The default in memory db
     mem_db: InMemoryDB,
+    /// The subroutine to use to initialize new forks with
+    ///
+    /// The way [`revm::SubRoutine`] works is, that it holds the "hot" accounts loaded from the
+    /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
+    /// subroutine so it can apply changes to the state while the evm executes.
+    ///
+    /// In a way the `Subroutine` is something like a cache that
+    /// 1. check if account is already loaded (hot)
+    /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
+    /// mode)
+    ///
+    /// To properly initialize we store the `Subroutine` before the first fork is selected
+    /// ([`DatabaseExt::select_fork`]).
+    ///
+    /// This will be an empty `Subroutine`, which will be populated with persistent accounts, See
+    /// [`Self::update_fork_db()`] and [`clone_data()`].
+    fork_init_subroutine: SubRoutine,
     /// The currently active fork database
     ///
     /// If this is set, then the Backend is currently in forking mode
@@ -276,6 +293,7 @@ impl Backend {
         let mut backend = Self {
             forks,
             mem_db: InMemoryDB::default(),
+            fork_init_subroutine: Default::default(),
             active_fork_ids: None,
             inner: BackendInner {
                 persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
@@ -300,6 +318,7 @@ impl Backend {
         Self {
             forks: self.forks.clone(),
             mem_db: InMemoryDB::default(),
+            fork_init_subroutine: Default::default(),
             active_fork_ids: None,
             inner: Default::default(),
         }
@@ -436,6 +455,11 @@ impl Backend {
         self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
     }
 
+    /// Returns `true` if the `Backend` is currently in forking mode
+    pub fn is_in_forking_mode(&self) -> bool {
+        self.active_fork().is_some()
+    }
+
     /// Returns the currently active `Fork`, if any
     pub fn active_fork(&self) -> Option<&Fork> {
         self.active_fork_ids.map(|(_, idx)| self.inner.get_fork(idx))
@@ -561,12 +585,14 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        subroutine: &SubRoutine,
+        _subroutine: &SubRoutine,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
-        let (id, _) = self.inner.insert_new_fork(fork_id, fork_db, subroutine.clone());
+
+        let (id, _) =
+            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_subroutine.clone());
         Ok(id)
     }
 
@@ -590,9 +616,21 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        // if currently active we need to update the subroutine to this point
+        // If we're currently in forking mode we need to update the subroutine to this point, this
+        // ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.subroutine = subroutine.clone();
+        } else {
+            // this is the first time a fork is selected. This means up to this point all changes
+            // are made in a single `SubRoutine`, for example after a `setup` that only created
+            // different forks. Since the `Subroutine` is valid for all forks until the
+            // first fork is selected, we need to update it for all forks and use it as init state
+            // for all future forks
+            trace!("recording fork init subroutine");
+            self.fork_init_subroutine = subroutine.clone();
+            for fork in self.inner.forks_iter_mut() {
+                fork.subroutine = self.fork_init_subroutine.clone();
+            }
         }
 
         // update the shared state and track
@@ -936,6 +974,11 @@ impl BackendInner {
         self.issued_local_fork_ids
             .iter()
             .map(|(id, fork_id)| (*id, self.get_fork(self.created_forks[fork_id])))
+    }
+
+    /// Returns a mutable iterator over all Forks
+    pub fn forks_iter_mut(&mut self) -> impl Iterator<Item = &mut Fork> + '_ {
+        self.forks.iter_mut().filter_map(|f| f.as_mut())
     }
 
     /// Reverts the entire fork database
