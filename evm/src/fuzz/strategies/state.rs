@@ -1,8 +1,12 @@
 use super::fuzz_param_from_state;
-use crate::{executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts, utils};
+use crate::{
+    executor::StateChangeset,
+    fuzz::invariant::FuzzRunIdentifiedContracts,
+    utils::{self, get_function},
+};
 use bytes::Bytes;
 use ethers::{
-    abi::{Abi, Function},
+    abi::{Abi, FixedBytes, Function},
     prelude::ArtifactId,
     types::{Address, Log, H256, U256},
 };
@@ -171,11 +175,12 @@ pub fn collect_created_contracts(
     state_changeset: &StateChangeset,
     project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     setup_contracts: &BTreeMap<Address, (String, Abi)>,
+    targeted_abi: &BTreeMap<String, Vec<FixedBytes>>,
+    excluded_abi: &[String],
     targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
-) -> bool {
+) -> eyre::Result<()> {
     let mut writable_targeted = targeted_contracts.lock();
-    let before = created_contracts.len();
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
@@ -185,14 +190,28 @@ pub fn collect_created_contracts(
                         .iter()
                         .find(|(_, (_, known_code))| diff_score(known_code, code.bytes()) < 0.1)
                     {
+                        let functions = targeted_abi
+                            .get(&artifact.identifier())
+                            .iter()
+                            .flat_map(|selectors| {
+                                selectors
+                                    .iter()
+                                    .map(|selector| get_function(&artifact.name, selector, abi))
+                            })
+                            .collect::<eyre::Result<Vec<_>>>()?;
+
+                        if functions.is_empty() && excluded_abi.contains(&artifact.identifier()) {
+                            continue
+                        }
+
                         created_contracts.push(*address);
                         writable_targeted
-                            .insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
+                            .insert(*address, (artifact.name.clone(), abi.clone(), functions));
                     }
                 }
             }
         }
     }
 
-    created_contracts.len() > before
+    Ok(())
 }

@@ -14,6 +14,7 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
+    utils::get_function,
     CALLER,
 };
 use ethers::{
@@ -152,13 +153,18 @@ impl<'a> InvariantExecutor<'a> {
                         &state_changeset,
                         fuzz_state.clone(),
                     );
-                    collect_created_contracts(
+
+                    if let Err(error) = collect_created_contracts(
                         &state_changeset,
                         self.project_contracts,
                         self.setup_contracts,
+                        &self.targeted_abi,
+                        &self.excluded_abi,
                         targeted_contracts.clone(),
                         &mut created_contracts,
-                    );
+                    ) {
+                        warn!(target: "forge::test", "{error}");
+                    }
 
                     // Commit changes to the database.
                     executor.backend_mut().commit(state_changeset);
@@ -423,19 +429,11 @@ impl<'a> InvariantExecutor<'a> {
         bytes4_array: Vec<Vec<u8>>,
         targeted_contracts: &mut BTreeMap<Address, (String, Abi, Vec<Function>)>,
     ) -> Result<(), eyre::ErrReport> {
-        fn get_function(name: &str, selector: FixedBytes, abi: &Abi) -> eyre::Result<Function> {
-            abi.functions()
-                .into_iter()
-                .find(|func| func.short_signature().as_slice() == selector.as_slice())
-                .cloned()
-                .wrap_err(format!("{name} does not have the selector {:?}", selector))
-        }
-
         if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
             // The contract is already part of our filter, and all we do is specify that we're
             // only looking at specific functions coming from `bytes4_array`.
             for selector in bytes4_array {
-                address_selectors.push(get_function(name, selector, abi)?);
+                address_selectors.push(get_function(name, &selector, abi)?);
             }
         } else {
             let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
@@ -445,7 +443,7 @@ impl<'a> InvariantExecutor<'a> {
 
             let functions = bytes4_array
                 .into_iter()
-                .map(|selector| get_function(name, selector, abi))
+                .map(|selector| get_function(name, &selector, abi))
                 .collect::<Result<Vec<_>, _>>()?;
 
             targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
