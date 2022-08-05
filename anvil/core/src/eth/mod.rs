@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_helpers::Params;
 
 pub mod block;
+pub mod proof;
 pub mod receipt;
 pub mod serde_helpers;
 pub mod subscription;
@@ -87,6 +88,11 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockId>),
+
+    /// Returns the account and storage values of the specified account including the Merkle-proof.
+    /// This call can be used to verify that the data you are pulling from is not tampered with.
+    #[serde(rename = "eth_getProof")]
+    EthGetProof(Address, Vec<U256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
@@ -443,6 +449,13 @@ mod tests {
     #[test]
     fn test_eth_network_id() {
         let s = r#"{"method": "eth_networkId", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_proof() {
+        let s = r#"{"method":"eth_getProof","params":["0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842",["0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

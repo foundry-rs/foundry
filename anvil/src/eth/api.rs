@@ -26,6 +26,7 @@ use crate::{
 use anvil_core::{
     eth::{
         block::BlockInfo,
+        proof::AccountProof,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -181,6 +182,9 @@ impl EthApi {
             }
             EthRequest::EthGetCodeAt(addr, block) => {
                 self.get_code(addr, block).await.to_rpc_result()
+            }
+            EthRequest::EthGetProof(addr, keys, block) => {
+                self.get_proof(addr, keys, block).await.to_rpc_result()
             }
             EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
             EthRequest::EthSignTypedData(addr, data) => {
@@ -555,6 +559,22 @@ impl EthApi {
         node_info!("eth_getCode");
         let number = self.backend.ensure_block_number(block_number)?;
         self.backend.get_code(address, Some(number.into())).await
+    }
+
+    /// Returns the account and storage values of the specified account including the Merkle-proof.
+    /// This call can be used to verify that the data you are pulling from is not tampered with.
+    ///
+    /// Handler for ETH RPC call: `eth_getProof`
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<U256>,
+        block_number: Option<BlockId>,
+    ) -> Result<AccountProof> {
+        node_info!("eth_getProof");
+        let number = self.backend.ensure_block_number(block_number)?;
+        let proof = self.backend.prove_account_at(address, keys, Some(number.into()))?;
+        Ok(proof)
     }
 
     /// Signs data via [EIP-712](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md).
@@ -1921,6 +1941,11 @@ impl EthApi {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Returns the current state root
+    pub fn state_root(&self) -> Option<H256> {
+        self.backend.get_db().read().maybe_state_root()
     }
 }
 
