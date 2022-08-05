@@ -1,11 +1,18 @@
-//! build command
-
+//! Build command
 use crate::{
-    cmd::{forge::watch::WatchArgs, Cmd},
+    cmd::{
+        forge::{
+            install::{self, DependencyInstallOpts},
+            watch::WatchArgs,
+        },
+        Cmd,
+    },
     compile,
+    utils::p_println,
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
+use eyre::WrapErr;
 use foundry_config::{
     figment::{
         self,
@@ -67,6 +74,21 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
+
+        if install::has_missing_dependencies(&project.root()) {
+            // The extra newline is needed, otherwise the compiler output will overwrite the
+            // message
+            p_println!(!self.args.silent => "Missing dependencies found. Installing now.\n");
+            install::install(
+                &project.root(),
+                Vec::new(),
+                DependencyInstallOpts {
+                    // TODO(onbjerg): We should settle on --quiet or --silent.
+                    quiet: self.args.silent,
+                    ..Default::default()
+                },
+            ).wrap_err("Your project has missing dependencies that could not be installed. Please ensure git is installed and available.")?
+        }
 
         if self.args.silent {
             compile::suppress_compile(&project)

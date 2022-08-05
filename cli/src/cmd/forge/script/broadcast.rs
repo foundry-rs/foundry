@@ -207,30 +207,24 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
             if script_config.evm_opts.fork_url.is_some() {
-                let mut gas_filled_txs;
-                if self.skip_simulation {
+                let gas_filled_txs = if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
-                    gas_filled_txs = VecDeque::new();
-                    for tx in txs.into_iter() {
-                        gas_filled_txs
-                            .push_back(TransactionWithMetadata::from_typed_transaction(tx)?);
-                    }
+                    txs.into_iter().map(TransactionWithMetadata::from_typed_transaction).collect()
                 } else {
-                    gas_filled_txs = self
-                        .execute_transactions(
-                            txs,
-                            &mut script_config,
-                            decoder,
-                            &verify.known_contracts,
-                        )
-                        .await
-                        .map_err(|_| {
-                            eyre::eyre!(
-                                "One or more transactions failed when simulating the
+                    self.execute_transactions(
+                        txs,
+                        &mut script_config,
+                        decoder,
+                        &verify.known_contracts,
+                    )
+                    .await
+                    .map_err(|_| {
+                        eyre::eyre!(
+                            "One or more transactions failed when simulating the
                     on-chain version. Check the trace by re-running with `-vvv`"
-                            )
-                        })?;
-                }
+                        )
+                    })?
+                };
 
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 

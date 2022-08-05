@@ -219,7 +219,7 @@ impl MultiWallet {
             }
         );
 
-        let mut error_msg = "".to_string();
+        let mut error_msg = String::new();
 
         // This is an actual used address
         if addresses.contains(&Config::DEFAULT_SENDER) {

@@ -1,7 +1,8 @@
 use crate::cmd::utils::Cmd;
 
+use crate::{cmd::forge::build::CoreBuildArgs, compile};
 use clap::{Parser, ValueHint};
-use ethers::contract::MultiAbigen;
+use ethers::contract::{ContractFilter, ExcludeContracts, MultiAbigen, SelectContracts};
 use foundry_config::{
     figment::{
         self,
@@ -14,22 +15,13 @@ use foundry_config::{
 use serde::Serialize;
 use std::{fs, path::PathBuf};
 
-impl_figment_convert!(BindArgs);
+impl_figment_convert!(BindArgs, build_args);
 
 static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
 static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BindArgs {
-    #[clap(
-        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    #[serde(skip)]
-    pub root: Option<PathBuf>,
-
     #[clap(
         help = "Path to where the contract artifacts are stored",
         long = "bindings-path",
@@ -39,6 +31,29 @@ pub struct BindArgs {
     )]
     #[serde(skip)]
     pub bindings: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Create bindings only for contracts whose names match the specified filter(s)"
+    )]
+    #[serde(skip)]
+    pub select: Vec<regex::Regex>,
+
+    #[clap(
+        long,
+        help = "Create bindings only for contracts whose names do not match the specified filter(s)",
+        conflicts_with = "select"
+    )]
+    #[serde(skip)]
+    pub skip: Vec<regex::Regex>,
+
+    #[clap(
+        long,
+        help ="By default all contracts ending with `Test` or `Script` are excluded. This will explicitly generate bindings for all contracts",
+        conflicts_with_all = &["select", "skip"]
+    )]
+    #[serde(skip)]
+    pub select_all: bool,
 
     #[clap(
         long = "crate-name",
@@ -74,6 +89,14 @@ pub struct BindArgs {
     #[clap(long = "skip-cargo-toml", help = "Skip Cargo.toml consistency checks.")]
     #[serde(skip)]
     skip_cargo_toml: bool,
+
+    #[clap(long, help = "Skips running forge build before generating binding")]
+    #[serde(skip)]
+    skip_build: bool,
+
+    #[clap(flatten)]
+    #[serde(skip)]
+    build_args: CoreBuildArgs,
 }
 
 impl BindArgs {
@@ -93,9 +116,23 @@ impl BindArgs {
         self.bindings_root().is_dir()
     }
 
+    /// Returns the filter to use for `MultiAbigen`
+    fn get_filter(&self) -> ContractFilter {
+        if self.select_all {
+            return ContractFilter::All
+        }
+        if !self.select.is_empty() {
+            return SelectContracts::default().extend_regex(self.select.clone()).into()
+        }
+        if !self.skip.is_empty() {
+            return ExcludeContracts::default().extend_regex(self.skip.clone()).into()
+        }
+        ExcludeContracts::default().add_pattern(".*Test").add_pattern(".*Script").into()
+    }
+
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        let multi = MultiAbigen::from_json_files(self.artifacts())?;
+        let multi = MultiAbigen::from_json_files(self.artifacts())?.with_filter(self.get_filter());
 
         eyre::ensure!(
             !multi.is_empty(),
@@ -147,6 +184,12 @@ impl Cmd for BindArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        if !self.skip_build {
+            // run `forge build`
+            let project = self.build_args.project()?;
+            compile::compile(&project, false, false)?;
+        }
+
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
             return self.check_existing_bindings()

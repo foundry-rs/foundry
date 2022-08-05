@@ -44,6 +44,7 @@ console = "0.15.0"
 watchexec = "2.0.0"
 atty = "0.2.14"
 comfy-table = "5.0.0"
+dotenv = "0.15.0"
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
@@ -83,7 +84,7 @@ foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
-serial_test = "0.7.0"
+serial_test = "0.8.0"
 
 [features]
 default = ["rustls"]
