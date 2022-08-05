@@ -1,6 +1,6 @@
 //! test outcomes
 
-use crate::Address;
+use crate::{Address, TestOptions};
 use ethers::prelude::Log;
 use foundry_evm::{
     coverage::HitMaps,
@@ -9,6 +9,15 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Duration};
+
+/// Contains the results of all executed tests
+#[derive(Debug, Clone, Default)]
+pub struct TestRunnerOutcome {
+    /// The options the test was run with
+    pub options: TestOptions,
+    /// All test results grouped by the contract's identifier they belong to
+    pub contract_results: BTreeMap<String, SuiteResult>,
+}
 
 /// Results and duration for a set of tests included in the same test contract
 #[derive(Debug, Clone, Serialize)]
