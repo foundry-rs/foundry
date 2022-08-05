@@ -353,7 +353,7 @@ impl<'a> InvariantExecutor<'a> {
 
             return Ok(artifact.identifier())
         }
-        eyre::bail!("{contract} not found in the project. Allowed f");
+        eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
     }
 
     /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
