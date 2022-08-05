@@ -328,9 +328,7 @@ impl<'a> InvariantExecutor<'a> {
             .iter()
             .filter(|(artifact, _)| {
                 // Check if user passed a matching contract name or path:name
-                artifact.name.as_str() == contract ||
-                    format!("{}:{}", artifact.source.to_string_lossy(), artifact.name).as_str() ==
-                        contract
+                artifact.name.as_str() == contract || artifact.identifier() == contract
             })
             .collect::<Vec<_>>();
 
@@ -347,7 +345,7 @@ impl<'a> InvariantExecutor<'a> {
                     .wrap_err(format!("{contract} does not have the selector {:?}", selector))?;
             }
 
-            return Ok(format!("{}:{}", artifact.source.to_string_lossy(), artifact.name))
+            return Ok(artifact.identifier())
         }
         eyre::bail!("{contract} not found in the project. Allowed f");
     }
