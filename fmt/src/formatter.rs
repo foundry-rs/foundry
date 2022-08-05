@@ -793,9 +793,21 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
     ) -> Result<()> {
+        let mut comments = comments.into_iter().peekable();
+        let mut last_byte_written =
+            if let Some(comment) = comments.peek() { comment.loc.start() } else { return Ok(()) };
         let mut is_first = true;
         for comment in comments {
-            self.write_comment(comment, is_first)?;
+            let unwritten_whitespace_loc =
+                Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
+            if self.inline_config.is_disabled(unwritten_whitespace_loc) {
+                self.write_raw(&self.source[unwritten_whitespace_loc.range()])?;
+                self.write_raw_comment(comment)?;
+                last_byte_written =
+                    if comment.is_line() { comment.loc.end() + 1 } else { comment.loc.end() };
+            } else {
+                self.write_comment(comment, is_first)?;
+            }
             is_first = false;
         }
         Ok(())
@@ -1136,7 +1148,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             if let Some(semi) = src.find(';') {
                 loc = loc.with_start(from + semi + 1);
             }
-            (loc, &self.source[loc.start()..loc.end()])
+            (loc, &self.source[loc.range()])
         };
 
         let mut last_byte_written = match (
@@ -1165,10 +1177,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 Either::Left(comment) => {
                     if ignore_whitespace {
                         self.write_raw_comment(comment)?;
-                        if self.source
-                            [unwritten_whitespace_loc.start()..unwritten_whitespace_loc.end()]
-                            .contains('\n')
-                        {
+                        if unwritten_whitespace.contains('\n') {
                             needs_space = false;
                         }
                     } else {
@@ -1387,7 +1396,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// by the configuration `quote_style`
     fn quote_str(&self, loc: Loc, prefix: Option<&str>, string: &str) -> String {
         let get_og_quote = || {
-            self.source[loc.start()..loc.end()]
+            self.source[loc.range()]
                 .quote_state_char_indices()
                 .find_map(
                     |(state, _, ch)| {
@@ -1421,7 +1430,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     type Error = FormatterError;
 
     fn visit_source(&mut self, loc: Loc) -> Result<()> {
-        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())
+        let source = String::from_utf8(self.source.as_bytes()[loc.range()].to_vec())
             .map_err(FormatterError::custom)?;
         let mut lines = source.splitn(2, '\n');
 

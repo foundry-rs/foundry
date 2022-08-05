@@ -463,6 +463,7 @@ pub trait LocExt {
     fn with_end_from(self, other: &Self) -> Self;
     fn with_start(self, start: usize) -> Self;
     fn with_end(self, end: usize) -> Self;
+    fn range(self) -> std::ops::Range<usize>;
 }
 
 impl LocExt for Loc {
@@ -479,5 +480,8 @@ impl LocExt for Loc {
     }
     fn with_end(self, end: usize) -> Self {
         Loc::File(self.file_no(), self.start(), end)
+    }
+    fn range(self) -> std::ops::Range<usize> {
+        self.start()..self.end()
     }
 }

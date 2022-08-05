@@ -68,6 +68,12 @@ function test() {
     // forgefmt: disable-next-item
     uint256 pi_approx = 666 /
         212;
+
+    uint256 test_postfix = 1; // forgefmt: disable-start
+                              // comment1
+                              // comment2
+                              // comment3
+                              // forgefmt: disable-end
 }
 
 // forgefmt: disable-next-item
