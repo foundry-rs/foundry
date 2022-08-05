@@ -1968,6 +1968,7 @@ dependencies = [
  "color-eyre",
  "comfy-table 5.0.1",
  "console 0.15.0",
+ "dialoguer",
  "dotenv",
  "dunce",
  "ethers",

@@ -148,6 +148,12 @@ impl ScriptArgs {
                 }
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+
+                self.check_contract_sizes(
+                    result.transactions.as_ref(),
+                    &highlevel_known_contracts,
+                )?;
+
                 self.handle_broadcastable_transactions(
                     &target,
                     result,
