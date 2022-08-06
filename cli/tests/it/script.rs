@@ -282,7 +282,6 @@ contract DeployScript is Script {
         let run_log =
             std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
         let run_object: Value = serde_json::from_str(&run_log).unwrap();
-        println!("{}", serde_json::to_string_pretty(&run_object).unwrap());
         let contract_address = SimpleCast::checksum_address(
             &ethers::prelude::H160::from_str(
                 run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
