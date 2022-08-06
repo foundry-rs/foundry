@@ -427,6 +427,12 @@ impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
     }
 }
 
+impl OptionalLineOfCode for SourceUnit {
+    fn loc(&self) -> Option<Loc> {
+        self.0.get(0).map(|unit| *unit.loc())
+    }
+}
+
 impl LineOfCode for Unit {
     fn loc(&self) -> Loc {
         match *self {

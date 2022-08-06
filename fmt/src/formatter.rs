@@ -1181,7 +1181,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                             needs_space = false;
                         }
                     } else {
-                        self.write_comment(&comment, last_loc.is_none())?;
+                        self.write_comment(comment, last_loc.is_none())?;
                         if last_loc.is_some() && comment.has_newline_before {
                             needs_space = false;
                         }
@@ -1454,7 +1454,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         //     _ => usize::MAX,
         // });
         let loc = Loc::File(
-            source_unit.0.iter().next().map(|unit| unit.loc().file_no()).unwrap_or_default(),
+            source_unit
+                .loc()
+                .or_else(|| self.comments.iter().next().map(|comment| comment.loc))
+                .map(|loc| loc.file_no())
+                .unwrap_or_default(),
             0,
             self.source.len(),
         );

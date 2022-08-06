@@ -1,5 +1,6 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
+    term::cli_warn,
     utils::FoundryPathExt,
 };
 use clap::{Parser, ValueHint};
@@ -86,13 +87,28 @@ impl Cmd for FmtArgs {
                     Input::Stdin(source) => source.to_string()
                 };
 
-                /// TODO emit warnings for invalid inline config items
                 let parsed = parse(&source)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
+
+                if !parsed.invalid_inline_config_items.is_empty() {
+                    let path = match input {
+                        Input::Path(path) => {
+                            let path = path.strip_prefix(&config.__root.0).unwrap_or(path);
+                            format!("{}", path.display())
+                        }
+                        Input::Stdin(_) => "stdin".to_string()
+                    };
+                    for (loc, warning) in &parsed.invalid_inline_config_items {
+                        let mut lines = source[..loc.start().min(source.len())].split('\n');
+                        let col = lines.next_back().unwrap().len() + 1;
+                        let row = lines.count() + 1;
+                        cli_warn!("[{}:{}:{}] {}", path, row, col, warning);
+                    }
+                }
 
                 let mut output = String::new();
                 format(&mut output, parsed, config.fmt.clone()).unwrap();
