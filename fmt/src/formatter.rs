@@ -1877,12 +1877,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 self.indented_if(multiline, 1, |fmt| {
                     fmt.write_chunks_separated(&chunks, ",", multiline)?;
                     if multiline {
+                        fmt.write_postfix_comments_before(loc.end())?;
                         fmt.write_prefix_comments_before(loc.end())?;
                         fmt.write_whitespace_separator(true)?;
                     }
                     Ok(())
                 })?;
-                self.write_prefix_comments_before(loc.end())?;
                 write_chunk!(self, loc.end(), "]")?;
             }
             Expression::PreIncrement(..) |
@@ -2429,7 +2429,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> Result<()> {
-        return_source_if_disabled!(self, def.loc);
+        return_source_if_disabled!(self, def.loc, ';');
         self.grouped(|fmt| {
             write_chunk!(fmt, def.loc.start(), def.name.loc.start(), "type")?;
             def.name.visit(fmt)?;
@@ -2810,9 +2810,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         return_source_if_disabled!(self, loc, ';');
         write_chunk!(self, loc.start(), "do ")?;
         self.visit_stmt_as_block(body)?;
-        self.surrounded(body.loc().end(), "while (", ");", Some(cond.loc().end()), |fmt, _| {
-            cond.visit(fmt)
-        })
+        visit_source_if_disabled_else!(self, loc.with_start(body.loc().end()), {
+            self.surrounded(cond.loc().start(), "while (", ");", Some(loc.end()), |fmt, _| {
+                cond.visit(fmt)
+            })?;
+        });
+        Ok(())
     }
 
     fn visit_if(
@@ -2824,9 +2827,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
 
-        self.surrounded(loc.start(), "if (", ")", Some(cond.loc().end()), |fmt, _| {
-            cond.visit(fmt)
-        })?;
+        visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
+            self.surrounded(loc.start(), "if (", ")", Some(cond.loc().end()), |fmt, _| {
+                cond.visit(fmt)
+            })?;
+        });
         self.visit_stmt_as_block(if_branch)?;
         if let Some(else_branch) = else_branch {
             self.write_postfix_comments_before(else_branch.loc().start())?;
@@ -2927,6 +2932,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_return(&mut self, loc: Loc, expr: &mut Option<Expression>) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc, ';');
 
+        self.write_postfix_comments_before(loc.start())?;
         self.write_prefix_comments_before(loc.start())?;
 
         if expr.is_none() {
