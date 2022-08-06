@@ -1,8 +1,6 @@
 use crate::{
-    config::{Hardfork, DEFAULT_MNEMONIC},
-    eth::pool::transactions::TransactionOrder,
-    genesis::Genesis,
-    AccountGenerator, NodeConfig, CHAIN_ID,
+    config::DEFAULT_MNEMONIC, eth::pool::transactions::TransactionOrder, genesis::Genesis,
+    AccountGenerator, Hardfork, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
 use clap::Parser;
