@@ -3,44 +3,47 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 
+contract Targeted {
+    bool public world = true;
+
+    function change() public {
+        world = false;
+    }
+}
+
 contract Hello {
     bool public world = true;
 
-    function change() public {
-        world = false;
-    }
-}
-
-contract ThirdHello {
-    bool public world = true;
-
-    function change() public {
-        world = false;
-    }
+    function no_change() public {}
 }
 
 contract TargetAbi is DSTest {
-    Hello hello1;
-    Hello hello2;
-    ThirdHello hello3;
+    Targeted target1;
+    Targeted target2;
+    Hello hello;
 
     function setUp() public {
-        hello1 = new Hello();
-        hello2 = new Hello();
-        hello3 = new ThirdHello();
+        target1 = new Targeted();
+        target2 = new Targeted();
+        hello = new Hello();
     }
 
     function targetAbis() public returns (string[] memory) {
         string[] memory abis = new string[](1);
-        abis[0] = "fuzz/invariant/targetAbi/TargetAbi.t.sol:Hello";
+        abis[0] = "fuzz/invariant/targetAbi/TargetAbi.t.sol:Targeted";
         return abis;
     }
 
-    function invariantTrueWorld() public {
-        require(hello2.world() == true || hello1.world() == true || hello3.world() == true, "false world.");
+    function invariantShouldPass() public {
+        require(
+            target2.world() == true || target1.world() == true || hello.world() == true,
+            "false world."
+        );
     }
 
-    function invariantFalseWorld() public {
-        require(hello2.world() == true || hello1.world() == true, "false world.");
+    function invariantShouldFail() public {
+        require(
+            target2.world() == true || target1.world() == true, "false world."
+        );
     }
 }

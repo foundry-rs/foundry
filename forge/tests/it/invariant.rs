@@ -46,18 +46,18 @@ fn test_invariant() {
             ),
             (
                 "fuzz/invariant/targetAbi/ExcludeAbi.t.sol:ExcludeAbi",
-                vec![("invariantTrueWorld", true, None, None, None)],
+                vec![("invariantShouldPass", true, None, None, None)],
             ),
             (
                 "fuzz/invariant/targetAbi/TargetAbi.t.sol:TargetAbi",
                 vec![
-                    ("invariantTrueWorld", true, None, None, None),
-                    ("invariantFalseWorld", false, Some("false world.".into()), None, None),
+                    ("invariantShouldPass", true, None, None, None),
+                    ("invariantShouldFail", false, Some("false world.".into()), None, None),
                 ],
             ),
             (
                 "fuzz/invariant/targetAbi/TargetAbiSelectors.t.sol:TargetAbiSelectors",
-                vec![("invariantTrueWorld", true, None, None, None)],
+                vec![("invariantShouldPass", true, None, None, None)],
             ),
         ]),
     );

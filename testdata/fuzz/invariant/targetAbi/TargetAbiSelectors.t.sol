@@ -8,34 +8,36 @@ struct FuzzAbiSelector {
     bytes4[] selectors;
 }
 
-contract Hello {
+contract Hi {
     bool public world = true;
 
-    function change() public {
+    function no_change() public {
         world = true;
     }
-    
-    function real_change() public {
+
+    function changee() public {
         world = false;
     }
 }
 
 contract TargetAbiSelectors is DSTest {
-    Hello hello;
+    Hi hello;
 
     function setUp() public {
-        hello = new Hello();
+        hello = new Hi();
     }
 
     function targetAbiSelectors() public returns (FuzzAbiSelector[] memory) {
         FuzzAbiSelector[] memory targets = new FuzzAbiSelector[](1);
         bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = Hello.change.selector;
-        targets[0] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetAbiSelectors.t.sol:Hello", selectors);
+        selectors[0] = Hi.no_change.selector;
+        targets[0] = FuzzAbiSelector(
+            "fuzz/invariant/targetAbi/TargetAbiSelectors.t.sol:Hi", selectors
+        );
         return targets;
     }
 
-    function invariantTrueWorld() public {
+    function invariantShouldPass() public {
         require(hello.world() == true, "false world.");
     }
 }
