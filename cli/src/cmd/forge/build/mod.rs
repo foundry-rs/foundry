@@ -12,7 +12,7 @@ use crate::{
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
-use eyre::WrapErr;
+
 use foundry_config::{
     figment::{
         self,
@@ -94,16 +94,15 @@ impl Cmd for BuildArgs {
                     ..Default::default()
                 },
             )
-            .is_err()
+            .is_err() &&
+                !self.args.silent
             {
-                if !self.args.silent {
-                    eprintln!(
-                        "{}",
-                        Paint::yellow(
-                            "Your project has missing dependencies that could not be installed."
-                        )
+                eprintln!(
+                    "{}",
+                    Paint::yellow(
+                        "Your project has missing dependencies that could not be installed."
                     )
-                }
+                )
             }
         }
 
