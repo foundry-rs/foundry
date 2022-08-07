@@ -16,6 +16,7 @@ use parking_lot::{
     RawRwLock, RwLock,
 };
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
 
 /// Represents a fork of a remote client
@@ -31,14 +32,14 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: Arc<RwLock<ForkedDatabase>>,
+    pub database: Arc<AsyncRwLock<ForkedDatabase>>,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
     /// Creates a new instance of the fork
-    pub fn new(config: ClientForkConfig, database: Arc<RwLock<ForkedDatabase>>) -> Self {
+    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<ForkedDatabase>>) -> Self {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
@@ -51,6 +52,7 @@ impl ClientFork {
         {
             self.database
                 .write()
+                .await
                 .reset(url.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }

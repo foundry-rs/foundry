@@ -37,7 +37,7 @@ async fn can_get_proof() {
 
     let rlp_account = rlp::encode(&account);
 
-    let root: H256 = api.state_root().unwrap();
+    let root: H256 = api.state_root().await.unwrap();
     let acc_proof: Vec<Vec<u8>> = proof.account_proof.into_iter().map(|b| b.to_vec()).collect();
 
     verify_proof::<ExtensionLayout>(

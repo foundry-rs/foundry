@@ -53,6 +53,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1", features = ["time"] }
 parking_lot = "0.12"
 futures = "0.3"
+async-trait = "0.1"
 
 # misc
 serde_json = "1.0.67"
@@ -67,7 +68,6 @@ clap = { version = "3.0.10", features = [
     "wrap_help",
 ], optional = true }
 clap_complete =  { version = "3.0.4", optional = true }
-async-trait = "0.1.53"
 chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
