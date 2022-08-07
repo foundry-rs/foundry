@@ -59,6 +59,10 @@ fn test_invariant() {
                 "fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:TargetArtifactSelectors",
                 vec![("invariantShouldPass", true, None, None, None)],
             ),
+            (
+                "fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:TargetArtifactSelectors2",
+                vec![("invariantShouldFail", false, Some("its false.".into()), None, None)],
+            ),
         ]),
     );
 }

@@ -200,6 +200,7 @@ pub fn collect_created_contracts(
                             })
                             .collect::<eyre::Result<Vec<_>>>()?;
 
+                        // targetArtifactSelectors > excludeArtifacts > targetArtifacts
                         if functions.is_empty() && excluded_abi.contains(&artifact.identifier()) {
                             continue
                         }
