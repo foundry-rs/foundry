@@ -20,19 +20,22 @@ contract Hi {
     }
 }
 
-contract TargetAbiSelectors is DSTest {
+contract TargetArtifactSelectors is DSTest {
     Hi hello;
 
     function setUp() public {
         hello = new Hi();
     }
 
-    function targetAbiSelectors() public returns (FuzzAbiSelector[] memory) {
+    function targetArtifactSelectors()
+        public
+        returns (FuzzAbiSelector[] memory)
+    {
         FuzzAbiSelector[] memory targets = new FuzzAbiSelector[](1);
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = Hi.no_change.selector;
         targets[0] = FuzzAbiSelector(
-            "fuzz/invariant/targetAbi/TargetAbiSelectors.t.sol:Hi", selectors
+            "fuzz/invariant/targetAbi/TargetArtifactSelectors.t.sol:Hi", selectors
         );
         return targets;
     }

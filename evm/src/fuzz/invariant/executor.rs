@@ -281,15 +281,19 @@ impl<'a> InvariantExecutor<'a> {
     ///
     /// Priority:
     ///
-    /// targetAbiSelectors > excludeAbis > targetAbis
+    /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
     pub fn select_contract_artifacts(
         &mut self,
         invariant_address: Address,
         abi: &Abi,
     ) -> eyre::Result<()> {
-        // targetAbiSelectors -> (string, bytes4[])[].
+        // targetArtifactSelectors -> (string, bytes4[])[].
         let targeted_abi = self
-            .get_list::<(String, Vec<FixedBytes>)>(invariant_address, abi, "targetAbiSelectors")
+            .get_list::<(String, Vec<FixedBytes>)>(
+                invariant_address,
+                abi,
+                "targetArtifactSelectors",
+            )
             .into_iter()
             .map(|(contract, functions)| (contract, functions))
             .collect::<BTreeMap<_, _>>();
@@ -301,12 +305,12 @@ impl<'a> InvariantExecutor<'a> {
             self.targeted_abi.entry(identifier).or_insert(vec![]).extend(selectors);
         }
 
-        // targetAbis -> string[]
-        // excludeAbis -> string[].
-        let [selected_abi, excluded_abi] = ["targetAbis", "excludeAbis"]
+        // targetArtifacts -> string[]
+        // excludeArtifacts -> string[].
+        let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"]
             .map(|method| self.get_list::<String>(invariant_address, abi, method));
 
-        // Insert `excludeAbis` into the executor `excluded_abi`.
+        // Insert `excludeArtifacts` into the executor `excluded_abi`.
         for contract in excluded_abi {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
@@ -315,7 +319,8 @@ impl<'a> InvariantExecutor<'a> {
             }
         }
 
-        // Insert `targetAbis` into the executor `targeted_abi`, if they have not been seen before.
+        // Insert `targetArtifacts` into the executor `targeted_abi`, if they have not been seen
+        // before.
         for contract in selected_abi {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
@@ -396,14 +401,14 @@ impl<'a> InvariantExecutor<'a> {
     }
 
     /// Selects the functions to fuzz based on the contract method `targetSelectors()` and
-    /// `targetAbiSelectors()`.
+    /// `targetArtifactSelectors()`.
     pub fn select_selectors(
         &self,
         address: Address,
         abi: &Abi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
-        // `targetAbiSelectors() -> (string, bytes4[])[]`.
+        // `targetArtifactSelectors() -> (string, bytes4[])[]`.
         let some_abi_selectors = self
             .targeted_abi
             .iter()

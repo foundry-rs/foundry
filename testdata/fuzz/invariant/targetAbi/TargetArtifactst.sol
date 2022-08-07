@@ -17,7 +17,7 @@ contract Hello {
     function no_change() public {}
 }
 
-contract TargetAbi is DSTest {
+contract TargetArtifacts is DSTest {
     Targeted target1;
     Targeted target2;
     Hello hello;
@@ -28,9 +28,9 @@ contract TargetAbi is DSTest {
         hello = new Hello();
     }
 
-    function targetAbis() public returns (string[] memory) {
+    function targetArtifacts() public returns (string[] memory) {
         string[] memory abis = new string[](1);
-        abis[0] = "fuzz/invariant/targetAbi/TargetAbi.t.sol:Targeted";
+        abis[0] = "fuzz/invariant/targetAbi/TargetArtifacts.t.sol:Targeted";
         return abis;
     }
 

@@ -19,7 +19,7 @@ contract Hello {
     }
 }
 
-contract ExcludeAbi is DSTest {
+contract ExcludeArtifacts is DSTest {
     Excluded excluded;
 
     function setUp() public {
@@ -27,9 +27,9 @@ contract ExcludeAbi is DSTest {
         new Hello();
     }
 
-    function excludeAbis() public returns (string[] memory) {
+    function excludeArtifacts() public returns (string[] memory) {
         string[] memory abis = new string[](1);
-        abis[0] = "fuzz/invariant/targetAbi/ExcludeAbi.t.sol:Excluded";
+        abis[0] = "fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:Excluded";
         return abis;
     }
 
