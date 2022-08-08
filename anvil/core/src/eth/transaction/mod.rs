@@ -1069,7 +1069,7 @@ impl TransactionInfo {
             let child_idx = node.idx;
             node = &self.traces[parent];
             // find the index of the child call in the parent node
-            let call_idx  = node
+            let call_idx = node
                 .children
                 .iter()
                 .position(|child| *child == child_idx)
