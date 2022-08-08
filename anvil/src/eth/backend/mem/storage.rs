@@ -235,7 +235,7 @@ impl MinedTransaction {
             let trace = Trace {
                 action,
                 result: Some(result),
-                trace_address: self.info.trace_call_graph(idx),
+                trace_address: self.info.trace_address(idx),
                 subtraces: node.children.len(),
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
