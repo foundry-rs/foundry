@@ -1,10 +1,11 @@
 use crate::{
     cmd::{Cmd, LoadConfig},
+    term::cli_warn,
     utils::FoundryPathExt,
 };
 use clap::{Parser, ValueHint};
 use console::{style, Style};
-use forge_fmt::{Comments, Formatter, Visitable};
+use forge_fmt::{format, parse};
 use foundry_common::fs;
 use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
@@ -80,26 +81,37 @@ impl Cmd for FmtArgs {
 
         let diffs = inputs
             .par_iter()
-            .enumerate()
-            .map(|(i, input)| {
+            .map(|input| {
                 let source = match input {
                     Input::Path(path) => fs::read_to_string(&path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
-                let (mut source_unit, comments) = solang_parser::parse(&source, i)
+                let parsed = parse(&source)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             input,
                             diags
                         ))?;
-                let comments = Comments::new(comments, &source);
+
+                if !parsed.invalid_inline_config_items.is_empty() {
+                    let path = match input {
+                        Input::Path(path) => {
+                            let path = path.strip_prefix(&config.__root.0).unwrap_or(path);
+                            format!("{}", path.display())
+                        }
+                        Input::Stdin(_) => "stdin".to_string()
+                    };
+                    for (loc, warning) in &parsed.invalid_inline_config_items {
+                        let mut lines = source[..loc.start().min(source.len())].split('\n');
+                        let col = lines.next_back().unwrap().len() + 1;
+                        let row = lines.count() + 1;
+                        cli_warn!("[{}:{}:{}] {}", path, row, col, warning);
+                    }
+                }
 
                 let mut output = String::new();
-                let mut formatter =
-                    Formatter::new(&mut output, &source, comments, config.fmt.clone());
-
-                source_unit.visit(&mut formatter).unwrap();
+                format(&mut output, parsed, config.fmt.clone()).unwrap();
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
