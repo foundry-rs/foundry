@@ -100,7 +100,7 @@ fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address>
     }
 }
 
-/// Strategy to randomly select a contract from the `contracts` list.
+/// Strategy to randomly select a contract from the `contracts` list that has at least 1 function
 fn select_random_contract(
     contracts: FuzzRunIdentifiedContracts,
 ) -> impl Strategy<Value = (Address, Abi, Vec<Function>)> {
@@ -108,7 +108,8 @@ fn select_random_contract(
 
     selectors.prop_map(move |selector| {
         let contracts = contracts.lock();
-        let (addr, (_, abi, functions)) = selector.select(contracts.iter());
+        let (addr, (_, abi, functions)) =
+            selector.select(contracts.iter().filter(|(_, (_, abi, _))| !abi.functions.is_empty()));
         (*addr, abi.clone(), functions.clone())
     })
 }
