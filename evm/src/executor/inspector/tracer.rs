@@ -71,6 +71,13 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        node.logs
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -87,13 +94,6 @@ where
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
     fn call_end(

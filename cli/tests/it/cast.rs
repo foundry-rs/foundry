@@ -73,19 +73,19 @@ casttest!(estimate_contract_deploy_gas, |_: TestProject, mut cmd: TestCommand| {
     // accepts and could be deployed.
     cmd.args([
         "estimate",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
         "--create",
         "0000",
         "ERC20(uint256,string,string)",
         "100",
         "Test",
         "TST",
-        "--",
-        "--rpc-url",
-        eth_rpc_url.as_str(),
     ]);
-    let out: u32 = cmd.stdout_lossy().trim().parse().unwrap();
+
+    let gas: u32 = cmd.stdout_lossy().trim().parse().unwrap();
     // ensure we get a positive non-error value for gas estimate
-    assert!(out.ge(&0));
+    assert!(gas > 0);
 });
 
 // tests that the `cast upload-signatures` command works correctly

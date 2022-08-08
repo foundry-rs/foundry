@@ -1,7 +1,7 @@
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::Contract,
-    prelude::{ContractFactory, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    prelude::{Action, ContractFactory, Middleware, Signer, SignerMiddleware, TransactionRequest},
     types::ActionType,
 };
 use ethers_solc::{project_util::TempProject, Artifact};
@@ -24,6 +24,15 @@ async fn test_get_transfer_parity_traces() {
 
     let traces = provider.trace_transaction(tx.transaction_hash).await.unwrap();
     assert!(!traces.is_empty());
+
+    match traces[0].action {
+        Action::Call(ref call) => {
+            assert_eq!(call.from, from);
+            assert_eq!(call.to, to);
+            assert_eq!(call.value, amount);
+        }
+        _ => unreachable!("unexpected action"),
+    }
 
     let num = provider.get_block_number().await.unwrap();
     let block_traces = provider.trace_block(num.into()).await.unwrap();

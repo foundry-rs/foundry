@@ -43,8 +43,7 @@ impl CallTraceArena {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                let node = &mut self.arena[0];
-                node.trace.update(new_trace);
+                self.arena[0].trace = new_trace;
                 0
             }
             // We found the parent node, add the new trace as a child
@@ -326,18 +325,6 @@ pub struct CallTrace {
 // === impl CallTrace ===
 
 impl CallTrace {
-    /// Updates a trace given another trace
-    fn update(&mut self, new_trace: Self) {
-        self.success = new_trace.success;
-        self.address = new_trace.address;
-        self.kind = new_trace.kind;
-        self.value = new_trace.value;
-        self.data = new_trace.data;
-        self.output = new_trace.output;
-        self.address = new_trace.address;
-        self.gas_cost = new_trace.gas_cost;
-    }
-
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)

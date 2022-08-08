@@ -12,7 +12,7 @@ use crate::{
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
-use eyre::WrapErr;
+
 use foundry_config::{
     figment::{
         self,
@@ -24,6 +24,7 @@ use foundry_config::{
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 mod core;
 pub use self::core::CoreBuildArgs;
@@ -84,7 +85,7 @@ impl Cmd for BuildArgs {
             // The extra newline is needed, otherwise the compiler output will overwrite the
             // message
             p_println!(!self.args.silent => "Missing dependencies found. Installing now.\n");
-            install::install(
+            if install::install(
                 &mut config,
                 Vec::new(),
                 DependencyInstallOpts {
@@ -92,7 +93,17 @@ impl Cmd for BuildArgs {
                     quiet: self.args.silent,
                     ..Default::default()
                 },
-            ).wrap_err("Your project has missing dependencies that could not be installed. Please ensure git is installed and available.")?
+            )
+            .is_err() &&
+                !self.args.silent
+            {
+                eprintln!(
+                    "{}",
+                    Paint::yellow(
+                        "Your project has missing dependencies that could not be installed."
+                    )
+                )
+            }
         }
 
         if self.args.silent {
