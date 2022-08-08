@@ -2039,7 +2039,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ethers-core",
+ "ethers-providers",
+ "eyre",
  "foundry-config",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",
