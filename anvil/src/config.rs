@@ -17,7 +17,7 @@ use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Wallet, U256},
-    providers::{Http, Middleware, Provider, RetryClient},
+    providers::Middleware,
     signers::{
         coins_bip39::{English, Mnemonic},
         MnemonicBuilder, Signer,
@@ -25,6 +25,7 @@ use ethers::{
     types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
+use foundry_common::ProviderBuilder;
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -559,7 +560,11 @@ impl NodeConfig {
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 // TODO make provider agnostic
                 let provider = Arc::new(
-                    Provider::<RetryClient<Http>>::new_client(&eth_rpc_url, 10, 1000)
+                    ProviderBuilder::new(&eth_rpc_url)
+                        .max_retry(10)
+                        .initial_backoff(1000)
+                        .connect()
+                        .await
                         .expect("Failed to establish provider to fork url"),
                 );
 

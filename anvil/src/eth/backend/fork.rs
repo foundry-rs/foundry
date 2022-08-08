@@ -3,13 +3,14 @@
 use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
 use anvil_core::eth::transaction::EthTransactionRequest;
 use ethers::{
-    prelude::{BlockNumber, Http, Provider},
-    providers::{Middleware, ProviderError, RetryClient},
+    prelude::BlockNumber,
+    providers::{Middleware, ProviderError},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
         Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_evm::utils::u256_to_h256_be;
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -119,7 +120,7 @@ impl ClientFork {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<Provider<RetryClient<Http>>> {
+    fn provider(&self) -> Arc<RetryProvider> {
         self.config.read().provider.clone()
     }
 
@@ -398,7 +399,7 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     pub block_hash: H256,
     // TODO make provider agnostic
-    pub provider: Arc<Provider<RetryClient<Http>>>,
+    pub provider: Arc<RetryProvider>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
     /// The timestamp for the forked block
@@ -416,9 +417,14 @@ impl ClientForkConfig {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
+        let interval = self.provider.get_interval();
         self.provider = Arc::new(
-            Provider::<RetryClient<Http>>::new_client(url.as_str(), 10, 1000)
-                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+            ProviderBuilder::new(url.as_str())
+                .max_retry(10)
+                .initial_backoff(1000)
+                .build()
+                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
+                .interval(interval),
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;

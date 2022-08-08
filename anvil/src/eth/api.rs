@@ -21,7 +21,7 @@ use crate::{
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
     revm::TransactOut,
-    ClientFork, LoggingManager, Miner, MiningMode, Provider, StorageInfo,
+    ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use anvil_core::{
     eth::{
@@ -39,7 +39,7 @@ use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
     prelude::TxpoolInspect,
-    providers::{Http, ProviderError, RetryClient},
+    providers::ProviderError,
     types::{
         transaction::{
             eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
@@ -51,6 +51,7 @@ use ethers::{
     },
     utils::rlp,
 };
+use foundry_common::ProviderBuilder;
 use foundry_evm::{
     revm::{return_ok, return_revert, Return},
     utils::u256_to_h256_be,
@@ -1450,14 +1451,21 @@ impl EthApi {
     pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
-            let new_provider =
-                Arc::new(Provider::<RetryClient<Http>>::new_client(&url, 10, 1000).map_err(
-                    |_| ProviderError::CustomError(format!("Failed to parse invalid url {}", url)),
-                )?);
             let mut config = fork.config.write();
+            let interval = config.provider.get_interval();
+            let new_provider = Arc::new(
+                ProviderBuilder::new(&url)
+                    .max_retry(10)
+                    .initial_backoff(1000)
+                    .build()
+                    .map_err(|_| {
+                        ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+                    })?
+                    .interval(interval),
+            );
+            config.provider = new_provider;
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
             config.eth_rpc_url = url;
-            config.provider = new_provider;
         }
         Ok(())
     }
