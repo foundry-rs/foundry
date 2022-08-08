@@ -25,7 +25,7 @@ contract LiteralExpressions {
         0x2eff_abde;
 
         // rational number literals
-        .1;
+        0.1;
         1.3;
         2.5e1;
 
