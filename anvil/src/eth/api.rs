@@ -196,7 +196,9 @@ impl EthApi {
             EthRequest::EthSignTypedDataV4(addr, data) => {
                 self.sign_typed_data_v4(addr, &data).await.to_rpc_result()
             }
-            EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
+            EthRequest::EthSendRawTransaction(tx) => {
+                self.send_raw_transaction(tx).await.to_rpc_result()
+            }
             EthRequest::EthCall(call, block) => self.call(call, block).await.to_rpc_result(),
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
@@ -485,7 +487,7 @@ impl EthApi {
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<Block<TxHash>>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block()))
+            return Ok(Some(self.pending_block().await))
         }
 
         self.backend.block_by_number(number).await
@@ -500,7 +502,7 @@ impl EthApi {
     ) -> Result<Option<Block<Transaction>>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(self.pending_block_full())
+            return Ok(self.pending_block_full().await)
         }
         self.backend.block_by_number_full(number).await
     }
@@ -573,7 +575,7 @@ impl EthApi {
     ) -> Result<AccountProof> {
         node_info!("eth_getProof");
         let number = self.backend.ensure_block_number(block_number)?;
-        let proof = self.backend.prove_account_at(address, keys, Some(number.into()))?;
+        let proof = self.backend.prove_account_at(address, keys, Some(number.into())).await?;
         Ok(proof)
     }
 
@@ -647,7 +649,7 @@ impl EthApi {
         };
 
         // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
         let provides = vec![to_marker(nonce.as_u64(), from)];
@@ -659,7 +661,7 @@ impl EthApi {
     /// Sends signed transaction, returning its hash.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
-    pub fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
+    pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
         let data = tx.as_ref();
         if data.is_empty() {
@@ -686,9 +688,9 @@ impl EthApi {
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender());
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await;
         let from = *pending_transaction.sender();
         let nonce = *pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
@@ -1150,7 +1152,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_impersonateAccount");
-        self.backend.impersonate(address);
+        self.backend.impersonate(address).await;
         Ok(())
     }
 
@@ -1159,7 +1161,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.stop_impersonating(address);
+        self.backend.stop_impersonating(address).await;
         Ok(())
     }
 
@@ -1251,7 +1253,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
-        self.backend.set_balance(address, balance);
+        self.backend.set_balance(address, balance).await;
         Ok(())
     }
 
@@ -1260,7 +1262,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
-        self.backend.set_code(address, code);
+        self.backend.set_code(address, code).await;
         Ok(())
     }
 
@@ -1269,7 +1271,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
-        self.backend.set_nonce(address, nonce);
+        self.backend.set_nonce(address, nonce).await;
         Ok(())
     }
 
@@ -1283,7 +1285,7 @@ impl EthApi {
         val: H256,
     ) -> Result<()> {
         node_info!("anvil_setStorageAt");
-        self.backend.set_storage_at(address, slot, val);
+        self.backend.set_storage_at(address, slot, val).await;
         Ok(())
     }
 
@@ -1330,12 +1332,12 @@ impl EthApi {
     }
 
     /// Create a bufer that represents all state on the chain, which can be loaded to separate
-    /// process by calling `anvil_laodState`
+    /// process by calling `anvil_loadState`
     ///
     /// Handler for RPC call: `anvil_dumpState`
     pub async fn anvil_dump_state(&self) -> Result<Bytes> {
         node_info!("anvil_dumpState");
-        self.backend.dump_state()
+        self.backend.dump_state().await
     }
 
     /// Append chain state buffer to current chain. Will overwrite any conflicting addresses or
@@ -1344,7 +1346,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        self.backend.load_state(buf)
+        self.backend.load_state(buf).await
     }
 
     /// Snapshot the state of the blockchain at the current block.
@@ -1352,7 +1354,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
-        Ok(self.backend.create_snapshot())
+        Ok(self.backend.create_snapshot().await)
     }
 
     /// Revert the state of the blockchain to a previous snapshot.
@@ -1361,7 +1363,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
-        Ok(self.backend.revert_snapshot(id))
+        Ok(self.backend.revert_snapshot(id).await)
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -1490,7 +1492,7 @@ impl EthApi {
         let pending_transaction = PendingTransaction::with_sender(transaction, from);
 
         // pre-validate
-        self.backend.validate_pool_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
         let provides = vec![to_marker(nonce.as_u64(), from)];
@@ -1806,17 +1808,17 @@ impl EthApi {
     }
 
     /// Returns the pending block with tx hashes
-    fn pending_block(&self) -> Block<TxHash> {
+    async fn pending_block(&self) -> Block<TxHash> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let info = self.backend.pending_block(transactions);
+        let info = self.backend.pending_block(transactions).await;
         self.backend.convert_block(info.block)
     }
 
     /// Returns the full pending block with `Transaction` objects
-    fn pending_block_full(&self) -> Option<Block<Transaction>> {
+    async fn pending_block_full(&self) -> Option<Block<Transaction>> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
-            self.backend.pending_block(transactions);
+            self.backend.pending_block(transactions).await;
 
         let ethers_block = self.backend.convert_block(block.clone());
 
@@ -1944,8 +1946,8 @@ impl EthApi {
     }
 
     /// Returns the current state root
-    pub fn state_root(&self) -> Option<H256> {
-        self.backend.get_db().read().maybe_state_root()
+    pub async fn state_root(&self) -> Option<H256> {
+        self.backend.get_db().read().await.maybe_state_root()
     }
 }
 
