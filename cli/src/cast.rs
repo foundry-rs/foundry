@@ -684,6 +684,14 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::Rpc(cmd) => cmd.run()?.await?,
+        Subcommands::FormatBytes32String { string } => {
+            let val = unwrap_or_stdin(string)?;
+            println!("{}", SimpleCast::format_bytes32_string(&val)?);
+        }
+        Subcommands::ParseBytes32String { bytes } => {
+            let val = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_string(&val)?);
+        }
     };
     Ok(())
 }
