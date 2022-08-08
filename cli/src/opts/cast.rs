@@ -830,6 +830,18 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     #[clap(visible_alias = "rp")]
     #[clap(about = "Perform a raw JSON-RPC request")]
     Rpc(RpcArgs),
+    #[clap(name = "--format-bytes32-string")]
+    #[clap(about = "Formats a string into bytes32 encoding.")]
+    FormatBytes32String {
+        #[clap(value_name = "STRING")]
+        string: Option<String>,
+    },
+    #[clap(name = "--parse-bytes32-string")]
+    #[clap(about = "Parses a string from bytes32 encoding.")]
+    ParseBytes32String {
+        #[clap(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

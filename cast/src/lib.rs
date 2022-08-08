@@ -9,7 +9,10 @@ use ethers_core::{
         Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units, rlp},
+    utils::{
+        self, format_bytes32_string, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp,
+    },
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -1390,6 +1393,26 @@ impl SimpleCast {
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
+    }
+
+    /// Encodes string into bytes32 value
+    pub fn format_bytes32_string(s: &str) -> Result<String> {
+        let formatted = format_bytes32_string(s)?;
+        Ok(format!("0x{}", hex::encode(&formatted)))
+    }
+
+    /// Decodes string from bytes32 value
+    pub fn parse_bytes32_string(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("string not 32 bytes");
+        }
+
+        let bytes = hex::decode(&s)?;
+        let mut buffer = [0u8; 32];
+        buffer.copy_from_slice(&bytes);
+
+        Ok(parse_bytes32_string(&buffer)?.to_owned())
     }
 }
 
