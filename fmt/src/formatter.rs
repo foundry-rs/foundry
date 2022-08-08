@@ -1441,7 +1441,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_raw(&format!("\n{remainder}"))?;
         }
 
-        let _ = self.comments.remove_comments_before(loc.end());
+        let _ = self.comments.remove_all_comments_before(loc.end());
 
         Ok(())
     }

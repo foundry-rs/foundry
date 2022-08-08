@@ -1,4 +1,7 @@
-use crate::solang_ext::*;
+use crate::{
+    inline_config::{InlineConfigItem, InvalidInlineConfigItem},
+    solang_ext::*,
+};
 use itertools::Itertools;
 use solang_parser::pt::*;
 use std::collections::VecDeque;
@@ -84,7 +87,7 @@ impl CommentWithMetadata {
 
         let mut lines_before = src_before.lines().rev();
         let this_line =
-            if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or("") };
+            if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or_default() };
         let indent_len = this_line.chars().take_while(|c| c.is_whitespace()).count();
         let last_line = lines_before.next();
 
@@ -92,7 +95,7 @@ impl CommentWithMetadata {
             return Self::new(
                 comment,
                 CommentPosition::Prefix,
-                last_line.map(|line| line.trim_start().is_empty()).unwrap_or(false),
+                last_line.unwrap_or_default().trim_start().is_empty(),
                 indent_len,
             )
         }
@@ -107,7 +110,7 @@ impl CommentWithMetadata {
                 }
             })
             .last()
-            .unwrap_or(0);
+            .unwrap_or_default();
 
         let (position, has_newline_before) = {
             if src_before[code_end..].contains('\n') {
@@ -212,38 +215,35 @@ impl Comments {
         Self { prefixes, postfixes }
     }
 
-    /// Remove any prefix comments that occur before the byte offset in the src
-    pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let pos = self
-            .prefixes
+    /// Heloer for removing comments before a byte offset
+    fn remove_comments_before(
+        comments: &mut VecDeque<CommentWithMetadata>,
+        byte: usize,
+    ) -> Vec<CommentWithMetadata> {
+        let pos = comments
             .iter()
             .find_position(|comment| !comment.is_before(byte))
             .map(|(idx, _)| idx)
-            .unwrap_or_else(|| self.prefixes.len());
+            .unwrap_or_else(|| comments.len());
         if pos == 0 {
             return Vec::new()
         }
-        self.prefixes.rotate_left(pos);
-        self.prefixes.split_off(self.prefixes.len() - pos).into()
+        comments.rotate_left(pos);
+        comments.split_off(comments.len() - pos).into()
+    }
+
+    /// Remove any prefix comments that occur before the byte offset in the src
+    pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+        Self::remove_comments_before(&mut self.prefixes, byte)
     }
 
     /// Remove any postfix comments that occur before the byte offset in the src
     pub(crate) fn remove_postfixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let pos = self
-            .postfixes
-            .iter()
-            .find_position(|comment| !comment.is_before(byte))
-            .map(|(idx, _)| idx)
-            .unwrap_or_else(|| self.postfixes.len());
-        if pos == 0 {
-            return Vec::new()
-        }
-        self.postfixes.rotate_left(pos);
-        self.postfixes.split_off(self.postfixes.len() - pos).into()
+        Self::remove_comments_before(&mut self.postfixes, byte)
     }
 
     /// Remove any comments that occur before the byte offset in the src
-    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+    pub(crate) fn remove_all_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
         self.remove_prefixes_before(byte)
             .into_iter()
             .merge(self.remove_postfixes_before(byte).into_iter())
@@ -260,6 +260,22 @@ impl Comments {
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &CommentWithMetadata> {
         self.prefixes.iter().merge(self.postfixes.iter())
+    }
+
+    /// Parse all comments to return a list of inline config items. This will return an iterator of
+    /// results of parsing comments which start with `forgefmt:`
+    pub fn parse_inline_config_items(
+        &self,
+    ) -> impl Iterator<Item = Result<(Loc, InlineConfigItem), (Loc, InvalidInlineConfigItem)>> + '_
+    {
+        self.iter()
+            .filter_map(|comment| {
+                Some((comment, comment.contents().trim_start().strip_prefix("forgefmt:")?.trim()))
+            })
+            .map(|(comment, item)| {
+                let loc = comment.loc;
+                item.parse().map(|out| (loc, out)).map_err(|out| (loc, out))
+            })
     }
 }
 
