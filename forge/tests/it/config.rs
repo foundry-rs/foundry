@@ -2,7 +2,7 @@
 
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
-use foundry_config::{Config, Endpoint, Endpoints};
+use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
 use std::collections::BTreeMap;
 
@@ -64,11 +64,11 @@ pub fn forked_runner(rpc: &str) -> MultiContractRunner {
 }
 
 /// the RPC endpoints used during tests
-pub fn rpc_endpoints() -> Endpoints {
-    Endpoints::new([
+pub fn rpc_endpoints() -> RpcEndpoints {
+    RpcEndpoints::new([
         (
             "rpcAlias",
-            Endpoint::Url(
+            RpcEndpoint::Url(
                 "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf".to_string(),
             ),
         ),

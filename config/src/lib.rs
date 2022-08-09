@@ -41,7 +41,7 @@ pub mod utils;
 pub use crate::utils::*;
 
 mod endpoints;
-pub use endpoints::{Endpoint, Endpoints, ResolvedRpcEndpoints, UnresolvedEnvVarError};
+pub use endpoints::{RpcEndpoint, RpcEndpoints, ResolvedRpcEndpoints, UnresolvedEnvVarError};
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -286,8 +286,11 @@ pub struct Config {
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
     /// Multiple rpc endpoints and their aliases
-    #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
-    pub rpc_endpoints: Endpoints,
+    #[serde(default, skip_serializing_if = "Endpoints::is_empty")]
+    pub rpc_endpoints: RpcEndpoints,
+    /// Multiple etherscan api endpoints and their aliases
+    #[serde(default, skip_serializing_if = "Endpoints::is_empty")]
+    pub etherscan_api_keys: RpcEndpoints,
     /// Whether to include the metadata hash.
     ///
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
@@ -348,7 +351,7 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan_api_keys", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1522,6 +1525,7 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
+            etherscan_api_keys: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
@@ -2349,7 +2353,7 @@ mod tests {
 
     use super::*;
 
-    use crate::endpoints::Endpoint;
+    use crate::endpoints::RpcEndpoint;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -2713,6 +2717,55 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_etherscan_api_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan_api_keys]
+                mainnet = "FX42Z3BBJJEWXWGYV2X1CIPRSCN"
+                moonbeam =  "${_CONFIG_ETHERSCAN_MOONBEAM}"
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
+
+            jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
+            let endpoints = config.rpc_endpoints.resolved();
+
+            assert!(!endpoints.has_unresolved());
+
+            assert_eq!(
+                endpoints,
+                RpcEndpoints::new([
+                    ("mainnet", RpcEndpoint::Url("https://example.com/".to_string())),
+                    (
+                        "mainnet",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                    ),
+                    (
+                        "mainnet_2",
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                    ),
+                    (
+                        "mainnet_3",
+                        RpcEndpoint::Url(
+                            "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
+                        )
+                    ),
+                ])
+                    .resolved()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_resolve_endpoints() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -2741,19 +2794,19 @@ mod tests {
 
             assert_eq!(
                 endpoints,
-                Endpoints::new([
-                    ("optimism", Endpoint::Url("https://example.com/".to_string())),
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
                     (
                         "mainnet",
-                        Endpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123455".to_string())
                     ),
                     (
                         "mainnet_2",
-                        Endpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
+                        RpcEndpoint::Url("https://eth-mainnet.alchemyapi.io/v2/123456".to_string())
                     ),
                     (
                         "mainnet_3",
-                        Endpoint::Url(
+                        RpcEndpoint::Url(
                             "https://eth-mainnet.alchemyapi.io/v2/123456/98765".to_string()
                         )
                     ),
@@ -2815,18 +2868,18 @@ mod tests {
                     bytecode_hash: BytecodeHash::Ipfs,
                     revert_strings: Some(RevertStrings::Strip),
                     allow_paths: vec![PathBuf::from("allow"), PathBuf::from("paths")],
-                    rpc_endpoints: Endpoints::new([
-                        ("optimism", Endpoint::Url("https://example.com/".to_string())),
-                        ("mainnet", Endpoint::Env("${RPC_MAINNET}".to_string())),
+                    rpc_endpoints: RpcEndpoints::new([
+                        ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                        ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
                         (
                             "mainnet_2",
-                            Endpoint::Env(
+                            RpcEndpoint::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                             )
                         ),
                         (
                             "mainnet_3",
-                            Endpoint::Env(
+                            RpcEndpoint::Env(
                                 "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}/${ANOTHER_KEY}"
                                     .to_string()
                             )
@@ -2937,12 +2990,12 @@ mod tests {
 
             assert_eq!(
                 config.rpc_endpoints,
-                Endpoints::new([
-                    ("optimism", Endpoint::Url("https://example.com/".to_string())),
-                    ("mainnet", Endpoint::Env("${RPC_MAINNET}".to_string())),
+                RpcEndpoints::new([
+                    ("optimism", RpcEndpoint::Url("https://example.com/".to_string())),
+                    ("mainnet", RpcEndpoint::Env("${RPC_MAINNET}".to_string())),
                     (
                         "mainnet_2",
-                        Endpoint::Env(
+                        RpcEndpoint::Env(
                             "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}".to_string()
                         )
                     ),

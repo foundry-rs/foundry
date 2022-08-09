@@ -12,15 +12,15 @@ pub static RE_PLACEHOLDER: Lazy<Regex> =
 /// Container type for API endpoints, like various RPC endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Endpoints {
-    endpoints: BTreeMap<String, Endpoint>,
+pub struct RpcEndpoints {
+    endpoints: BTreeMap<String, RpcEndpoint>,
 }
 
 // === impl Endpoints ===
 
-impl Endpoints {
+impl RpcEndpoints {
     /// Creates anew list of endpoints
-    pub fn new(endpoints: impl IntoIterator<Item = (impl Into<String>, Endpoint)>) -> Self {
+    pub fn new(endpoints: impl IntoIterator<Item = (impl Into<String>, RpcEndpoint)>) -> Self {
         Self { endpoints: endpoints.into_iter().map(|(name, url)| (name.into(), url)).collect() }
     }
 
@@ -37,8 +37,8 @@ impl Endpoints {
     }
 }
 
-impl Deref for Endpoints {
-    type Target = BTreeMap<String, Endpoint>;
+impl Deref for RpcEndpoints {
+    type Target = BTreeMap<String, RpcEndpoint>;
 
     fn deref(&self) -> &Self::Target {
         &self.endpoints
@@ -52,7 +52,7 @@ impl Deref for Endpoints {
 /// value of the env var itself.
 /// In other words, this type does not resolve env vars when it's being deserialized
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Endpoint {
+pub enum RpcEndpoint {
     /// A raw Url (ws, http)
     Url(String),
     /// An endpoint that contains at least one `${ENV_VAR}` placeholder
@@ -63,20 +63,20 @@ pub enum Endpoint {
 
 // === impl Endpoint ===
 
-impl Endpoint {
+impl RpcEndpoint {
     /// Returns the url variant
     pub fn as_url(&self) -> Option<&str> {
         match self {
-            Endpoint::Url(url) => Some(url),
-            Endpoint::Env(_) => None,
+            RpcEndpoint::Url(url) => Some(url),
+            RpcEndpoint::Env(_) => None,
         }
     }
 
     /// Returns the url variant
     pub fn as_env(&self) -> Option<&str> {
         match self {
-            Endpoint::Env(val) => Some(val),
-            Endpoint::Url(_) => None,
+            RpcEndpoint::Env(val) => Some(val),
+            RpcEndpoint::Url(_) => None,
         }
     }
 
@@ -87,8 +87,8 @@ impl Endpoint {
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
-            Endpoint::Url(url) => Ok(url),
-            Endpoint::Env(val) => Self::interpolate(&val),
+            RpcEndpoint::Url(url) => Ok(url),
+            RpcEndpoint::Env(val) => Self::interpolate(&val),
         }
     }
 
@@ -111,24 +111,24 @@ impl Endpoint {
     }
 }
 
-impl fmt::Display for Endpoint {
+impl fmt::Display for RpcEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Endpoint::Url(url) => url.fmt(f),
-            Endpoint::Env(var) => var.fmt(f),
+            RpcEndpoint::Url(url) => url.fmt(f),
+            RpcEndpoint::Env(var) => var.fmt(f),
         }
     }
 }
 
-impl TryFrom<Endpoint> for String {
+impl TryFrom<RpcEndpoint> for String {
     type Error = UnresolvedEnvVarError;
 
-    fn try_from(value: Endpoint) -> Result<Self, Self::Error> {
+    fn try_from(value: RpcEndpoint) -> Result<Self, Self::Error> {
         value.resolve()
     }
 }
 
-impl Serialize for Endpoint {
+impl Serialize for RpcEndpoint {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -137,14 +137,14 @@ impl Serialize for Endpoint {
     }
 }
 
-impl<'de> Deserialize<'de> for Endpoint {
+impl<'de> Deserialize<'de> for RpcEndpoint {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let val = String::deserialize(deserializer)?;
         let endpoint =
-            if RE_PLACEHOLDER.is_match(&val) { Endpoint::Env(val) } else { Endpoint::Url(val) };
+            if RE_PLACEHOLDER.is_match(&val) { RpcEndpoint::Env(val) } else { RpcEndpoint::Url(val) };
 
         Ok(endpoint)
     }
@@ -191,7 +191,7 @@ pub struct UnresolvedEnvVarError {
 impl UnresolvedEnvVarError {
     /// Tries to resolve the RPC endpoint again
     pub fn try_resolve_endpoint(&self) -> Result<String, UnresolvedEnvVarError> {
-        Endpoint::interpolate(&self.unresolved)
+        RpcEndpoint::interpolate(&self.unresolved)
     }
 }
 
