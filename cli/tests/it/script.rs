@@ -3,11 +3,10 @@ use anvil::{spawn, NodeConfig};
 use ethers::abi::Address;
 use foundry_cli_test_utils::{
     forgetest, forgetest_async, forgetest_init,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
 use foundry_utils::rpc;
-
 use regex::Regex;
 use std::{env, path::PathBuf, str::FromStr};
 
@@ -96,16 +95,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(format!("{}:Demo", script.display()));
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_fqn.stdout"),
+    );
 });
 
 // Tests that the run command can run arbitrary functions
@@ -196,20 +189,10 @@ contract Demo {
         )
         .unwrap();
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1836
-
-== Return ==
-result: uint256 255
-1: uint8 3
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_returned.stdout"),
+    );
 });
 
 forgetest_async!(
