@@ -501,6 +501,8 @@ impl TestCommand {
     }
 
     /// Runs the command and prints its output
+    /// You have to pass --nocapture to cargo test or the print won't be displayed.
+    /// The full command would be: cargo test -- --nocapture
     pub fn print_output(&mut self) {
         let output = self.execute();
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));

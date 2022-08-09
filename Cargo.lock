@@ -1901,6 +1901,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "yansi",
 ]
 
 [[package]]
