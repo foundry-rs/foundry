@@ -1,4 +1,4 @@
-// config: number_literal_underscore = "thousands"
+// config: number_underscore = "thousands"
 contract NumberLiteral {
     function test() external {
         1;

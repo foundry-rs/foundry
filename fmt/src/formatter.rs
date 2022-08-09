@@ -13,7 +13,7 @@ use crate::{
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes, NumberLiteralUnderscore,
+    FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
 
 /// A custom Error thrown by the Formatter
@@ -1433,10 +1433,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         fractional: Option<&str>,
         exponent: &str,
     ) -> Result<()> {
-        let config = self.config.number_literal_underscore;
+        let config = self.config.number_underscore;
 
         // get source if we preserve underscores
-        let (value, fractional, exponent) = if matches!(config, NumberLiteralUnderscore::Preserve) {
+        let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
             let source = &self.source[loc.start()..loc.end()];
             let (val, exp) = source.split_once(&['e', 'E']).unwrap_or((source, ""));
             let (val, fract) =
@@ -1466,7 +1466,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         exp = exp.trim().trim_start_matches('0');
 
         let add_underscores = |string: &str, reversed: bool| -> String {
-            if !matches!(config, NumberLiteralUnderscore::Thousands) || string.len() < 5 {
+            if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
                 return string.to_string()
             }
             if reversed {
@@ -1474,7 +1474,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             } else {
                 Box::new(string.as_bytes().rchunks(3).rev()) as Box<dyn Iterator<Item = &[u8]>>
             }
-            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .map(|chunk| std::str::from_utf8(chunk).expect("valid utf8 content."))
             .collect::<Vec<_>>()
             .join("_")
         };
