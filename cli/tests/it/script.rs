@@ -121,16 +121,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with arguments
@@ -156,18 +150,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 3957
-
-== Logs ==
-  script ran
-  1
-  2
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_args.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with return values
