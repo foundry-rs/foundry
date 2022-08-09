@@ -13,7 +13,7 @@ use crate::{
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes,
+    FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
 
 /// A custom Error thrown by the Formatter
@@ -1423,6 +1423,88 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
         write_chunk!(self, loc.start(), loc.end(), "{}", self.quote_str(loc, prefix, string))
     }
+
+    /// Write and format numbers. This will fix underscores as well as remove unnecessary 0's and
+    /// exponents
+    fn write_num_literal(
+        &mut self,
+        loc: Loc,
+        value: &str,
+        fractional: Option<&str>,
+        exponent: &str,
+    ) -> Result<()> {
+        let config = self.config.number_underscore;
+
+        // get source if we preserve underscores
+        let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
+            let source = &self.source[loc.start()..loc.end()];
+            let (val, exp) = source.split_once(&['e', 'E']).unwrap_or((source, ""));
+            let (val, fract) =
+                val.split_once('.').map(|(val, fract)| (val, Some(fract))).unwrap_or((val, None));
+            (
+                val.trim().to_string(),
+                fract.map(|fract| fract.trim().to_string()),
+                exp.trim().to_string(),
+            )
+        } else {
+            // otherwise strip underscores
+            (
+                value.trim().replace('_', ""),
+                fractional.map(|fract| fract.trim().replace('_', "")),
+                exponent.trim().replace('_', ""),
+            )
+        };
+
+        // strip any padded 0's
+        let val = value.trim_start_matches('0');
+        let fract = fractional.as_ref().map(|fract| fract.trim_end_matches('0'));
+        let (exp_sign, mut exp) = if let Some(exp) = exponent.strip_prefix('-') {
+            ("-", exp)
+        } else {
+            ("", exponent.as_str())
+        };
+        exp = exp.trim().trim_start_matches('0');
+
+        let add_underscores = |string: &str, reversed: bool| -> String {
+            if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
+                return string.to_string()
+            }
+            if reversed {
+                Box::new(string.as_bytes().chunks(3)) as Box<dyn Iterator<Item = &[u8]>>
+            } else {
+                Box::new(string.as_bytes().rchunks(3).rev()) as Box<dyn Iterator<Item = &[u8]>>
+            }
+            .map(|chunk| std::str::from_utf8(chunk).expect("valid utf8 content."))
+            .collect::<Vec<_>>()
+            .join("_")
+        };
+
+        let mut out = String::new();
+        if val.is_empty() {
+            out.push('0');
+        } else {
+            out.push_str(&add_underscores(val, false));
+        }
+        if let Some(fract) = fract {
+            out.push('.');
+            if fract.is_empty() {
+                out.push('0');
+            } else {
+                // TODO re-enable me on the next solang-parser v0.1.18
+                // currently disabled because of the following bug
+                // https://github.com/hyperledger-labs/solang/pull/954
+                // out.push_str(&add_underscores(fract, true));
+                out.push_str(fract)
+            }
+        }
+        if !exp.is_empty() {
+            out.push('e');
+            out.push_str(exp_sign);
+            out.push_str(&add_underscores(exp, false));
+        }
+
+        write_chunk!(self, loc.start(), loc.end(), "{out}")
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1780,9 +1862,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::BoolLiteral(loc, val) => {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::NumberLiteral(loc, val, expr) => {
-                let val = if expr.is_empty() { val.to_owned() } else { format!("{val}e{expr}") };
-                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            Expression::NumberLiteral(loc, val, exp) => {
+                self.write_num_literal(*loc, val, None, exp)?;
             }
             Expression::HexNumberLiteral(loc, val) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
@@ -1793,10 +1874,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::RationalNumberLiteral(loc, val, fraction, expr) => {
-                let val = format!("{}.{}", val, fraction);
-                let val = if expr.is_empty() { val } else { format!("{val}e{expr}") };
-                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            Expression::RationalNumberLiteral(loc, val, fraction, exp) => {
+                self.write_num_literal(*loc, val, Some(fraction), exp)?;
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
@@ -3506,4 +3585,5 @@ mod tests {
     test_directory! { YulStrings }
     test_directory! { IntTypes }
     test_directory! { InlineDisable }
+    test_directory! { NumberLiteralUnderscore }
 }
