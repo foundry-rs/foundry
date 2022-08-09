@@ -142,3 +142,15 @@ impl<'a> From<&'a str> for ProviderBuilder {
         Self::new(url)
     }
 }
+
+impl<'a> From<&'a String> for ProviderBuilder {
+    fn from(url: &'a String) -> Self {
+        url.as_str().into()
+    }
+}
+
+impl From<String> for ProviderBuilder {
+    fn from(url: String) -> Self {
+        url.as_str().into()
+    }
+}
