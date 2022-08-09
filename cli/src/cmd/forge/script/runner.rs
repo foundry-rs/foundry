@@ -247,7 +247,7 @@ impl ScriptRunner {
 
         if commit {
             // if explicitly requested we can now commit the call
-            res = self.executor.call_raw_committing(from, to, calldata.0.clone(), value)?;
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
         }
 
         let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
