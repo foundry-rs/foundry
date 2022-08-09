@@ -601,6 +601,24 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.source[start..end].trim_comments().matches('\n').count()
     }
 
+    /// Get the byte offset of the next line
+    fn find_next_line(&self, byte_offset: usize) -> Option<usize> {
+        let mut iter = self.source[byte_offset..].char_indices();
+        while let Some((_, ch)) = iter.next() {
+            match ch {
+                '\n' => return iter.next().map(|(idx, _)| byte_offset + idx),
+                '\r' => {
+                    return iter.next().and_then(|(idx, ch)| match ch {
+                        '\n' => iter.next().map(|(idx, _)| byte_offset + idx),
+                        _ => Some(byte_offset + idx),
+                    })
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Find the next instance of the character in source
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
@@ -753,7 +771,9 @@ impl<'a, W: Write> Formatter<'a, W> {
                     self.write_raw(line)?;
                 }
             }
-            write_preserved_ln(self)?;
+            if self.find_next_line(comment.loc.end()).is_some() {
+                write_preserved_ln(self)?;
+            }
             return Ok(())
         }
 
@@ -803,8 +823,11 @@ impl<'a, W: Write> Formatter<'a, W> {
             if self.inline_config.is_disabled(unwritten_whitespace_loc) {
                 self.write_raw(&self.source[unwritten_whitespace_loc.range()])?;
                 self.write_raw_comment(comment)?;
-                last_byte_written =
-                    if comment.is_line() { comment.loc.end() + 1 } else { comment.loc.end() };
+                last_byte_written = if comment.is_line() {
+                    self.find_next_line(comment.loc.end()).unwrap_or_else(|| comment.loc.end())
+                } else {
+                    comment.loc.end()
+                };
             } else {
                 self.write_comment(comment, is_first)?;
             }
@@ -1207,14 +1230,22 @@ impl<'a, W: Write> Formatter<'a, W> {
             last_byte_written = loc.end();
             if let Some(comment) = line_item.as_ref().left() {
                 if comment.is_line() {
-                    last_byte_written += 1;
+                    last_byte_written =
+                        self.find_next_line(last_byte_written).unwrap_or(last_byte_written);
                 }
             }
         }
 
-        let (unwritten_src_loc, unwritten_whitespace) =
+        let (unwritten_src_loc, mut unwritten_whitespace) =
             unwritten_whitespace(last_byte_written, loc.end());
         if self.inline_config.is_disabled(unwritten_src_loc) {
+            if unwritten_src_loc.end() == self.source.len() {
+                // remove EOF line ending
+                unwritten_whitespace = unwritten_whitespace
+                    .strip_suffix('\n')
+                    .map(|w| w.strip_suffix('\r').unwrap_or(w))
+                    .unwrap_or(unwritten_whitespace);
+            }
             self.write_raw(unwritten_whitespace)?;
         }
 
