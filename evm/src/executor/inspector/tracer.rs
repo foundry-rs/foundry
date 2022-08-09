@@ -11,7 +11,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug)]
@@ -84,13 +86,20 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
+        let (from, to) = match call.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (call.context.address, call.context.code_address)
+            }
+            _ => (call.context.caller, call.context.address),
+        };
+
         self.start_trace(
             data.subroutine.depth() as usize,
-            call.context.code_address,
+            to,
             call.input.to_vec(),
             call.transfer.value,
             call.context.scheme.into(),
-            call.context.caller,
+            from,
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
