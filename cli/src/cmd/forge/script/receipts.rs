@@ -45,8 +45,10 @@ pub async fn wait_for_receipts(
                 Ok(Some(receipt)) => {
                     if let Some(status) = receipt.status {
                         if status.is_zero() {
-                            errors
-                                .push(format!("Transaction Failure: {}", receipt.transaction_hash));
+                            errors.push(format!(
+                                "Transaction Failure: {:?}",
+                                receipt.transaction_hash
+                            ));
                         }
                     }
                     trace!(?receipt.transaction_hash, "received tx receipt");
@@ -55,10 +57,11 @@ pub async fn wait_for_receipts(
                     receipts.push(receipt)
                 }
                 Ok(None) => {
-                    errors.push(format!("Received an empty receipt for {}", tx_hash));
+                    errors.push(format!("Received an empty receipt for {:?}", tx_hash));
                 }
                 Err(err) => {
-                    errors.push(format!("Failure on receiving a receipt for {}:\n{err}", tx_hash));
+                    errors
+                        .push(format!("Failure on receiving a receipt for {:?}:\n{err}", tx_hash));
                 }
             }
             update_progress!(pb, index);
