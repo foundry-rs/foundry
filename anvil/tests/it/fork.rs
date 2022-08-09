@@ -46,7 +46,7 @@ impl LocalFork {
     }
 }
 
-fn fork_config() -> NodeConfig {
+pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
         .with_fork_block_number(Some(BLOCK_NUMBER))
