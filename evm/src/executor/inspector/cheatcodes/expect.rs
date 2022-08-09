@@ -274,8 +274,7 @@ pub fn apply<DB: Database>(
                 .unwrap_or(true)
             {
                 let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
-                let code_hash = code.hash();
-                data.subroutine.set_code(inner.0, code, code_hash);
+                data.subroutine.set_code(inner.0, code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
