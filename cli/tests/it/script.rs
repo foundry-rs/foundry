@@ -44,7 +44,7 @@ contract ContractScript is Script {
 );
 
 // Tests that the `run` command works correctly
-forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command2, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -63,16 +63,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command.stdout"),
+    );
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
