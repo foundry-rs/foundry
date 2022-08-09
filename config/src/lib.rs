@@ -41,7 +41,10 @@ pub mod utils;
 pub use crate::utils::*;
 
 mod endpoints;
-pub use endpoints::{RpcEndpoint, RpcEndpoints, ResolvedRpcEndpoints, UnresolvedEnvVarError};
+pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
+
+mod etherscan;
+mod resolve;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -351,7 +354,8 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan_api_keys", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] =
+        &["rpc_endpoints", "etherscan_api_keys", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -2758,7 +2762,7 @@ mod tests {
                         )
                     ),
                 ])
-                    .resolved()
+                .resolved()
             );
 
             Ok(())
