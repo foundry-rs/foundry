@@ -198,3 +198,11 @@ casttest!(cast_rpc_raw_params_stdin, |_: TestProject, mut cmd: TestCommand| {
     let output = cmd.stdout_lossy();
     assert!(output.contains(r#""number":"0x123""#), "{}", output);
 });
+
+// checks `cast calldata` can handle arrays
+casttest!(calldata_array, |_: TestProject, mut cmd: TestCommand| {
+    cmd.args(["calldata", "propose(string[])", "[\"\"]"]);
+    let out = cmd.stdout_lossy();
+    assert_eq!(out.trim(),"0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
+    );
+});
