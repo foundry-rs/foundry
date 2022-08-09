@@ -4,7 +4,6 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, utils, LoadConfig, RetryArgs},
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
-    utils::get_http_provider,
 };
 use cast::SimpleCast;
 use clap::{Parser, ValueHint};
@@ -18,9 +17,8 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::fs;
+use foundry_common::{fs, get_http_provider};
 use foundry_utils::parse_tokens;
-
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
@@ -119,10 +117,9 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = self.eth.load_config_emit_warnings();
-        let provider = get_http_provider(
+        let provider = Arc::new(get_http_provider(
             config.eth_rpc_url.as_deref().unwrap_or("http://localhost:8545"),
-            false,
-        );
+        ));
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =

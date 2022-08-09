@@ -1,12 +1,11 @@
-use crate::{
-    cmd::{unwrap_contracts, LoadConfig},
-    utils::get_http_provider,
-};
+use crate::cmd::{unwrap_contracts, LoadConfig};
+use std::sync::Arc;
 
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
+use foundry_common::get_http_provider;
 use tracing::trace;
 
 use super::{sequence::ScriptSequence, *};
@@ -48,7 +47,7 @@ impl ScriptArgs {
                 .expect("You must provide an RPC URL (see --fork-url).")
                 .clone();
 
-            let provider = get_http_provider(&fork_url, true);
+            let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
 
             let mut deployment_sequence = ScriptSequence::load(

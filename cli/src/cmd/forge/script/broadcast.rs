@@ -7,15 +7,15 @@ use crate::{
     init_progress,
     opts::WalletType,
     update_progress,
-    utils::get_http_provider,
 };
 use ethers::{
-    prelude::{Http, Provider, RetryClient, Signer, SignerMiddleware, TxHash},
+    prelude::{Signer, SignerMiddleware, TxHash},
     providers::Middleware,
     types::transaction::eip2718::TypedTransaction,
     utils::format_units,
 };
 use eyre::ContextCompat;
+use foundry_common::{get_http_provider, RetryProvider};
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -28,7 +28,7 @@ impl ScriptArgs {
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
     ) -> eyre::Result<()> {
-        let provider = get_http_provider(fork_url, true);
+        let provider = Arc::new(get_http_provider(fork_url));
         let already_broadcasted = deployment_sequence.receipts.len();
 
         if already_broadcasted < deployment_sequence.transactions.len() {
@@ -228,7 +228,7 @@ impl ScriptArgs {
 
                 let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
-                let provider = get_http_provider(&fork_url, false);
+                let provider = Arc::new(get_http_provider(&fork_url));
                 let chain = provider.get_chainid().await?.as_u64();
 
                 let returns = self.get_returns(&script_config, &result.returned)?;
@@ -266,7 +266,7 @@ impl ScriptArgs {
     async fn handle_chain_requirements(
         &self,
         txes: VecDeque<TransactionWithMetadata>,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
         chain: u64,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut is_legacy = self.legacy;

@@ -2,12 +2,11 @@ use super::{Wallet, WalletType};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::RetryClient,
-    providers::{Http, Provider},
     signers::{HDPath as LedgerHDPath, Ledger, Signer, Trezor, TrezorHDPath},
     types::{Address, U256},
 };
 use eyre::Result;
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_config::{
     figment::{
         self,
@@ -62,7 +61,13 @@ impl EthereumOpts {
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
         self.signer_with(
             chain_id,
-            Arc::new(Provider::<RetryClient<Http>>::new_client(self.rpc_url()?, 10, 1000)?),
+            Arc::new(
+                ProviderBuilder::new(self.rpc_url()?)
+                    .chain(chain_id)
+                    .initial_backoff(1000)
+                    .connect()
+                    .await?,
+            ),
         )
         .await
     }
@@ -72,7 +77,7 @@ impl EthereumOpts {
     pub async fn signer_with(
         &self,
         chain_id: U256,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
     ) -> eyre::Result<Option<WalletType>> {
         if self.wallet.ledger {
             let derivation = match &self.wallet.hd_path {
