@@ -206,7 +206,7 @@ impl ScriptArgs {
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
-            if script_config.evm_opts.fork_url.is_some() {
+            if let Some(fork_url) = script_config.evm_opts.fork_url.clone() {
                 let gas_filled_txs = if self.skip_simulation {
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
                     txs.into_iter().map(TransactionWithMetadata::from_typed_transaction).collect()
@@ -225,8 +225,6 @@ impl ScriptArgs {
                         )
                     })?
                 };
-
-                let fork_url = self.evm_opts.fork_url.as_ref().unwrap().clone();
 
                 let provider = Arc::new(get_http_provider(&fork_url));
                 let chain = provider.get_chainid().await?.as_u64();
