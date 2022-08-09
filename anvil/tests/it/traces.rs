@@ -295,5 +295,12 @@ async fn test_trace_address_fork() {
     traces.into_iter().zip(expected_traces).for_each(|(a, b)| {
         assert_eq!(a.trace_address, b.trace_address);
         assert_eq!(a.subtraces, b.subtraces);
+        match (a.action, b.action) {
+            (Action::Call(a), Action::Call(b)) => {
+                assert_eq!(a.from, b.from);
+                assert_eq!(a.to, b.to);
+            }
+            _ => unreachable!("unexpected action"),
+        }
     })
 }
