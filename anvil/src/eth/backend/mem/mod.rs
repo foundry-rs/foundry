@@ -369,6 +369,11 @@ impl Backend {
         self.env().read().block.gas_limit
     }
 
+    /// Sets the block gas limit
+    pub fn set_gas_limit(&self, gas_limit: U256) {
+        self.env().write().block.gas_limit = gas_limit;
+    }
+
     /// Returns the current base fee
     pub fn base_fee(&self) -> U256 {
         self.fees.base_fee()

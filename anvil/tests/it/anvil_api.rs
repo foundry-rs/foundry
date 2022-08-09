@@ -23,6 +23,18 @@ async fn can_set_gas_price() {
     assert_eq!(gas_price, provider.get_gas_price().await.unwrap());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn can_set_block_gas_limit() {
+    let (api, _) = spawn(NodeConfig::test().with_hardfork(Some(Hardfork::Berlin))).await;
+
+    let block_gas_limit = 1337u64.into();
+    assert!(api.evm_set_block_gas_limit(block_gas_limit).unwrap());
+    // Mine a new block, and check the new block gas limit
+    api.mine_one().await;
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block_gas_limit, latest_block.gas_limit);
+}
+
 // Ref <https://github.com/foundry-rs/foundry/issues/2341>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_storage() {

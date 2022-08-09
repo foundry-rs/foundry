@@ -358,6 +358,14 @@ pub enum EthRequest {
     )]
     EvmSetNextBlockTimeStamp(u64),
 
+    /// Set the exact gas limit that you want in the next block
+    #[serde(
+        rename = "anvil_setBlockGasLimit",
+        alias = "evm_setBlockGasLimit",
+        deserialize_with = "deserialize_number_seq"
+    )]
+    EvmSetBlockGasLimit(U256),
+
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
     /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
