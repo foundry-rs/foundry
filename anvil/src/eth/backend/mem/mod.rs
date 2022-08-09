@@ -4,8 +4,8 @@ use crate::{
         backend::{
             cheats,
             cheats::CheatsManager,
-            db::{Db, SerializableState},
-            executor::{EvmExecutorLock, ExecutedTransactions, TransactionExecutor},
+            db::{AsHashDB, Db, MaybeHashDatabase, SerializableState},
+            executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
@@ -26,10 +26,12 @@ use crate::{
 use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header},
+        proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{
             EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
         },
+        trie::RefTrieDB,
         utils::to_access_list,
     },
     types::{Forking, Index},
@@ -53,10 +55,13 @@ use foundry_evm::{
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
+use hash_db::HashDB;
 use parking_lot::{Mutex, RwLock};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 use storage::{Blockchain, MinedTransaction};
+use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
+use trie_db::{Recorder, Trie};
 
 pub mod fork_db;
 pub mod in_memory_db;
@@ -68,10 +73,25 @@ pub type State = foundry_evm::HashMap<Address, Account>;
 /// Gives access to the [revm::Database]
 #[derive(Clone)]
 pub struct Backend {
-    /// access to revm's database related operations
-    /// This stores the actual state of the blockchain
-    /// Supports concurrent reads
-    db: Arc<RwLock<dyn Db>>,
+    /// Access to [`revm::Database`] abstraction.
+    ///
+    /// This will be used in combination with [`revm::Evm`] and is responsible for feeding data to
+    /// the evm during its execution.
+    ///
+    /// At time of writing, there are two different types of `Db`:
+    ///   - [`MemDb`](crate::mem::MemDb): everything is stored in memory
+    ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
+    ///     data is retrieved via RPC-calls
+    ///
+    /// In order to commit changes to the [`revm::Database`], the [`revm::Evm`] requires mutable
+    /// access, which requires a write-lock from this `db`. In forking mode, the time during
+    /// which the write-lock is active depends on whether the `ForkDb` can provide all requested
+    /// data from memory or whether it has to retrieve it via RPC calls first. This means that it
+    /// potentially blocks for some time, even taking into account the rate limits of RPC
+    /// endpoints. Therefor the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
+    /// need to read from it, while it's currently written to, don't block. E.g. a new block is
+    /// currently mined and a new [`Self::set_storage()`] request is being executed.
+    db: Arc<AsyncRwLock<dyn Db>>,
     /// stores all block related data in memory
     blockchain: Blockchain,
     /// Historic states of previous blocks
@@ -92,13 +112,11 @@ pub struct Backend {
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// keeps track of active snapshots at a specific block
     active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
-    /// A lock used to sync evm executor access
-    executor_lock: EvmExecutorLock,
 }
 
 impl Backend {
     /// Create a new instance of in-mem backend.
-    pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
+    pub fn new(db: Arc<AsyncRwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
         let blockchain = Blockchain::new(&env.read(), fees.is_eip1559().then(|| fees.base_fee()));
         Self {
             db,
@@ -112,7 +130,6 @@ impl Backend {
             fees,
             genesis: Default::default(),
             active_snapshots: Arc::new(Mutex::new(Default::default())),
-            executor_lock: EvmExecutorLock::new(false),
         }
     }
 
@@ -120,12 +137,12 @@ impl Backend {
     pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
         let db = MemDb::default();
         let fees = FeeManager::new(env.read().cfg.spec_id, gas_price, gas_price);
-        Self::new(Arc::new(RwLock::new(db)), env, fees)
+        Self::new(Arc::new(AsyncRwLock::new(db)), env, fees)
     }
 
     /// Initialises the balance of the given accounts
-    pub fn with_genesis(
-        db: Arc<RwLock<dyn Db>>,
+    pub async fn with_genesis(
+        db: Arc<AsyncRwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
         genesis: GenesisConfig,
         fees: FeeManager,
@@ -144,7 +161,6 @@ impl Backend {
             blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
-            executor_lock: EvmExecutorLock::new(fork.is_some()),
             fork,
             time: Default::default(),
             cheats: Default::default(),
@@ -154,16 +170,16 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
         };
 
-        backend.apply_genesis();
+        backend.apply_genesis().await;
         backend
     }
 
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    fn apply_genesis(&self) {
+    async fn apply_genesis(&self) {
         trace!(target: "backend", "setting genesis balances");
-        let mut db = self.db.write();
+        let mut db = self.db.write().await;
 
         if self.fork.is_some() {
             // in fork mode we only set the balance, this way the accountinfo is fetched from the
@@ -182,25 +198,25 @@ impl Backend {
     /// Sets the account to impersonate
     ///
     /// Returns `true` if the account is already impersonated
-    pub fn impersonate(&self, addr: Address) -> bool {
+    pub async fn impersonate(&self, addr: Address) -> bool {
         if self.cheats.is_impersonated(addr) {
             return true
         }
         // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
         // the code hash to `KECCAK_EMPTY` temporarily
-        let mut account = self.db.read().basic(addr);
+        let mut account = self.db.read().await.basic(addr);
         let mut code_hash = None;
         if account.code_hash != KECCAK_EMPTY {
             code_hash = Some(std::mem::replace(&mut account.code_hash, KECCAK_EMPTY));
-            self.db.write().insert_account(addr, account);
+            self.db.write().await.insert_account(addr, account);
         }
         self.cheats.impersonate(addr, code_hash)
     }
 
     /// Removes the account that from the impersonated set
-    pub fn stop_impersonating(&self, addr: Address) {
+    pub async fn stop_impersonating(&self, addr: Address) {
         if let Some(code_hash) = self.cheats.stop_impersonating(&addr) {
-            let mut db = self.db.write();
+            let mut db = self.db.write().await;
             let mut account = db.basic(addr);
             account.code_hash = code_hash;
             db.insert_account(addr, account)
@@ -210,6 +226,11 @@ impl Backend {
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<&ClientFork> {
         self.fork.as_ref()
+    }
+
+    /// Returns the database
+    pub fn get_db(&self) -> &Arc<AsyncRwLock<dyn Db>> {
+        &self.db
     }
 
     /// Whether we're forked off some remote client
@@ -238,7 +259,7 @@ impl Backend {
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
             self.states.write().clear();
 
-            self.apply_genesis();
+            self.apply_genesis().await;
             Ok(())
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
@@ -298,13 +319,13 @@ impl Backend {
     }
 
     /// Returns balance of the given account.
-    pub fn current_balance(&self, address: Address) -> U256 {
-        self.db.read().basic(address).balance
+    pub async fn current_balance(&self, address: Address) -> U256 {
+        self.db.read().await.basic(address).balance
     }
 
     /// Returns balance of the given account.
-    pub fn current_nonce(&self, address: Address) -> U256 {
-        self.db.read().basic(address).nonce.into()
+    pub async fn current_nonce(&self, address: Address) -> U256 {
+        self.db.read().await.basic(address).nonce.into()
     }
 
     /// Sets the coinbase address
@@ -313,23 +334,23 @@ impl Backend {
     }
 
     /// Sets the nonce of the given address
-    pub fn set_nonce(&self, address: Address, nonce: U256) {
-        self.db.write().set_nonce(address, nonce.try_into().unwrap_or(u64::MAX));
+    pub async fn set_nonce(&self, address: Address, nonce: U256) {
+        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX));
     }
 
     /// Sets the balance of the given address
-    pub fn set_balance(&self, address: Address, balance: U256) {
-        self.db.write().set_balance(address, balance);
+    pub async fn set_balance(&self, address: Address, balance: U256) {
+        self.db.write().await.set_balance(address, balance);
     }
 
     /// Sets the code of the given address
-    pub fn set_code(&self, address: Address, code: Bytes) {
-        self.db.write().set_code(address, code);
+    pub async fn set_code(&self, address: Address, code: Bytes) {
+        self.db.write().await.set_code(address, code);
     }
 
     /// Sets the value for the given slot of the given address
-    pub fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
-        self.db.write().set_storage_at(address, slot, val.into_uint());
+    pub async fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
+        self.db.write().await.set_storage_at(address, slot, val.into_uint());
     }
 
     /// Returns true for post London
@@ -369,17 +390,17 @@ impl Backend {
     /// Creates a new `evm_snapshot` at the current height
     ///
     /// Returns the id of the snapshot created
-    pub fn create_snapshot(&self) -> U256 {
+    pub async fn create_snapshot(&self) -> U256 {
         let num = self.best_number().as_u64();
         let hash = self.best_hash();
-        let id = self.db.write().snapshot();
+        let id = self.db.write().await.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_snapshots.lock().insert(id, (num, hash));
         id
     }
 
     /// Reverts the state to the snapshot
-    pub fn revert_snapshot(&self, id: U256) -> bool {
+    pub async fn revert_snapshot(&self, id: U256) -> bool {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
             {
@@ -404,13 +425,14 @@ impl Backend {
             }
             self.set_block_number(num.into());
         }
-        self.db.write().revert(id)
+        self.db.write().await.revert(id)
     }
 
     /// Write all chain data to serialized bytes buffer
-    pub fn dump_state(&self) -> Result<Bytes, BlockchainError> {
+    pub async fn dump_state(&self) -> Result<Bytes, BlockchainError> {
         self.db
             .read()
+            .await
             .dump_state()
             .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
             .ok_or_else(|| {
@@ -422,11 +444,11 @@ impl Backend {
     }
 
     /// Deserialize and add all chain data to the backend storage
-    pub fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
+    pub async fn load_state(&self, buf: Bytes) -> Result<bool, BlockchainError> {
         let state: SerializableState =
             serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
-        if !self.db.write().load_state(state) {
+        if !self.db.write().await.load_state(state) {
             Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
@@ -447,13 +469,13 @@ impl Backend {
     }
 
     /// executes the transactions without writing to the underlying database
-    pub fn inspect_tx(
+    pub async fn inspect_tx(
         &self,
         tx: Arc<PoolTransaction>,
     ) -> (Return, TransactOut, u64, State, Vec<revm::Log>) {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
-        let db = self.db.read();
+        let db = self.db.read().await;
 
         let mut evm = revm::EVM::new();
         evm.env = env;
@@ -464,8 +486,8 @@ impl Backend {
     /// Creates the pending block
     ///
     /// This will execute all transaction in the order they come but will not mine the block
-    pub fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
-        let db = self.db.read();
+    pub async fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
+        let db = self.db.read().await;
         let env = self.next_env();
 
         let mut cache_db = CacheDB::new(&*db);
@@ -505,8 +527,6 @@ impl Backend {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
-            let _lock = self.executor_lock.write().await;
-
             let current_base_fee = self.base_fee();
 
             let mut env = self.env.read().clone();
@@ -517,11 +537,12 @@ impl Backend {
 
             let best_hash = self.blockchain.storage.read().best_hash;
 
+            let db = self.db.read().await.current_state();
             // store current state before executing all transactions
-            self.states.write().insert(best_hash, self.db.read().current_state());
+            self.states.write().insert(best_hash, db);
 
             let (executed_tx, block_hash) = {
-                let mut db = self.db.write();
+                let mut db = self.db.write().await;
                 let executor = TransactionExecutor {
                     db: &mut *db,
                     validator: self,
@@ -623,8 +644,6 @@ impl Backend {
         fee_details: FeeDetails,
         block_number: Option<BlockNumber>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
-        let _lock = self.executor_lock.read().await;
-
         let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -684,7 +703,7 @@ impl Backend {
             }
         }
 
-        let db = self.db.read();
+        let db = self.db.read().await;
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
@@ -1056,9 +1075,9 @@ impl Backend {
     }
 
     /// Helper function to execute a closure with the database at a specific block
-    pub fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
+    pub async fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
     where
-        F: FnOnce(Box<dyn DatabaseRef + '_>) -> T,
+        F: FnOnce(Box<dyn MaybeHashDatabase + '_>) -> T,
     {
         let block_number: U256 = self.convert_block_number(block_number).into();
 
@@ -1070,7 +1089,7 @@ impl Backend {
                 return f(Box::new(state))
             }
         }
-        let db = self.db.read();
+        let db = self.db.read().await;
         f(Box::new(&*db))
     }
 
@@ -1085,6 +1104,7 @@ impl Backend {
             let val = db.storage(address, index);
             Ok(u256_to_h256_be(val))
         })
+        .await
     }
 
     /// Returns the code of the address
@@ -1106,6 +1126,7 @@ impl Backend {
             };
             Ok(code.bytes()[..code.len()].to_vec().into())
         })
+        .await
     }
 
     /// Returns the balance of the address
@@ -1120,6 +1141,7 @@ impl Backend {
             trace!(target: "backend", "get balance for {:?}", address);
             Ok(db.basic(address).balance)
         })
+        .await
     }
 
     /// Returns the nonce of the address
@@ -1134,6 +1156,7 @@ impl Backend {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(db.basic(address).nonce.into())
         })
+        .await
     }
 
     /// Returns the traces for the given transaction
@@ -1375,6 +1398,71 @@ impl Backend {
         Some(transaction_build(tx, Some(&block), Some(info), true, block.header.base_fee_per_gas))
     }
 
+    /// Prove an account's existence or nonexistence in the state trie.
+    ///
+    /// Returns a merkle proof of the account's trie node, `account_key` == keccak(address)
+    pub async fn prove_account_at(
+        &self,
+        addr: Address,
+        values: Vec<U256>,
+        block_number: Option<BlockNumber>,
+    ) -> Result<AccountProof, BlockchainError> {
+        let account_key = H256::from(keccak256(addr.as_bytes()));
+
+        self.with_database_at(block_number, |block_db| {
+            trace!(target: "backend", "get proof for {:?} at {:?}", addr, block_number);
+            let (db, root) = block_db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
+
+            let data: &dyn HashDB<_, _> = db.deref();
+            let mut recorder = Recorder::new();
+            let trie = RefTrieDB::new(&data, &root.0)
+                .map_err(|err| BlockchainError::TrieError(err.to_string()))?;
+
+            let maybe_account: Option<BasicAccount> = {
+                let acc_decoder = |bytes: &[u8]| {
+                    rlp::decode(bytes).unwrap_or_else(|_| {
+                        panic!("prove_account_at, could not query trie for account={:?}", &addr)
+                    })
+                };
+                let query = (&mut recorder, acc_decoder);
+                trie.get_with(account_key.as_bytes(), query)
+                    .map_err(|err| BlockchainError::TrieError(err.to_string()))?
+            };
+            let account = maybe_account.unwrap_or_default();
+
+            let proof =
+                recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
+
+            let account_db =
+                block_db.maybe_account_db(addr).ok_or(BlockchainError::DataUnavailable)?;
+
+            let account_proof = AccountProof {
+                balance: account.balance,
+                nonce: account.nonce,
+                code_hash: account.code_hash,
+                storage_hash: account.storage_root,
+                account_proof: proof,
+                storage_proof: values
+                    .into_iter()
+                    .map(|storage_index| {
+                        let storage_key: H256 = BigEndianHash::from_uint(&storage_index);
+                        let key = H256::from(keccak256(storage_key));
+                        prove_storage(&account, &account_db.0, key).map(
+                            |(storage_proof, storage_value)| StorageProof {
+                                key: key.into_uint(),
+                                value: storage_value.into_uint(),
+                                proof: storage_proof.into_iter().map(Into::into).collect(),
+                            },
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            };
+
+            Ok(account_proof)
+        })
+        .await
+    }
+
     /// Returns a new block event stream
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         let (tx, rx) = unbounded();
@@ -1397,12 +1485,13 @@ impl Backend {
     }
 }
 
+#[async_trait::async_trait]
 impl TransactionValidator for Backend {
-    fn validate_pool_transaction(
+    async fn validate_pool_transaction(
         &self,
         tx: &PendingTransaction,
     ) -> Result<(), InvalidTransactionError> {
-        let account = self.db.read().basic(*tx.sender());
+        let account = self.db.read().await.basic(*tx.sender());
         let env = self.next_env();
         self.validate_pool_transaction_for(tx, &account, &env)
     }
@@ -1509,4 +1598,31 @@ pub fn transaction_build(
     transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);
 
     transaction
+}
+
+/// Prove a storage key's existence or nonexistence in the account's storage
+/// trie.
+/// `storage_key` is the hash of the desired storage key, meaning
+/// this will only work correctly under a secure trie.
+/// `storage_key` == keccak(key)
+pub fn prove_storage(
+    acc: &BasicAccount,
+    data: &AsHashDB,
+    storage_key: H256,
+) -> Result<(Vec<Vec<u8>>, H256), BlockchainError> {
+    let data: &dyn HashDB<_, _> = data.deref();
+    let mut recorder = Recorder::new();
+    let trie = RefTrieDB::new(&data, &acc.storage_root.0)
+        .map_err(|err| BlockchainError::TrieError(err.to_string()))
+        .unwrap();
+
+    let item: U256 = {
+        let decode_value = |bytes: &[u8]| rlp::decode(bytes).expect("decoding db value failed");
+        let query = (&mut recorder, decode_value);
+        trie.get_with(storage_key.as_bytes(), query)
+            .map_err(|err| BlockchainError::TrieError(err.to_string()))?
+            .unwrap_or_else(U256::zero)
+    };
+
+    Ok((recorder.drain().into_iter().map(|r| r.data).collect(), BigEndianHash::from_uint(&item)))
 }

@@ -465,6 +465,7 @@ impl<'a> ContractRunner<'a> {
         known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
         identified_contracts: BTreeMap<Address, (String, Abi)>,
     ) -> Result<Vec<TestResult>> {
+        trace!(target: "forge::test::fuzz", "executing invariant test with invariant functions {:?}",  functions.iter().map(|f|&f.name).collect::<Vec<_>>());
         let empty = BTreeMap::new();
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;

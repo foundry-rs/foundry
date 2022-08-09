@@ -1049,17 +1049,34 @@ pub struct TransactionInfo {
 // === impl TransactionInfo ===
 
 impl TransactionInfo {
-    /// Returns the callgraph of the trace
-    pub fn trace_call_graph(&self, idx: usize) -> Vec<usize> {
+    /// Returns the `traceAddress` of the node in the arena
+    ///
+    /// The `traceAddress` field of all returned traces, gives the exact location in the call trace
+    /// [index in root, index in first CALL, index in second CALL, …].
+    ///
+    /// # Panics
+    ///
+    /// if the `idx` does not belong to a node
+    pub fn trace_address(&self, idx: usize) -> Vec<usize> {
+        if idx == 0 {
+            // root call has empty traceAddress
+            return vec![]
+        }
         let mut graph = vec![];
         let mut node = &self.traces[idx];
-
         while let Some(parent) = node.parent {
+            // the index of the child call in the arena
+            let child_idx = node.idx;
             node = &self.traces[parent];
-            graph.push(node.trace.depth);
+            // find the index of the child call in the parent node
+            let call_idx = node
+                .children
+                .iter()
+                .position(|child| *child == child_idx)
+                .expect("child exists in parent");
+            graph.push(call_idx);
         }
         graph.reverse();
-        graph.push(self.traces[idx].trace.depth);
         graph
     }
 }

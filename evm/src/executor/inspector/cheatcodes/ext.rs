@@ -18,7 +18,7 @@ use std::{
     process::Command,
     str::FromStr,
 };
-use tracing::trace;
+use tracing::{error, trace};
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
@@ -34,13 +34,17 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
 
     trace!(?args, "invoking ffi");
 
-    let stdout = cmd
+    let output = cmd
         .current_dir(&state.config.root)
         .output()
-        .map_err(|err| util::encode_error(format!("Failed to execute command: {}", err)))?
-        .stdout;
+        .map_err(|err| util::encode_error(format!("Failed to execute command: {}", err)))?;
 
-    let output = String::from_utf8(stdout)
+    if !output.stderr.is_empty() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        error!(?err, "stderr");
+    }
+
+    let output = String::from_utf8(output.stdout)
         .map_err(|err| util::encode_error(format!("Failed to decode non utf-8 output: {}", err)))?;
 
     let trim_out = output.trim();

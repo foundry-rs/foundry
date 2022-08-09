@@ -7,6 +7,7 @@ mod ganache;
 mod gas;
 mod geth;
 mod logs;
+mod proof;
 mod pubsub;
 mod revert;
 mod sign;

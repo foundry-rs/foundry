@@ -2,7 +2,7 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile,
     compile::ProjectCompiler,
@@ -13,7 +13,7 @@ use clap::{AppSettings, Parser};
 use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, opts::EvmOpts},
+    executor::inspector::CheatsConfig,
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
@@ -23,7 +23,7 @@ use forge::{
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment, figment::Figment, Config};
+use foundry_config::{figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -113,15 +113,6 @@ impl TestArgs {
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
     pub fn filter(&self, config: &Config) -> Filter {
         self.filter.with_merged_config(config)
-    }
-
-    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
-    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // merge all configs
-        let figment: Figment = self.into();
-        let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
-        Ok((config, evm_opts))
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -220,7 +211,7 @@ impl TestOutcome {
 
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
+        self.results.values().flat_map(|suite| suite.tests())
     }
 
     /// Returns an iterator over all `Test`
@@ -235,26 +226,34 @@ impl TestOutcome {
 
     /// Checks if there are any failures and failures are disallowed
     pub fn ensure_ok(&self) -> eyre::Result<()> {
-        if !self.allow_failure {
-            let failures = self.failures().count();
-            if failures > 0 {
-                println!();
-                println!("Failed tests:");
-                for (name, result) in self.failures() {
-                    short_test_result(name, result);
-                }
-                println!();
-
-                let successes = self.successes().count();
-                println!(
-                    "Encountered a total of {} failing tests, {} tests succeeded",
-                    Paint::red(failures.to_string()),
-                    Paint::green(successes.to_string())
-                );
-                std::process::exit(1);
-            }
+        let failures = self.failures().count();
+        if self.allow_failure || failures == 0 {
+            return Ok(())
         }
-        Ok(())
+
+        println!();
+        println!("Failing tests:");
+        for (suite_name, suite) in self.results.iter() {
+            let failures = suite.failures().count();
+            if failures == 0 {
+                continue
+            }
+
+            let term = if failures > 1 { "tests" } else { "test" };
+            println!("Encountered {} failing {} in {}", failures, term, suite_name);
+            for (name, result) in suite.failures() {
+                short_test_result(name, result);
+            }
+            println!();
+        }
+
+        let successes = self.successes().count();
+        println!(
+            "Encountered a total of {} failing tests, {} tests succeeded",
+            Paint::red(failures.to_string()),
+            Paint::green(successes.to_string())
+        );
+        std::process::exit(1);
     }
 
     pub fn duration(&self) -> Duration {
@@ -310,7 +309,7 @@ fn short_test_result(name: &str, result: &TestResult) {
 
 pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
-    let (config, mut evm_opts) = args.config_and_evm_opts()?;
+    let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
 
     let test_options = TestOptions {
         fuzz_runs: config.fuzz_runs,

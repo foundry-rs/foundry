@@ -1,6 +1,6 @@
 //! Helpers to automatically fix configuration warnings
 
-use crate::{config_warn, Config};
+use crate::{Config, Warning};
 use figment::providers::Env;
 use std::{
     fs, io,
@@ -70,6 +70,12 @@ impl TomlFile {
         profile_str: &str,
         value: toml_edit::Item,
     ) -> Result<(), InsertProfileError> {
+        if !value.is_table_like() {
+            return Err(InsertProfileError {
+                message: format!("Expected [{}] to be a Table", profile_str),
+                value,
+            })
+        }
         // get or create the profile section
         let profile_map = if let Some(map) = self.get_mut(Config::PROFILE_SECTION) {
             map
@@ -121,9 +127,11 @@ impl TomlFile {
 }
 
 /// Making sure any implicit profile `[name]` becomes `[profile.name]` for the given file and
-/// return true if the file was edited
-fn fix_toml_non_strict_profiles(toml_file: &mut TomlFile) -> bool {
-    let mut edited = false;
+/// returns the implicit profiles and the result of editing them
+fn fix_toml_non_strict_profiles(
+    toml_file: &mut TomlFile,
+) -> Vec<(String, Result<(), InsertProfileError>)> {
+    let mut results = vec![];
 
     // get any non root level keys that need to be inserted into [profile]
     let profiles = toml_file
@@ -138,34 +146,21 @@ fn fix_toml_non_strict_profiles(toml_file: &mut TomlFile) -> bool {
     // remove each profile and insert into [profile] section
     for profile in profiles {
         if let Some(value) = toml_file.remove(&profile) {
-            if !value.is_table_like() {
-                config_warn!(
-                    "Invalid profile [{}] for TOML at {}: Expected [{}] to be a Table",
-                    profile,
-                    toml_file.path().display(),
-                    profile
-                );
-                toml_file.insert(&profile, value);
-            } else if let Err(err) = toml_file.insert_profile(&profile, value) {
-                config_warn!(
-                    "Could not fix [{}] in TOML at {}: {}",
-                    profile,
-                    toml_file.path().display(),
-                    err
-                );
-                toml_file.insert(&profile, err.value);
-            } else {
-                edited = true;
+            let res = toml_file.insert_profile(&profile, value);
+            if let Err(err) = res.as_ref() {
+                toml_file.insert(&profile, err.value.clone());
             }
+            results.push((profile, res))
         }
     }
-
-    edited
+    results
 }
 
 /// Fix foundry.toml files. Making sure any implicit profile `[name]` becomes
-/// `[profile.name]`
-pub fn fix_tomls() {
+/// `[profile.name]`. Return any warnings
+pub fn fix_tomls() -> Vec<Warning> {
+    let mut warnings = vec![];
+
     let tomls = {
         let mut tomls = vec![];
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
@@ -177,24 +172,44 @@ pub fn fix_tomls() {
         if local_toml.exists() {
             tomls.push(local_toml);
         } else {
-            config_warn!("No local TOML found to fix. Change the current directory to a project path or set the foundry.toml path with the FOUNDRY_CONFIG environment variable");
+            warnings.push(Warning::NoLocalToml(local_toml));
         }
         tomls
     };
+
     for toml in tomls {
         let mut toml_file = match TomlFile::open(&toml) {
             Ok(toml_file) => toml_file,
             Err(err) => {
-                config_warn!("Could not read TOML at {}: {}", toml.display(), err);
-                return
+                warnings.push(Warning::CouldNotReadToml { path: toml, err: err.to_string() });
+                continue
             }
         };
-        if fix_toml_non_strict_profiles(&mut toml_file) {
+
+        let results = fix_toml_non_strict_profiles(&mut toml_file);
+        let was_edited = results.iter().any(|(_, res)| res.is_ok());
+        for (profile, err) in results
+            .into_iter()
+            .filter_map(|(profile, res)| res.err().map(|err| (profile, err.message)))
+        {
+            warnings.push(Warning::CouldNotFixProfile {
+                path: toml_file.path().into(),
+                profile,
+                err,
+            })
+        }
+
+        if was_edited {
             if let Err(err) = toml_file.save() {
-                config_warn!("Could not write TOML to {}: {}", toml_file.path().display(), err);
+                warnings.push(Warning::CouldNotWriteToml {
+                    path: toml_file.path().into(),
+                    err: err.to_string(),
+                });
             }
         }
     }
+
+    warnings
 }
 
 #[cfg(test)]

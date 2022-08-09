@@ -1,17 +1,20 @@
 //! The in memory DB
 
 use crate::{
-    eth::backend::db::{Db, SerializableAccountRecord, SerializableState, StateDb},
-    mem::state::state_merkle_trie_root,
+    eth::backend::db::{
+        AsHashDB, Db, MaybeHashDatabase, SerializableAccountRecord, SerializableState, StateDb,
+    },
+    mem::state::{state_merkle_trie_root, trie_hash_db},
     revm::AccountInfo,
     Address, U256,
 };
 use ethers::prelude::H256;
-use tracing::{trace, warn};
-// reexport for convenience
-pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
-
 use forge::revm::{Bytecode, KECCAK_EMPTY};
+use tracing::{trace, warn};
+
+// reexport for convenience
+use crate::mem::state::storage_trie_db;
+pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -107,7 +110,21 @@ impl Db for MemDb {
     }
 
     fn current_state(&self) -> StateDb {
-        StateDb::new(self.inner.clone())
+        StateDb::new(MemDb { inner: self.inner.clone(), ..Default::default() })
+    }
+}
+
+impl MaybeHashDatabase for MemDb {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        Some(trie_hash_db(&self.inner.accounts))
+    }
+
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        if let Some(acc) = self.inner.accounts.get(&addr) {
+            Some(storage_trie_db(&acc.storage))
+        } else {
+            Some(storage_trie_db(&Default::default()))
+        }
     }
 }
 

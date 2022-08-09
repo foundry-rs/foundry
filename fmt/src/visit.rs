@@ -24,10 +24,11 @@ pub trait Visitor {
 
     fn visit_pragma(
         &mut self,
+        loc: Loc,
         _ident: &mut Identifier,
         _str: &mut StringLiteral,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_import_plain(
@@ -430,7 +431,7 @@ impl Visitable for SourceUnitPart {
     {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
-            SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
+            SourceUnitPart::PragmaDirective(loc, ident, str) => v.visit_pragma(*loc, ident, str),
             SourceUnitPart::ImportDirective(import) => import.visit(v),
             SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),

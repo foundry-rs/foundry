@@ -204,14 +204,32 @@ macro_rules! impl_figment_convert_cast {
     };
 }
 
-macro_rules! config_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            ansi_term::Color::Yellow.bold().paint("warning"),
-            ansi_term::Style::new().bold().paint(":"),
-            format_args!($($arg)*)
-        )
-    }
+/// Same as `impl_figment_convert` but also implies `Provider` for the given `Serialize` type for
+/// convenience. The `Provider` only provides the "root" value for the current profile
+#[macro_export]
+macro_rules! impl_figment_convert_basic {
+    ($name:ty) => {
+        $crate::impl_figment_convert!($name);
+
+        impl $crate::figment::Provider for $name {
+            fn metadata(&self) -> $crate::figment::Metadata {
+                $crate::figment::Metadata::named(stringify!($name))
+            }
+            fn data(
+                &self,
+            ) -> Result<
+                $crate::figment::value::Map<$crate::figment::Profile, $crate::figment::value::Dict>,
+                $crate::figment::Error,
+            > {
+                let mut dict = $crate::figment::value::Dict::new();
+                if let Some(root) = self.root.as_ref() {
+                    dict.insert(
+                        "root".to_string(),
+                        $crate::figment::value::Value::serialize(root)?,
+                    );
+                }
+                Ok($crate::figment::value::Map::from([($crate::Config::selected_profile(), dict)]))
+            }
+        }
+    };
 }
-pub(crate) use config_warn;

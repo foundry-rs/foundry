@@ -17,7 +17,7 @@ pub struct SuiteResult {
     pub duration: Duration,
     /// Individual test results. `test method name -> TestResult`
     pub test_results: BTreeMap<String, TestResult>,
-    // Warnings
+    /// Warnings
     pub warnings: Vec<String>,
 }
 
@@ -30,10 +30,27 @@ impl SuiteResult {
         Self { duration, test_results, warnings }
     }
 
+    /// Iterator over all succeeding tests and their names
+    pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.success)
+    }
+
+    /// Iterator over all failing tests and their names
+    pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| !t.success)
+    }
+
+    /// Iterator over all tests and their names
+    pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.test_results.iter()
+    }
+
+    /// Whether this test suite is empty.
     pub fn is_empty(&self) -> bool {
         self.test_results.is_empty()
     }
 
+    /// The number of tests in this test suite.
     pub fn len(&self) -> usize {
         self.test_results.len()
     }

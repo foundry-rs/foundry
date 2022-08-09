@@ -7,14 +7,19 @@ use crate::{
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
+use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
 use clap::{Parser, ValueHint};
+use dialoguer::Confirm;
 use ethers::{
     abi::{Abi, Function},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
-    types::{transaction::eip2718::TypedTransaction, Address, Log, TransactionRequest, U256},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
+        U256,
+    },
 };
 use forge::{
     debug::DebugArena,
@@ -25,7 +30,7 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, CONTRACT_MAX_SIZE};
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
@@ -49,6 +54,7 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
@@ -409,6 +415,70 @@ impl ScriptArgs {
             }
         };
         Ok((func.clone(), data))
+    }
+
+    /// Checks if the transaction is a deployment with a size above the `CONTRACT_MAX_SIZE`.
+    ///
+    /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
+    /// the user.
+    fn check_contract_sizes(
+        &self,
+        transactions: Option<&VecDeque<TypedTransaction>>,
+        known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    ) -> eyre::Result<()> {
+        for (data, to) in transactions.iter().flat_map(|txes| {
+            txes.iter().filter_map(|tx| {
+                tx.data().filter(|data| data.len() > CONTRACT_MAX_SIZE).map(|data| (data, tx.to()))
+            })
+        }) {
+            let mut offset = 0;
+
+            // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
+            if let Some(NameOrAddress::Address(to)) = to {
+                if *to == DEFAULT_CREATE2_DEPLOYER {
+                    // Size of the salt prefix.
+                    offset = 32;
+                }
+            } else if to.is_some() {
+                continue
+            }
+
+            // Find artifact with a deployment code same as the data.
+            if let Some((artifact, bytecode)) =
+                known_contracts.iter().find(|(_, bytecode)| {
+                    bytecode
+                        .bytecode
+                        .object
+                        .as_bytes()
+                        .expect("Code should have been linked before.") ==
+                        &data[offset..]
+                })
+            {
+                // Find the deployed code size of the artifact.
+                if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
+                    let deployment_size = deployed_bytecode.object.bytes_len();
+
+                    if deployment_size > CONTRACT_MAX_SIZE {
+                        println!(
+                            "{}",
+                            Paint::red(format!(
+                                "`{}` is above the contract size limit ({} vs {}).",
+                                artifact.name, deployment_size, CONTRACT_MAX_SIZE
+                            ))
+                        );
+
+                        if self.broadcast &&
+                            !Confirm::new()
+                                .with_prompt("Do you wish to continue?".to_string())
+                                .interact()?
+                        {
+                            eyre::bail!("User canceled the script.");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
