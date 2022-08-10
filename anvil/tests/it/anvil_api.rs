@@ -3,9 +3,10 @@ use crate::{abi::*, fork::fork_config};
 use anvil::{spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
 use ethers::{
-    abi::ethereum_types::BigEndianHash,
+    abi::{ethereum_types::BigEndianHash, AbiDecode},
     prelude::{Middleware, SignerMiddleware},
     types::{Address, BlockNumber, TransactionRequest, H256, U256},
+    utils::hex,
 };
 use std::{
     sync::Arc,
@@ -236,4 +237,32 @@ async fn test_timestamp_interval() {
     let another_block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
     // check interval is disabled
     assert!(another_block.timestamp - new_block.timestamp < U256::from(interval));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/2341>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_set_storage_bsc_fork() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+    let provider = Arc::new(handle.http_provider());
+
+    let busd_addr: Address = "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56".parse().unwrap();
+    let idx: U256 =
+        "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49".parse().unwrap();
+    let value: H256 =
+        "0x0000000000000000000000000000000000000000000000000000000000003039".parse().unwrap();
+
+    api.anvil_set_storage_at(busd_addr, idx, value).await.unwrap();
+    let storage = api.storage_at(busd_addr, idx, None).await.unwrap();
+    assert_eq!(storage, value);
+
+    let input =
+        hex::decode("70a082310000000000000000000000000000000000000000000000000000000000000000")
+            .unwrap();
+
+    let busd = BUSD::new(busd_addr, provider);
+    let call = busd::BalanceOfCall::decode(&input).unwrap();
+
+    let balance = busd.balance_of(call.0).call().await.unwrap();
+    assert_eq!(balance, U256::from(12345u64));
 }

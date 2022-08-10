@@ -4,6 +4,7 @@ use crate::{
     Address, U256,
 };
 use ethers::prelude::H256;
+use forge::revm::Database;
 use foundry_evm::executor::fork::database::ForkDbSnapshot;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 
@@ -14,6 +15,8 @@ impl Db for ForkedDatabase {
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
+        // this ensures the account is loaded first
+        let _ = Database::basic(self, address);
         self.database_mut().set_storage_at(address, slot, val)
     }
 
