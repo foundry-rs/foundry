@@ -1,5 +1,5 @@
 //! tests for custom anvil endpoints
-use crate::abi::*;
+use crate::{abi::*, fork::fork_config};
 use anvil::{spawn, Hardfork, NodeConfig};
 use anvil_core::eth::EthRequest;
 use ethers::{
@@ -115,6 +115,37 @@ async fn can_impersonate_contract() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_gnosis_safe() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // <https://help.gnosis-safe.io/en/articles/4971293-i-don-t-remember-my-safe-address-where-can-i-find-it>
+    let safe: Address = "0xA063Cb7CFd8E57c30c788A0572CBbf2129ae56B6".parse().unwrap();
+
+    let code = provider.get_code(safe, None).await.unwrap();
+    assert!(!code.is_empty());
+
+    api.anvil_impersonate_account(safe).await.unwrap();
+
+    let code = provider.get_code(safe, None).await.unwrap();
+    // impersonated contract code is temporarily removed
+    assert!(code.is_empty());
+
+    let balance = U256::from(1e18 as u64);
+    // fund the impersonated account
+    api.anvil_set_balance(safe, balance).await.unwrap();
+
+    let on_chain_balance = provider.get_balance(safe, None).await.unwrap();
+    assert_eq!(on_chain_balance, balance);
+
+    api.anvil_stop_impersonating_account(safe).await.unwrap();
+
+    let code = provider.get_code(safe, None).await.unwrap();
+    // code is added back after stop impersonating
+    assert!(!code.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
