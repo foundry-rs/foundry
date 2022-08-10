@@ -31,7 +31,7 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
-use widget::memory::{self, MemoryView, MemoryViewState};
+use widget::word::{self, WordView, WordViewState};
 
 /// Trait for starting the UI
 pub trait Ui {
@@ -142,13 +142,13 @@ impl Tui {
         current_step: usize,
         call_kind: CallKind,
         draw_memory: &mut DrawMemory,
-        stack_labels: bool,
     ) {
+        let curr_step = &debug_steps[current_step];
+
+        // Compute layout
         let [footer, src_pane, op_pane, stack_pane, memory_pane] =
             if f.size().width < 225 { Tui::vertical_layout(f) } else { Tui::square_layout(f) }
                 .unwrap();
-
-        let curr_step = &debug_steps[current_step];
 
         Tui::draw_footer(f, footer);
         Tui::draw_src(
@@ -163,9 +163,38 @@ impl Tui {
             src_pane,
         );
         Tui::draw_op_list(f, address, debug_steps, opcode_list, current_step, draw_memory, op_pane);
-        Tui::draw_stack(f, debug_steps, current_step, stack_pane, stack_labels, draw_memory);
 
-        let mut memory_view = MemoryView::new(&curr_step.memory).block(
+        // Draw stack
+        let stack = curr_step
+            .stack
+            .iter()
+            .rev()
+            .flat_map(|word| {
+                let mut buffer: [u8; 32] = [0u8; 32];
+                word.to_big_endian(&mut buffer);
+                buffer
+            })
+            .collect::<Vec<u8>>();
+        let stack_view = curr_step
+            .instruction
+            .affected_stack_items()
+            .iter()
+            .fold(
+                WordView::new(&stack, &curr_step.stack.len() * 32).block(
+                    Block::default()
+                        .title(format!("Stack: {}", curr_step.stack.len()))
+                        .borders(Borders::ALL),
+                ),
+                |stack_view, (item, label)| {
+                    stack_view.highlight(*item, Color::Cyan).label(*item, label.to_string())
+                },
+            )
+            .item_number_mode(word::ItemNumberMode::Byte)
+            .item_number_format(word::ItemNumberFormat::Decimal);
+        f.render_stateful_widget(stack_view, stack_pane, &mut draw_memory.stack_view_state);
+
+        // Draw memory
+        let mut memory_view = WordView::new(curr_step.memory.data(), curr_step.memory.len()).block(
             Block::default()
                 .title(format!(
                     "Memory (max expansion: {} bytes)",
@@ -188,7 +217,6 @@ impl Tui {
                 memory_view = memory_view.highlight(word, Color::Green);
             }
         }
-
         f.render_stateful_widget(memory_view, memory_pane, &mut draw_memory.memory_view_state);
     }
 
@@ -684,73 +712,6 @@ impl Tui {
             Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
-
-    /// Draw the stack into the stack pane
-    fn draw_stack<B: Backend>(
-        f: &mut Frame<B>,
-        debug_steps: &[DebugStep],
-        current_step: usize,
-        area: Rect,
-        stack_labels: bool,
-        draw_memory: &mut DrawMemory,
-    ) {
-        let stack = &debug_steps[current_step].stack;
-        let stack_space =
-            Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
-        let min_len = usize::max(format!("{}", stack.len()).len(), 2);
-
-        let indices_affected = debug_steps[current_step].instruction.affected_stack_items();
-        let text: Vec<Spans> = stack
-            .iter()
-            .rev()
-            .enumerate()
-            .skip(draw_memory.current_stack_startline)
-            .map(|(i, stack_item)| {
-                let affected =
-                    indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
-
-                let mut words: Vec<Span> = (0..32)
-                    .into_iter()
-                    .rev()
-                    .map(|i| stack_item.byte(i))
-                    .map(|byte| {
-                        Span::styled(
-                            format!("{:02x} ", byte),
-                            if affected.is_some() {
-                                Style::default().fg(Color::Cyan)
-                            } else if byte == 0 {
-                                // this improves compatibility across terminals by not combining
-                                // color with DIM modifier
-                                Style::default().add_modifier(Modifier::DIM)
-                            } else {
-                                Style::default().fg(Color::White)
-                            },
-                        )
-                    })
-                    .collect();
-
-                if stack_labels {
-                    if let Some((_, name)) = affected {
-                        words.push(Span::raw(format!("| {name}")));
-                    } else {
-                        words.push(Span::raw("| ".to_string()));
-                    }
-                }
-
-                let mut spans = vec![Span::styled(
-                    format!("{:0min_len$}| ", i, min_len = min_len),
-                    Style::default().fg(Color::White),
-                )];
-                spans.extend(words);
-                spans.push(Span::raw("\n"));
-
-                Spans::from(spans)
-            })
-            .collect();
-
-        let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
-    }
 }
 
 impl Ui for Tui {
@@ -804,7 +765,6 @@ impl Ui for Tui {
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
 
-        let mut stack_labels = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -846,14 +806,7 @@ impl Ui for Tui {
                     }
                     KeyCode::Char('J') => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            let max_stack = debug_call[draw_memory.inner_call_index].1
-                                [self.current_step]
-                                .stack
-                                .len()
-                                .saturating_sub(1);
-                            if draw_memory.current_stack_startline < max_stack {
-                                draw_memory.current_stack_startline += 1;
-                            }
+                            draw_memory.stack_view_state.scroll_down();
                         }
                         self.key_buffer.clear();
                     }
@@ -874,8 +827,7 @@ impl Ui for Tui {
                     }
                     KeyCode::Char('K') => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                            draw_memory.current_stack_startline =
-                                draw_memory.current_stack_startline.saturating_sub(1);
+                            draw_memory.stack_view_state.scroll_up();
                         }
                         self.key_buffer.clear();
                     }
@@ -961,13 +913,15 @@ impl Ui for Tui {
                     }
                     // toggle stack labels
                     KeyCode::Char('t') => {
-                        stack_labels = !stack_labels;
+                        draw_memory
+                            .stack_view_state
+                            .toggle_mode(word::ViewMode::None, word::ViewMode::Label);
                     }
                     // toggle memory utf8 decoding
                     KeyCode::Char('m') => {
                         draw_memory
                             .memory_view_state
-                            .toggle_mode(memory::ViewMode::Hex, memory::ViewMode::Utf8);
+                            .toggle_mode(word::ViewMode::None, word::ViewMode::Utf8);
                     }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
@@ -989,7 +943,7 @@ impl Ui for Tui {
                         } else if draw_memory.inner_call_index > 0 {
                             draw_memory.inner_call_index -= 1;
                             draw_memory.memory_view_state.scroll_to_top();
-                            draw_memory.current_stack_startline = 0;
+                            draw_memory.memory_view_state.scroll_to_top();
                             self.current_step =
                                 debug_call[draw_memory.inner_call_index].1.len() - 1;
                         }
@@ -1000,7 +954,7 @@ impl Ui for Tui {
                         } else if draw_memory.inner_call_index < debug_call.len() - 1 {
                             draw_memory.inner_call_index += 1;
                             draw_memory.memory_view_state.scroll_to_top();
-                            draw_memory.current_stack_startline = 0;
+                            draw_memory.memory_view_state.scroll_to_top();
                             self.current_step = 0;
                         }
                     }
@@ -1023,7 +977,6 @@ impl Ui for Tui {
                     current_step,
                     debug_call[draw_memory.inner_call_index].2,
                     &mut draw_memory,
-                    stack_labels,
                 )
             })?;
         }
@@ -1043,6 +996,6 @@ enum Interrupt {
 struct DrawMemory {
     pub current_startline: usize,
     pub inner_call_index: usize,
-    pub current_stack_startline: usize,
-    memory_view_state: MemoryViewState,
+    memory_view_state: WordViewState,
+    stack_view_state: WordViewState,
 }
