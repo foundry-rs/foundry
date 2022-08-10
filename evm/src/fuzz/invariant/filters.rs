@@ -17,15 +17,36 @@ pub struct ArtifactFilters {
 }
 
 impl ArtifactFilters {
-    /// Gets all the targeted functions from `artifact`. Returns error, if `artifact` doesn't exist.
-    pub fn get_functions(&self, artifact: &ArtifactId, abi: &Abi) -> eyre::Result<Vec<Function>> {
-        self.targeted
-            .get(&artifact.identifier())
-            .ok_or_else(|| {
-                eyre::eyre!("{} does not exist inside ArtifactFilters.", artifact.identifier())
-            })?
-            .iter()
-            .map(|selector| get_function(&artifact.name, selector, abi))
-            .collect::<eyre::Result<Vec<_>>>()
+    /// Gets all the targeted functions from `artifact`. Returns error, if selectors do not match
+    /// the `artifact`.
+    ///
+    /// An empty vector means that it targets any mutable function. See `select_random_function` for
+    /// more.
+    pub fn get_targeted_functions(
+        &self,
+        artifact: &ArtifactId,
+        abi: &Abi,
+    ) -> eyre::Result<Option<Vec<Function>>> {
+        if let Some(selectors) = self.targeted.get(&artifact.identifier()) {
+            let functions = selectors
+                .iter()
+                .map(|selector| get_function(&artifact.name, selector, abi))
+                .collect::<eyre::Result<Vec<_>>>()?;
+
+            // targetArtifactSelectors > excludeArtifacts > targetArtifacts
+            if functions.is_empty() && self.excluded.contains(&artifact.identifier()) {
+                return Ok(None)
+            }
+
+            return Ok(Some(functions))
+        }
+
+        // If no contract is specifically targeted, and this contract is not excluded, then accept
+        // all functions.
+        if self.targeted.is_empty() && !self.excluded.contains(&artifact.identifier()) {
+            return Ok(Some(vec![]))
+        }
+
+        Ok(None)
     }
 }

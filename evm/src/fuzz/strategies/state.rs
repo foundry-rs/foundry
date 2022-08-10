@@ -182,18 +182,13 @@ pub fn collect_created_contracts(
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
-                        let functions = artifact_filters.get_functions(artifact, abi)?;
-
-                        // targetArtifactSelectors > excludeArtifacts > targetArtifacts
-                        if functions.is_empty() &&
-                            artifact_filters.excluded.contains(&artifact.identifier())
+                        if let Some(functions) =
+                            artifact_filters.get_targeted_functions(artifact, abi)?
                         {
-                            continue
+                            created_contracts.push(*address);
+                            writable_targeted
+                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
                         }
-
-                        created_contracts.push(*address);
-                        writable_targeted
-                            .insert(*address, (artifact.name.clone(), abi.clone(), functions));
                     }
                 }
             }
