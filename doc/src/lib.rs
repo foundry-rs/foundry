@@ -1,11 +1,4 @@
-use std::{borrow::Borrow, collections::HashMap, path::PathBuf, rc::Rc};
-
 use forge_fmt::{Visitable, Visitor};
-use mdbook::{
-    book::{Link, Summary, SummaryItem},
-    config::{BookConfig, BuildConfig},
-    Config, MDBook,
-};
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
@@ -125,7 +118,7 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     #[test]
-    fn test_build() {
+    fn parse_docs() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata")
             .join("oz-governance")
