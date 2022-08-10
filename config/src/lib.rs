@@ -137,6 +137,8 @@ pub struct Config {
     pub evm_version: EvmVersion,
     /// list of contracts to report gas of
     pub gas_reports: Vec<String>,
+    /// list of contracts to ignore for gas reports
+    pub gas_reports_ignore: Vec<String>,
     /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -1470,6 +1472,7 @@ impl Default for Config {
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
+            gas_reports_ignore: vec![],
             solc: None,
             auto_detect_solc: true,
             offline: false,

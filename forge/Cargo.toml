@@ -18,6 +18,7 @@ serde = "1.0.130"
 regex = { version = "1.5.4", default-features = false }
 hex = "0.4.3"
 glob = "0.3.0"
+yansi = "0.5.1"
 # TODO: Trim down
 tokio = { version = "1", features = ["time"] }
 tracing = "0.1"
