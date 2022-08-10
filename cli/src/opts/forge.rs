@@ -10,6 +10,7 @@ use crate::cmd::forge::{
     config, coverage,
     create::CreateArgs,
     debug::DebugArgs,
+    doc::DocArgs,
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
@@ -167,6 +168,9 @@ pub enum Subcommands {
         about = "Display a tree visualization of the project's dependency graph."
     )]
     Tree(tree::TreeArgs),
+
+    #[clap(about = "Generate documentation for the project,")]
+    Doc(DocArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

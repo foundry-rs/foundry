@@ -6,8 +6,6 @@ use mdbook::{
     config::{BookConfig, BuildConfig},
     Config, MDBook,
 };
-use thiserror::Error;
-// use foundry_common::paths::ProjectPathsArgs;
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
     pt::{
@@ -15,6 +13,7 @@ use solang_parser::{
         VariableDefinition,
     },
 };
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DocError {} // TODO:
@@ -23,8 +22,8 @@ type Result<T, E = DocError> = std::result::Result<T, E>;
 
 #[derive(Debug)]
 pub struct SolidityDoc {
+    pub parts: Vec<SolidityDocPart>,
     comments: Vec<Comment>,
-    parts: Vec<SolidityDocPart>,
     start_at: usize,
     curr_parent: Option<SolidityDocPart>,
 }
@@ -90,16 +89,6 @@ impl Visitor for SolidityDoc {
                         children: vec![],
                     };
                     self.start_at = def.loc.start();
-
-                    // StructDefinition(Box<StructDefinition>),
-                    // EventDefinition(Box<EventDefinition>),
-                    // EnumDefinition(Box<EnumDefinition>),
-                    // ErrorDefinition(Box<ErrorDefinition>),
-                    // VariableDefinition(Box<VariableDefinition>) - done
-                    // FunctionDefinition(Box<FunctionDefinition>) - done
-                    // TypeDefinition(Box<TypeDefinition>),
-                    // StraySemicolon(Loc),
-                    // Using(Box<Using>),
                     let contract = self.with_parent(contract, |doc| {
                         for d in def.parts.iter_mut() {
                             d.visit(doc)?;
@@ -144,7 +133,6 @@ mod tests {
         let target = fs::read_to_string(path).unwrap();
         let (mut source_pt, source_comments) = solang_parser::parse(&target, 1).unwrap();
         let mut d = SolidityDoc::new(source_comments);
-        source_pt.visit(&mut d).unwrap();
-        // write_docs(&d.parts).unwrap();
+        assert!(source_pt.visit(&mut d).is_ok());
     }
 }

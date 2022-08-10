@@ -126,6 +126,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Doc(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())

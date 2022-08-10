@@ -28,4 +28,3 @@ clap = { version = "3.0.10", features = [
 solang-parser = "0.1.17"
 eyre = "0.6"
 thiserror = "1.0.30"
-mdbook = "0.4.21"
