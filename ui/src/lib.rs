@@ -10,8 +10,10 @@ use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
 use forge::{
     debug::{DebugStep, Instruction},
+    utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
+use revm::{opcode, SpecId};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, HashMap, VecDeque},
@@ -29,8 +31,6 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
-
-use revm::opcode;
 
 /// Trait for starting the UI
 pub trait Ui {
@@ -52,11 +52,13 @@ pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
     key_buffer: String,
-    /// current step in the debug steps
+    /// Current step in the debug steps
     current_step: usize,
     identified_contracts: HashMap<Address, String>,
     known_contracts: HashMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
+    /// A mapping of source -> (PC -> IC map for deploy code, PC -> IC map for runtime code)
+    pc_ic_maps: BTreeMap<String, (PCICMap, PCICMap)>,
 }
 
 impl Tui {
@@ -75,6 +77,30 @@ impl Tui {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
+        let pc_ic_maps = known_contracts
+            .iter()
+            .filter_map(|(contract_name, bytecode)| {
+                Some((
+                    contract_name.clone(),
+                    (
+                        build_pc_ic_map(
+                            SpecId::LATEST,
+                            bytecode.bytecode.object.as_bytes()?.as_ref(),
+                        ),
+                        build_pc_ic_map(
+                            SpecId::LATEST,
+                            bytecode
+                                .deployed_bytecode
+                                .bytecode
+                                .as_ref()?
+                                .object
+                                .as_bytes()?
+                                .as_ref(),
+                        ),
+                    ),
+                ))
+            })
+            .collect();
         Ok(Tui {
             debug_arena,
             terminal,
@@ -83,6 +109,7 @@ impl Tui {
             identified_contracts,
             known_contracts,
             source_code,
+            pc_ic_maps,
         })
     }
 
@@ -106,6 +133,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
+        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -122,6 +150,7 @@ impl Tui {
                 address,
                 identified_contracts,
                 known_contracts,
+                pc_ic_maps,
                 source_code,
                 debug_steps,
                 opcode_list,
@@ -137,6 +166,7 @@ impl Tui {
                 address,
                 identified_contracts,
                 known_contracts,
+                pc_ic_maps,
                 source_code,
                 debug_steps,
                 opcode_list,
@@ -155,6 +185,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
+        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -189,8 +220,9 @@ impl Tui {
                     address,
                     identified_contracts,
                     known_contracts,
+                    pc_ic_maps,
                     source_code,
-                    debug_steps[current_step].ic,
+                    debug_steps[current_step].pc,
                     call_kind,
                     src_pane,
                 );
@@ -226,6 +258,7 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
+        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -266,8 +299,9 @@ impl Tui {
                             address,
                             identified_contracts,
                             known_contracts,
+                            pc_ic_maps,
                             source_code,
-                            debug_steps[current_step].ic,
+                            debug_steps[current_step].pc,
                             call_kind,
                             src_pane,
                         );
@@ -328,8 +362,9 @@ impl Tui {
         address: Address,
         identified_contracts: &HashMap<Address, String>,
         known_contracts: &HashMap<String, ContractBytecodeSome>,
+        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
         source_code: &BTreeMap<u32, String>,
-        ic: usize,
+        pc: usize,
         call_kind: CallKind,
         area: Rect,
     ) {
@@ -347,11 +382,18 @@ impl Tui {
 
         if let Some(contract_name) = identified_contracts.get(&address) {
             if let Some(known) = known_contracts.get(contract_name) {
+                let pc_ic_map = pc_ic_maps.get(contract_name);
                 // grab either the creation source map or runtime sourcemap
-                if let Some(sourcemap) = if matches!(call_kind, CallKind::Create) {
-                    known.bytecode.source_map()
+                if let Some((sourcemap, ic)) = if matches!(call_kind, CallKind::Create) {
+                    known.bytecode.source_map().zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
                 } else {
-                    known.deployed_bytecode.bytecode.as_ref().expect("no bytecode").source_map()
+                    known
+                        .deployed_bytecode
+                        .bytecode
+                        .as_ref()
+                        .expect("no bytecode")
+                        .source_map()
+                        .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
                 } {
                     match sourcemap {
                         Ok(sourcemap) => {
@@ -360,10 +402,10 @@ impl Tui {
                             // This includes an offset and length. This vector is in
                             // instruction pointer order, meaning the location of
                             // the instruction - sum(push_bytes[..pc])
-                            if let Some(source_idx) = sourcemap[ic].index {
+                            if let Some(source_idx) = sourcemap[*ic].index {
                                 if let Some(source) = source_code.get(&source_idx) {
-                                    let offset = sourcemap[ic].offset;
-                                    let len = sourcemap[ic].length;
+                                    let offset = sourcemap[*ic].offset;
+                                    let len = sourcemap[*ic].length;
 
                                     // split source into before, relevant, and after chunks
                                     // split by line as well to do some formatting stuff
@@ -1180,6 +1222,7 @@ impl Ui for Tui {
                     debug_call[draw_memory.inner_call_index].0,
                     &self.identified_contracts,
                     &self.known_contracts,
+                    &self.pc_ic_maps,
                     &self.source_code,
                     &debug_call[draw_memory.inner_call_index].1[..],
                     &opcode_list,

@@ -1,3 +1,6 @@
+use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
+use tracing::trace;
+
 /// Gas reports
 pub mod gas_report;
 
@@ -45,4 +48,28 @@ pub struct TestOptions {
     /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
     /// checks
     pub invariant_call_override: bool,
+}
+
+impl TestOptions {
+    pub fn fuzzer(&self) -> TestRunner {
+        // TODO: Add Options to modify the persistence
+        let cfg = proptest::test_runner::Config {
+            failure_persistence: None,
+            cases: self.fuzz_runs,
+            max_local_rejects: self.fuzz_max_local_rejects,
+            max_global_rejects: self.fuzz_max_global_rejects,
+            ..Default::default()
+        };
+
+        if let Some(ref fuzz_seed) = self.fuzz_seed {
+            trace!(target: "forge::test", "building deterministic fuzzer with seed {}", fuzz_seed);
+            let mut bytes: [u8; 32] = [0; 32];
+            fuzz_seed.to_big_endian(&mut bytes);
+            let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
+            proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
+        } else {
+            trace!(target: "forge::test", "building stochastic fuzzer");
+            proptest::test_runner::TestRunner::new(cfg)
+        }
+    }
 }
