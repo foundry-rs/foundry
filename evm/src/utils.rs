@@ -30,8 +30,6 @@ pub fn h256_to_u256_le(storage: H256) -> U256 {
 pub type PCICMap = BTreeMap<usize, usize>;
 
 /// Builds a mapping from program counters to instruction counters.
-// TODO: Some of the same logic is performed in REVM, but then later discarded. We should
-// investigate if we can reuse it
 pub fn build_pc_ic_map(spec: SpecId, code: &[u8]) -> PCICMap {
     let opcode_infos = spec_opcode_gas(spec);
     let mut pc_ic_map: PCICMap = BTreeMap::new();
