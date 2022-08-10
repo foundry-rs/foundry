@@ -25,9 +25,12 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
 
 /// Returns the path of the top-level directory of the working git tree. If there is no working
 /// tree, an error is returned.
-pub fn find_git_root_path() -> eyre::Result<PathBuf> {
-    let path =
-        std::process::Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
+pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
+    let path = std::process::Command::new("git")
+        .args(&["rev-parse", "--show-toplevel"])
+        .current_dir(relative_to.as_ref())
+        .output()?
+        .stdout;
     let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
     Ok(PathBuf::from(path))
 }
@@ -47,11 +50,11 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
 /// ```
 /// will still detect `repo` as root
 pub fn find_project_root_path() -> std::io::Result<PathBuf> {
-    let boundary = find_git_root_path()
+    let cwd = std::env::current_dir()?;
+    let boundary = find_git_root_path(&cwd)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
-    let cwd = std::env::current_dir()?;
+        .unwrap_or_else(|| cwd.clone());
     let mut cwd = cwd.as_path();
     // traverse as long as we're in the current git repo cwd
     while cwd.starts_with(&boundary) {

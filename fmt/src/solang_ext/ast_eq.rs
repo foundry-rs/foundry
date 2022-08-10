@@ -3,6 +3,27 @@ use ethers_core::types::H160;
 use solang_parser::pt::*;
 use std::str::FromStr;
 
+/// Helper to convert a string number into a comparable one
+fn to_num(string: &str) -> isize {
+    if string.is_empty() {
+        return 0
+    }
+    string.replace('_', "").trim().parse().unwrap()
+}
+
+/// Helper to convert the fractional part of a number into a comparable one.
+/// This will reverse the number so that 0's can be ignored
+fn to_num_reversed(string: &str) -> usize {
+    if string.is_empty() {
+        return 0
+    }
+    let mut string = dbg!(string.replace('_', ""));
+    unsafe {
+        string.as_mut_vec().reverse();
+    }
+    dbg!(dbg!(string).trim().parse().unwrap())
+}
+
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
 /// not matter
 pub trait AstEq {
@@ -122,20 +143,29 @@ impl AstEq for String {
     }
 }
 
+macro_rules! ast_eq_field {
+    (#[ast_eq_use($convert_func:ident)] $field:ident) => {
+        $convert_func($field)
+    };
+    ($field:ident) => {
+        $field
+    };
+}
+
 macro_rules! gen_ast_eq_enum {
     ($self:expr, $other:expr, $name:ident {
         $($unit_variant:ident),* $(,)?
         _
-        $($tuple_variant:ident ( $($tuple_field:ident),* $(,)? )),*  $(,)?
+        $($tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? )),*  $(,)?
         _
-        $($struct_variant:ident { $($struct_field:ident),* $(,)? }),*  $(,)?
+        $($struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? }),*  $(,)?
     }) => {
         match $self {
             $($name::$unit_variant => gen_ast_eq_enum!($other, $name, $unit_variant),)*
             $($name::$tuple_variant($($tuple_field),*) =>
-                gen_ast_eq_enum!($other, $name, $tuple_variant ($($tuple_field),*)),)*
+                gen_ast_eq_enum!($other, $name, $tuple_variant ($($(#[ast_eq_use($tuple_convert_func)])? $tuple_field),*)),)*
             $($name::$struct_variant { $($struct_field),* } =>
-                gen_ast_eq_enum!($other, $name, $struct_variant {$($struct_field),*}),)*
+                gen_ast_eq_enum!($other, $name, $struct_variant {$($(#[ast_eq_use($struct_convert_func)])? $struct_field),*}),)*
         }
     };
     ($other:expr, $name:ident, $unit_variant:ident) => {
@@ -143,22 +173,22 @@ macro_rules! gen_ast_eq_enum {
             matches!($other, $name::$unit_variant)
         }
     };
-    ($other:expr, $name:ident, $tuple_variant:ident ( $($tuple_field:ident),* $(,)? ) ) => {
+    ($other:expr, $name:ident, $tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? ) ) => {
         {
-            let left = ($($tuple_field),*);
+            let left = ($(ast_eq_field!($(#[ast_eq_use($tuple_convert_func)])? $tuple_field)),*);
             if let $name::$tuple_variant($($tuple_field),*) = $other {
-                let right = ($($tuple_field),*);
+                let right = ($(ast_eq_field!($(#[ast_eq_use($tuple_convert_func)])? $tuple_field)),*);
                 left.ast_eq(&right)
             } else {
                 false
             }
         }
     };
-    ($other:expr, $name:ident, $struct_variant:ident { $($struct_field:ident),* $(,)? } ) => {
+    ($other:expr, $name:ident, $struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? } ) => {
         {
-            let left = ($($struct_field),*);
+            let left = ($(ast_eq_field!($(#[ast_eq_use($struct_convert_func)])? $struct_field)),*);
             if let $name::$struct_variant { $($struct_field),* } = $other {
-                let right = ($($struct_field),*);
+                let right = ($(ast_eq_field!($(#[ast_eq_use($struct_convert_func)])? $struct_field)),*);
                 left.ast_eq(&right)
             } else {
                 false
@@ -308,18 +338,18 @@ macro_rules! derive_ast_eq {
     (enum $name:ident {
         $($unit_variant:ident),* $(,)?
         _
-        $($tuple_variant:ident ( $($tuple_field:ident),* $(,)? )),*  $(,)?
+        $($tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? )),*  $(,)?
         _
-        $($struct_variant:ident { $($struct_field:ident),* $(,)? }),*  $(,)?
+        $($struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? }),*  $(,)?
     }) => {
         impl AstEq for $name {
             fn ast_eq(&self, other: &Self) -> bool {
                 gen_ast_eq_enum!(self, other, $name {
                     $($unit_variant),*
                     _
-                    $($tuple_variant ( $($tuple_field),* )),*
+                    $($tuple_variant ( $($(#[ast_eq_use($tuple_convert_func)])? $tuple_field),* )),*
                     _
-                    $($struct_variant { $($struct_field),* }),*
+                    $($struct_variant { $($(#[ast_eq_use($struct_convert_func)])? $struct_field),* }),*
                 })
             }
         }
@@ -334,6 +364,8 @@ derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
+derive_ast_eq! { isize }
+derive_ast_eq! { usize }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
 derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
@@ -483,8 +515,13 @@ derive_ast_eq! { enum Expression {
     AssignDivide(loc, expr1, expr2),
     AssignModulo(loc, expr1, expr2),
     BoolLiteral(loc, bool1),
-    NumberLiteral(loc, str1, str2),
-    RationalNumberLiteral(loc, str1, str2, str3),
+    NumberLiteral(loc, #[ast_eq_use(to_num)] str1, #[ast_eq_use(to_num)] str2),
+    RationalNumberLiteral(
+        loc,
+        #[ast_eq_use(to_num)] str1,
+        #[ast_eq_use(to_num_reversed)] str2,
+        #[ast_eq_use(to_num)] str3
+    ),
     HexNumberLiteral(loc, str1),
     StringLiteral(strs1),
     Type(loc, ty1),

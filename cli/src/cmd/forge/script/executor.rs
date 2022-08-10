@@ -176,7 +176,8 @@ impl ScriptArgs {
             .with_config(env)
             .with_spec(utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
-            .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug);
+            // We need it enabled to decode contract names: local or external.
+            .set_tracing(true);
 
         if let SimulationStage::Local = stage {
             builder = builder

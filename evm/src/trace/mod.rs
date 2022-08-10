@@ -9,16 +9,17 @@ mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
-use crate::{abi::CHEATCODE_ADDRESS, CallKind};
+use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
 use ethers::{
-    abi::{Address, RawLog},
+    abi::{Abi, Address, RawLog},
+    prelude::ArtifactId,
     types::U256,
 };
 use node::CallTraceNode;
 use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fmt::{self, Write},
 };
 use yansi::{Color, Paint};
@@ -42,8 +43,7 @@ impl CallTraceArena {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                let node = &mut self.arena[0];
-                node.trace.update(new_trace);
+                self.arena[0].trace = new_trace;
                 0
             }
             // We found the parent node, add the new trace as a child
@@ -52,8 +52,12 @@ impl CallTraceArena {
 
                 let trace_location = self.arena[entry].children.len();
                 self.arena[entry].ordering.push(LogCallOrder::Call(trace_location));
-                let node =
-                    CallTraceNode { parent: Some(entry), trace: new_trace, ..Default::default() };
+                let node = CallTraceNode {
+                    parent: Some(entry),
+                    trace: new_trace,
+                    idx: id,
+                    ..Default::default()
+                };
                 self.arena.push(node);
                 self.arena[entry].children.push(id);
 
@@ -325,18 +329,6 @@ pub struct CallTrace {
 // === impl CallTrace ===
 
 impl CallTrace {
-    /// Updates a trace given another trace
-    fn update(&mut self, new_trace: Self) {
-        self.success = new_trace.success;
-        self.address = new_trace.address;
-        self.kind = new_trace.kind;
-        self.value = new_trace.value;
-        self.data = new_trace.data;
-        self.output = new_trace.output;
-        self.address = new_trace.address;
-        self.gas_cost = new_trace.gas_cost;
-    }
-
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)
@@ -434,5 +426,36 @@ fn trace_color(trace: &CallTrace) -> Color {
         Color::Green
     } else {
         Color::Red
+    }
+}
+
+/// Given a list of traces and artifacts, it returns a map connecting address to abi
+pub fn load_contracts(
+    traces: Vec<(TraceKind, CallTraceArena)>,
+    known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+) -> BTreeMap<Address, (String, Abi)> {
+    if let Some(contracts) = known_contracts {
+        let local_identifier = LocalTraceIdentifier::new(contracts);
+        let mut decoder = CallTraceDecoderBuilder::new().build();
+        for (_, trace) in &traces {
+            decoder.identify(trace, &local_identifier);
+        }
+
+        decoder
+            .contracts
+            .iter()
+            .map(|(addr, name)| {
+                let (_, (abi, _)) = contracts
+                    .iter()
+                    .find(|(artifact, _)| {
+                        artifact.name ==
+                            *name.split(':').last().expect("invalid contract").to_string()
+                    })
+                    .expect("no contract");
+                (*addr, (name.clone(), abi.clone()))
+            })
+            .collect()
+    } else {
+        BTreeMap::new()
     }
 }

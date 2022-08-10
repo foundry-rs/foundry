@@ -18,6 +18,8 @@ pub struct FormatterConfig {
     pub func_attrs_with_params_multiline: bool,
     /// Style of quotation marks
     pub quote_style: QuoteStyle,
+    /// Style of underscores in number literals
+    pub number_underscore: NumberUnderscore,
 }
 
 /// Style of uint/int256 types
@@ -29,6 +31,19 @@ pub enum IntTypes {
     /// Print the implicit uint or int
     Short,
     /// Use the type defined in the source code
+    Preserve,
+}
+
+/// Style of underscores in number literals
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NumberUnderscore {
+    /// Remove all underscores
+    Remove,
+    /// Add an underscore every thousand, if greater than 9999
+    /// e.g. 1000 -> 1000 and 10000 -> 10_000
+    Thousands,
+    /// Use the underscores defined in the source code
     Preserve,
 }
 
@@ -64,6 +79,7 @@ impl Default for FormatterConfig {
             int_types: IntTypes::Long,
             func_attrs_with_params_multiline: true,
             quote_style: QuoteStyle::Double,
+            number_underscore: NumberUnderscore::Preserve,
         }
     }
 }

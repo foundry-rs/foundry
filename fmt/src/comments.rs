@@ -1,9 +1,13 @@
-use crate::solang_ext::*;
+use crate::{
+    inline_config::{InlineConfigItem, InvalidInlineConfigItem},
+    solang_ext::*,
+};
 use itertools::Itertools;
 use solang_parser::pt::*;
+use std::collections::VecDeque;
 
 /// The type of a Comment
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentType {
     /// A Line comment (e.g. `// ...`)
     Line,
@@ -16,7 +20,7 @@ pub enum CommentType {
 }
 
 /// The comment position
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentPosition {
     /// Comes before the code it describes
     Prefix,
@@ -25,7 +29,7 @@ pub enum CommentPosition {
 }
 
 /// Comment with additional metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommentWithMetadata {
     pub ty: CommentType,
     pub loc: Loc,
@@ -33,6 +37,18 @@ pub struct CommentWithMetadata {
     pub indent_len: usize,
     pub comment: String,
     pub position: CommentPosition,
+}
+
+impl PartialOrd for CommentWithMetadata {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.loc.partial_cmp(&other.loc)
+    }
+}
+
+impl Ord for CommentWithMetadata {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.loc.cmp(&other.loc)
+    }
 }
 
 impl CommentWithMetadata {
@@ -65,34 +81,46 @@ impl CommentWithMetadata {
         last_comment: Option<&CommentWithMetadata>,
     ) -> Self {
         let src_before = &src[..comment.loc().start()];
+        if src_before.is_empty() {
+            return Self::new(comment, CommentPosition::Prefix, false, 0)
+        }
+
         let mut lines_before = src_before.lines().rev();
         let this_line =
-            if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or("") };
+            if src_before.ends_with('\n') { "" } else { lines_before.next().unwrap_or_default() };
         let indent_len = this_line.chars().take_while(|c| c.is_whitespace()).count();
+        let last_line = lines_before.next();
+
+        if matches!(comment, Comment::DocLine(..) | Comment::DocBlock(..)) {
+            return Self::new(
+                comment,
+                CommentPosition::Prefix,
+                last_line.unwrap_or_default().trim_start().is_empty(),
+                indent_len,
+            )
+        }
+
+        let code_end = src_before
+            .comment_state_char_indices()
+            .filter_map(|(state, idx, ch)| {
+                if matches!(state, CommentState::None) && !ch.is_whitespace() {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .last()
+            .unwrap_or_default();
 
         let (position, has_newline_before) = {
-            if src_before.is_empty() {
-                // beginning of code
-                (CommentPosition::Prefix, false)
-            } else if this_line.trim_start().is_empty() {
-                // comment sits on a new line
-                if let Some(last_line) = lines_before.next() {
+            if src_before[code_end..].contains('\n') {
+                // comment sits on a line without code
+                if let Some(last_line) = last_line {
                     if last_line.trim_start().is_empty() {
                         // line before is empty
                         (CommentPosition::Prefix, true)
                     } else {
                         // line has something
-                        let code_end = src_before
-                            .comment_state_char_indices()
-                            .filter_map(|(state, idx, ch)| {
-                                if matches!(state, CommentState::None) && !ch.is_whitespace() {
-                                    Some(idx)
-                                } else {
-                                    None
-                                }
-                            })
-                            .last()
-                            .unwrap_or(0);
                         // check if the last comment after code was a postfix comment
                         if last_comment
                             .filter(|last_comment| {
@@ -134,7 +162,7 @@ impl CommentWithMetadata {
         Self::new(comment, position, has_newline_before, indent_len)
     }
     pub fn is_line(&self) -> bool {
-        matches!(self.ty, CommentType::Line)
+        matches!(self.ty, CommentType::Line | CommentType::DocLine)
     }
     pub fn is_doc_block(&self) -> bool {
         matches!(self.ty, CommentType::DocBlock)
@@ -145,20 +173,32 @@ impl CommentWithMetadata {
     pub fn is_before(&self, byte: usize) -> bool {
         self.loc.start() < byte
     }
+    pub fn contents(&self) -> &str {
+        match self.ty {
+            CommentType::Line => self.comment.strip_prefix("//"),
+            CommentType::Block => {
+                self.comment.strip_prefix("/*").and_then(|comment| comment.strip_suffix("*/"))
+            }
+            CommentType::DocLine => self.comment.strip_prefix("///"),
+            CommentType::DocBlock => {
+                self.comment.strip_prefix("/**").and_then(|comment| comment.strip_suffix("*/"))
+            }
+        }
+        .unwrap_or(&self.comment)
+    }
 }
 
 /// A list of comments
-/// NOTE: comments are stored in reverse order for easy removal
 #[derive(Debug, Clone)]
 pub struct Comments {
-    prefixes: Vec<CommentWithMetadata>,
-    postfixes: Vec<CommentWithMetadata>,
+    prefixes: VecDeque<CommentWithMetadata>,
+    postfixes: VecDeque<CommentWithMetadata>,
 }
 
 impl Comments {
     pub fn new(mut comments: Vec<Comment>, src: &str) -> Self {
-        let mut prefixes = Vec::new();
-        let mut postfixes = Vec::new();
+        let mut prefixes = VecDeque::new();
+        let mut postfixes = VecDeque::new();
         let mut last_comment = None;
 
         comments.sort_by_key(|comment| comment.loc());
@@ -167,50 +207,75 @@ impl Comments {
                 CommentWithMetadata::from_comment_and_src(comment, src, last_comment.as_ref());
             last_comment = Some(comment.clone());
             if comment.is_prefix() {
-                prefixes.push(comment)
+                prefixes.push_back(comment)
             } else {
-                postfixes.push(comment)
+                postfixes.push_back(comment)
             }
         }
-
-        prefixes.reverse();
-        postfixes.reverse();
-
         Self { prefixes, postfixes }
+    }
+
+    /// Heloer for removing comments before a byte offset
+    fn remove_comments_before(
+        comments: &mut VecDeque<CommentWithMetadata>,
+        byte: usize,
+    ) -> Vec<CommentWithMetadata> {
+        let pos = comments
+            .iter()
+            .find_position(|comment| !comment.is_before(byte))
+            .map(|(idx, _)| idx)
+            .unwrap_or_else(|| comments.len());
+        if pos == 0 {
+            return Vec::new()
+        }
+        comments.rotate_left(pos);
+        comments.split_off(comments.len() - pos).into()
     }
 
     /// Remove any prefix comments that occur before the byte offset in the src
     pub(crate) fn remove_prefixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let mut prefixes = self.prefixes.split_off(
-            self.prefixes
-                .iter()
-                .find_position(|comment| comment.is_before(byte))
-                .map(|(idx, _)| idx)
-                .unwrap_or_else(|| self.prefixes.len()),
-        );
-        prefixes.reverse();
-        prefixes
+        Self::remove_comments_before(&mut self.prefixes, byte)
     }
 
     /// Remove any postfix comments that occur before the byte offset in the src
     pub(crate) fn remove_postfixes_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let mut postfixes = self.postfixes.split_off(
-            self.postfixes
-                .iter()
-                .find_position(|comment| comment.is_before(byte))
-                .map(|(idx, _)| idx)
-                .unwrap_or_else(|| self.postfixes.len()),
-        );
-        postfixes.reverse();
-        postfixes
+        Self::remove_comments_before(&mut self.postfixes, byte)
     }
 
     /// Remove any comments that occur before the byte offset in the src
-    pub(crate) fn remove_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
-        let mut out = self.remove_prefixes_before(byte);
-        out.append(&mut self.remove_postfixes_before(byte));
-        out.sort_by_key(|comment| comment.loc.start());
-        out
+    pub(crate) fn remove_all_comments_before(&mut self, byte: usize) -> Vec<CommentWithMetadata> {
+        self.remove_prefixes_before(byte)
+            .into_iter()
+            .merge(self.remove_postfixes_before(byte).into_iter())
+            .collect()
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<CommentWithMetadata> {
+        if self.iter().next()?.is_prefix() {
+            self.prefixes.pop_front()
+        } else {
+            self.postfixes.pop_front()
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &CommentWithMetadata> {
+        self.prefixes.iter().merge(self.postfixes.iter())
+    }
+
+    /// Parse all comments to return a list of inline config items. This will return an iterator of
+    /// results of parsing comments which start with `forgefmt:`
+    pub fn parse_inline_config_items(
+        &self,
+    ) -> impl Iterator<Item = Result<(Loc, InlineConfigItem), (Loc, InvalidInlineConfigItem)>> + '_
+    {
+        self.iter()
+            .filter_map(|comment| {
+                Some((comment, comment.contents().trim_start().strip_prefix("forgefmt:")?.trim()))
+            })
+            .map(|(comment, item)| {
+                let loc = comment.loc;
+                item.parse().map(|out| (loc, out)).map_err(|out| (loc, out))
+            })
     }
 }
 

@@ -60,6 +60,10 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz_max_local_rejects: 2000,
         fuzz_max_global_rejects: 100203,
         fuzz_seed: Some(1000.into()),
+        invariant_runs: 256,
+        invariant_depth: 15,
+        invariant_fail_on_revert: false,
+        invariant_call_override: false,
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -98,6 +102,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         build_info_path: None,
         fmt: Default::default(),
         __non_exhaustive: (),
+        __warnings: vec![],
     };
     prj.write_config(input.clone());
     let config = cmd.config();
@@ -500,4 +505,32 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
 
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
+});
+
+// test to check that loading the config emits warnings on the root foundry.toml and
+// is silent for any libs
+forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
+    cmd.assert_non_empty_stdout();
+
+    let faulty_toml = r#"[default]
+    src = 'src'
+    out = 'out'
+    libs = ['lib']"#;
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
+
+    cmd.forge_fuse().args(["config"]);
+    let output = cmd.execute();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| { line.contains("Unknown section [default]") })
+            .count(),
+        1
+    )
 });

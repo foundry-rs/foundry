@@ -393,7 +393,6 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
             } else {
                 StrictTokenizer::tokenize(param, value)
             };
-
             if token.is_err() && value.starts_with("0x") {
                 match param {
                     ParamType::FixedBytes(32) => {
@@ -421,10 +420,56 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
                     _ => {}
                 }
             }
-            token
+
+            token.map(sanitize_token)
         })
         .collect::<Result<_, _>>()
         .wrap_err("Failed to parse tokens")
+}
+
+/// cleans up potential shortcomings of the ethabi Tokenizer
+///
+/// For example: parsing a string array with a single empty string: `[""]`, is returned as
+/// ```text
+///     [
+//         String(
+//             "\"\"",
+//         ),
+//     ],
+/// ```
+/// 
+/// But should just be
+/// ```text
+///     [
+//         String(
+//             "",
+//         ),
+//     ],
+/// ```
+/// 
+/// This will handle this edge case
+fn sanitize_token(token: Token) -> Token {
+    match token {
+        Token::Array(tokens) => {
+            let mut sanitized = Vec::with_capacity(tokens.len());
+            for token in tokens {
+                let token = match token {
+                    Token::String(val) => {
+                        let val = match val.as_str() {
+                            // this is supposed to be an empty string
+                            "\"\"" | "''" => "".to_string(),
+                            _ => val,
+                        };
+                        Token::String(val)
+                    }
+                    _ => sanitize_token(token),
+                };
+                sanitized.push(token)
+            }
+            Token::Array(sanitized)
+        }
+        _ => token,
+    }
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
@@ -815,6 +860,36 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+
+    #[test]
+    fn can_sanitize_token() {
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("[\"\"]", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("['']", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+
+        let token = Token::Array(
+            LenientTokenizer::tokenize_array("[\"\",\"\"]", &ParamType::String).unwrap(),
+        );
+        let sanitized = sanitize_token(token);
+        assert_eq!(
+            sanitized,
+            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+        );
+
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("['','']", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(
+            sanitized,
+            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+        );
+    }
 
     #[test]
     fn parse_hex_uint_tokens() {

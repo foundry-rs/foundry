@@ -106,6 +106,16 @@ impl Executor {
         &self.backend
     }
 
+    /// Returns an immutable reference to the InspectorStackConfig
+    pub fn inspector_config(&self) -> &InspectorStackConfig {
+        &self.inspector_config
+    }
+
+    /// Returns a mutable reference to the InspectorStackConfig
+    pub fn inspector_config_mut(&mut self) -> &mut InspectorStackConfig {
+        &mut self.inspector_config
+    }
+
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
         let create2_deployer_account = self.backend_mut().basic(DEFAULT_CREATE2_DEPLOYER);

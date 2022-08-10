@@ -18,7 +18,7 @@ contract FuzzTest is DSTest {
 
     function testFailFuzz(uint8 x) public {
         emit log("testFailFuzz");
-        require(x == 5, "should revert");
+        require(x > 128, "should revert");
     }
 
     function testSuccessfulFuzz(uint128 a, uint128 b) public {

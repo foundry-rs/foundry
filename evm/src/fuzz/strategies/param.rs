@@ -55,15 +55,16 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
 /// fuzz state.
 ///
 /// Works with ABI Encoder v2 tuples.
-pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStrategy<Token> {
+pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> BoxedStrategy<Token> {
     // These are to comply with lifetime requirements
-    let state_len = state.borrow().len();
-    let s = state.clone();
+    let state = arc_state.read();
+    let state_len = state.len();
 
     // Select a value from the state
+    let st = arc_state.clone();
     let value = any::<prop::sample::Index>()
         .prop_map(move |index| index.index(state_len))
-        .prop_map(move |index| *s.borrow().iter().nth(index).unwrap());
+        .prop_map(move |index| *st.read().iter().nth(index).unwrap());
 
     // Convert the value based on the parameter type
     match param {
@@ -98,28 +99,27 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
         },
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value
-            .prop_map(move |value| {
-                Token::String(unsafe { std::str::from_utf8_unchecked(&value[..]).to_string() })
-            })
+            .prop_map(move |value| Token::String(String::from_utf8_lossy(&value[..]).to_string()))
             .boxed(),
-        ParamType::Array(param) => {
-            proptest::collection::vec(fuzz_param_from_state(param, state), 0..MAX_ARRAY_LEN)
-                .prop_map(Token::Array)
-                .boxed()
-        }
+        ParamType::Array(param) => proptest::collection::vec(
+            fuzz_param_from_state(param, arc_state.clone()),
+            0..MAX_ARRAY_LEN,
+        )
+        .prop_map(Token::Array)
+        .boxed(),
         ParamType::FixedBytes(size) => {
             let size = *size;
             value.prop_map(move |value| Token::FixedBytes(value[32 - size..].to_vec())).boxed()
         }
         ParamType::FixedArray(param, size) => {
             let fixed_size = *size;
-            proptest::collection::vec(fuzz_param_from_state(param, state), fixed_size)
+            proptest::collection::vec(fuzz_param_from_state(param, arc_state.clone()), fixed_size)
                 .prop_map(Token::FixedArray)
                 .boxed()
         }
         ParamType::Tuple(params) => params
             .iter()
-            .map(|p| fuzz_param_from_state(p, state.clone()))
+            .map(|p| fuzz_param_from_state(p, arc_state.clone()))
             .collect::<Vec<_>>()
             .prop_map(Token::Tuple)
             .boxed(),

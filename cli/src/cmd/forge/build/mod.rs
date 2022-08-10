@@ -1,11 +1,18 @@
-//! build command
-
+//! Build command
 use crate::{
-    cmd::{forge::watch::WatchArgs, Cmd},
+    cmd::{
+        forge::{
+            install::{self, DependencyInstallOpts},
+            watch::WatchArgs,
+        },
+        Cmd, LoadConfig,
+    },
     compile,
+    utils::p_println,
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
+
 use foundry_config::{
     figment::{
         self,
@@ -17,6 +24,7 @@ use foundry_config::{
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 mod core;
 pub use self::core::CoreBuildArgs;
@@ -66,7 +74,37 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = self.project()?;
+        let mut config = self.load_config_emit_warnings();
+        let project = config.project()?;
+
+        // try to auto install missing submodules in the default install dir but only if git is
+        // installed
+        if which::which("git").is_ok() &&
+            install::has_missing_dependencies(&project.root(), &config.install_lib_dir())
+        {
+            // The extra newline is needed, otherwise the compiler output will overwrite the
+            // message
+            p_println!(!self.args.silent => "Missing dependencies found. Installing now.\n");
+            if install::install(
+                &mut config,
+                Vec::new(),
+                DependencyInstallOpts {
+                    // TODO(onbjerg): We should settle on --quiet or --silent.
+                    quiet: self.args.silent,
+                    ..Default::default()
+                },
+            )
+            .is_err() &&
+                !self.args.silent
+            {
+                eprintln!(
+                    "{}",
+                    Paint::yellow(
+                        "Your project has missing dependencies that could not be installed."
+                    )
+                )
+            }
+        }
 
         if self.args.silent {
             compile::suppress_compile(&project)

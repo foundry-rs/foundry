@@ -10,7 +10,7 @@ use crate::cmd::{
 use clap::{Parser, ValueHint};
 use ethers::types::U256;
 use eyre::Context;
-use forge::result::TestKindGas;
+use forge::result::TestKindReport;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -210,7 +210,7 @@ impl SnapshotConfig {
 pub struct SnapshotEntry {
     pub contract_name: String,
     pub signature: String,
-    pub gas_used: TestKindGas,
+    pub gas_used: TestKindReport,
 }
 
 impl FromStr for SnapshotEntry {
@@ -226,7 +226,9 @@ impl FromStr for SnapshotEntry {
                             Some(SnapshotEntry {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
+                                gas_used: TestKindReport::Standard {
+                                    gas: gas.as_str().parse().unwrap(),
+                                },
                             })
                         } else {
                             cap.name("runs")
@@ -237,10 +239,10 @@ impl FromStr for SnapshotEntry {
                                 .map(|(runs, avg, med)| SnapshotEntry {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
-                                    gas_used: TestKindGas::Fuzz {
+                                    gas_used: TestKindReport::Fuzz {
                                         runs: runs.as_str().parse().unwrap(),
-                                        median: med.as_str().parse().unwrap(),
-                                        mean: avg.as_str().parse().unwrap(),
+                                        median_gas: med.as_str().parse().unwrap(),
+                                        mean_gas: avg.as_str().parse().unwrap(),
                                     },
                                 })
                         }
@@ -274,13 +276,7 @@ fn write_to_snapshot_file(
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        writeln!(
-            out,
-            "{}:{} {}",
-            test.contract_name(),
-            test.signature,
-            test.result.kind.gas_used()
-        )?;
+        writeln!(out, "{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())?;
     }
     Ok(fs::write(path, out)?)
 }
@@ -289,8 +285,8 @@ fn write_to_snapshot_file(
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotDiff {
     pub signature: String,
-    pub source_gas_used: TestKindGas,
-    pub target_gas_used: TestKindGas,
+    pub source_gas_used: TestKindReport,
+    pub target_gas_used: TestKindReport,
 }
 
 impl SnapshotDiff {
@@ -321,7 +317,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
         if let Some(target_gas) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
-            let source_gas = test.result.kind.gas_used();
+            let source_gas = test.result.kind.report();
             if source_gas.gas() != target_gas.gas() {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
@@ -363,7 +359,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
             })?;
 
         diffs.push(SnapshotDiff {
-            source_gas_used: test.result.kind.gas_used(),
+            source_gas_used: test.result.kind.report(),
             signature: test.signature,
             target_gas_used,
         });
@@ -429,7 +425,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Standard(7222)
+                gas_used: TestKindReport::Standard { gas: 7222 }
             }
         );
     }
@@ -443,7 +439,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
+                gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
             }
         );
     }

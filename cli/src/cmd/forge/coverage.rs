@@ -2,7 +2,7 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, test::Filter},
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile::ProjectCompiler,
     utils::{self, p_println},
@@ -25,11 +25,13 @@ use forge::{
     },
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
+    revm::SpecId,
     trace::identifier::LocalTraceIdentifier,
-    MultiContractRunnerBuilder,
+    utils::{build_ic_pc_map, ICPCMap},
+    MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::{evm::EvmArgs, fs};
-use foundry_config::{figment::Figment, Config};
+use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
 
@@ -63,16 +65,6 @@ impl CoverageArgs {
     pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
-
-    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
-    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // Merge all configs
-        let figment: Figment = self.into();
-        let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
-
-        Ok((config, evm_opts))
-    }
 }
 
 impl Cmd for CoverageArgs {
@@ -97,7 +89,7 @@ impl CoverageArgs {
     /// Collects and adjusts configuration.
     fn configure(&self) -> eyre::Result<(Config, EvmOpts)> {
         // Merge all configs
-        let (config, mut evm_opts) = self.config_and_evm_opts()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
 
         // We always want traces
         evm_opts.verbosity = 3;
@@ -164,48 +156,62 @@ impl CoverageArgs {
             .into_iter()
             .map(|(id, artifact)| (id, CompactContractBytecode::from(artifact)))
             .filter_map(|(id, artifact)| {
-                Some((
+                let contract_id = ContractId {
+                    version: id.version.clone(),
+                    source_id: *report
+                        .get_source_id(id.version, id.source.to_string_lossy().to_string())?,
+                    contract_name: id.name,
+                };
+                let source_maps = (
+                    contract_id.clone(),
                     (
-                        ContractId {
-                            version: id.version.clone(),
-                            source_id: *report.get_source_id(
-                                id.version.clone(),
-                                id.source.to_string_lossy().to_string(),
-                            )?,
-                            contract_name: id.name.clone(),
-                        },
-                        (
-                            artifact.get_source_map()?.ok()?,
-                            artifact
-                                .get_deployed_bytecode()
-                                .as_ref()?
-                                .bytecode
-                                .as_ref()?
-                                .source_map()?
-                                .ok()?,
-                        ),
+                        artifact.get_source_map()?.ok()?,
+                        artifact
+                            .get_deployed_bytecode()
+                            .as_ref()?
+                            .bytecode
+                            .as_ref()?
+                            .source_map()?
+                            .ok()?,
                     ),
+                );
+                let bytecodes = (
+                    contract_id,
                     (
-                        ContractId {
-                            version: id.version.clone(),
-                            source_id: *report.get_source_id(
-                                id.version.clone(),
-                                id.source.to_string_lossy().to_string(),
-                            )?,
-                            contract_name: id.name.clone(),
-                        },
-                        (
-                            artifact
-                                .get_bytecode()
-                                .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
-                            artifact.get_deployed_bytecode().and_then(|bytecode| {
-                                dummy_link_deployed_bytecode(bytecode.into_owned())
-                            })?,
-                        ),
+                        artifact
+                            .get_bytecode()
+                            .and_then(|bytecode| dummy_link_bytecode(bytecode.into_owned()))?,
+                        artifact.get_deployed_bytecode().and_then(|bytecode| {
+                            dummy_link_deployed_bytecode(bytecode.into_owned())
+                        })?,
                     ),
-                ))
+                );
+
+                Some((source_maps, bytecodes))
             })
             .unzip();
+
+        // Build IC -> PC mappings
+        //
+        // The source maps are indexed by *instruction counters*, which are the indexes of
+        // instructions in the bytecode *minus any push bytes*.
+        //
+        // Since our coverage inspector collects hit data using program counters, the anchors also
+        // need to be based on program counters.
+        // TODO: Index by contract ID
+        let ic_pc_maps: HashMap<ContractId, (ICPCMap, ICPCMap)> = bytecodes
+            .iter()
+            .map(|(id, bytecodes)| {
+                // TODO: Creation bytecode as well
+                (
+                    id.clone(),
+                    (
+                        build_ic_pc_map(SpecId::LATEST, bytecodes.0.as_ref()),
+                        build_ic_pc_map(SpecId::LATEST, bytecodes.1.as_ref()),
+                    ),
+                )
+            })
+            .collect();
 
         // Add coverage items
         for (version, asts) in versioned_asts.into_iter() {
@@ -229,6 +235,7 @@ impl CoverageArgs {
                         find_anchors(
                             &bytecodes.get(contract_id)?.1,
                             &source_maps.get(contract_id)?.1,
+                            &ic_pc_maps.get(contract_id)?.1,
                             item_ids,
                             &source_analysis.items,
                         ),
@@ -251,64 +258,62 @@ impl CoverageArgs {
         config: Config,
         evm_opts: EvmOpts,
     ) -> eyre::Result<()> {
-        // Setup the fuzzer
-        // TODO: Add CLI Options to modify the persistence
-        let cfg = proptest::test_runner::Config {
-            failure_persistence: None,
-            cases: config.fuzz_runs,
-            max_local_rejects: config.fuzz_max_local_rejects,
-            max_global_rejects: config.fuzz_max_global_rejects,
-            ..Default::default()
-        };
-        let fuzzer = proptest::test_runner::TestRunner::new(cfg);
         let root = project.paths.root;
-
-        let env = evm_opts.evm_env_blocking();
 
         // Build the contract runner
         let evm_spec = utils::evm_spec(&config.evm_version);
+        let env = evm_opts.evm_env_blocking();
         let mut runner = MultiContractRunnerBuilder::default()
-            .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+            .with_test_options(TestOptions {
+                fuzz_runs: config.fuzz_runs,
+                fuzz_max_local_rejects: config.fuzz_max_local_rejects,
+                fuzz_max_global_rejects: config.fuzz_max_global_rejects,
+                ..Default::default()
+            })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
-
-        let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Set up identifier
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
 
-        // TODO: Coverage for fuzz tests
-        let handle = thread::spawn(move || runner.test(&self.filter, Some(tx)).unwrap());
-        for mut result in rx.into_iter().flat_map(|(_, suite)| suite.test_results.into_values()) {
-            if let Some(hit_map) = result.coverage.take() {
-                for (_, trace) in &mut result.traces {
-                    local_identifier
-                        .identify_addresses(trace.addresses().into_iter().collect())
-                        .into_iter()
-                        .for_each(|identity| {
-                            if let Some((artifact_id, hits)) =
-                                identity.artifact_id.zip(hit_map.get(&identity.address))
-                            {
-                                if let Some(source_id) = report.get_source_id(
-                                    artifact_id.version.clone(),
-                                    artifact_id.source.to_string_lossy().to_string(),
-                                ) {
-                                    let contract_id = ContractId {
-                                        version: artifact_id.version,
-                                        source_id: *source_id,
-                                        contract_name: artifact_id.name,
-                                    };
+        // Run tests
+        let (tx, rx) = channel::<(String, SuiteResult)>();
+        let handle =
+            thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
 
-                                    // TODO: Distinguish between creation/runtime in a smart way
-                                    report.add_hit_map(&contract_id, hits);
-                                }
-                            }
-                        });
+        // Add hit data to the coverage report
+        for (hit_map, traces) in rx
+            .into_iter()
+            .flat_map(|(_, suite)| suite.test_results.into_values())
+            .flat_map(|mut result| Some((result.coverage.take()?, result.traces)))
+        {
+            let hits = traces
+                .into_iter()
+                .flat_map(|(_, trace)| {
+                    local_identifier.identify_addresses(trace.addresses().into_iter().collect())
+                })
+                .flat_map(|identity| identity.artifact_id.zip(hit_map.get(&identity.address)));
+            // TODO: Coverage for fuzz tests
+            // TODO: Note down failing tests
+            for (artifact_id, hits) in hits {
+                if let Some(source_id) = report.get_source_id(
+                    artifact_id.version.clone(),
+                    artifact_id.source.to_string_lossy().to_string(),
+                ) {
+                    // TODO: Distinguish between creation/runtime in a smart way
+                    report.add_hit_map(
+                        &ContractId {
+                            version: artifact_id.version,
+                            source_id: *source_id,
+                            contract_name: artifact_id.name,
+                        },
+                        hits,
+                    );
                 }
             }
         }
@@ -316,6 +321,7 @@ impl CoverageArgs {
         // Reattach the thread
         let _ = handle.join();
 
+        // Output final report
         match self.report {
             CoverageReportKind::Summary => SummaryReporter::default().report(report),
             // TODO: Sensible place to put the LCOV file

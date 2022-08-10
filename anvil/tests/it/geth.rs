@@ -30,7 +30,7 @@ async fn test_geth_pending_transaction() {
     let _res = client.send_transaction(tx, None).await.unwrap();
 
     let pending = timeout(std::time::Duration::from_secs(3), watch_tx_stream.next()).await;
-    assert!(pending.is_err());
+    pending.unwrap_err();
 }
 
 // check how geth returns reverts

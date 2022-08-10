@@ -1,8 +1,8 @@
 //! remappings command
 
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, LoadConfig};
 use clap::{Parser, ValueHint};
-use foundry_config::{find_project_root_path, Config};
+use foundry_config::impl_figment_convert_basic;
 use std::path::PathBuf;
 
 /// Command to list remappings
@@ -16,14 +16,13 @@ pub struct RemappingArgs {
     )]
     root: Option<PathBuf>,
 }
+impl_figment_convert_basic!(RemappingArgs);
 
 impl Cmd for RemappingArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let root = self.root.unwrap_or_else(|| find_project_root_path().unwrap());
-        let mut config = Config::load_with_root(root);
-        config.sanitize_remappings();
+        let config = self.load_config_emit_warnings();
         config.remappings.iter().for_each(|x| println!("{x}"));
         Ok(())
     }
