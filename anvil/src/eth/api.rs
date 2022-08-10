@@ -1284,10 +1284,10 @@ impl EthApi {
         address: Address,
         slot: U256,
         val: H256,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         node_info!("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val).await;
-        Ok(())
+        Ok(true)
     }
 
     /// Enable or disable logging.
