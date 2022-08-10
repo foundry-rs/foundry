@@ -144,55 +144,55 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
     ) {
-        if f.size().width < 225 {
-            Tui::vertical_layout(
-                f,
-                address,
-                identified_contracts,
-                known_contracts,
-                pc_ic_maps,
-                source_code,
-                debug_steps,
-                opcode_list,
-                current_step,
-                call_kind,
-                draw_memory,
-                stack_labels,
-            );
-        } else {
-            Tui::square_layout(
-                f,
-                address,
-                identified_contracts,
-                known_contracts,
-                pc_ic_maps,
-                source_code,
-                debug_steps,
-                opcode_list,
-                current_step,
-                call_kind,
-                draw_memory,
-                stack_labels,
-            );
+        let [footer, src_pane, op_pane, stack_pane, memory_pane] =
+            if f.size().width < 225 { Tui::vertical_layout(f) } else { Tui::square_layout(f) }
+                .unwrap();
+
+        let curr_step = &debug_steps[current_step];
+
+        Tui::draw_footer(f, footer);
+        Tui::draw_src(
+            f,
+            address,
+            identified_contracts,
+            known_contracts,
+            pc_ic_maps,
+            source_code,
+            debug_steps[current_step].pc,
+            call_kind,
+            src_pane,
+        );
+        Tui::draw_op_list(f, address, debug_steps, opcode_list, current_step, draw_memory, op_pane);
+        Tui::draw_stack(f, debug_steps, current_step, stack_pane, stack_labels, draw_memory);
+
+        let mut memory_view = MemoryView::new(&curr_step.memory).block(
+            Block::default()
+                .title(format!(
+                    "Memory (max expansion: {} bytes)",
+                    curr_step.memory.effective_len()
+                ))
+                .borders(Borders::ALL),
+        );
+        if let Some((op, word)) = curr_step.affected_memory_word() {
+            let color = match op {
+                opcode::MLOAD => Color::Cyan,
+                opcode::MSTORE => Color::Red,
+                _ => unreachable!(),
+            };
+            memory_view = memory_view.highlight(word, color);
         }
+        if current_step > 0 {
+            if let Some((opcode::MSTORE, word)) =
+                debug_steps[current_step - 1].affected_memory_word()
+            {
+                memory_view = memory_view.highlight(word, Color::Green);
+            }
+        }
+
+        f.render_stateful_widget(memory_view, memory_pane, &mut draw_memory.memory_view_state);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn vertical_layout<B: Backend>(
-        f: &mut Frame<B>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        call_kind: CallKind,
-        draw_memory: &mut DrawMemory,
-        stack_labels: bool,
-    ) {
-        let curr_step = &debug_steps[current_step];
+    fn vertical_layout<B: Backend>(f: &mut Frame<B>) -> Result<[Rect; 5]> {
         if let [app, footer] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
@@ -211,92 +211,17 @@ impl Tui {
                 )
                 .split(app)[..]
             {
-                Tui::draw_footer(f, footer);
-                Tui::draw_src(
-                    f,
-                    address,
-                    identified_contracts,
-                    known_contracts,
-                    pc_ic_maps,
-                    source_code,
-                    debug_steps[current_step].pc,
-                    call_kind,
-                    src_pane,
-                );
-                Tui::draw_op_list(
-                    f,
-                    address,
-                    debug_steps,
-                    opcode_list,
-                    current_step,
-                    draw_memory,
-                    op_pane,
-                );
-                Tui::draw_stack(
-                    f,
-                    debug_steps,
-                    current_step,
-                    stack_pane,
-                    stack_labels,
-                    draw_memory,
-                );
-
-                let mut memory_view = MemoryView::new(&curr_step.memory).block(
-                    Block::default()
-                        .title(format!(
-                            "Memory (max expansion: {} bytes)",
-                            curr_step.memory.effective_len()
-                        ))
-                        .borders(Borders::ALL),
-                );
-                if let Some((op, word)) = curr_step.affected_memory_word() {
-                    let color = match op {
-                        opcode::MLOAD => Color::Cyan,
-                        opcode::MSTORE => Color::Red,
-                        _ => unreachable!(),
-                    };
-                    memory_view = memory_view.highlight(word, color);
-                }
-                if current_step > 0 {
-                    if let Some((opcode::MSTORE, word)) =
-                        debug_steps[current_step - 1].affected_memory_word()
-                    {
-                        memory_view = memory_view.highlight(word, Color::Green);
-                    }
-                }
-
-                f.render_stateful_widget(
-                    memory_view,
-                    memory_pane,
-                    &mut draw_memory.memory_view_state,
-                );
+                Ok([footer, src_pane, op_pane, stack_pane, memory_pane])
             } else {
-                panic!("unable to create vertical panes")
+                eyre::bail!("Unable to create vertical panes")
             }
         } else {
-            panic!("unable to create footer / app")
+            eyre::bail!("Unable to create footer / app panes")
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn square_layout<B: Backend>(
-        f: &mut Frame<B>,
-        address: Address,
-        identified_contracts: &HashMap<Address, String>,
-        known_contracts: &HashMap<String, ContractBytecodeSome>,
-        pc_ic_maps: &BTreeMap<String, (PCICMap, PCICMap)>,
-        source_code: &BTreeMap<u32, String>,
-        debug_steps: &[DebugStep],
-        opcode_list: &[String],
-        current_step: usize,
-        call_kind: CallKind,
-        draw_memory: &mut DrawMemory,
-        stack_labels: bool,
-    ) {
-        let curr_step = &debug_steps[current_step];
-
+    fn square_layout<B: Backend>(f: &mut Frame<B>) -> Result<[Rect; 5]> {
         // split in 2 vertically
-
         if let [app, footer] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
@@ -318,74 +243,18 @@ impl Tui {
                         .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
                         .split(right_pane)[..]
                     {
-                        Tui::draw_footer(f, footer);
-                        Tui::draw_src(
-                            f,
-                            address,
-                            identified_contracts,
-                            known_contracts,
-                            pc_ic_maps,
-                            source_code,
-                            debug_steps[current_step].pc,
-                            call_kind,
-                            src_pane,
-                        );
-                        Tui::draw_op_list(
-                            f,
-                            address,
-                            debug_steps,
-                            opcode_list,
-                            current_step,
-                            draw_memory,
-                            op_pane,
-                        );
-                        Tui::draw_stack(
-                            f,
-                            debug_steps,
-                            current_step,
-                            stack_pane,
-                            stack_labels,
-                            draw_memory,
-                        );
-
-                        let mut memory_view = MemoryView::new(&curr_step.memory).block(
-                            Block::default()
-                                .title(format!(
-                                    "Memory (max expansion: {} bytes)",
-                                    curr_step.memory.effective_len()
-                                ))
-                                .borders(Borders::ALL),
-                        );
-                        if let Some((op, word)) = curr_step.affected_memory_word() {
-                            let color = match op {
-                                opcode::MLOAD => Color::Cyan,
-                                opcode::MSTORE => Color::Red,
-                                _ => unreachable!(),
-                            };
-                            memory_view = memory_view.highlight(word, color);
-                        }
-                        if current_step > 0 {
-                            if let Some((opcode::MSTORE, word)) =
-                                debug_steps[current_step - 1].affected_memory_word()
-                            {
-                                memory_view = memory_view.highlight(word, Color::Green);
-                            }
-                        }
-
-                        f.render_stateful_widget(
-                            memory_view,
-                            memory_pane,
-                            &mut draw_memory.memory_view_state,
-                        );
+                        Ok([footer, src_pane, op_pane, stack_pane, memory_pane])
+                    } else {
+                        eyre::bail!("Couldn't generate horizontal split layout 1:2.");
                     }
                 } else {
-                    panic!("Couldn't generate horizontal split layout 1:2.");
+                    eyre::bail!("Couldn't generate horizontal split layout 1:2.");
                 }
             } else {
-                panic!("Couldn't generate vertical split layout 1:2.");
+                eyre::bail!("Couldn't generate vertical split layout 1:2.");
             }
         } else {
-            panic!("Couldn't generate application & footer")
+            eyre::bail!("Couldn't generate application & footer")
         }
     }
 
