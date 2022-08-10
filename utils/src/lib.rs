@@ -806,6 +806,7 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+    use foundry_common::ContractsByArtifact;
 
     #[test]
     fn can_sanitize_token() {

@@ -2118,6 +2118,7 @@ dependencies = [
  "ethers-providers",
  "ethers-solc",
  "eyre",
+ "foundry-common",
  "futures",
  "hex",
  "once_cell",
