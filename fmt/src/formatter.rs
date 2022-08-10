@@ -1594,6 +1594,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             },
         )?;
 
+        // EOF newline
+        if self.last_char().map_or(true, |char| char != '\n') {
+            writeln!(self.buf())?;
+        }
+
         Ok(())
     }
 
@@ -3509,6 +3514,10 @@ mod tests {
         }
     }
 
+    fn assert_eof(content: &str) {
+        assert!(content.ends_with("\n") && !content.ends_with("\n\n"));
+    }
+
     fn test_formatter(
         filename: &str,
         config: FormatterConfig,
@@ -3530,6 +3539,8 @@ mod tests {
             }
         }
 
+        assert_eof(expected_source);
+
         let source_parsed = parse(source).unwrap();
         let expected_parsed = parse(expected_source).unwrap();
 
@@ -3546,6 +3557,7 @@ mod tests {
 
         let mut source_formatted = String::new();
         format(&mut source_formatted, source_parsed, config.clone()).unwrap();
+        assert_eof(&source_formatted);
 
         // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
@@ -3559,6 +3571,8 @@ mod tests {
 
         let mut expected_formatted = String::new();
         format(&mut expected_formatted, expected_parsed, config).unwrap();
+        assert_eof(&expected_formatted);
+
         let expected_formatted = PrettyString(expected_formatted);
 
         pretty_assertions::assert_eq!(
