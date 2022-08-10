@@ -8,7 +8,7 @@ mod filters;
 pub use filters::ArtifactFilters;
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 mod executor;
 use crate::{
     decode::decode_revert,

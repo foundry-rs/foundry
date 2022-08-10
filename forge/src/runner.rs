@@ -7,7 +7,10 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    TestFunctionExt,
+};
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
@@ -19,7 +22,6 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};

@@ -24,32 +24,10 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use types::ContractsByArtifact;
 
 pub mod rpc;
 pub mod selectors;
 pub use selectors::decode_selector;
-pub mod types;
-
-/// Very simple fuzzy matching of contract bytecode.
-///
-/// Will fail for small contracts that are essentially all immutable variables.
-pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let cutoff_len = usize::min(a.len(), b.len());
-    if cutoff_len == 0 {
-        return 1.0
-    }
-
-    let a = &a[..cutoff_len];
-    let b = &b[..cutoff_len];
-    let mut diff_chars = 0;
-    for i in 0..cutoff_len {
-        if a[i] != b[i] {
-            diff_chars += 1;
-        }
-    }
-    diff_chars as f64 / cutoff_len as f64
-}
 
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
@@ -265,40 +243,6 @@ impl<'a> IntoFunction for &'a str {
         HumanReadableParser::parse_function(self)
             .unwrap_or_else(|_| panic!("could not convert {self} to function"))
     }
-}
-
-/// Flattens a group of contracts into maps of all events and functions
-pub fn flatten_known_contracts(
-    contracts: &ContractsByArtifact,
-) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
-    let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
-        .iter()
-        .flat_map(|(_name, (abi, _code))| {
-            abi.functions()
-                .map(|func| (func.short_signature(), func.clone()))
-                .collect::<BTreeMap<[u8; 4], Function>>()
-        })
-        .collect();
-
-    let flattened_events: BTreeMap<H256, Event> = contracts
-        .iter()
-        .flat_map(|(_name, (abi, _code))| {
-            abi.events()
-                .map(|event| (event.signature(), event.clone()))
-                .collect::<BTreeMap<H256, Event>>()
-        })
-        .collect();
-
-    // We need this for better revert decoding, and want it in abi form
-    let mut errors_abi = Abi::default();
-    contracts.iter().for_each(|(_name, (abi, _code))| {
-        abi.errors().for_each(|error| {
-            let entry =
-                errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
-            entry.push(error.clone());
-        });
-    });
-    (flattened_funcs, flattened_events, errors_abi)
 }
 
 /// Given a k/v serde object, it pretty prints its keys and values as a table.

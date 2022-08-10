@@ -14,9 +14,9 @@ use ethers::{
     },
 };
 use forge::executor::opts::EvmOpts;
-use foundry_common::TestFunctionExt;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
-use foundry_utils::{types::ContractsByArtifact, Retry};
+use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 

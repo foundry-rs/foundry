@@ -13,7 +13,7 @@ use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use node::CallTraceNode;
 use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};

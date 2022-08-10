@@ -2037,6 +2037,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ethers-core",
+ "ethers-solc",
+ "eyre",
  "foundry-config",
  "serde",
  "serde_json",

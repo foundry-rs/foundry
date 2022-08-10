@@ -25,9 +25,9 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, ContractsByArtifact};
 use foundry_config::Config;
-use foundry_utils::{encode_args, format_token, types::ContractsByArtifact, IntoFunction};
+use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},

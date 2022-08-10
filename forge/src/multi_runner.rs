@@ -6,7 +6,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
@@ -14,7 +14,7 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::{types::ContractsByArtifact, PostLinkInput};
+use foundry_utils::PostLinkInput;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
@@ -305,7 +305,7 @@ impl MultiContractRunnerBuilder {
             },
         )?;
 
-        let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
+        let execution_info = known_contracts.flatten();
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
