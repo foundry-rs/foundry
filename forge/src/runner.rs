@@ -4,11 +4,13 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    TestFunctionExt,
+};
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
@@ -182,7 +184,7 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &impl TestFilter,
         test_options: TestOptions,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        known_contracts: Option<&ContractsByArtifact>,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -428,11 +430,11 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         test_options: TestOptions,
         functions: Vec<&Function>,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        known_contracts: Option<&ContractsByArtifact>,
+        identified_contracts: ContractsByAddress,
     ) -> Result<Vec<TestResult>> {
         trace!(target: "forge::test::fuzz", "executing invariant test with invariant functions {:?}",  functions.iter().map(|f|&f.name).collect::<Vec<_>>());
-        let empty = BTreeMap::new();
+        let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 

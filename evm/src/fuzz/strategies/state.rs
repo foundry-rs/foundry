@@ -1,23 +1,22 @@
 use super::fuzz_param_from_state;
-use crate::{executor::StateChangeset, fuzz::invariant::FuzzRunIdentifiedContracts, utils};
+use crate::{
+    executor::StateChangeset,
+    fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
+    utils::{self},
+};
 use bytes::Bytes;
 use ethers::{
-    abi::{Abi, Function},
-    prelude::ArtifactId,
+    abi::Function,
     types::{Address, Log, H256, U256},
 };
-use foundry_utils::diff_score;
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, Filth, SpecId,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Write,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, io::Write, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -169,30 +168,32 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
 /// them at `targeted_contracts` and `created_contracts`.
 pub fn collect_created_contracts(
     state_changeset: &StateChangeset,
-    project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
-    setup_contracts: &BTreeMap<Address, (String, Abi)>,
+    project_contracts: &ContractsByArtifact,
+    setup_contracts: &ContractsByAddress,
+    artifact_filters: &ArtifactFilters,
     targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
-) -> bool {
+) -> eyre::Result<()> {
     let mut writable_targeted = targeted_contracts.lock();
-    let before = created_contracts.len();
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
             if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
                 if !code.is_empty() {
-                    if let Some((artifact, (abi, _))) = project_contracts
-                        .iter()
-                        .find(|(_, (_, known_code))| diff_score(known_code, code.bytes()) < 0.1)
+                    if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
-                        created_contracts.push(*address);
-                        writable_targeted
-                            .insert(*address, (artifact.name.clone(), abi.clone(), vec![]));
+                        if let Some(functions) =
+                            artifact_filters.get_targeted_functions(artifact, abi)?
+                        {
+                            created_contracts.push(*address);
+                            writable_targeted
+                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
+                        }
                     }
                 }
             }
         }
     }
 
-    created_contracts.len() > before
+    Ok(())
 }

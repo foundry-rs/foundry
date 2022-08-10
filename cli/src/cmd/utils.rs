@@ -14,7 +14,7 @@ use ethers::{
     },
 };
 use forge::executor::opts::EvmOpts;
-use foundry_common::TestFunctionExt;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -169,22 +169,24 @@ pub fn needs_setup(abi: &Abi) -> bool {
 pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     deployed_code: bool,
-) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
-    contracts
-        .iter()
-        .filter_map(|(id, c)| {
-            let bytecode = if deployed_code {
-                c.deployed_bytecode.clone().into_bytes()
-            } else {
-                c.bytecode.clone().object.into_bytes()
-            };
+) -> ContractsByArtifact {
+    ContractsByArtifact(
+        contracts
+            .iter()
+            .filter_map(|(id, c)| {
+                let bytecode = if deployed_code {
+                    c.deployed_bytecode.clone().into_bytes()
+                } else {
+                    c.bytecode.clone().object.into_bytes()
+                };
 
-            if let Some(bytecode) = bytecode {
-                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
-            }
-            None
-        })
-        .collect()
+                if let Some(bytecode) = bytecode {
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                }
+                None
+            })
+            .collect(),
+    )
 }
 
 #[macro_export]

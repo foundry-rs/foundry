@@ -29,6 +29,7 @@ once_cell = "1.13"
 rand = "0.8"
 
 [dev-dependencies]
+foundry-common = {path = "./../common"}
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 
 

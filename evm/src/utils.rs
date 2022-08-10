@@ -1,4 +1,8 @@
-use ethers::prelude::{H256, U256};
+use ethers::{
+    abi::{Abi, FixedBytes, Function},
+    prelude::{H256, U256},
+};
+use eyre::ContextCompat;
 use revm::{opcode, spec_opcode_gas, SpecId};
 use std::collections::BTreeMap;
 
@@ -76,4 +80,17 @@ pub fn build_ic_pc_map(spec: SpecId, code: &[u8]) -> ICPCMap {
     }
 
     ic_pc_map
+}
+
+/// Given an ABI and selector, it tries to find the respective function.
+pub fn get_function(
+    contract_name: &str,
+    selector: &FixedBytes,
+    abi: &Abi,
+) -> eyre::Result<Function> {
+    abi.functions()
+        .into_iter()
+        .find(|func| func.short_signature().as_slice() == selector.as_slice())
+        .cloned()
+        .wrap_err(format!("{contract_name} does not have the selector {:?}", selector))
 }

@@ -6,7 +6,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_evm::{
     executor::{
         backend::Backend, fork::CreateFork, inspector::CheatsConfig, opts::EvmOpts, Executor,
@@ -27,7 +27,7 @@ pub struct MultiContractRunner {
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
     /// Compiled contracts by name that have an Abi and runtime bytecode
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub known_contracts: ContractsByArtifact,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The configured evm
@@ -243,7 +243,7 @@ impl MultiContractRunnerBuilder {
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
 
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts = ContractsByArtifact::default();
         let source_paths = contracts
             .iter()
             .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))
@@ -305,7 +305,7 @@ impl MultiContractRunnerBuilder {
             },
         )?;
 
-        let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
+        let execution_info = known_contracts.flatten();
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,

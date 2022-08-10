@@ -164,7 +164,7 @@ impl ScriptSequence {
                 if let (Some(contract_address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    for (artifact, (_contract, bytecode)) in &verify.known_contracts {
+                    for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
                         // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
                         // of the transaction
                         if data.0.split_at(create2_offset).1.starts_with(bytecode) {

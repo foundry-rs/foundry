@@ -7,7 +7,7 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
-use foundry_common::calc;
+use foundry_common::{calc, contracts::ContractsByAddress};
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,7 @@ impl BaseCounterExample {
         sender: Address,
         addr: Address,
         bytes: &Bytes,
-        contracts: &BTreeMap<Address, (String, Abi)>,
+        contracts: &ContractsByAddress,
     ) -> Self {
         let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
 
