@@ -3,11 +3,10 @@ use anvil::{spawn, NodeConfig};
 use ethers::abi::Address;
 use foundry_cli_test_utils::{
     forgetest, forgetest_async, forgetest_init,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
 use foundry_utils::rpc;
-
 use regex::Regex;
 use std::{env, path::PathBuf, str::FromStr};
 
@@ -45,7 +44,7 @@ contract ContractScript is Script {
 );
 
 // Tests that the `run` command works correctly
-forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command2, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -64,16 +63,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command.stdout"),
+    );
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
@@ -96,16 +89,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(format!("{}:Demo", script.display()));
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_fqn.stdout"),
+    );
 });
 
 // Tests that the run command can run arbitrary functions
@@ -128,16 +115,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with arguments
@@ -163,18 +144,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 3957
-
-== Logs ==
-  script ran
-  1
-  2
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_args.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with return values
@@ -196,20 +169,10 @@ contract Demo {
         )
         .unwrap();
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1836
-
-== Return ==
-result: uint256 255
-1: uint8 3
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_returned.stdout"),
+    );
 });
 
 forgetest_async!(
