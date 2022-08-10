@@ -6,7 +6,7 @@ use crate::{
 };
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
-use foundry_utils::types::ContractsByArtifact;
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 mod executor;
 use crate::{
     decode::decode_revert,
@@ -213,7 +213,7 @@ impl InvariantFuzzError {
         &self,
         mut executor: Executor,
         known_contracts: Option<&ContractsByArtifact>,
-        mut ided_contracts: BTreeMap<Address, (String, Abi)>,
+        mut ided_contracts: ContractsByAddress,
         logs: &mut Vec<Log>,
         traces: &mut Vec<(TraceKind, CallTraceArena)>,
     ) -> Option<CounterExample> {

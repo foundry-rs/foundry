@@ -6,10 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{Abi, FixedBytes, Function},
+    abi::{FixedBytes, Function},
     types::{Address, Log, H256, U256},
 };
-use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -173,7 +173,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
 pub fn collect_created_contracts(
     state_changeset: &StateChangeset,
     project_contracts: &ContractsByArtifact,
-    setup_contracts: &BTreeMap<Address, (String, Abi)>,
+    setup_contracts: &ContractsByAddress,
     targeted_abi: &BTreeMap<String, Vec<FixedBytes>>,
     excluded_abi: &[String],
     targeted_contracts: FuzzRunIdentifiedContracts,

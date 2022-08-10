@@ -19,7 +19,7 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
-use foundry_utils::types::ContractsByArtifact;
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
@@ -463,7 +463,7 @@ impl<'a> ContractRunner<'a> {
         test_options: TestOptions,
         functions: Vec<&Function>,
         known_contracts: Option<&ContractsByArtifact>,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        identified_contracts: ContractsByAddress,
     ) -> Result<Vec<TestResult>> {
         let empty = BTreeMap::new();
         let project_contracts = known_contracts.unwrap_or(&empty);

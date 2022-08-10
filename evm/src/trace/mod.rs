@@ -8,11 +8,11 @@ pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
 
 use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
 use ethers::{
-    abi::{Abi, Address, RawLog},
+    abi::{Address, RawLog},
     types::U256,
 };
 use node::CallTraceNode;
@@ -442,7 +442,7 @@ fn trace_color(trace: &CallTrace) -> Color {
 pub fn load_contracts(
     traces: Vec<(TraceKind, CallTraceArena)>,
     known_contracts: Option<&ContractsByArtifact>,
-) -> BTreeMap<Address, (String, Abi)> {
+) -> ContractsByAddress {
     if let Some(contracts) = known_contracts {
         let local_identifier = LocalTraceIdentifier::new(contracts);
         let mut decoder = CallTraceDecoderBuilder::new().build();

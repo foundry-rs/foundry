@@ -1,5 +1,5 @@
 use crate::diff_score;
-use ethers_core::abi::Abi;
+use ethers_core::{abi::Abi, types::Address};
 use ethers_solc::ArtifactId;
 use std::collections::BTreeMap;
 
@@ -38,3 +38,6 @@ impl ContractsByArtifactExt for ContractsByArtifact {
         Ok(contracts.first().cloned())
     }
 }
+
+/// Wrapper type that maps an address to a contract identifier and contract ABI.
+pub type ContractsByAddress = BTreeMap<Address, (String, Abi)>;

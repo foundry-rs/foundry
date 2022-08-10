@@ -22,7 +22,7 @@ use ethers::{
     prelude::U256,
 };
 use eyre::ContextCompat;
-use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -46,7 +46,7 @@ pub struct InvariantExecutor<'a> {
     /// Proptest runner.
     runner: TestRunner,
     /// Contracts deployed with `setUp()`
-    setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+    setup_contracts: &'a ContractsByAddress,
     /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
     /// to identify them from the stateset changes.
     project_contracts: &'a ContractsByArtifact,
@@ -62,7 +62,7 @@ impl<'a> InvariantExecutor<'a> {
     pub fn new(
         executor: &'a mut Executor,
         runner: TestRunner,
-        setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+        setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
     ) -> Self {
         Self {
