@@ -1,12 +1,12 @@
 use super::fuzz_param_from_state;
 use crate::{
     executor::StateChangeset,
-    fuzz::invariant::FuzzRunIdentifiedContracts,
-    utils::{self, get_function},
+    fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
+    utils::{self},
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{FixedBytes, Function},
+    abi::Function,
     types::{Address, Log, H256, U256},
 };
 use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
@@ -16,11 +16,7 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, Filth, SpecId,
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Write,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, io::Write, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
@@ -174,8 +170,7 @@ pub fn collect_created_contracts(
     state_changeset: &StateChangeset,
     project_contracts: &ContractsByArtifact,
     setup_contracts: &ContractsByAddress,
-    targeted_abi: &BTreeMap<String, Vec<FixedBytes>>,
-    excluded_abi: &[String],
+    artifact_filters: &ArtifactFilters,
     targeted_contracts: FuzzRunIdentifiedContracts,
     created_contracts: &mut Vec<Address>,
 ) -> eyre::Result<()> {
@@ -187,18 +182,12 @@ pub fn collect_created_contracts(
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
-                        let functions = targeted_abi
-                            .get(&artifact.identifier())
-                            .iter()
-                            .flat_map(|selectors| {
-                                selectors
-                                    .iter()
-                                    .map(|selector| get_function(&artifact.name, selector, abi))
-                            })
-                            .collect::<eyre::Result<Vec<_>>>()?;
+                        let functions = artifact_filters.get_functions(artifact, abi)?;
 
                         // targetArtifactSelectors > excludeArtifacts > targetArtifacts
-                        if functions.is_empty() && excluded_abi.contains(&artifact.identifier()) {
+                        if functions.is_empty() &&
+                            artifact_filters.excluded.contains(&artifact.identifier())
+                        {
                             continue
                         }
 

@@ -1,7 +1,7 @@
 use super::{
-    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
-    InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
-    TargetedContracts,
+    assert_invariants, filters::ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts,
+    InvariantContract, InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions,
+    RandomCallGenerator, TargetedContracts,
 };
 use crate::{
     executor::{
@@ -50,11 +50,8 @@ pub struct InvariantExecutor<'a> {
     /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
     /// to identify them from the stateset changes.
     project_contracts: &'a ContractsByArtifact,
-    /// List of `contract_path:contract_name` which are to be targeted. If list of functions is not
-    /// empty, target only those.
-    targeted_abi: BTreeMap<String, Vec<FixedBytes>>,
-    /// List of `contract_path:contract_name` which are to be excluded.
-    excluded_abi: Vec<String>,
+    /// Filters contracts to be fuzzed through their artifact identifiers.
+    artifact_filters: ArtifactFilters,
 }
 
 impl<'a> InvariantExecutor<'a> {
@@ -70,8 +67,7 @@ impl<'a> InvariantExecutor<'a> {
             runner,
             setup_contracts,
             project_contracts,
-            targeted_abi: BTreeMap::new(),
-            excluded_abi: vec![],
+            artifact_filters: ArtifactFilters::default(),
         }
     }
 
@@ -159,8 +155,7 @@ impl<'a> InvariantExecutor<'a> {
                         &state_changeset,
                         self.project_contracts,
                         self.setup_contracts,
-                        &self.targeted_abi,
-                        &self.excluded_abi,
+                        &self.artifact_filters,
                         targeted_contracts.clone(),
                         &mut created_contracts,
                     ) {
@@ -303,7 +298,7 @@ impl<'a> InvariantExecutor<'a> {
         for (contract, selectors) in targeted_abi {
             let identifier = self.validate_selected_contract(contract, &selectors)?;
 
-            self.targeted_abi.entry(identifier).or_insert(vec![]).extend(selectors);
+            self.artifact_filters.targeted.entry(identifier).or_insert(vec![]).extend(selectors);
         }
 
         // targetArtifacts -> string[]
@@ -315,8 +310,8 @@ impl<'a> InvariantExecutor<'a> {
         for contract in excluded_abi {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
-            if !self.excluded_abi.contains(&identifier) {
-                self.excluded_abi.push(identifier);
+            if !self.artifact_filters.excluded.contains(&identifier) {
+                self.artifact_filters.excluded.push(identifier);
             }
         }
 
@@ -325,10 +320,10 @@ impl<'a> InvariantExecutor<'a> {
         for contract in selected_abi {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
-            if !self.targeted_abi.contains_key(&identifier) &&
-                !self.excluded_abi.contains(&identifier)
+            if !self.artifact_filters.targeted.contains_key(&identifier) &&
+                !self.artifact_filters.excluded.contains(&identifier)
             {
-                self.targeted_abi.insert(identifier, vec![]);
+                self.artifact_filters.targeted.insert(identifier, vec![]);
             }
         }
 
@@ -378,9 +373,11 @@ impl<'a> InvariantExecutor<'a> {
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
-                    (self.targeted_abi.is_empty() || self.targeted_abi.contains_key(identifier)) &&
+                    (self.artifact_filters.targeted.is_empty() ||
+                        self.artifact_filters.targeted.contains_key(identifier)) &&
                     (excluded.is_empty() || !excluded.contains(addr)) &&
-                    (self.excluded_abi.is_empty() || !self.excluded_abi.contains(identifier))
+                    (self.artifact_filters.excluded.is_empty() ||
+                        !self.artifact_filters.excluded.contains(identifier))
             })
             .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
@@ -400,7 +397,8 @@ impl<'a> InvariantExecutor<'a> {
     ) -> eyre::Result<()> {
         // `targetArtifactSelectors() -> (string, bytes4[])[]`.
         let some_abi_selectors = self
-            .targeted_abi
+            .artifact_filters
+            .targeted
             .iter()
             .filter(|(_, selectors)| !selectors.is_empty())
             .collect::<BTreeMap<_, _>>();
