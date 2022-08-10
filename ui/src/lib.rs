@@ -9,7 +9,7 @@ use crossterm::{
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
 use forge::{
-    debug::{DebugStep, Instruction},
+    debug::DebugStep,
     utils::{build_pc_ic_map, PCICMap},
     CallKind,
 };
@@ -31,6 +31,7 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
+use widget::memory::{self, MemoryView, MemoryViewState};
 
 /// Trait for starting the UI
 pub trait Ui {
@@ -44,8 +45,9 @@ pub enum TUIExitReason {
     CharExit,
 }
 
-mod op_effects;
-use op_effects::stack_indices_affected;
+mod ext;
+mod widget;
+use ext::{DebugStepExt, InstructionExt};
 
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
@@ -141,10 +143,8 @@ impl Tui {
         call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
-        mem_utf: bool,
     ) {
-        let total_size = f.size();
-        if total_size.width < 225 {
+        if f.size().width < 225 {
             Tui::vertical_layout(
                 f,
                 address,
@@ -158,7 +158,6 @@ impl Tui {
                 call_kind,
                 draw_memory,
                 stack_labels,
-                mem_utf,
             );
         } else {
             Tui::square_layout(
@@ -174,7 +173,6 @@ impl Tui {
                 call_kind,
                 draw_memory,
                 stack_labels,
-                mem_utf,
             );
         }
     }
@@ -193,13 +191,12 @@ impl Tui {
         call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
-        mem_utf: bool,
     ) {
-        let total_size = f.size();
+        let curr_step = &debug_steps[current_step];
         if let [app, footer] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
-            .split(total_size)[..]
+            .split(f.size())[..]
         {
             if let [op_pane, stack_pane, memory_pane, src_pane] = Layout::default()
                 .direction(Direction::Vertical)
@@ -243,7 +240,36 @@ impl Tui {
                     stack_labels,
                     draw_memory,
                 );
-                Tui::draw_memory(f, debug_steps, current_step, memory_pane, mem_utf, draw_memory);
+
+                let mut memory_view = MemoryView::new(&curr_step.memory).block(
+                    Block::default()
+                        .title(format!(
+                            "Memory (max expansion: {} bytes)",
+                            curr_step.memory.effective_len()
+                        ))
+                        .borders(Borders::ALL),
+                );
+                if let Some((op, word)) = curr_step.affected_memory_word() {
+                    let color = match op {
+                        opcode::MLOAD => Color::Cyan,
+                        opcode::MSTORE => Color::Red,
+                        _ => unreachable!(),
+                    };
+                    memory_view = memory_view.highlight(word, color);
+                }
+                if current_step > 0 {
+                    if let Some((opcode::MSTORE, word)) =
+                        debug_steps[current_step - 1].affected_memory_word()
+                    {
+                        memory_view = memory_view.highlight(word, Color::Green);
+                    }
+                }
+
+                f.render_stateful_widget(
+                    memory_view,
+                    memory_pane,
+                    &mut draw_memory.memory_view_state,
+                );
             } else {
                 panic!("unable to create vertical panes")
             }
@@ -266,16 +292,15 @@ impl Tui {
         call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
-        mem_utf: bool,
     ) {
-        let total_size = f.size();
+        let curr_step = &debug_steps[current_step];
 
         // split in 2 vertically
 
         if let [app, footer] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
-            .split(total_size)[..]
+            .split(f.size())[..]
         {
             if let [left_pane, right_pane] = Layout::default()
                 .direction(Direction::Horizontal)
@@ -322,13 +347,35 @@ impl Tui {
                             stack_labels,
                             draw_memory,
                         );
-                        Tui::draw_memory(
-                            f,
-                            debug_steps,
-                            current_step,
+
+                        let mut memory_view = MemoryView::new(&curr_step.memory).block(
+                            Block::default()
+                                .title(format!(
+                                    "Memory (max expansion: {} bytes)",
+                                    curr_step.memory.effective_len()
+                                ))
+                                .borders(Borders::ALL),
+                        );
+                        if let Some((op, word)) = curr_step.affected_memory_word() {
+                            let color = match op {
+                                opcode::MLOAD => Color::Cyan,
+                                opcode::MSTORE => Color::Red,
+                                _ => unreachable!(),
+                            };
+                            memory_view = memory_view.highlight(word, color);
+                        }
+                        if current_step > 0 {
+                            if let Some((opcode::MSTORE, word)) =
+                                debug_steps[current_step - 1].affected_memory_word()
+                            {
+                                memory_view = memory_view.highlight(word, Color::Green);
+                            }
+                        }
+
+                        f.render_stateful_widget(
+                            memory_view,
                             memory_pane,
-                            mem_utf,
-                            draw_memory,
+                            &mut draw_memory.memory_view_state,
                         );
                     }
                 } else {
@@ -783,13 +830,7 @@ impl Tui {
             Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
-        let indices_affected =
-            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-                stack_indices_affected(op)
-            } else {
-                vec![]
-            };
-
+        let indices_affected = debug_steps[current_step].instruction.affected_stack_items();
         let text: Vec<Spans> = stack
             .iter()
             .rev()
@@ -838,114 +879,6 @@ impl Tui {
             })
             .collect();
 
-        let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
-        f.render_widget(paragraph, area);
-    }
-
-    /// Draw memory in memory pane
-    fn draw_memory<B: Backend>(
-        f: &mut Frame<B>,
-        debug_steps: &[DebugStep],
-        current_step: usize,
-        area: Rect,
-        mem_utf8: bool,
-        draw_mem: &mut DrawMemory,
-    ) {
-        let memory = &debug_steps[current_step].memory;
-        let stack_space = Block::default()
-            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
-            .borders(Borders::ALL);
-        let memory = memory.data();
-        let max_i = memory.len() / 32;
-        let min_len = format!("{:x}", max_i * 32).len();
-
-        // color memory words based on write/read
-        let mut word = None;
-        let mut color = None;
-        if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-            let stack_len = debug_steps[current_step].stack.len();
-            if stack_len > 0 {
-                let w = debug_steps[current_step].stack[stack_len - 1];
-                match op {
-                    opcode::MLOAD => {
-                        word = Some(w.as_usize() / 32);
-                        color = Some(Color::Cyan);
-                    }
-                    opcode::MSTORE => {
-                        word = Some(w.as_usize() / 32);
-                        color = Some(Color::Red);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // color word on previous write op
-        if current_step > 0 {
-            let prev_step = current_step - 1;
-            let stack_len = debug_steps[prev_step].stack.len();
-            if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
-                if op == opcode::MSTORE {
-                    let prev_top = debug_steps[prev_step].stack[stack_len - 1];
-                    word = Some(prev_top.as_usize() / 32);
-                    color = Some(Color::Green);
-                }
-            }
-        }
-
-        let text: Vec<Spans> = memory
-            .chunks(32)
-            .enumerate()
-            .skip(draw_mem.current_mem_startline)
-            .map(|(i, mem_word)| {
-                let words: Vec<Span> = mem_word
-                    .iter()
-                    .map(|byte| {
-                        Span::styled(
-                            format!("{:02x} ", byte),
-                            if let (Some(w), Some(color)) = (word, color) {
-                                if i == w {
-                                    Style::default().fg(color)
-                                } else if *byte == 0 {
-                                    Style::default().add_modifier(Modifier::DIM)
-                                } else {
-                                    Style::default().fg(Color::White)
-                                }
-                            } else if *byte == 0 {
-                                Style::default().add_modifier(Modifier::DIM)
-                            } else {
-                                Style::default().fg(Color::White)
-                            },
-                        )
-                    })
-                    .collect();
-
-                let mut spans = vec![Span::styled(
-                    format!("{:0min_len$x}| ", i * 32, min_len = min_len),
-                    Style::default().fg(Color::White),
-                )];
-                spans.extend(words);
-
-                if mem_utf8 {
-                    let chars: Vec<Span> = mem_word
-                        .chunks(4)
-                        .map(|utf| {
-                            if let Ok(utf_str) = std::str::from_utf8(utf) {
-                                Span::raw(utf_str.replace(char::from(0), "."))
-                            } else {
-                                Span::raw(".")
-                            }
-                        })
-                        .collect();
-                    spans.push(Span::raw("|"));
-                    spans.extend(chars);
-                }
-
-                spans.push(Span::raw("\n"));
-
-                Spans::from(spans)
-            })
-            .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
@@ -1003,7 +936,6 @@ impl Ui for Tui {
         let mut last_index = 0;
 
         let mut stack_labels = false;
-        let mut mem_utf = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -1033,15 +965,7 @@ impl Ui for Tui {
                         // Grab number of times to do it
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                    [self.current_step]
-                                    .memory
-                                    .len() /
-                                    32)
-                                .saturating_sub(1);
-                                if draw_memory.current_mem_startline < max_mem {
-                                    draw_memory.current_mem_startline += 1;
-                                }
+                                draw_memory.memory_view_state.scroll_down();
                             } else if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
                             } else if draw_memory.inner_call_index < debug_call.len() - 1 {
@@ -1068,8 +992,7 @@ impl Ui for Tui {
                     KeyCode::Char('k') | KeyCode::Up => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                draw_memory.current_mem_startline =
-                                    draw_memory.current_mem_startline.saturating_sub(1);
+                                draw_memory.memory_view_state.scroll_up();
                             } else if self.current_step > 0 {
                                 self.current_step -= 1;
                             } else if draw_memory.inner_call_index > 0 {
@@ -1173,7 +1096,9 @@ impl Ui for Tui {
                     }
                     // toggle memory utf8 decoding
                     KeyCode::Char('m') => {
-                        mem_utf = !mem_utf;
+                        draw_memory
+                            .memory_view_state
+                            .toggle_mode(memory::ViewMode::Hex, memory::ViewMode::Utf8);
                     }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
@@ -1194,7 +1119,7 @@ impl Ui for Tui {
                             self.current_step -= 1;
                         } else if draw_memory.inner_call_index > 0 {
                             draw_memory.inner_call_index -= 1;
-                            draw_memory.current_mem_startline = 0;
+                            draw_memory.memory_view_state.scroll_to_top();
                             draw_memory.current_stack_startline = 0;
                             self.current_step =
                                 debug_call[draw_memory.inner_call_index].1.len() - 1;
@@ -1205,7 +1130,7 @@ impl Ui for Tui {
                             self.current_step += 1;
                         } else if draw_memory.inner_call_index < debug_call.len() - 1 {
                             draw_memory.inner_call_index += 1;
-                            draw_memory.current_mem_startline = 0;
+                            draw_memory.memory_view_state.scroll_to_top();
                             draw_memory.current_stack_startline = 0;
                             self.current_step = 0;
                         }
@@ -1230,7 +1155,6 @@ impl Ui for Tui {
                     debug_call[draw_memory.inner_call_index].2,
                     &mut draw_memory,
                     stack_labels,
-                    mem_utf,
                 )
             })?;
         }
@@ -1246,20 +1170,10 @@ enum Interrupt {
 
 /// This is currently used to remember last scroll
 /// position so screen doesn't wiggle as much.
+#[derive(Default)]
 struct DrawMemory {
     pub current_startline: usize,
     pub inner_call_index: usize,
-    pub current_mem_startline: usize,
     pub current_stack_startline: usize,
-}
-
-impl DrawMemory {
-    fn default() -> Self {
-        DrawMemory {
-            current_startline: 0,
-            inner_call_index: 0,
-            current_mem_startline: 0,
-            current_stack_startline: 0,
-        }
-    }
+    memory_view_state: MemoryViewState,
 }

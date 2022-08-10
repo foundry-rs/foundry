@@ -1,5 +1,44 @@
+use forge::debug::{DebugStep, Instruction};
+use revm::opcode;
+
+/// Helpers for working with [Instruction]s
+pub trait InstructionExt {
+    /// Get the stack items affected by the instruction.
+    fn affected_stack_items(&self) -> Vec<(usize, &'static str)>;
+}
+
+impl InstructionExt for Instruction {
+    fn affected_stack_items(&self) -> Vec<(usize, &'static str)> {
+        match self {
+            Instruction::OpCode(op) => stack_indices_affected(*op),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Helpers for working with [DebugStep]s
+pub trait DebugStepExt {
+    /// Get the word being written to or read by the instruction (if any)
+    fn affected_memory_word(&self) -> Option<(u8, usize)>;
+}
+
+impl DebugStepExt for DebugStep {
+    fn affected_memory_word(&self) -> Option<(u8, usize)> {
+        if self.stack.is_empty() {
+            return None
+        }
+
+        match self.instruction {
+            Instruction::OpCode(op) if op == opcode::MSTORE || op == opcode::MLOAD => {
+                Some((op, self.stack[self.stack.len() - 1].as_usize() / 32))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Maps an opcode and returns a vector of named affected indices
-pub fn stack_indices_affected(op: u8) -> Vec<(usize, &'static str)> {
+fn stack_indices_affected(op: u8) -> Vec<(usize, &'static str)> {
     match op {
         0x01 => vec![(0, "a"), (1, "b")],
         0x02 => vec![(0, "a"), (1, "b")],
