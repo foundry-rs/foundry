@@ -465,7 +465,7 @@ impl<'a> ContractRunner<'a> {
         known_contracts: Option<&ContractsByArtifact>,
         identified_contracts: ContractsByAddress,
     ) -> Result<Vec<TestResult>> {
-        let empty = BTreeMap::new();
+        let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 

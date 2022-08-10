@@ -22,7 +22,7 @@ use ethers::{
     prelude::U256,
 };
 use eyre::ContextCompat;
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},

@@ -1,28 +1,25 @@
 use crate::diff_score;
 use ethers_core::{abi::Abi, types::Address};
 use ethers_solc::ArtifactId;
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    ops::{Deref, DerefMut},
+};
 
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a (Abi, Vec<u8>));
 
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
-pub type ContractsByArtifact = BTreeMap<ArtifactId, (Abi, Vec<u8>)>;
+#[derive(Default)]
+pub struct ContractsByArtifact(pub BTreeMap<ArtifactId, (Abi, Vec<u8>)>);
 
-pub trait ContractsByArtifactExt {
+impl ContractsByArtifact {
     /// Finds a contract which has a similar bytecode as `code`.
-    fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef>;
-    /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
-    /// found, return error.
-    fn find_by_name_or_identifier(&self, id: &str)
-        -> eyre::Result<Option<ArtifactWithContractRef>>;
-}
-
-impl ContractsByArtifactExt for ContractsByArtifact {
-    fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
+    pub fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
     }
-
-    fn find_by_name_or_identifier(
+    /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
+    /// found, return error.
+    pub fn find_by_name_or_identifier(
         &self,
         id: &str,
     ) -> eyre::Result<Option<ArtifactWithContractRef>> {
@@ -36,6 +33,20 @@ impl ContractsByArtifactExt for ContractsByArtifact {
         }
 
         Ok(contracts.first().cloned())
+    }
+}
+
+impl Deref for ContractsByArtifact {
+    type Target = BTreeMap<ArtifactId, (Abi, Vec<u8>)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ContractsByArtifact {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

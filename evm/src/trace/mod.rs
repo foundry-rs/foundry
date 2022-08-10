@@ -7,14 +7,13 @@ mod decoder;
 pub mod node;
 mod utils;
 
-pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
-
 use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 use node::CallTraceNode;
 use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};

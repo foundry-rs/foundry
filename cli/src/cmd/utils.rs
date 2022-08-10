@@ -170,21 +170,23 @@ pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     deployed_code: bool,
 ) -> ContractsByArtifact {
-    contracts
-        .iter()
-        .filter_map(|(id, c)| {
-            let bytecode = if deployed_code {
-                c.deployed_bytecode.clone().into_bytes()
-            } else {
-                c.bytecode.clone().object.into_bytes()
-            };
+    ContractsByArtifact(
+        contracts
+            .iter()
+            .filter_map(|(id, c)| {
+                let bytecode = if deployed_code {
+                    c.deployed_bytecode.clone().into_bytes()
+                } else {
+                    c.bytecode.clone().object.into_bytes()
+                };
 
-            if let Some(bytecode) = bytecode {
-                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
-            }
-            None
-        })
-        .collect()
+                if let Some(bytecode) = bytecode {
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                }
+                None
+            })
+            .collect(),
+    )
 }
 
 #[macro_export]

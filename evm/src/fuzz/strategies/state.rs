@@ -9,7 +9,7 @@ use ethers::{
     abi::Function,
     types::{Address, Log, H256, U256},
 };
-use foundry_utils::types::{ContractsByAddress, ContractsByArtifact, ContractsByArtifactExt};
+use foundry_utils::types::{ContractsByAddress, ContractsByArtifact};
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{

@@ -14,7 +14,6 @@ use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
-use foundry_utils::types::ContractsByArtifactExt;
 use std::collections::VecDeque;
 use tracing::trace;
 
