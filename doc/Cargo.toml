@@ -1,7 +1,10 @@
 [package]
-name = "doc"
+name = "forge-doc"
 version = "0.1.0"
 edition = "2021"
+description = """
+Foundry's solidity doc parsing
+"""
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 
@@ -25,3 +28,4 @@ clap = { version = "3.0.10", features = [
 solang-parser = "0.1.17"
 eyre = "0.6"
 thiserror = "1.0.30"
+mdbook = "0.4.21"

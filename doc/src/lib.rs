@@ -1,18 +1,20 @@
-use clap::{Parser, ValueHint};
-use config::DocConfig;
-use context::Context;
-// use ethers_solc::{Graph, Project};
-use thiserror::Error;
+use std::{borrow::Borrow, collections::HashMap, path::PathBuf, rc::Rc};
 
-use forge_fmt::{Formatter, FormatterConfig, Visitable, Visitor};
+use forge_fmt::{Visitable, Visitor};
+use mdbook::{
+    book::{Link, Summary, SummaryItem},
+    config::{BookConfig, BuildConfig},
+    Config, MDBook,
+};
+use thiserror::Error;
 // use foundry_common::paths::ProjectPathsArgs;
 use solang_parser::{
     doccomment::{parse_doccomments, DocComment},
-    pt::{Comment, ContractTy, FunctionDefinition, SourceUnit, SourceUnitPart},
+    pt::{
+        Comment, ContractDefinition, FunctionDefinition, Loc, SourceUnit, SourceUnitPart,
+        VariableDefinition,
+    },
 };
-
-mod config;
-mod context;
 
 #[derive(Error, Debug)]
 pub enum DocError {} // TODO:
@@ -22,41 +24,57 @@ type Result<T, E = DocError> = std::result::Result<T, E>;
 #[derive(Debug)]
 pub struct SolidityDoc {
     comments: Vec<Comment>,
-    contracts: Vec<DocContract>,
+    parts: Vec<SolidityDocPart>,
+    start_at: usize,
+    curr_parent: Option<SolidityDocPart>,
 }
 
-#[derive(Debug)]
-pub struct DocContract {
-    ty: ContractTy,
-    name: String,
-    comments: Vec<DocComment>,
-    // TODO: functions: Vec<DocFunction>,
-    parts: Vec<DocContractPart>,
+#[derive(Debug, PartialEq)]
+pub struct SolidityDocPart {
+    pub comments: Vec<DocComment>,
+    pub element: SolidityDocPartElement,
+    pub children: Vec<SolidityDocPart>,
 }
-
-#[derive(Debug)]
-pub enum DocContractPart {
-    Function(DocFunction),
-}
-
-#[derive(Debug)]
-pub struct DocFunction {
-    comments: Vec<Comment>,
-    name: String,
-    // args: Vec<DocParam>,
-    // returns: Vec<DocParam>,
-}
-
-// #[derive(Debug)]
-// pub struct DocParam {
-//     name: Option<String>,
-//     type_: String, // TODO:
-// }
 
 impl SolidityDoc {
     pub fn new(comments: Vec<Comment>) -> Self {
-        SolidityDoc { contracts: vec![], comments }
+        SolidityDoc { parts: vec![], comments, start_at: 0, curr_parent: None }
     }
+
+    fn with_parent(
+        &mut self,
+        mut parent: SolidityDocPart,
+        mut visit: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<SolidityDocPart> {
+        let curr = self.curr_parent.take();
+        self.curr_parent = Some(parent);
+        visit(self)?;
+        parent = self.curr_parent.take().unwrap();
+        self.curr_parent = curr;
+        Ok(parent)
+    }
+
+    fn add_element_to_parent(&mut self, element: SolidityDocPartElement, loc: Loc) {
+        let child =
+            SolidityDocPart { comments: self.parse_docs(loc.start()), element, children: vec![] };
+        if let Some(parent) = self.curr_parent.as_mut() {
+            parent.children.push(child);
+        } else {
+            self.parts.push(child);
+        }
+        self.start_at = loc.end();
+    }
+
+    fn parse_docs(&mut self, end: usize) -> Vec<DocComment> {
+        parse_doccomments(&self.comments, self.start_at, end)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SolidityDocPartElement {
+    Contract(Box<ContractDefinition>),
+    Function(FunctionDefinition),
+    Variable(VariableDefinition),
 }
 
 impl Visitor for SolidityDoc {
@@ -66,17 +84,34 @@ impl Visitor for SolidityDoc {
         for source in source_unit.0.iter_mut() {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
-                    self.contracts.push(DocContract {
-                        name: def.name.name.clone(),
-                        ty: def.ty.clone(),
-                        comments: parse_doccomments(&self.comments, 0, def.loc.start()),
-                        parts: vec![],
-                    });
-                    for d in def.parts.iter_mut() {
-                        d.visit(self)?;
-                    }
+                    let contract = SolidityDocPart {
+                        element: SolidityDocPartElement::Contract(def.clone()),
+                        comments: self.parse_docs(def.loc.start()),
+                        children: vec![],
+                    };
+                    self.start_at = def.loc.start();
+
+                    // StructDefinition(Box<StructDefinition>),
+                    // EventDefinition(Box<EventDefinition>),
+                    // EnumDefinition(Box<EnumDefinition>),
+                    // ErrorDefinition(Box<ErrorDefinition>),
+                    // VariableDefinition(Box<VariableDefinition>) - done
+                    // FunctionDefinition(Box<FunctionDefinition>) - done
+                    // TypeDefinition(Box<TypeDefinition>),
+                    // StraySemicolon(Loc),
+                    // Using(Box<Using>),
+                    let contract = self.with_parent(contract, |doc| {
+                        for d in def.parts.iter_mut() {
+                            d.visit(doc)?;
+                        }
+
+                        Ok(())
+                    })?;
+
+                    self.start_at = def.loc.end();
+                    self.parts.push(contract);
                 }
-                SourceUnitPart::FunctionDefinition(def) => {}
+                SourceUnitPart::FunctionDefinition(func) => self.visit_function(func)?,
                 _ => {}
             };
         }
@@ -85,57 +120,31 @@ impl Visitor for SolidityDoc {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<()> {
+        self.add_element_to_parent(SolidityDocPartElement::Function(func.clone()), func.loc);
+        Ok(())
+    }
+
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> Result<()> {
+        self.add_element_to_parent(SolidityDocPartElement::Variable(var.clone()), var.loc);
         Ok(())
     }
 }
-
-// #[derive(Debug)]
-// pub enum Doc {
-//     Build(DocBuildArgs),
-//     // Serve,
-// }
-
-// #[derive(Debug, Clone, Parser)]
-// pub struct DocBuildArgs {
-//     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
-//     project_paths: ProjectPathsArgs,
-// }
-
-// impl DocBuildArgs {
-//     fn run(self) {
-//         //
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
 
-    #[allow(non_snake_case)]
     #[test]
-    fn test_docs() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join("Governor.sol");
+    fn test_build() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("oz-governance")
+            .join("Governor.sol");
         let target = fs::read_to_string(path).unwrap();
         let (mut source_pt, source_comments) = solang_parser::parse(&target, 1).unwrap();
-        // let source_comments = Comments::new(source_comments, source);
         let mut d = SolidityDoc::new(source_comments);
         source_pt.visit(&mut d).unwrap();
-        // println!("doc {:?}", d);
-
-        for contract in d.contracts {
-            println!("contract >>> {:?}", contract);
-            // for comment in contract.comments {
-            //     for comment in comment.comments() {
-            //         println!("comment >>> tag: {} val: {}", comment.tag, comment.value);
-            //     }
-            // }
-            // let content = match comment {
-            //     Comment::Block(_, comment) |
-            //     Comment::Line(_, comment) |
-            //     Comment::DocLine(_, comment) |
-            //     Comment::DocBlock(_, comment) => comment,
-            // };
-        }
+        // write_docs(&d.parts).unwrap();
     }
 }
