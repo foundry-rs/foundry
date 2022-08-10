@@ -19,9 +19,10 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
-    prelude::{ArtifactId, U256},
+    prelude::U256,
 };
 use eyre::ContextCompat;
+use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -48,7 +49,7 @@ pub struct InvariantExecutor<'a> {
     setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
     /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
     /// to identify them from the stateset changes.
-    project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    project_contracts: &'a ContractsByArtifact,
     /// List of `contract_path:contract_name` which are to be targeted. If list of functions is not
     /// empty, target only those.
     targeted_abi: BTreeMap<String, Vec<FixedBytes>>,
@@ -62,7 +63,7 @@ impl<'a> InvariantExecutor<'a> {
         executor: &'a mut Executor,
         runner: TestRunner,
         setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
-        project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        project_contracts: &'a ContractsByArtifact,
     ) -> Self {
         Self {
             executor,
@@ -341,20 +342,9 @@ impl<'a> InvariantExecutor<'a> {
         contract: String,
         selectors: &[FixedBytes],
     ) -> eyre::Result<String> {
-        let contracts = self
-            .project_contracts
-            .iter()
-            .filter(|(artifact, _)| {
-                // Check if user passed a matching contract name or source:name
-                artifact.name.as_str() == contract || artifact.identifier() == contract
-            })
-            .collect::<Vec<_>>();
-
-        if contracts.len() > 1 {
-            eyre::bail!("{contract} has more than one implementation. Please specify it with `contract_path:contract_name`.");
-        }
-
-        if let Some((artifact, (abi, _))) = contracts.first() {
+        if let Some((artifact, (abi, _))) =
+            self.project_contracts.find_by_name_or_identifier(&contract)?
+        {
             // Check that the selectors really exist for this contract.
             for selector in selectors {
                 abi.functions()

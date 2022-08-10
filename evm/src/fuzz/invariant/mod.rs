@@ -6,6 +6,7 @@ use crate::{
 };
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
+use foundry_utils::types::ContractsByArtifact;
 mod executor;
 use crate::{
     decode::decode_revert,
@@ -13,7 +14,6 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    solc::ArtifactId,
     types::{Address, Bytes, U256},
 };
 pub use executor::{InvariantExecutor, InvariantFailures};
@@ -212,7 +212,7 @@ impl InvariantFuzzError {
     pub fn replay(
         &self,
         mut executor: Executor,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        known_contracts: Option<&ContractsByArtifact>,
         mut ided_contracts: BTreeMap<Address, (String, Abi)>,
         logs: &mut Vec<Log>,
         traces: &mut Vec<(TraceKind, CallTraceArena)>,

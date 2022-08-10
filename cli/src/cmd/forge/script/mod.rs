@@ -27,7 +27,7 @@ use forge::{
 };
 use foundry_common::evm::EvmArgs;
 use foundry_config::Config;
-use foundry_utils::{encode_args, format_token, IntoFunction};
+use foundry_utils::{encode_args, format_token, types::ContractsByArtifact, IntoFunction};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -155,7 +155,7 @@ impl ScriptArgs {
         &self,
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let etherscan_identifier = EtherscanIdentifier::new(
             script_config.evm_opts.get_remote_chain_id(),
@@ -448,7 +448,7 @@ pub struct ScriptConfig {
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub known_contracts: ContractsByArtifact,
     pub etherscan_key: Option<String>,
     pub project_paths: ProjectPathsArgs,
     pub retry: RetryArgs,
@@ -458,7 +458,7 @@ impl VerifyBundle {
     pub fn new(
         project: &Project,
         config: &Config,
-        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: ContractsByArtifact,
         retry: RetryArgs,
     ) -> Self {
         let num_of_optimizations =

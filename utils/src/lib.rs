@@ -24,10 +24,12 @@ use std::{
     str::FromStr,
     time::Duration,
 };
+use types::ContractsByArtifact;
 
 pub mod rpc;
 pub mod selectors;
 pub use selectors::decode_selector;
+pub mod types;
 
 /// Very simple fuzzy matching of contract bytecode.
 ///
@@ -267,7 +269,7 @@ impl<'a> IntoFunction for &'a str {
 
 /// Flattens a group of contracts into maps of all events and functions
 pub fn flatten_known_contracts(
-    contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    contracts: &ContractsByArtifact,
 ) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
     let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
         .iter()
@@ -855,7 +857,7 @@ mod tests {
             .map(|(id, c)| (id, c.into_contract_bytecode()))
             .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
 
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts = ContractsByArtifact::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
             Default::default();
 

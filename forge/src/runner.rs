@@ -4,7 +4,6 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
@@ -20,6 +19,7 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
+use foundry_utils::types::ContractsByArtifact;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
@@ -182,7 +182,7 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &impl TestFilter,
         test_options: TestOptions,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        known_contracts: Option<&ContractsByArtifact>,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -462,7 +462,7 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         test_options: TestOptions,
         functions: Vec<&Function>,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        known_contracts: Option<&ContractsByArtifact>,
         identified_contracts: BTreeMap<Address, (String, Abi)>,
     ) -> Result<Vec<TestResult>> {
         let empty = BTreeMap::new();

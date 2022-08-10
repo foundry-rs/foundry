@@ -8,11 +8,11 @@ pub mod node;
 mod utils;
 
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
 
 use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
 use ethers::{
     abi::{Abi, Address, RawLog},
-    prelude::ArtifactId,
     types::U256,
 };
 use node::CallTraceNode;
@@ -441,7 +441,7 @@ fn trace_color(trace: &CallTrace) -> Color {
 /// Given a list of traces and artifacts, it returns a map connecting address to abi
 pub fn load_contracts(
     traces: Vec<(TraceKind, CallTraceArena)>,
-    known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+    known_contracts: Option<&ContractsByArtifact>,
 ) -> BTreeMap<Address, (String, Abi)> {
     if let Some(contracts) = known_contracts {
         let local_identifier = LocalTraceIdentifier::new(contracts);
@@ -453,15 +453,11 @@ pub fn load_contracts(
         decoder
             .contracts
             .iter()
-            .map(|(addr, name)| {
-                let (_, (abi, _)) = contracts
-                    .iter()
-                    .find(|(artifact, _)| {
-                        artifact.name ==
-                            *name.split(':').last().expect("invalid contract").to_string()
-                    })
-                    .expect("no contract");
-                (*addr, (name.clone(), abi.clone()))
+            .filter_map(|(addr, name)| {
+                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
+                    return Some((*addr, (name.clone(), abi.clone())))
+                }
+                None
             })
             .collect()
     } else {

@@ -14,7 +14,7 @@ use foundry_evm::{
     },
     revm,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::{types::ContractsByArtifact, PostLinkInput};
 use rayon::prelude::*;
 use std::{collections::BTreeMap, path::Path, sync::mpsc::Sender};
 
@@ -27,7 +27,7 @@ pub struct MultiContractRunner {
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
     /// Compiled contracts by name that have an Abi and runtime bytecode
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub known_contracts: ContractsByArtifact,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The configured evm
@@ -243,7 +243,7 @@ impl MultiContractRunnerBuilder {
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
 
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts = ContractsByArtifact::default();
         let source_paths = contracts
             .iter()
             .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))

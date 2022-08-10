@@ -7,10 +7,9 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, FixedBytes, Function},
-    prelude::ArtifactId,
     types::{Address, Log, H256, U256},
 };
-use foundry_utils::diff_score;
+use foundry_utils::types::{ContractsByArtifact, ContractsByArtifactExt};
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -173,7 +172,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
 /// them at `targeted_contracts` and `created_contracts`.
 pub fn collect_created_contracts(
     state_changeset: &StateChangeset,
-    project_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    project_contracts: &ContractsByArtifact,
     setup_contracts: &BTreeMap<Address, (String, Abi)>,
     targeted_abi: &BTreeMap<String, Vec<FixedBytes>>,
     excluded_abi: &[String],
@@ -186,9 +185,7 @@ pub fn collect_created_contracts(
         if !setup_contracts.contains_key(address) {
             if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
                 if !code.is_empty() {
-                    if let Some((artifact, (abi, _))) = project_contracts
-                        .iter()
-                        .find(|(_, (_, known_code))| diff_score(known_code, code.bytes()) < 0.1)
+                    if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
                         let functions = targeted_abi
                             .get(&artifact.identifier())
