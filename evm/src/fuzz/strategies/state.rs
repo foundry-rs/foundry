@@ -61,15 +61,25 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
 
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
+        state.insert(utils::u256_to_h256_be(info.balance).into());
+        state.insert(utils::u256_to_h256_be(U256::from(info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.insert(utils::u256_to_h256_be(*value).into());
+
+            // dbg!(hex::encode(utils::u256_to_h256_be(*value).into()));
+            // dbg!(hex::encode::<[u8]>(utils::u256_to_h256_be(*value).into()));
+            dbg!(hex::encode::<[u8; 32]>(utils::u256_to_h256_be(*value).into()));
+            dbg!(hex::encode::<[u8; 32]>(utils::u256_to_h256_be(*value).into()));
+            // println!("#######################");
         }
     }
+
+    // state.iter().for_each(|a| {
+    //     dbg!(hex::encode(a));
+    // });
 
     // need at least some state data if db is empty otherwise we can't select random data for state
     // fuzzing
@@ -92,13 +102,13 @@ pub fn collect_state_from_call(
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(account.info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(account.info.nonce)).into());
+        state.insert(utils::u256_to_h256_be(account.info.balance).into());
+        state.insert(utils::u256_to_h256_be(U256::from(account.info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.insert(utils::u256_to_h256_be(*value).into());
         }
 
         // Insert push bytes

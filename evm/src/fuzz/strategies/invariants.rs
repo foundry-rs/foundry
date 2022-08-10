@@ -13,6 +13,8 @@ use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
 use std::sync::Arc;
 
+use super::fuzz_param_from_state;
+
 /// Given a target address, we generate random calldata.
 pub fn override_call_strat(
     fuzz_state: EvmFuzzState,
@@ -75,7 +77,7 @@ fn generate_call(
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
             func.prop_flat_map(move |func| {
-                let sender = select_random_sender(senders.clone());
+                let sender = select_random_sender(fuzz_state.clone(), senders.clone());
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
@@ -86,9 +88,29 @@ fn generate_call(
 /// * If `senders` is empty, then it's a completely random address.
 /// * If `senders` is not empty, then there's an 80% chance that one from the list is selected. The
 ///   remaining 20% will be random.
-fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
-    let fuzz_strategy =
-        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
+fn select_random_sender(
+    fuzz_state: EvmFuzzState,
+    senders: Vec<Address>,
+) -> impl Strategy<Value = Address> {
+    let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
+        (
+            1,
+            fuzz_param(&ParamType::Address)
+                .prop_map(move |addr| addr.into_address().unwrap())
+                .boxed(),
+        ),
+        (
+            99,
+            fuzz_param_from_state(&ParamType::Address, fuzz_state.clone())
+                .prop_map(move |addr| {
+                    let addr = addr.into_address().unwrap();
+                    dbg!("{:?}", addr);
+                    addr
+                })
+                .boxed(),
+        ),
+    ])
+    .boxed();
 
     if !senders.is_empty() {
         let selector =
