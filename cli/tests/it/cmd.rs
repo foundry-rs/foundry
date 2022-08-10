@@ -1256,5 +1256,4 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
-    // cmd.arg("test").arg("--gas-report").print_output();
 });
