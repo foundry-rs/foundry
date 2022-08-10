@@ -5,8 +5,7 @@ use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
-    types::{Address, H256, U256},
-    utils::keccak256,
+    types::{Address, U256},
 };
 use revm::{Bytecode, Database, EVMData};
 
@@ -171,11 +170,10 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
-            let hash = H256::from_slice(&keccak256(&code));
 
             // TODO: Does this increase gas usage?
             data.subroutine.load_account(inner.0, data.db);
-            data.subroutine.set_code(inner.0, Bytecode::new_raw(code.0).to_checked(), hash);
+            data.subroutine.set_code(inner.0, Bytecode::new_raw(code.0).to_checked());
             Ok(Bytes::new())
         }
         HEVMCalls::Deal(inner) => {

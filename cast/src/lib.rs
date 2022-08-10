@@ -9,7 +9,10 @@ use ethers_core::{
         Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units, rlp},
+    utils::{
+        self, format_bytes32_string, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp,
+    },
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -70,7 +73,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.build();
@@ -132,7 +135,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.peek();
@@ -195,7 +198,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
@@ -258,7 +261,7 @@ where
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, from, to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_value(value)
     ///     .set_args(sig, args).await?;
@@ -1391,6 +1394,26 @@ impl SimpleCast {
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
     }
+
+    /// Encodes string into bytes32 value
+    pub fn format_bytes32_string(s: &str) -> Result<String> {
+        let formatted = format_bytes32_string(s)?;
+        Ok(format!("0x{}", hex::encode(&formatted)))
+    }
+
+    /// Decodes string from bytes32 value
+    pub fn parse_bytes32_string(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("string not 32 bytes");
+        }
+
+        let bytes = hex::decode(&s)?;
+        let mut buffer = [0u8; 32];
+        buffer.copy_from_slice(&bytes);
+
+        Ok(parse_bytes32_string(&buffer)?.to_owned())
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -1406,6 +1429,15 @@ mod tests {
         assert_eq!(
             "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
             Cast::calldata("f(uint a)", &["1"]).unwrap().as_str()
+        );
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/2681>
+    #[test]
+    fn calldata_array() {
+        assert_eq!(
+            "0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000",
+            Cast::calldata("propose(string[])", &["[\"\"]"]).unwrap().as_str()
         );
     }
 

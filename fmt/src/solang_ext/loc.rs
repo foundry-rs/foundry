@@ -80,7 +80,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::StructDefinition(structure) => structure.loc,
             SourceUnitPart::EventDefinition(event) => event.loc,
             SourceUnitPart::ErrorDefinition(error) => error.loc,
-            SourceUnitPart::FunctionDefinition(function) => function.loc,
+            SourceUnitPart::FunctionDefinition(function) => function.loc(),
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
             SourceUnitPart::Using(using) => using.loc,
@@ -427,6 +427,12 @@ impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
     }
 }
 
+impl OptionalLineOfCode for SourceUnit {
+    fn loc(&self) -> Option<Loc> {
+        self.0.get(0).map(|unit| *unit.loc())
+    }
+}
+
 impl LineOfCode for Unit {
     fn loc(&self) -> Loc {
         match *self {
@@ -456,3 +462,32 @@ impl_loc! { IdentifierPath }
 impl_loc! { YulTypedIdentifier }
 impl_loc! { EventParameter }
 impl_loc! { ErrorParameter }
+
+/// Extra helpers for Locs
+pub trait LocExt {
+    fn with_start_from(self, other: &Self) -> Self;
+    fn with_end_from(self, other: &Self) -> Self;
+    fn with_start(self, start: usize) -> Self;
+    fn with_end(self, end: usize) -> Self;
+    fn range(self) -> std::ops::Range<usize>;
+}
+
+impl LocExt for Loc {
+    fn with_start_from(mut self, other: &Self) -> Self {
+        self.use_start_from(other);
+        self
+    }
+    fn with_end_from(mut self, other: &Self) -> Self {
+        self.use_end_from(other);
+        self
+    }
+    fn with_start(self, start: usize) -> Self {
+        Loc::File(self.file_no(), start, self.end())
+    }
+    fn with_end(self, end: usize) -> Self {
+        Loc::File(self.file_no(), self.start(), end)
+    }
+    fn range(self) -> std::ops::Range<usize> {
+        self.start()..self.end()
+    }
+}

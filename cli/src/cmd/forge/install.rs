@@ -146,11 +146,12 @@ pub(crate) fn install(
 
 /// Checks if any submodules have not been initialized yet.
 ///
-/// `git submodule status` will return a new line per submodule in the repository. If any line
-/// starts with `-` then it has not been initialized yet.
-pub fn has_missing_dependencies(root: impl AsRef<Path>) -> bool {
+/// `git submodule status <lib dir>` will return a new line per submodule in the repository. If any
+/// line starts with `-` then it has not been initialized yet.
+pub fn has_missing_dependencies(root: impl AsRef<Path>, lib_dir: impl AsRef<Path>) -> bool {
     Command::new("git")
         .args(&["submodule", "status"])
+        .arg(lib_dir.as_ref())
         .current_dir(root)
         .output()
         .map(|output| {

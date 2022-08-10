@@ -1,12 +1,7 @@
 use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
-use ethers::{
-    abi::Address,
-    prelude::{Middleware, Provider},
-    solc::utils::RuntimeOrHandle,
-    types::H256,
-};
+use ethers::{abi::Address, prelude::Middleware, solc::utils::RuntimeOrHandle, types::H256};
 use forge::{
     debug::DebugArena,
     executor::{
@@ -15,6 +10,7 @@ use forge::{
     },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
+use foundry_common::get_http_provider;
 use foundry_config::{find_project_root_path, Config};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -62,8 +58,7 @@ impl RunArgs {
         let config = Config::from_provider(figment).sanitized();
 
         let rpc_url = consume_config_rpc_url(self.rpc_url);
-        let provider =
-            Provider::try_from(rpc_url.as_str()).expect("could not instantiate provider");
+        let provider = get_http_provider(rpc_url.as_str());
 
         if let Some(tx) =
             provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")).await?

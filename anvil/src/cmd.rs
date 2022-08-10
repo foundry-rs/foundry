@@ -16,6 +16,7 @@ use std::{
         Arc,
     },
 };
+use tokio::runtime::Handle;
 use tracing::log::trace;
 
 #[derive(Clone, Debug, Parser)]
@@ -165,8 +166,12 @@ impl NodeArgs {
         let (api, handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
-        let fork = api.get_fork().cloned();
+        let mut fork = api.get_fork().cloned();
         let running = Arc::new(AtomicUsize::new(0));
+
+        // handle for the currently running rt, this must be obtained before setting the crtlc
+        // handler, See [Handle::current]
+        let rt_handle = Handle::current();
 
         ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
@@ -174,8 +179,10 @@ impl NodeArgs {
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
-                if let Some(ref fork) = fork {
-                    fork.database.read().flush_cache();
+                if let Some(fork) = fork.take() {
+                    rt_handle.block_on(async move {
+                        fork.database.read().await.flush_cache();
+                    });
                 }
                 std::process::exit(0);
             }

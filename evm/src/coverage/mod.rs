@@ -124,9 +124,9 @@ pub struct HitMap {
 }
 
 impl HitMap {
-    /// Increase the hit counter for the given instruction counter.
-    pub fn hit(&mut self, ic: usize) {
-        *self.hits.entry(ic).or_default() += 1;
+    /// Increase the hit counter for the given program counter.
+    pub fn hit(&mut self, pc: usize) {
+        *self.hits.entry(pc).or_default() += 1;
     }
 }
 
@@ -151,7 +151,7 @@ impl Display for ContractId {
 /// An item anchor describes what instruction marks a [CoverageItem] as covered.
 #[derive(Clone, Debug)]
 pub struct ItemAnchor {
-    /// The instruction counter for the opcode of this anchor
+    /// The program counter for the opcode of this anchor
     pub instruction: usize,
     /// The item ID this anchor points to
     pub item_id: usize,

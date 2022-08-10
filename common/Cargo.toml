@@ -16,6 +16,11 @@ foundry-config = { path = "../config" }
 # eth
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+
+# io
+reqwest = { version = "0.11", default-features = false }
+
 # cli
 clap = { version = "3.0.10", features = [
     "derive",

@@ -4,7 +4,6 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
-    utils::build_ic_map,
     CallKind,
 };
 use bytes::Bytes;
@@ -13,7 +12,6 @@ use revm::{
     opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
     Interpreter, Memory, Return,
 };
-use std::collections::BTreeMap;
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Default, Debug)]
@@ -24,13 +22,6 @@ pub struct Debugger {
     pub head: usize,
     /// The current execution address.
     pub context: Address,
-    /// A mapping of program counters to instruction counters.
-    ///
-    /// The program counter keeps track of where we are in the contract bytecode as a whole,
-    /// including push bytes, while the instruction counter ignores push bytes.
-    ///
-    /// The instruction counter is used in Solidity source maps.
-    pub ic_map: BTreeMap<Address, BTreeMap<usize, usize>>,
     /// The amount of gas spent in the current gas block.
     ///
     /// REVM adds gas in blocks, so we need to keep track of this separately to get accurate gas
@@ -97,16 +88,9 @@ where
     fn initialize_interp(
         &mut self,
         interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
+        _: &mut EVMData<'_, DB>,
         _: bool,
     ) -> Return {
-        // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
-        // map for a given address does not exist, *but* we need to account for the fact that the
-        // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.ic_map.insert(
-            self.context,
-            build_ic_map(data.env.cfg.spec_id, interp.contract().bytecode.bytecode()),
-        );
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
@@ -154,12 +138,6 @@ where
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
-            ic: *self
-                .ic_map
-                .get(&self.context)
-                .expect("no instruction counter map")
-                .get(&pc)
-                .expect("unknown ic for pc"),
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
         });
 
