@@ -46,6 +46,7 @@ use ethers::{
     },
     utils::{keccak256, rlp},
 };
+use forge::revm::BlockEnv;
 use foundry_evm::{
     revm,
     revm::{
@@ -69,6 +70,22 @@ pub mod state;
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
+
+/// A block request, which includes the Pool Transactions if it's Pending
+#[derive(Debug)]
+pub enum BlockRequest {
+    Pending(Vec<Arc<PoolTransaction>>),
+    Number(U64),
+}
+
+impl BlockRequest {
+    pub fn block_number(&self) -> BlockNumber {
+        match self {
+            BlockRequest::Pending(_) => BlockNumber::Pending,
+            BlockRequest::Number(n) => BlockNumber::Number(*n),
+        }
+    }
+}
 
 /// Gives access to the [revm::Database]
 #[derive(Clone)]
@@ -297,11 +314,6 @@ impl Backend {
         self.blockchain.storage.read().best_hash
     }
 
-    fn hash_for_block_number(&self, num: u64) -> Option<H256> {
-        let num: U64 = num.into();
-        self.blockchain.storage.read().hashes.get(&num).copied()
-    }
-
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> U64 {
         let num: u64 = self.env.read().block.number.try_into().unwrap_or(u64::MAX);
@@ -498,6 +510,20 @@ impl Backend {
     ///
     /// This will execute all transaction in the order they come but will not mine the block
     pub async fn pending_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> BlockInfo {
+        self.with_pending_block(pool_transactions, |_, block| block).await
+    }
+
+    /// Creates the pending block
+    ///
+    /// This will execute all transaction in the order they come but will not mine the block
+    pub async fn with_pending_block<F, T>(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction>>,
+        f: F,
+    ) -> T
+    where
+        F: FnOnce(Box<dyn MaybeHashDatabase + '_>, BlockInfo) -> T,
+    {
         let db = self.db.read().await;
         let env = self.next_env();
 
@@ -517,7 +543,7 @@ impl Backend {
 
         // create a new pending block
         let executed = executor.execute();
-        executed.block
+        f(Box::new(cache_db), executed.block)
     }
 
     /// Mines a new block and stores it.
@@ -653,15 +679,33 @@ impl Backend {
         &self,
         request: EthTransactionRequest,
         fee_details: FeeDetails,
-        block_number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
+        self.with_database_at(block_request, |state, block| {
+            let block_number = block.number.as_u64();
+            let (exit, out, gas, state) = self.call_with_state(state, request, fee_details, block)?;
+            trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
+            Ok((exit, out, gas, state))
+        }).await?
+    }
+
+    pub fn call_with_state<D>(
+        &self,
+        state: D,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
+    where
+        D: DatabaseRef,
+    {
         let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
 
-        let gas_limit = gas.unwrap_or_else(|| self.gas_limit());
+        let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
-        env.block.timestamp = self.time.current_call_timestamp().into();
+        env.block = block_env;
 
         if let Some(base) = max_fee_per_gas {
             env.block.basefee = base;
@@ -685,43 +729,10 @@ impl Backend {
             access_list: to_access_list(access_list.unwrap_or_default()),
         };
 
-        let block_number =
-            U256::from(self.convert_block_number(block_number)).min(env.block.number);
-
-        if block_number < env.block.number {
-            // requested historic state
-            let states = self.states.read();
-
-            return if let Some(state) =
-                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
-            {
-                let mut evm = revm::EVM::new();
-                env.block.number = block_number;
-                evm.env = env;
-                evm.database(state);
-
-                let (exit, out, gas, state, _) = evm.transact_ref();
-
-                trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
-
-                Ok((exit, out, gas, state))
-            } else {
-                warn!(target: "backend", "Not historic state found for block={}", block_number);
-                Err(BlockchainError::BlockOutOfRange(
-                    env.block.number.as_u64(),
-                    block_number.as_u64(),
-                ))
-            }
-        }
-
-        let db = self.db.read().await;
         let mut evm = revm::EVM::new();
         evm.env = env;
-        evm.database(&*db);
-
+        evm.database(state);
         let (exit, out, gas, state, _) = evm.transact_ref();
-        trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
-
         Ok((exit, out, gas, state))
     }
 
@@ -1086,36 +1097,77 @@ impl Backend {
     }
 
     /// Helper function to execute a closure with the database at a specific block
-    pub async fn with_database_at<F, T>(&self, block_number: Option<BlockNumber>, f: F) -> T
+    pub async fn with_database_at<F, T>(
+        &self,
+        block_request: Option<BlockRequest>,
+        f: F,
+    ) -> Result<T, BlockchainError>
     where
-        F: FnOnce(Box<dyn MaybeHashDatabase + '_>) -> T,
+        F: FnOnce(Box<dyn MaybeHashDatabase + '_>, BlockEnv) -> T,
     {
+        let block_number = match block_request {
+            Some(BlockRequest::Pending(pool_transactions)) => {
+                let result = self
+                    .with_pending_block(pool_transactions, |state, block| {
+                        let block = block.block;
+                        let block = BlockEnv {
+                            number: block.header.number,
+                            coinbase: block.header.beneficiary,
+                            timestamp: block.header.timestamp.into(),
+                            difficulty: block.header.difficulty,
+                            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                            gas_limit: block.header.gas_limit,
+                        };
+                        f(state, block)
+                    })
+                    .await;
+                return Ok(result)
+            }
+            Some(BlockRequest::Number(bn)) => Some(BlockNumber::Number(bn)),
+            None => None,
+        };
         let block_number: U256 = self.convert_block_number(block_number).into();
 
         if block_number < self.env.read().block.number {
             let states = self.states.read();
-            if let Some(state) =
-                self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
+            return if let Some((state, block)) = self
+                .get_block(block_number.as_u64())
+                .and_then(|block| Some((states.get(&block.header.hash())?, block)))
             {
-                return f(Box::new(state))
+                let block = BlockEnv {
+                    number: block.header.number,
+                    coinbase: block.header.beneficiary,
+                    timestamp: block.header.timestamp.into(),
+                    difficulty: block.header.difficulty,
+                    basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                    gas_limit: block.header.gas_limit,
+                };
+                Ok(f(Box::new(state), block))
+            } else {
+                warn!(target: "backend", "Not historic state found for block={}", block_number);
+                Err(BlockchainError::BlockOutOfRange(
+                    self.env.read().block.number.as_u64(),
+                    block_number.as_u64(),
+                ))
             }
         }
         let db = self.db.read().await;
-        f(Box::new(&*db))
+        let block = self.env().read().block.clone();
+        Ok(f(Box::new(&*db), block))
     }
 
     pub async fn storage_at(
         &self,
         address: Address,
         index: U256,
-        number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<H256, BlockchainError> {
-        self.with_database_at(number, |db| {
+        self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
             let val = db.storage(address, index);
             Ok(u256_to_h256_be(val))
         })
-        .await
+        .await?
     }
 
     /// Returns the code of the address
@@ -1125,23 +1177,31 @@ impl Backend {
     pub async fn get_code(
         &self,
         address: Address,
-        number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<Bytes, BlockchainError> {
-        self.with_database_at(number, |db| {
-            trace!(target: "backend", "get code for {:?}", address);
-            let account = db.basic(address);
-            if account.code_hash == KECCAK_EMPTY {
-                // if the code hash is `KECCAK_EMPTY`, we check no further
-                return Ok(Default::default())
-            }
-            let code = if let Some(code) = account.code {
-                code
-            } else {
-                db.code_by_hash(account.code_hash)
-            };
-            Ok(code.bytes()[..code.len()].to_vec().into())
-        })
-        .await
+        self.with_database_at(block_request, |db, _| self.get_code_with_state(db, address)).await?
+    }
+
+    pub fn get_code_with_state<D>(
+        &self,
+        state: D,
+        address: Address,
+    ) -> Result<Bytes, BlockchainError>
+    where
+        D: DatabaseRef,
+    {
+        trace!(target: "backend", "get code for {:?}", address);
+        let account = state.basic(address);
+        if account.code_hash == KECCAK_EMPTY {
+            // if the code hash is `KECCAK_EMPTY`, we check no further
+            return Ok(Default::default())
+        }
+        let code = if let Some(code) = account.code {
+            code
+        } else {
+            state.code_by_hash(account.code_hash)
+        };
+        Ok(code.bytes()[..code.len()].to_vec().into())
     }
 
     /// Returns the balance of the address
@@ -1150,13 +1210,22 @@ impl Backend {
     pub async fn get_balance(
         &self,
         address: Address,
-        number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
-        self.with_database_at(number, |db| {
-            trace!(target: "backend", "get balance for {:?}", address);
-            Ok(db.basic(address).balance)
-        })
-        .await
+        self.with_database_at(block_request, |db, _| self.get_balance_with_state(db, address))
+            .await?
+    }
+
+    pub fn get_balance_with_state<D>(
+        &self,
+        state: D,
+        address: Address,
+    ) -> Result<U256, BlockchainError>
+    where
+        D: DatabaseRef,
+    {
+        trace!(target: "backend", "get balance for {:?}", address);
+        Ok(state.basic(address).balance)
     }
 
     /// Returns the nonce of the address
@@ -1165,13 +1234,13 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<U256, BlockchainError> {
-        self.with_database_at(number, |db| {
+        self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
             Ok(db.basic(address).nonce.into())
         })
-        .await
+        .await?
     }
 
     /// Returns the traces for the given transaction
@@ -1413,11 +1482,12 @@ impl Backend {
         &self,
         addr: Address,
         values: Vec<U256>,
-        block_number: Option<BlockNumber>,
+        block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
         let account_key = H256::from(keccak256(addr.as_bytes()));
+        let block_number = block_request.as_ref().map(|r| r.block_number());
 
-        self.with_database_at(block_number, |block_db| {
+        self.with_database_at(block_request, |block_db, _| {
             trace!(target: "backend", "get proof for {:?} at {:?}", addr, block_number);
             let (db, root) = block_db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
 
@@ -1468,7 +1538,7 @@ impl Backend {
 
             Ok(account_proof)
         })
-        .await
+        .await?
     }
 
     /// Returns a new block event stream
