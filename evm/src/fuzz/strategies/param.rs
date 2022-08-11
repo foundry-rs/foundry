@@ -100,7 +100,6 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value
             .prop_map(move |value| {
-                dbg!(String::from_utf8_lossy(&value[..]).trim().trim_end_matches('\0').to_string());
                 Token::String(
                     String::from_utf8_lossy(&value[..]).trim().trim_end_matches('\0').to_string(),
                 )

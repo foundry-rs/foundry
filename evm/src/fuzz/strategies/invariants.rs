@@ -94,19 +94,15 @@ fn select_random_sender(
 ) -> impl Strategy<Value = Address> {
     let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
         (
-            1,
+            10,
             fuzz_param(&ParamType::Address)
                 .prop_map(move |addr| addr.into_address().unwrap())
                 .boxed(),
         ),
         (
-            99,
-            fuzz_param_from_state(&ParamType::Address, fuzz_state.clone())
-                .prop_map(move |addr| {
-                    let addr = addr.into_address().unwrap();
-                    dbg!("{:?}", addr);
-                    addr
-                })
+            90,
+            fuzz_param_from_state(&ParamType::Address, fuzz_state)
+                .prop_map(move |addr| addr.into_address().unwrap())
                 .boxed(),
         ),
     ])

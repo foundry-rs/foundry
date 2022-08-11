@@ -141,9 +141,6 @@ impl<'a> InvariantExecutor<'a> {
                         .call_raw(*sender, *address, calldata.0.clone(), U256::zero())
                         .expect("could not make raw evm call");
 
-                    dbg!(format!("{:?}", *sender));
-                    dbg!(format!("{:?}", hex::encode(calldata.0.as_ref())));
-
                     // Collect data for fuzzing from the state changeset.
                     let state_changeset =
                         call_result.state_changeset.to_owned().expect("to have a state changeset.");

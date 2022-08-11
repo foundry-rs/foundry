@@ -67,18 +67,8 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         for (slot, value) in &account.storage {
             state.insert(utils::u256_to_h256_be(*slot).into());
             state.insert(utils::u256_to_h256_be(*value).into());
-
-            // dbg!(hex::encode(utils::u256_to_h256_be(*value).into()));
-            // dbg!(hex::encode::<[u8]>(utils::u256_to_h256_be(*value).into()));
-            dbg!(hex::encode::<[u8; 32]>(utils::u256_to_h256_be(*value).into()));
-            dbg!(hex::encode::<[u8; 32]>(utils::u256_to_h256_be(*value).into()));
-            // println!("#######################");
         }
     }
-
-    // state.iter().for_each(|a| {
-    //     dbg!(hex::encode(a));
-    // });
 
     // need at least some state data if db is empty otherwise we can't select random data for state
     // fuzzing
