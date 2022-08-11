@@ -282,14 +282,14 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(ForkUrl { url: url.to_string(), block: None });
+                return Ok(ForkUrl { url: url.to_string(), block: None })
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(ForkUrl { url: url.to_string(), block: Some(block) });
+                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
             }
         }
         Ok(ForkUrl { url: s.to_string(), block: None })

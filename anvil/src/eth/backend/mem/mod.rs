@@ -9,7 +9,7 @@ use crate::{
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
-            time::{utc_from_secs, TimeManager},
+            time::{duration_since_unix_epoch, utc_from_secs, TimeManager},
             validate::TransactionValidator,
         },
         error::{BlockchainError, InvalidTransactionError},
@@ -62,8 +62,6 @@ use storage::{Blockchain, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
 use trie_db::{Recorder, Trie};
-
-use super::time::duration_since_unix_epoch;
 
 pub mod fork_db;
 pub mod in_memory_db;
@@ -210,7 +208,7 @@ impl Backend {
     /// Returns `true` if the account is already impersonated
     pub async fn impersonate(&self, addr: Address) -> bool {
         if self.cheats.is_impersonated(addr) {
-            return true;
+            return true
         }
         // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
         // the code hash to `KECCAK_EMPTY` temporarily and also remove the code itself and add back
@@ -716,7 +714,7 @@ impl Backend {
                     env.block.number.as_u64(),
                     block_number.as_u64(),
                 ))
-            };
+            }
         }
 
         let db = self.db.read().await;
@@ -751,12 +749,12 @@ impl Backend {
         hash: H256,
     ) -> Result<Vec<Log>, BlockchainError> {
         if let Some(block) = self.blockchain.storage.read().blocks.get(&hash).cloned() {
-            return Ok(self.mined_logs_for_block(filter, block));
+            return Ok(self.mined_logs_for_block(filter, block))
         }
 
         if let Some(fork) = self.get_fork() {
             let filter = filter;
-            return Ok(fork.logs(&filter).await?);
+            return Ok(fork.logs(&filter).await?)
         }
 
         Ok(Vec::new())
@@ -883,11 +881,11 @@ impl Backend {
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash(hash).await?);
+            return Ok(fork.block_by_hash(hash).await?)
         }
 
         Ok(None)
@@ -899,11 +897,11 @@ impl Backend {
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.get_full_block(hash) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash_full(hash).await?);
+            return Ok(fork.block_by_hash_full(hash).await?)
         }
 
         Ok(None)
@@ -935,11 +933,11 @@ impl Backend {
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?);
+            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
         }
 
         Ok(None)
@@ -951,11 +949,11 @@ impl Backend {
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.get_full_block(number) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?);
+            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?)
         }
 
         Ok(None)
@@ -1102,7 +1100,7 @@ impl Backend {
             if let Some(state) =
                 self.hash_for_block_number(block_number.as_u64()).and_then(|hash| states.get(&hash))
             {
-                return f(Box::new(state));
+                return f(Box::new(state))
             }
         }
         let db = self.db.read().await;
@@ -1137,7 +1135,7 @@ impl Backend {
             let account = db.basic(address);
             if account.code_hash == KECCAK_EMPTY {
                 // if the code hash is `KECCAK_EMPTY`, we check no further
-                return Ok(Default::default());
+                return Ok(Default::default())
             }
             let code = if let Some(code) = account.code {
                 code
@@ -1182,11 +1180,11 @@ impl Backend {
     /// Returns the traces for the given transaction
     pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, BlockchainError> {
         if let Some(traces) = self.mined_parity_trace_transaction(hash) {
-            return Ok(traces);
+            return Ok(traces)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.trace_transaction(hash).await?);
+            return Ok(fork.trace_transaction(hash).await?)
         }
 
         Ok(vec![])
@@ -1212,12 +1210,12 @@ impl Backend {
     pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>, BlockchainError> {
         let number = self.convert_block_number(Some(block));
         if let Some(traces) = self.mined_parity_trace_block(number) {
-            return Ok(traces);
+            return Ok(traces)
         }
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return Ok(fork.trace_block(number).await?);
+                return Ok(fork.trace_block(number).await?)
             }
         }
 
@@ -1229,11 +1227,11 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<TransactionReceipt>, BlockchainError> {
         if let tx @ Some(_) = self.mined_transaction_receipt(hash) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_receipt(hash).await?);
+            return Ok(fork.transaction_receipt(hash).await?)
         }
 
         Ok(None)
@@ -1336,15 +1334,13 @@ impl Backend {
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
         if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.hash) {
-            return Ok(self.mined_transaction_by_block_hash_and_index(hash, index));
+            return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
         let number = self.convert_block_number(Some(number));
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return Ok(fork
-                    .transaction_by_block_number_and_index(number, index.into())
-                    .await?);
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
         }
 
@@ -1357,11 +1353,11 @@ impl Backend {
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
         if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?);
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
         }
 
         Ok(None)
@@ -1390,11 +1386,11 @@ impl Backend {
     ) -> Result<Option<Transaction>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
-            return Ok(tx);
+            return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_hash(hash).await?);
+            return Ok(fork.transaction_by_hash(hash).await?)
         }
 
         Ok(None)
@@ -1520,19 +1516,19 @@ impl TransactionValidator for Backend {
         let tx = &pending.transaction;
         if tx.gas_limit() > env.block.gas_limit {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
-            return Err(InvalidTransactionError::GasTooHigh);
+            return Err(InvalidTransactionError::GasTooHigh)
         }
 
         // check nonce
         let nonce: u64 = (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMax)?;
         if nonce < account.nonce {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
-            return Err(InvalidTransactionError::NonceTooLow);
+            return Err(InvalidTransactionError::NonceTooLow)
         }
 
         if (env.cfg.spec_id as u8) >= (SpecId::LONDON as u8) && tx.gas_price() < env.block.basefee {
             warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.block.basefee);
-            return Err(InvalidTransactionError::FeeTooLow);
+            return Err(InvalidTransactionError::FeeTooLow)
         }
 
         let max_cost = tx.max_cost();
@@ -1546,7 +1542,7 @@ impl TransactionValidator for Backend {
 
         if account.balance < req_funds {
             warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
-            return Err(InvalidTransactionError::Payment);
+            return Err(InvalidTransactionError::Payment)
         }
         Ok(())
     }
@@ -1559,7 +1555,7 @@ impl TransactionValidator for Backend {
     ) -> Result<(), InvalidTransactionError> {
         self.validate_pool_transaction_for(tx, account, env)?;
         if tx.nonce().as_u64() > account.nonce {
-            return Err(InvalidTransactionError::NonceTooHigh);
+            return Err(InvalidTransactionError::NonceTooHigh)
         }
         Ok(())
     }
