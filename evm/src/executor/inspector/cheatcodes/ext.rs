@@ -1,13 +1,13 @@
 use crate::{
     abi::HEVMCalls,
     executor::inspector::{
-        cheatcodes::util::{self, encode_error},
+        cheatcodes::util::{self},
         Cheatcodes,
     },
 };
 use bytes::Bytes;
 use ethers::{
-    abi::{self, encode, AbiEncode, Error, ParamType, Token},
+    abi::{self, AbiEncode, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::*,
     utils::hex::FromHex,
@@ -183,9 +183,9 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
-        vec![val.to_string()]
+        vec![val]
     };
-    let is_array: bool = if delim.is_some() { true } else { false };
+    let is_array: bool = delim.is_some();
     value_to_abi(val, r#type, is_array)
 }
 
@@ -309,18 +309,15 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-    let values: Value = jsonpath_rust::JsonPathFinder::from_str(json, key)?.find();
+    let values: Value = JsonPathFinder::from_str(json, key)?.find();
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
     let res = values
         .as_array()
-        .ok_or(util::encode_error("JsonPath did not return an array"))?
+        .ok_or_else(|| util::encode_error("JsonPath did not return an array"))?
         .iter()
-        .map(|inner| {
-            let val = inner;
-            value_to_token(val).map_err(util::encode_error)
-        })
+        .map(|inner| value_to_token(inner).map_err(util::encode_error))
         .collect::<Result<Vec<Token>, Bytes>>();
     // encode the bytes as the 'bytes' solidity type
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
