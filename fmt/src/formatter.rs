@@ -2521,7 +2521,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(fmt.buf(), " {{")?;
             fmt.surrounded(
-                structure.fields.first().unwrap().loc.start(),
+                structure.name.loc.end(),
                 "",
                 "}",
                 Some(structure.loc.end()),
