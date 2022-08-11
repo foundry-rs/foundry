@@ -209,7 +209,7 @@ impl<'a> InvariantExecutor<'a> {
             });
         }
 
-        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(|a| hex::encode(a)));
+        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(hex::encode));
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 
@@ -512,7 +512,7 @@ fn collect_data(
         invariant_contract.address,
         &call_result.logs,
         &*state_changeset,
-        fuzz_state.clone(),
+        fuzz_state,
     );
 
     // Re-add changes
