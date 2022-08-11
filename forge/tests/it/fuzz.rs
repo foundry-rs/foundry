@@ -10,8 +10,14 @@ use std::collections::BTreeMap;
 fn test_fuzz() {
     let mut runner = runner();
 
-    let suite_result =
-        runner.test(&Filter::new(".*", ".*", ".*fuzz/[^invariant]"), None, TEST_OPTS).unwrap();
+    let suite_result = runner
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/[^invariant]")
+                .exclude_tests(r#"invariantCounter|testIncrement\(address\)|testNeedle(uint256)"#),
+            None,
+            TEST_OPTS,
+        )
+        .unwrap();
 
     assert!(!suite_result.is_empty());
 
