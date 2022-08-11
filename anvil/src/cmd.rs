@@ -50,6 +50,9 @@ pub struct NodeArgs {
     )]
     pub balance: u64,
 
+    #[clap(long, help = "The timestamp of the genesis block", value_name = "NUM")]
+    pub timestamp: Option<u64>,
+
     #[clap(
         long,
         short,
@@ -129,6 +132,7 @@ impl NodeArgs {
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
+            .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(
                 self.evm_opts
@@ -278,14 +282,14 @@ impl FromStr for ForkUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((url, block)) = s.rsplit_once('@') {
             if block == "latest" {
-                return Ok(ForkUrl { url: url.to_string(), block: None })
+                return Ok(ForkUrl { url: url.to_string(), block: None });
             }
             // this will prevent false positives for auths `user:password@example.com`
             if !block.is_empty() && !block.contains(':') && !block.contains('.') {
                 let block: u64 = block
                     .parse()
                     .map_err(|_| format!("Failed to parse block number: `{block}`"))?;
-                return Ok(ForkUrl { url: url.to_string(), block: Some(block) })
+                return Ok(ForkUrl { url: url.to_string(), block: Some(block) });
             }
         }
         Ok(ForkUrl { url: s.to_string(), block: None })

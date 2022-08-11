@@ -1,8 +1,5 @@
 //! In-memory blockchain storage
-use crate::eth::{
-    backend::{db::StateDb, time::duration_since_unix_epoch},
-    pool::transactions::PoolTransaction,
-};
+use crate::eth::{backend::db::StateDb, pool::transactions::PoolTransaction};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
@@ -99,10 +96,10 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
-            timestamp: duration_since_unix_epoch().as_secs(),
+            timestamp,
             base_fee,
             gas_limit: env.block.gas_limit,
             beneficiary: env.block.coinbase,
@@ -173,8 +170,8 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee))) }
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
