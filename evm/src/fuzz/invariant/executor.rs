@@ -209,7 +209,7 @@ impl<'a> InvariantExecutor<'a> {
             });
         }
 
-        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(hex::encode));
+        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 

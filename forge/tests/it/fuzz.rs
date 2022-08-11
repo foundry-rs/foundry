@@ -1,6 +1,7 @@
 //! Tests for invariants
 
 use crate::{config::*, test_helpers::filter::Filter};
+use ethers::types::U256;
 use forge::result::SuiteResult;
 use foundry_evm::decode::decode_console_logs;
 use std::collections::BTreeMap;
@@ -46,8 +47,9 @@ fn test_fuzz_collection() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.invariant_depth = 200;
+    opts.invariant_depth = 100;
     opts.fuzz_runs = 1000;
+    opts.fuzz_seed = Some(U256::from(3u32));
     runner.test_options = opts;
 
     let results =

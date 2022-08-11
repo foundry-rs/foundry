@@ -123,7 +123,8 @@ impl<'a> FuzzedExecutor<'a> {
                 ))
             }
         });
-        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(hex::encode));
+
+        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {
