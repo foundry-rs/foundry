@@ -9,7 +9,7 @@ contract ParseJson is DSTest {
     string json;
 
     function setUp() public {
-        string memory path = "../testdata/fixtures/ParseJson/test.json";
+        string memory path = "../testdata/fixtures/Json/test.json";
         json = cheats.readFile(path);
     }
 
@@ -89,3 +89,4 @@ contract ParseJson is DSTest {
         assertEq(whole.strArray[1], "there");
     }
 }
+

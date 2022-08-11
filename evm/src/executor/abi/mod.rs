@@ -108,7 +108,6 @@ ethers::contract::abigen!(
             rpcUrls()(string[2][])
             parseJson(string, string)(bytes)
             parseJson(string)(bytes)
-            writeJson(string[], string[], string, bool)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};
