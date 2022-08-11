@@ -293,7 +293,7 @@ impl SnapshotDiff {
     /// Returns the gas diff
     ///
     /// `> 0` if the source used more gas
-    /// `< 0` if the source used more gas
+    /// `< 0` if the target used more gas
     fn gas_change(&self) -> i128 {
         self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
@@ -393,12 +393,13 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 }
 
 fn fmt_pct_change(change: f64) -> String {
+    let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Paint::green(format!("{:.3}%", change)).to_string(),
+        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change)
+            format!("{:.3}%", change_pct)
         }
-        Ordering::Greater => Paint::red(format!("{:.3}%", change)).to_string(),
+        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
     }
 }
 
