@@ -73,7 +73,7 @@ impl Display for Item {
             }
             Item::Array(arr) => {
                 write!(f, "[")?;
-                let mut iter = arr.into_iter().peekable();
+                let mut iter = arr.iter().peekable();
                 while let Some(item) = iter.next() {
                     write!(f, "{item}")?;
                     if iter.peek().is_some() {
