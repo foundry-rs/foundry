@@ -100,7 +100,7 @@ async fn test_trace_address_fork() {
 
     let from: Address = "0x2e4777139254ff76db957e284b186a4507ff8c67".parse().unwrap();
     let to: Address = "0xe2f2a5c287993345a840db3b0845fbc70f5935a5".parse().unwrap();
-    let tx = TransactionRequest::new().to(to).from(from).data(input);
+    let tx = TransactionRequest::new().to(to).from(from).data(input).gas(300_000);
 
     api.anvil_impersonate_account(from).await.unwrap();
 
