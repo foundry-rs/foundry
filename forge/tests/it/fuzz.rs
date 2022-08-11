@@ -2,8 +2,8 @@
 
 use crate::{config::*, test_helpers::filter::Filter};
 use forge::result::SuiteResult;
-
 use foundry_evm::decode::decode_console_logs;
+use std::collections::BTreeMap;
 
 #[test]
 fn test_fuzz() {
@@ -39,4 +39,35 @@ fn test_fuzz() {
             }
         }
     }
+}
+
+#[test]
+fn test_fuzz_collection() {
+    let mut runner = runner();
+
+    let mut opts = TEST_OPTS;
+    opts.invariant_depth = 200;
+    opts.fuzz_runs = 1000;
+    runner.test_options = opts;
+
+    let results =
+        runner.test(&Filter::new(".*", ".*", ".*fuzz/FuzzCollection.t.sol"), None, opts).unwrap();
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/FuzzCollection.t.sol:SampleContractTest",
+            vec![
+                ("invariantCounter", false, Some("broken counter.".into()), None, None),
+                (
+                    "testIncrement(address)",
+                    false,
+                    Some("Call did not revert as expected".into()),
+                    None,
+                    None,
+                ),
+                ("testNeedle(uint256)", false, Some("needle found.".into()), None, None),
+            ],
+        )]),
+    );
 }
