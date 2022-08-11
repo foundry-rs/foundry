@@ -291,6 +291,9 @@ impl EthApi {
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
                 self.evm_set_next_block_timestamp(time).to_rpc_result()
             }
+            EthRequest::EvmSetBlockGasLimit(gas_limit) => {
+                self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
+            }
             EthRequest::EvmSetBlockTimeStampInterval(time) => {
                 self.evm_set_block_timestamp_interval(time).to_rpc_result()
             }
@@ -1383,6 +1386,15 @@ impl EthApi {
         node_info!("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds);
         Ok(())
+    }
+
+    /// Set the next block gas limit
+    ///
+    /// Handler for RPC call: `evm_setBlockGasLimit`
+    pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
+        node_info!("evm_setBlockGasLimit");
+        self.backend.set_gas_limit(gas_limit);
+        Ok(true)
     }
 
     /// Sets an interval for the block timestamp
