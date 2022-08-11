@@ -73,7 +73,7 @@ impl QuoteStyle {
 impl Default for FormatterConfig {
     fn default() -> Self {
         FormatterConfig {
-            line_length: 80,
+            line_length: 120,
             tab_width: 4,
             bracket_spacing: false,
             int_types: IntTypes::Long,
