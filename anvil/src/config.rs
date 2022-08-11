@@ -302,7 +302,7 @@ impl Default for NodeConfig {
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
-            genesis_timestamp: Some(duration_since_unix_epoch().as_secs()),
+            genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
@@ -391,7 +391,7 @@ impl NodeConfig {
 
     /// Returns the genesis timestamp to use
     pub fn get_genesis_timestamp(&self) -> u64 {
-        self.genesis_timestamp.unwrap_or_default()
+        self.genesis_timestamp.unwrap_or_else(|| duration_since_unix_epoch().as_secs())
     }
 
     /// Sets the genesis timestamp
