@@ -29,26 +29,6 @@ pub mod rpc;
 pub mod selectors;
 pub use selectors::decode_selector;
 
-/// Very simple fuzzy matching of contract bytecode.
-///
-/// Will fail for small contracts that are essentially all immutable variables.
-pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let cutoff_len = usize::min(a.len(), b.len());
-    if cutoff_len == 0 {
-        return 1.0
-    }
-
-    let a = &a[..cutoff_len];
-    let b = &b[..cutoff_len];
-    let mut diff_chars = 0;
-    for i in 0..cutoff_len {
-        if a[i] != b[i] {
-            diff_chars += 1;
-        }
-    }
-    diff_chars as f64 / cutoff_len as f64
-}
-
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
     pub contract: CompactContractBytecode,
@@ -265,40 +245,6 @@ impl<'a> IntoFunction for &'a str {
     }
 }
 
-/// Flattens a group of contracts into maps of all events and functions
-pub fn flatten_known_contracts(
-    contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
-) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
-    let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
-        .iter()
-        .flat_map(|(_name, (abi, _code))| {
-            abi.functions()
-                .map(|func| (func.short_signature(), func.clone()))
-                .collect::<BTreeMap<[u8; 4], Function>>()
-        })
-        .collect();
-
-    let flattened_events: BTreeMap<H256, Event> = contracts
-        .iter()
-        .flat_map(|(_name, (abi, _code))| {
-            abi.events()
-                .map(|event| (event.signature(), event.clone()))
-                .collect::<BTreeMap<H256, Event>>()
-        })
-        .collect();
-
-    // We need this for better revert decoding, and want it in abi form
-    let mut errors_abi = Abi::default();
-    contracts.iter().for_each(|(_name, (abi, _code))| {
-        abi.errors().for_each(|error| {
-            let entry =
-                errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
-            entry.push(error.clone());
-        });
-    });
-    (flattened_funcs, flattened_events, errors_abi)
-}
-
 /// Given a k/v serde object, it pretty prints its keys and values as a table.
 pub fn to_table(value: serde_json::Value) -> String {
     match value {
@@ -393,7 +339,6 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
             } else {
                 StrictTokenizer::tokenize(param, value)
             };
-
             if token.is_err() && value.starts_with("0x") {
                 match param {
                     ParamType::FixedBytes(32) => {
@@ -421,10 +366,56 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
                     _ => {}
                 }
             }
-            token
+
+            token.map(sanitize_token)
         })
         .collect::<Result<_, _>>()
         .wrap_err("Failed to parse tokens")
+}
+
+/// cleans up potential shortcomings of the ethabi Tokenizer
+///
+/// For example: parsing a string array with a single empty string: `[""]`, is returned as
+/// ```text
+///     [
+//         String(
+//             "\"\"",
+//         ),
+//     ],
+/// ```
+/// 
+/// But should just be
+/// ```text
+///     [
+//         String(
+//             "",
+//         ),
+//     ],
+/// ```
+/// 
+/// This will handle this edge case
+fn sanitize_token(token: Token) -> Token {
+    match token {
+        Token::Array(tokens) => {
+            let mut sanitized = Vec::with_capacity(tokens.len());
+            for token in tokens {
+                let token = match token {
+                    Token::String(val) => {
+                        let val = match val.as_str() {
+                            // this is supposed to be an empty string
+                            "\"\"" | "''" => "".to_string(),
+                            _ => val,
+                        };
+                        Token::String(val)
+                    }
+                    _ => sanitize_token(token),
+                };
+                sanitized.push(token)
+            }
+            Token::Array(sanitized)
+        }
+        _ => token,
+    }
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
@@ -815,6 +806,37 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+    use foundry_common::ContractsByArtifact;
+
+    #[test]
+    fn can_sanitize_token() {
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("[\"\"]", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("['']", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(sanitized, Token::Array(vec![Token::String("".to_string())]));
+
+        let token = Token::Array(
+            LenientTokenizer::tokenize_array("[\"\",\"\"]", &ParamType::String).unwrap(),
+        );
+        let sanitized = sanitize_token(token);
+        assert_eq!(
+            sanitized,
+            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+        );
+
+        let token =
+            Token::Array(LenientTokenizer::tokenize_array("['','']", &ParamType::String).unwrap());
+        let sanitized = sanitize_token(token);
+        assert_eq!(
+            sanitized,
+            Token::Array(vec![Token::String("".to_string()), Token::String("".to_string())])
+        );
+    }
 
     #[test]
     fn parse_hex_uint_tokens() {
@@ -855,7 +877,7 @@ mod tests {
             .map(|(id, c)| (id, c.into_contract_bytecode()))
             .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
 
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts = ContractsByArtifact::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
             Default::default();
 

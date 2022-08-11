@@ -15,6 +15,7 @@ foundry-config = { path = "../config" }
 
 # eth
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 # io

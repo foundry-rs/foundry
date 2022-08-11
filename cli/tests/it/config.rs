@@ -35,6 +35,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         force: true,
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
+        gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         offline: true,

@@ -8,11 +8,9 @@ use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
 use ethers::{
     prelude::{Log as EthersLog, H256 as TxHash},
-    types::FilteredParams,
+    types::{Filter, FilteredParams},
 };
 use futures::{channel::mpsc::Receiver, Stream, StreamExt};
-
-use ethers::types::Filter;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -23,6 +21,7 @@ use std::{
 use tokio::sync::Mutex;
 use tracing::{trace, warn};
 
+/// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap = Arc<Mutex<HashMap<String, (EthFilter, Instant)>>>;
 
 /// timeout after which to remove an active filter if it wasn't polled since then
@@ -45,19 +44,19 @@ impl Filters {
         let id = new_id();
         trace!(target: "node::filter", "Adding new filter id {}", id);
         let mut filters = self.active_filters.lock().await;
-        filters.insert(id.clone(), (filter, Instant::now()));
+        filters.insert(id.clone(), (filter, self.next_deadline()));
         id
     }
 
     pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
         {
             let mut filters = self.active_filters.lock().await;
-            if let Some((filter, timestamp)) = filters.get_mut(id) {
+            if let Some((filter, deadline)) = filters.get_mut(id) {
                 let resp = filter
                     .next()
                     .await
                     .unwrap_or_else(|| ResponseResult::success(Vec::<()>::new()));
-                *timestamp = Instant::now();
+                *deadline = self.next_deadline();
                 return resp
             }
         }
@@ -85,11 +84,17 @@ impl Filters {
         self.keepalive
     }
 
+    /// Returns the timestamp after which a filter should expire
+    fn next_deadline(&self) -> Instant {
+        Instant::now() + self.keep_alive()
+    }
+
+    /// Evict all filters that weren't updated and reached there deadline
     pub async fn evict(&self) {
         trace!(target: "node::filter", "Evicting stale filters");
-        let deadline = Instant::now() - self.keepalive;
+        let now = Instant::now();
         let mut active_filters = self.active_filters.lock().await;
-        active_filters.retain(|_, (_, timestamp)| *timestamp > deadline);
+        active_filters.retain(|_, (_, deadline)| *deadline > now);
     }
 }
 

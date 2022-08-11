@@ -1,7 +1,7 @@
 use super::{
-    assert_invariants, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
-    InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator,
-    TargetedContracts,
+    assert_invariants, filters::ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts,
+    InvariantContract, InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions,
+    RandomCallGenerator, TargetedContracts,
 };
 use crate::{
     executor::{
@@ -14,13 +14,15 @@ use crate::{
         },
         FuzzCase, FuzzedCases,
     },
+    utils::get_function,
     CALLER,
 };
 use ethers::{
     abi::{Abi, Address, Detokenize, FixedBytes, Function, Tokenizable, TokenizableItem},
-    prelude::{ArtifactId, U256},
+    prelude::U256,
 };
 use eyre::ContextCompat;
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -44,10 +46,12 @@ pub struct InvariantExecutor<'a> {
     /// Proptest runner.
     runner: TestRunner,
     /// Contracts deployed with `setUp()`
-    setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
+    setup_contracts: &'a ContractsByAddress,
     /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
     /// to identify them from the stateset changes.
-    project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    project_contracts: &'a ContractsByArtifact,
+    /// Filters contracts to be fuzzed through their artifact identifiers.
+    artifact_filters: ArtifactFilters,
 }
 
 impl<'a> InvariantExecutor<'a> {
@@ -55,10 +59,16 @@ impl<'a> InvariantExecutor<'a> {
     pub fn new(
         executor: &'a mut Executor,
         runner: TestRunner,
-        setup_contracts: &'a BTreeMap<Address, (String, Abi)>,
-        project_contracts: &'a BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        setup_contracts: &'a ContractsByAddress,
+        project_contracts: &'a ContractsByArtifact,
     ) -> Self {
-        Self { executor, runner, setup_contracts, project_contracts }
+        Self {
+            executor,
+            runner,
+            setup_contracts,
+            project_contracts,
+            artifact_filters: ArtifactFilters::default(),
+        }
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`
@@ -140,13 +150,17 @@ impl<'a> InvariantExecutor<'a> {
                         &state_changeset,
                         fuzz_state.clone(),
                     );
-                    collect_created_contracts(
+
+                    if let Err(error) = collect_created_contracts(
                         &state_changeset,
                         self.project_contracts,
                         self.setup_contracts,
+                        &self.artifact_filters,
                         targeted_contracts.clone(),
                         &mut created_contracts,
-                    );
+                    ) {
+                        warn!(target: "forge::test", "{error}");
+                    }
 
                     // Commit changes to the database.
                     executor.backend_mut().commit(state_changeset);
@@ -207,6 +221,7 @@ impl<'a> InvariantExecutor<'a> {
         test_options: InvariantTestOptions,
     ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
+        self.select_contract_artifacts(invariant_contract.address, invariant_contract.abi)?;
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address, invariant_contract.abi)?;
 
@@ -256,6 +271,88 @@ impl<'a> InvariantExecutor<'a> {
         Ok((fuzz_state, targeted_contracts, strat))
     }
 
+    /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
+    /// format). They will be used to filter contracts after the `setUp`, and more importantly,
+    /// during the runs.
+    ///
+    /// Priority:
+    ///
+    /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
+    pub fn select_contract_artifacts(
+        &mut self,
+        invariant_address: Address,
+        abi: &Abi,
+    ) -> eyre::Result<()> {
+        // targetArtifactSelectors -> (string, bytes4[])[].
+        let targeted_abi = self
+            .get_list::<(String, Vec<FixedBytes>)>(
+                invariant_address,
+                abi,
+                "targetArtifactSelectors",
+            )
+            .into_iter()
+            .map(|(contract, functions)| (contract, functions))
+            .collect::<BTreeMap<_, _>>();
+
+        // Insert them into the executor `targeted_abi`.
+        for (contract, selectors) in targeted_abi {
+            let identifier = self.validate_selected_contract(contract, &selectors)?;
+
+            self.artifact_filters.targeted.entry(identifier).or_insert(vec![]).extend(selectors);
+        }
+
+        // targetArtifacts -> string[]
+        // excludeArtifacts -> string[].
+        let [selected_abi, excluded_abi] = ["targetArtifacts", "excludeArtifacts"]
+            .map(|method| self.get_list::<String>(invariant_address, abi, method));
+
+        // Insert `excludeArtifacts` into the executor `excluded_abi`.
+        for contract in excluded_abi {
+            let identifier = self.validate_selected_contract(contract, &[])?;
+
+            if !self.artifact_filters.excluded.contains(&identifier) {
+                self.artifact_filters.excluded.push(identifier);
+            }
+        }
+
+        // Insert `targetArtifacts` into the executor `targeted_abi`, if they have not been seen
+        // before.
+        for contract in selected_abi {
+            let identifier = self.validate_selected_contract(contract, &[])?;
+
+            if !self.artifact_filters.targeted.contains_key(&identifier) &&
+                !self.artifact_filters.excluded.contains(&identifier)
+            {
+                self.artifact_filters.targeted.insert(identifier, vec![]);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Makes sure that the contract exists in the project. If so, it returns its artifact
+    /// identifier.
+    fn validate_selected_contract(
+        &mut self,
+        contract: String,
+        selectors: &[FixedBytes],
+    ) -> eyre::Result<String> {
+        if let Some((artifact, (abi, _))) =
+            self.project_contracts.find_by_name_or_identifier(&contract)?
+        {
+            // Check that the selectors really exist for this contract.
+            for selector in selectors {
+                abi.functions()
+                    .into_iter()
+                    .find(|func| func.short_signature().as_slice() == selector.as_slice())
+                    .wrap_err(format!("{contract} does not have the selector {:?}", selector))?;
+            }
+
+            return Ok(artifact.identifier())
+        }
+        eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
+    }
+
     /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
     /// `targetContracts() -> address[]` and `excludeContracts() -> address[]`.
     pub fn select_contracts_and_senders(
@@ -271,14 +368,18 @@ impl<'a> InvariantExecutor<'a> {
             .setup_contracts
             .clone()
             .into_iter()
-            .filter(|(addr, _)| {
+            .filter(|(addr, (identifier, _))| {
                 *addr != invariant_address &&
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
                     (selected.is_empty() || selected.contains(addr)) &&
-                    (excluded.is_empty() || !excluded.contains(addr))
+                    (self.artifact_filters.targeted.is_empty() ||
+                        self.artifact_filters.targeted.contains_key(identifier)) &&
+                    (excluded.is_empty() || !excluded.contains(addr)) &&
+                    (self.artifact_filters.excluded.is_empty() ||
+                        !self.artifact_filters.excluded.contains(identifier))
             })
-            .map(|(addr, (name, abi))| (addr, (name, abi, vec![])))
+            .map(|(addr, (identifier, abi))| (addr, (identifier, abi, vec![])))
             .collect();
 
         self.select_selectors(invariant_address, abi, &mut contracts)?;
@@ -286,45 +387,67 @@ impl<'a> InvariantExecutor<'a> {
         Ok((senders, contracts))
     }
 
-    /// Selects the functions to fuzz based on the contract method `targetSelectors() -> (address,
-    /// bytes4[])[]`.
+    /// Selects the functions to fuzz based on the contract method `targetSelectors()` and
+    /// `targetArtifactSelectors()`.
     pub fn select_selectors(
         &self,
         address: Address,
         abi: &Abi,
         targeted_contracts: &mut TargetedContracts,
     ) -> eyre::Result<()> {
+        // `targetArtifactSelectors() -> (string, bytes4[])[]`.
+        let some_abi_selectors = self
+            .artifact_filters
+            .targeted
+            .iter()
+            .filter(|(_, selectors)| !selectors.is_empty())
+            .collect::<BTreeMap<_, _>>();
+
+        for (address, (identifier, _)) in self.setup_contracts.iter() {
+            if let Some(selectors) = some_abi_selectors.get(identifier) {
+                self.add_address_with_functions(
+                    *address,
+                    (*selectors).clone(),
+                    targeted_contracts,
+                )?;
+            }
+        }
+
+        // `targetSelectors() -> (address, bytes4[])[]`.
         let selectors =
             self.get_list::<(Address, Vec<FixedBytes>)>(address, abi, "targetSelectors");
 
-        fn get_function(name: &str, selector: FixedBytes, abi: &Abi) -> eyre::Result<Function> {
-            abi.functions()
-                .into_iter()
-                .find(|func| func.short_signature().as_slice() == selector.as_slice())
-                .cloned()
-                .wrap_err(format!("{name} does not have the selector {:?}", selector))
-        }
-
         for (address, bytes4_array) in selectors.into_iter() {
-            if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
-                // The contract is already part of our filter, and all we do is specify that we're
-                // only looking at specific functions coming from `bytes4_array`.
-                for selector in bytes4_array {
-                    address_selectors.push(get_function(name, selector, abi)?);
-                }
-            } else {
-                let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
-                    "[targetSelectors] address does not have an associated contract: {}",
-                    address
-                ))?;
+            self.add_address_with_functions(address, bytes4_array, targeted_contracts)?;
+        }
+        Ok(())
+    }
 
-                let functions = bytes4_array
-                    .into_iter()
-                    .map(|selector| get_function(name, selector, abi))
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
+    /// Adds the address and fuzzable functions to `TargetedContracts`.
+    fn add_address_with_functions(
+        &self,
+        address: Address,
+        bytes4_array: Vec<Vec<u8>>,
+        targeted_contracts: &mut TargetedContracts,
+    ) -> eyre::Result<()> {
+        if let Some((name, abi, address_selectors)) = targeted_contracts.get_mut(&address) {
+            // The contract is already part of our filter, and all we do is specify that we're
+            // only looking at specific functions coming from `bytes4_array`.
+            for selector in bytes4_array {
+                address_selectors.push(get_function(name, &selector, abi)?);
             }
+        } else {
+            let (name, abi) = self.setup_contracts.get(&address).wrap_err(format!(
+                "[targetSelectors] address does not have an associated contract: {}",
+                address
+            ))?;
+
+            let functions = bytes4_array
+                .into_iter()
+                .map(|selector| get_function(name, &selector, abi))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            targeted_contracts.insert(address, (name.to_string(), abi.clone(), functions));
         }
         Ok(())
     }

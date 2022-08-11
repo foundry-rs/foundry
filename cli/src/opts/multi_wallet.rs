@@ -6,12 +6,13 @@ use std::{
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::{Http, Middleware, Provider, RetryClient, Signer},
+    prelude::{Middleware, Signer},
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
 use eyre::Result;
 
+use foundry_common::RetryProvider;
 use foundry_config::Config;
 use serde::Serialize;
 
@@ -191,7 +192,7 @@ impl MultiWallet {
     /// error, if it can't find all.
     pub async fn find_all(
         &self,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
     ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");

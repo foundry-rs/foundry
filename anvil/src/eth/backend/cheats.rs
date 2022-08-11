@@ -2,6 +2,7 @@
 
 use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{Address, Signature, H256, U256};
+use forge::revm::Bytecode;
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
@@ -32,15 +33,20 @@ impl CheatsManager {
     /// This also accepts the actual code hash if the address is a contract to bypass EIP-3607
     ///
     /// Returns `true` if the account is already impersonated
-    pub fn impersonate(&self, addr: Address, code_hash: Option<H256>) -> bool {
+    pub fn impersonate(
+        &self,
+        addr: Address,
+        code_hash: Option<H256>,
+        code: Option<Bytecode>,
+    ) -> bool {
         trace!(target: "cheats", "Start impersonating {:?}", addr);
-        self.state.write().impersonated_account.insert(addr, code_hash).is_some()
+        self.state.write().impersonated_account.insert(addr, (code_hash, code)).is_some()
     }
 
     /// Removes the account that from the impersonated set
-    pub fn stop_impersonating(&self, addr: &Address) -> Option<H256> {
+    pub fn stop_impersonating(&self, addr: &Address) -> Option<(Option<H256>, Option<Bytecode>)> {
         trace!(target: "cheats", "Stop impersonating {:?}", addr);
-        self.state.write().impersonated_account.remove(addr).flatten()
+        self.state.write().impersonated_account.remove(addr)
     }
 
     /// Returns true if the `addr` is currently impersonated
@@ -62,7 +68,7 @@ pub struct CheatsState {
     /// If the account is a contract it holds the hash of the contracts code that is temporarily
     /// set to `KECCAK_EMPTY` to bypass EIP-3607 which rejects transactions from senders with
     /// deployed code
-    pub impersonated_account: HashMap<Address, Option<H256>>,
+    pub impersonated_account: HashMap<Address, (Option<H256>, Option<Bytecode>)>,
     /// The signature used for the `eth_sendUnsignedTransaction` cheat code
     pub bypass_signature: Signature,
 }

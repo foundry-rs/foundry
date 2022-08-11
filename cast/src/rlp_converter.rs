@@ -1,6 +1,6 @@
 use ethers_core::utils::rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use serde_json::Value;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, Write};
 
 /// Arbitrarly nested data
 /// Item::Array(vec![]); is equivalent to []
@@ -29,7 +29,7 @@ impl Encodable for Item {
 }
 
 impl Decodable for Item {
-    fn decode(rlp: &Rlp) -> std::result::Result<Self, DecoderError> {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         if rlp.is_data() {
             return Ok(Item::Data(Vec::from(rlp.data()?)))
         }
@@ -73,11 +73,11 @@ impl Display for Item {
             }
             Item::Array(arr) => {
                 write!(f, "[")?;
-                for item in arr {
-                    if arr.last() == Some(item) {
-                        write!(f, "{item}")?;
-                    } else {
-                        write!(f, "{item},")?;
+                let mut iter = arr.into_iter().peekable();
+                while let Some(item) = iter.next() {
+                    write!(f, "{item}")?;
+                    if iter.peek().is_some() {
+                        f.write_char(',')?;
                     }
                 }
                 write!(f, "]")?;

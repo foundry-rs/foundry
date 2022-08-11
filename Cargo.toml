@@ -62,3 +62,6 @@ debug = 0
 #ethers-signers = { path = "../ethers-rs/ethers-signers" }
 #ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
+
+#[patch.crates-io]
+#revm = { path = "../../revm/crates/revm" }

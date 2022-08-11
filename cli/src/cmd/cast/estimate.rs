@@ -6,9 +6,10 @@ use crate::{
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
-    providers::{Middleware, Provider},
+    providers::Middleware,
     types::{NameOrAddress, U256},
 };
+use foundry_common::get_http_provider;
 use foundry_config::{Chain, Config};
 
 #[derive(Debug, Parser)]
@@ -62,9 +63,9 @@ impl EstimateArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let EstimateArgs { to, sig, args, value, eth, command } = self;
         let config = Config::from(&eth);
-        let provider = Provider::try_from(
+        let provider = get_http_provider(
             config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-        )?;
+        );
 
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };

@@ -141,11 +141,11 @@ impl ForkedDatabase {
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        self.cache_db.basic(address)
+        Database::basic(&mut self.cache_db, address)
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
-        self.cache_db.code_by_hash(code_hash)
+        Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
@@ -153,7 +153,7 @@ impl Database for ForkedDatabase {
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.cache_db.block_hash(number)
+        Database::block_hash(&mut self.cache_db, number)
     }
 }
 

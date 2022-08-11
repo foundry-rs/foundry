@@ -1,7 +1,7 @@
 use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
-    prelude::{Http, Provider, RetryClient, TransactionReceipt},
+    prelude::TransactionReceipt,
     solc::EvmVersion,
     types::U256,
     utils::format_units,
@@ -14,7 +14,6 @@ use std::{
     path::Path,
     process::{Command, Output},
     str::FromStr,
-    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -222,21 +221,6 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
-}
-
-/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
-/// node) and with the default, `7s` if otherwise.
-pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClient<Http>>> {
-    let (max_retry, initial_backoff) = if aggressive { (1000, 1) } else { (10, 1000) };
-
-    let provider = Provider::<RetryClient<Http>>::new_client(url, max_retry, initial_backoff)
-        .expect("Bad fork provider.");
-
-    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
-        provider.interval(Duration::from_millis(100))
-    } else {
-        provider
-    })
 }
 
 /// Prints parts of the receipt to stdout

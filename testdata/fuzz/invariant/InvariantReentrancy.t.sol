@@ -38,6 +38,7 @@ contract InvariantReentrancy is DSTest {
         mal = new Malicious();
         vuln = new Vulnerable(address(mal));
     }
+
     function invariantNotStolen() public {
         require(vuln.stolen() == false, "stolen.");
     }
