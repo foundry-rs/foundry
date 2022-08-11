@@ -1182,8 +1182,9 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn from_rlp(value: String) -> Result<String> {
-        let striped_value = strip_0x(&value);
+    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+        let value = value.as_ref();
+        let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
         Ok(format!("{}", item))
@@ -1453,5 +1454,15 @@ mod tests {
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
         assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+    }
+
+    #[test]
+    fn from_rlp() {
+        let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
+        let item = Cast::from_rlp(rlp).unwrap();
+        assert_eq!(
+            item,
+            r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
+        )
     }
 }
