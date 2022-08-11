@@ -53,17 +53,9 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 }
 
 /// Builds the initial [EvmFuzzState] from a database.
-pub fn build_initial_state<DB: DatabaseRef>(
-    test_address: Address,
-    db: &CacheDB<DB>,
-) -> EvmFuzzState {
+pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
     let mut state: BTreeSet<[u8; 32]> = BTreeSet::new();
     for (address, account) in db.accounts.iter() {
-        // We don't want to collect data from the test contract.
-        if *address == test_address {
-            continue
-        }
-
         let info = db.basic(*address);
 
         // Insert basic account information
@@ -97,7 +89,6 @@ pub fn build_initial_state<DB: DatabaseRef>(
 
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
 pub fn collect_state_from_call(
-    test_address: Address,
     logs: &[Log],
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
@@ -105,11 +96,6 @@ pub fn collect_state_from_call(
     let mut state = state.write();
 
     for (address, account) in state_changeset {
-        // We don't want to collect data from the test contract.
-        if *address == test_address {
-            continue
-        }
-
         // Insert basic account information
         state.insert(H256::from(*address).into());
         state.insert(utils::u256_to_h256_be(account.info.balance).into());
