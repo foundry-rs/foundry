@@ -1,16 +1,21 @@
 use crate::{
     abi::HEVMCalls,
-    executor::inspector::{cheatcodes::util, Cheatcodes},
+    executor::inspector::{
+        cheatcodes::util::{self},
+        Cheatcodes,
+    },
 };
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
-    types::{Address, I256, U256},
+    types::*,
     utils::hex::FromHex,
 };
 use foundry_common::fs;
+use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     env,
     io::{BufRead, BufReader, Write},
@@ -127,15 +132,7 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
         Ok(Bytes::new())
     }
 }
-
-fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
-    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
-    let val = if let Some(d) = delim {
-        val.split(d).map(|v| v.trim()).collect()
-    } else {
-        vec![val.as_str()]
-    };
-
+fn value_to_abi(val: Vec<String>, r#type: ParamType, is_array: bool) -> Result<Bytes, Bytes> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -172,13 +169,24 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         })
         .collect::<Result<Vec<Token>, String>>()
         .map(|mut tokens| {
-            if delim.is_none() {
-                abi::encode(&[tokens.remove(0)]).into()
-            } else {
+            if is_array {
                 abi::encode(&[Token::Array(tokens)]).into()
+            } else {
+                abi::encode(&[tokens.remove(0)]).into()
             }
         })
         .map_err(|e| e.into())
+}
+
+fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
+    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    let val = if let Some(d) = delim {
+        val.split(d).map(|v| v.trim().to_string()).collect()
+    } else {
+        vec![val]
+    };
+    let is_array: bool = delim.is_some();
+    value_to_abi(val, r#type, is_array)
 }
 
 fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
@@ -262,6 +270,60 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Converts a serde_json::Value to an abi::Token
+/// The function is designed to run recursively, so that in case of an object
+/// it will call itself to convert each of it's value and encode the whole as a
+/// Tuple
+fn value_to_token(value: &Value) -> Result<Token, Token> {
+    if value.is_boolean() {
+        Ok(Token::Bool(value.as_bool().unwrap()))
+    } else if value.is_string() {
+        let val = value.as_str().unwrap();
+        // If it can decoded as an address, it's an address
+        if let Ok(addr) = H160::from_str(val) {
+            Ok(Token::Address(addr))
+        } else {
+            Ok(Token::String(val.to_owned()))
+        }
+    } else if value.is_u64() {
+        Ok(Token::Uint(value.as_u64().unwrap().into()))
+    } else if value.is_i64() {
+        Ok(Token::Int(value.as_i64().unwrap().into()))
+    } else if value.is_array() {
+        let arr = value.as_array().unwrap();
+        Ok(Token::Array(arr.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>()))
+    } else if value.is_object() {
+        let values = value
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|val| value_to_token(val).unwrap())
+            .collect::<Vec<Token>>();
+        Ok(Token::Tuple(values))
+    } else {
+        Err(Token::String("Could not decode field".to_string()))
+    }
+}
+/// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
+/// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
+/// deserialized in the same order. That means that the solidity `struct` should order it's fields
+/// alphabetically and not by efficient packing or some other taxonomy.
+fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
+    let values: Value = JsonPathFinder::from_str(json, key)?.find();
+    // values is an array of items. Depending on the JsonPath key, they
+    // can be many or a single item. An item can be a single value or
+    // an entire JSON object.
+    let res = values
+        .as_array()
+        .ok_or_else(|| util::encode_error("JsonPath did not return an array"))?
+        .iter()
+        .map(|inner| value_to_token(inner).map_err(util::encode_error))
+        .collect::<Result<Vec<Token>, Bytes>>();
+    // encode the bytes as the 'bytes' solidity type
+    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
+    Ok(abi_encoded.into())
+}
+
 pub fn apply(
     state: &mut Cheatcodes,
     ffi_enabled: bool,
@@ -299,6 +361,10 @@ pub fn apply(
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        // If no key argument is passed, return the whole JSON object.
+        // "$" is the JSONPath key for the root of the object
+        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }
