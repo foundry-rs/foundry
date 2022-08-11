@@ -37,7 +37,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
-    time::Duration,
 };
 use yansi::Paint;
 
@@ -164,11 +163,9 @@ impl ScriptArgs {
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let etherscan_identifier = EtherscanIdentifier::new(
+            &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
-            script_config.config.etherscan_api_key.clone(),
-            Config::foundry_etherscan_chain_cache_dir(script_config.evm_opts.get_chain_id()),
-            Duration::from_secs(24 * 60 * 60),
-        );
+        )?;
 
         let local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =

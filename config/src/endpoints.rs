@@ -1,11 +1,8 @@
 //! Support for multiple RPC-endpoints
 
-use crate::{
-    resolve::{UnresolvedEnvVarError, RE_PLACEHOLDER},
-    RE_PLACEHOLDER,
-};
+use crate::resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, env, env::VarError, fmt, ops::Deref};
+use std::{collections::BTreeMap, fmt, ops::Deref};
 
 /// Container type for API endpoints, like various RPC endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -22,14 +19,14 @@ impl RpcEndpoints {
         Self { endpoints: endpoints.into_iter().map(|(name, url)| (name.into(), url)).collect() }
     }
 
-    /// Returns `true` if this type holds no endpoints
+    /// Returns `true` if this type doesn't contain any endpoints
     pub fn is_empty(&self) -> bool {
         self.endpoints.is_empty()
     }
 
     /// Returns all (alias -> url) pairs
-    pub fn resolved(self) -> ResolvedEndpoints {
-        ResolvedEndpoints {
+    pub fn resolved(self) -> ResolvedRpcEndpoints {
+        ResolvedRpcEndpoints {
             endpoints: self.endpoints.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
         }
     }
@@ -86,7 +83,7 @@ impl RpcEndpoint {
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
             RpcEndpoint::Url(url) => Ok(url),
-            RpcEndpoint::Env(val) => Self::interpolate(&val),
+            RpcEndpoint::Env(val) => interpolate(&val),
         }
     }
 }
@@ -133,9 +130,9 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
     }
 }
 
-/// Container type for _resolved_ endpoints, see [Endpoints::resolve_all()]
+/// Container type for _resolved_ endpoints, see [RpcEndpoints::resolve_all()]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ResolvedEndpoints {
+pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var
     /// alias
     endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
@@ -143,14 +140,14 @@ pub struct ResolvedEndpoints {
 
 // === impl ResolvedEndpoints ===
 
-impl ResolvedEndpoints {
+impl ResolvedRpcEndpoints {
     /// Returns true if there's an endpoint that couldn't be resolved
     pub fn has_unresolved(&self) -> bool {
         self.endpoints.values().any(|val| val.is_err())
     }
 }
 
-impl Deref for ResolvedEndpoints {
+impl Deref for ResolvedRpcEndpoints {
     type Target = BTreeMap<String, Result<String, UnresolvedEnvVarError>>;
 
     fn deref(&self) -> &Self::Target {

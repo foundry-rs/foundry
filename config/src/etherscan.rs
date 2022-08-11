@@ -1,14 +1,31 @@
 //! Support for multiple etherscan keys
 use crate::{
-    resolve::{UnresolvedEnvVarError, RE_PLACEHOLDER},
-    Chain,
+    resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
+    Chain, Config,
 };
-use ethers_core::types::Chain as NamedChain;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, env, env::VarError, fmt, ops::Deref};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::{Deref, DerefMut},
+    str::FromStr,
+    time::Duration,
+};
+use tracing::warn;
+
+/// Errors that can occur when creating an `EtherscanConfig`
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EtherscanConfigError {
+    #[error(transparent)]
+    Unresolved(#[from] UnresolvedEnvVarError),
+    #[error("No known Etherscan url for etherscan config `{0}` with chain `{1}`")]
+    UnknownChain(String, Chain),
+    #[error("Missing `url` or `chain` for etherscan config `{0}`")]
+    MissingUrlOrChain(String),
+}
 
 /// Container type for API endpoints, like various RPC endpoints
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EtherscanConfigs {
     configs: BTreeMap<String, EtherscanConfig>,
@@ -19,10 +36,10 @@ pub struct EtherscanConfigs {
 impl EtherscanConfigs {
     /// Creates a new list of etherscan configs
     pub fn new(configs: impl IntoIterator<Item = (impl Into<String>, EtherscanConfig)>) -> Self {
-        Self { configs: configs.into_iter().map(|(name, url)| (name.into(), url)).collect() }
+        Self { configs: configs.into_iter().map(|(name, config)| (name.into(), config)).collect() }
     }
 
-    /// Returns `true` if this type holds no endpoints
+    /// Returns `true` if this type doesn't contain any configs
     pub fn is_empty(&self) -> bool {
         self.configs.is_empty()
     }
@@ -30,8 +47,29 @@ impl EtherscanConfigs {
     /// Returns all (alias -> url) pairs
     pub fn resolved(self) -> ResolvedEtherscanConfigs {
         ResolvedEtherscanConfigs {
-            configs: self.configs.into_iter().map(|(name, e)| (name, e.resolve())).collect(),
+            configs: self
+                .configs
+                .into_iter()
+                .map(|(name, e)| {
+                    let resolved = e.resolve(&name);
+                    (name, resolved)
+                })
+                .collect(),
         }
+    }
+}
+
+impl Deref for EtherscanConfigs {
+    type Target = BTreeMap<String, EtherscanConfig>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.configs
+    }
+}
+
+impl DerefMut for EtherscanConfigs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.configs
     }
 }
 
@@ -40,15 +78,48 @@ impl EtherscanConfigs {
 pub struct ResolvedEtherscanConfigs {
     /// contains all named `ResolvedEtherscanConfig` or an error if we failed to resolve the env
     /// var alias
-    configs: BTreeMap<String, Result<ResolvedEtherscanConfig, UnresolvedEnvVarError>>,
+    configs: BTreeMap<String, Result<ResolvedEtherscanConfig, EtherscanConfigError>>,
+}
+
+// === impl ResolvedEtherscanConfigs ===
+
+impl ResolvedEtherscanConfigs {
+    /// Creates a new list of resolved etherscan configs
+    pub fn new(
+        configs: impl IntoIterator<Item = (impl Into<String>, ResolvedEtherscanConfig)>,
+    ) -> Self {
+        Self {
+            configs: configs.into_iter().map(|(name, config)| (name.into(), Ok(config))).collect(),
+        }
+    }
+    /// Returns true if there's a config that couldn't be resolved
+    pub fn has_unresolved(&self) -> bool {
+        self.configs.values().any(|val| val.is_err())
+    }
+}
+
+impl Deref for ResolvedEtherscanConfigs {
+    type Target = BTreeMap<String, Result<ResolvedEtherscanConfig, EtherscanConfigError>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.configs
+    }
+}
+
+impl DerefMut for ResolvedEtherscanConfigs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.configs
+    }
 }
 
 /// Represents all info required to create an etherscan client
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EtherscanConfig {
     /// Chain name/id that can be used to derive the api url
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
     /// Etherscan API URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// The etherscan API KEY that's required to make requests
     pub key: EtherscanApiKey,
@@ -63,24 +134,122 @@ impl EtherscanConfig {
     ///
     /// Returns an error if the type holds a reference to an env var and the env var is not set
     /// Or no chain or url is configured
-    pub fn resolve(self) -> Result<ResolvedEtherscanConfig, UnresolvedEnvVarError> {
+    pub fn resolve(self, alias: &str) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
         let EtherscanConfig { chain, url, key } = self;
-        match (chain, url) {
-            (Some(_), Some(url)) => url,
-            (Some(chain), None) => if let Ok(chain) = NamedChain::try_from(chain) {},
-        }
+        let key = key.resolve()?;
 
-        todo!()
+        let chain = chain.or_else(|| {
+            // if no chain is provided we try to convert the alias into a named chain, this way we
+            // can support settings like `moonbeam = { key = "..." }` where the alias `moonbeam`
+            // also serves as the chain id
+            Chain::from_str(alias).ok()
+        });
+
+        match (chain, url) {
+            (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
+                api_url,
+                browser_url: chain.etherscan_urls().map(|urls| urls.1.to_string()),
+                key,
+                chain: Some(chain),
+            }),
+            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain)
+                .ok_or_else(|| EtherscanConfigError::UnknownChain(alias.to_string(), chain)),
+            (None, Some(api_url)) => {
+                Ok(ResolvedEtherscanConfig { api_url, browser_url: None, key, chain: None })
+            }
+            _ => Err(EtherscanConfigError::MissingUrlOrChain(alias.to_string())),
+        }
     }
 }
 
 /// Contains required url + api key to set up an etherscan client
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedEtherscanConfig {
     /// Etherscan API URL
-    pub url: String,
+    #[serde(rename = "url")]
+    pub api_url: String,
+    /// Optional browser url
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_url: Option<String>,
     /// Resolved api key
-    pub api_key: String,
+    pub key: String,
+    /// The chain if set
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<Chain>,
+}
+
+// === impl ResolvedEtherscanConfig ===
+
+impl ResolvedEtherscanConfig {
+    /// Creates a new instance using the api key and chain
+    pub fn create(api_key: impl Into<String>, chain: impl Into<Chain>) -> Option<Self> {
+        let chain = chain.into();
+        let (api_url, browser_url) = chain.etherscan_urls()?;
+        Some(Self {
+            api_url: api_url.to_string(),
+            browser_url: Some(browser_url.to_string()),
+            key: api_key.into(),
+            chain: Some(chain),
+        })
+    }
+
+    /// Sets the chain value and consumes the type
+    ///
+    /// This is only used to set derive the appropriate Cache path for the etherscan client
+    pub fn with_chain(mut self, chain: impl Into<Chain>) -> Self {
+        self.set_chain(chain);
+        self
+    }
+
+    /// Sets the chain value
+    pub fn set_chain(&mut self, chain: impl Into<Chain>) -> &mut Self {
+        let chain = chain.into();
+        if let Some((api, browser)) = chain.etherscan_urls() {
+            self.api_url = api.to_string();
+            self.browser_url = Some(browser.to_string());
+        }
+        self.chain = Some(chain);
+        self
+    }
+
+    /// Returns the corresponding `ethers_etherscan::Client`, configured with the `api_url`,
+    /// `api_key` and cache
+    pub fn into_client(
+        self,
+    ) -> Result<ethers_etherscan::Client, ethers_etherscan::errors::EtherscanError> {
+        let ResolvedEtherscanConfig { api_url, browser_url, key: api_key, chain } = self;
+        let (mainnet_api, mainnet_url) =
+            ethers_core::types::Chain::Mainnet.etherscan_urls().expect("exist; qed");
+
+        let cache = chain
+            .or_else(|| {
+                if api_url == mainnet_api {
+                    // try to match against mainnet, which is usually the most common target
+                    Some(ethers_core::types::Chain::Mainnet.into())
+                } else {
+                    None
+                }
+            })
+            .and_then(Config::foundry_etherscan_chain_cache_dir);
+
+        if let Some(ref cache_path) = cache {
+            // we also create the `sources` sub dir here
+            if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
+                warn!("could not create etherscan cache dir: {:?}", err);
+            }
+        }
+
+        ethers_etherscan::Client::builder()
+            .with_api_key(api_key)
+            .with_api_url(api_url.as_str())?
+            .with_url(
+                // the browser url is not used/required by the client so we can simply set the
+                // mainnet browser url here
+                browser_url.as_deref().unwrap_or(mainnet_url),
+            )?
+            .with_cache(cache, Duration::from_secs(24 * 60 * 60))
+            .build()
+    }
 }
 
 /// Represents a single etherscan API key
@@ -117,6 +286,18 @@ impl EtherscanApiKey {
             EtherscanApiKey::Key(_) => None,
         }
     }
+
+    /// Returns the key this type holds
+    ///
+    /// # Error
+    ///
+    /// Returns an error if the type holds a reference to an env var and the env var is not set
+    pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
+        match self {
+            EtherscanApiKey::Key(key) => Ok(key),
+            EtherscanApiKey::Env(val) => interpolate(&val),
+        }
+    }
 }
 
 impl Serialize for EtherscanApiKey {
@@ -141,5 +322,81 @@ impl<'de> Deserialize<'de> for EtherscanApiKey {
         };
 
         Ok(endpoint)
+    }
+}
+
+impl fmt::Display for EtherscanApiKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EtherscanApiKey::Key(key) => key.fmt(f),
+            EtherscanApiKey::Env(var) => var.fmt(f),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers_core::types::Chain::Mainnet;
+
+    #[test]
+    fn can_create_client_via_chain() {
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "mainnet".to_string(),
+            EtherscanConfig {
+                chain: Some(Mainnet.into()),
+                url: None,
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("mainnet").unwrap().unwrap();
+        let _ = config.into_client().unwrap();
+    }
+
+    #[test]
+    fn can_create_client_via_url_and_chain() {
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "mainnet".to_string(),
+            EtherscanConfig {
+                chain: Some(Mainnet.into()),
+                url: Some("https://api.etherscan.io/api".to_string()),
+                key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("mainnet").unwrap().unwrap();
+        let _ = config.into_client().unwrap();
+    }
+
+    #[test]
+    fn can_create_client_via_url_and_chain_env_var() {
+        let mut configs = EtherscanConfigs::default();
+        let env = "_CONFIG_ETHERSCAN_API_KEY";
+        configs.insert(
+            "mainnet".to_string(),
+            EtherscanConfig {
+                chain: Some(Mainnet.into()),
+                url: Some("https://api.etherscan.io/api".to_string()),
+                key: EtherscanApiKey::Env(format!("${{{}}}", env)),
+            },
+        );
+
+        let mut resolved = configs.clone().resolved();
+        let config = resolved.remove("mainnet").unwrap();
+        assert!(config.is_err());
+
+        std::env::set_var(env, "ABCDEFG");
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("mainnet").unwrap().unwrap();
+        assert_eq!(config.key, "ABCDEFG");
+        let _ = config.into_client().unwrap();
+
+        std::env::remove_var(env);
     }
 }
