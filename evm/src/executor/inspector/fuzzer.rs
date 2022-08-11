@@ -82,12 +82,13 @@ impl Fuzzer {
             state.insert(utils::u256_to_h256_be(*slot).into());
         }
 
-        for index in 0..interpreter.memory.len() / 32 {
-            let mut slot = [0u8; 32];
-            slot.clone_from_slice(interpreter.memory.get_slice(index * 32, 32));
+        // TODO: disabled for now since it's flooding the dictionary
+        // for index in 0..interpreter.memory.len() / 32 {
+        //     let mut slot = [0u8; 32];
+        //     slot.clone_from_slice(interpreter.memory.get_slice(index * 32, 32));
 
-            state.insert(slot);
-        }
+        //     state.insert(slot);
+        // }
     }
 
     /// Overrides an external call and tries to call any method of msg.sender.
