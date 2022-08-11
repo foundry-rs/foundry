@@ -293,7 +293,7 @@ impl SnapshotDiff {
     /// Returns the gas diff
     ///
     /// `> 0` if the source used more gas
-    /// `< 0` if the source used more gas
+    /// `< 0` if the target used more gas
     fn gas_change(&self) -> i128 {
         self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
