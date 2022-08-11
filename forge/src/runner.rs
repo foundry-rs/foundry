@@ -302,7 +302,7 @@ impl<'a> ContractRunner<'a> {
                 .collect();
 
             let results = self.run_invariant_test(
-                test_options.fuzzer(),
+                test_options.invariant_fuzzer(),
                 setup,
                 test_options,
                 functions.clone(),
