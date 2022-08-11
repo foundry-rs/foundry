@@ -7,14 +7,6 @@ contract Contract {
     string public str = "hello";
     uint256 public num = 1337;
     uint256 public pushNum;
-    // bytes4[] public arr;
-
-    // constructor() {
-    //     arr.push(bytes4(1));
-    //     arr.push(bytes4(3));
-    //     arr.push(bytes4(3));
-    //     arr.push(bytes4(7));
-    // }
 
     function changeAddress(address _addr) public {
         if(_addr == addr) {

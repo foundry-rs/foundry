@@ -1,6 +1,7 @@
 //! Tests for invariants
 
 use crate::{config::*, test_helpers::filter::Filter};
+use ethers::types::U256;
 use std::collections::BTreeMap;
 
 #[test]
@@ -99,7 +100,9 @@ fn test_invariant_storage() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.invariant_depth = 200;
+    opts.invariant_depth = 40;
+    opts.invariant_runs = 100;
+    opts.fuzz_seed = Some(U256::from(5u32));
     runner.test_options = opts;
 
     let results = runner
