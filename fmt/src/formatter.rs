@@ -13,7 +13,7 @@ use crate::{
     solang_ext::*,
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes,
+    FormatterConfig, InlineConfig, IntTypes, NumberUnderscore,
 };
 
 /// A custom Error thrown by the Formatter
@@ -601,6 +601,24 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.source[start..end].trim_comments().matches('\n').count()
     }
 
+    /// Get the byte offset of the next line
+    fn find_next_line(&self, byte_offset: usize) -> Option<usize> {
+        let mut iter = self.source[byte_offset..].char_indices();
+        while let Some((_, ch)) = iter.next() {
+            match ch {
+                '\n' => return iter.next().map(|(idx, _)| byte_offset + idx),
+                '\r' => {
+                    return iter.next().and_then(|(idx, ch)| match ch {
+                        '\n' => iter.next().map(|(idx, _)| byte_offset + idx),
+                        _ => Some(byte_offset + idx),
+                    })
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Find the next instance of the character in source
     fn find_next_in_src(&self, byte_offset: usize, needle: char) -> Option<usize> {
         self.source[byte_offset..]
@@ -753,7 +771,9 @@ impl<'a, W: Write> Formatter<'a, W> {
                     self.write_raw(line)?;
                 }
             }
-            write_preserved_ln(self)?;
+            if self.find_next_line(comment.loc.end()).is_some() {
+                write_preserved_ln(self)?;
+            }
             return Ok(())
         }
 
@@ -803,8 +823,11 @@ impl<'a, W: Write> Formatter<'a, W> {
             if self.inline_config.is_disabled(unwritten_whitespace_loc) {
                 self.write_raw(&self.source[unwritten_whitespace_loc.range()])?;
                 self.write_raw_comment(comment)?;
-                last_byte_written =
-                    if comment.is_line() { comment.loc.end() + 1 } else { comment.loc.end() };
+                last_byte_written = if comment.is_line() {
+                    self.find_next_line(comment.loc.end()).unwrap_or_else(|| comment.loc.end())
+                } else {
+                    comment.loc.end()
+                };
             } else {
                 self.write_comment(comment, is_first)?;
             }
@@ -1207,14 +1230,22 @@ impl<'a, W: Write> Formatter<'a, W> {
             last_byte_written = loc.end();
             if let Some(comment) = line_item.as_ref().left() {
                 if comment.is_line() {
-                    last_byte_written += 1;
+                    last_byte_written =
+                        self.find_next_line(last_byte_written).unwrap_or(last_byte_written);
                 }
             }
         }
 
-        let (unwritten_src_loc, unwritten_whitespace) =
+        let (unwritten_src_loc, mut unwritten_whitespace) =
             unwritten_whitespace(last_byte_written, loc.end());
         if self.inline_config.is_disabled(unwritten_src_loc) {
+            if unwritten_src_loc.end() == self.source.len() {
+                // remove EOF line ending
+                unwritten_whitespace = unwritten_whitespace
+                    .strip_suffix('\n')
+                    .map(|w| w.strip_suffix('\r').unwrap_or(w))
+                    .unwrap_or(unwritten_whitespace);
+            }
             self.write_raw(unwritten_whitespace)?;
         }
 
@@ -1423,6 +1454,88 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn write_quoted_str(&mut self, loc: Loc, prefix: Option<&str>, string: &str) -> Result<()> {
         write_chunk!(self, loc.start(), loc.end(), "{}", self.quote_str(loc, prefix, string))
     }
+
+    /// Write and format numbers. This will fix underscores as well as remove unnecessary 0's and
+    /// exponents
+    fn write_num_literal(
+        &mut self,
+        loc: Loc,
+        value: &str,
+        fractional: Option<&str>,
+        exponent: &str,
+    ) -> Result<()> {
+        let config = self.config.number_underscore;
+
+        // get source if we preserve underscores
+        let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
+            let source = &self.source[loc.start()..loc.end()];
+            let (val, exp) = source.split_once(&['e', 'E']).unwrap_or((source, ""));
+            let (val, fract) =
+                val.split_once('.').map(|(val, fract)| (val, Some(fract))).unwrap_or((val, None));
+            (
+                val.trim().to_string(),
+                fract.map(|fract| fract.trim().to_string()),
+                exp.trim().to_string(),
+            )
+        } else {
+            // otherwise strip underscores
+            (
+                value.trim().replace('_', ""),
+                fractional.map(|fract| fract.trim().replace('_', "")),
+                exponent.trim().replace('_', ""),
+            )
+        };
+
+        // strip any padded 0's
+        let val = value.trim_start_matches('0');
+        let fract = fractional.as_ref().map(|fract| fract.trim_end_matches('0'));
+        let (exp_sign, mut exp) = if let Some(exp) = exponent.strip_prefix('-') {
+            ("-", exp)
+        } else {
+            ("", exponent.as_str())
+        };
+        exp = exp.trim().trim_start_matches('0');
+
+        let add_underscores = |string: &str, reversed: bool| -> String {
+            if !matches!(config, NumberUnderscore::Thousands) || string.len() < 5 {
+                return string.to_string()
+            }
+            if reversed {
+                Box::new(string.as_bytes().chunks(3)) as Box<dyn Iterator<Item = &[u8]>>
+            } else {
+                Box::new(string.as_bytes().rchunks(3).rev()) as Box<dyn Iterator<Item = &[u8]>>
+            }
+            .map(|chunk| std::str::from_utf8(chunk).expect("valid utf8 content."))
+            .collect::<Vec<_>>()
+            .join("_")
+        };
+
+        let mut out = String::new();
+        if val.is_empty() {
+            out.push('0');
+        } else {
+            out.push_str(&add_underscores(val, false));
+        }
+        if let Some(fract) = fract {
+            out.push('.');
+            if fract.is_empty() {
+                out.push('0');
+            } else {
+                // TODO re-enable me on the next solang-parser v0.1.18
+                // currently disabled because of the following bug
+                // https://github.com/hyperledger-labs/solang/pull/954
+                // out.push_str(&add_underscores(fract, true));
+                out.push_str(fract)
+            }
+        }
+        if !exp.is_empty() {
+            out.push('e');
+            out.push_str(exp_sign);
+            out.push_str(&add_underscores(exp, false));
+        }
+
+        write_chunk!(self, loc.start(), loc.end(), "{out}")
+    }
 }
 
 // Traverse the Solidity Parse Tree and write to the code formatter
@@ -1480,6 +1593,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 _ => true,
             },
         )?;
+
+        // EOF newline
+        if self.last_char().map_or(true, |char| char != '\n') {
+            writeln!(self.buf())?;
+        }
 
         Ok(())
     }
@@ -1780,9 +1898,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             Expression::BoolLiteral(loc, val) => {
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::NumberLiteral(loc, val, expr) => {
-                let val = if expr.is_empty() { val.to_owned() } else { format!("{val}e{expr}") };
-                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            Expression::NumberLiteral(loc, val, exp) => {
+                self.write_num_literal(*loc, val, None, exp)?;
             }
             Expression::HexNumberLiteral(loc, val) => {
                 // ref: https://docs.soliditylang.org/en/latest/types.html?highlight=address%20literal#address-literals
@@ -1793,10 +1910,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 };
                 write_chunk!(self, loc.start(), loc.end(), "{val}")?;
             }
-            Expression::RationalNumberLiteral(loc, val, fraction, expr) => {
-                let val = format!("{}.{}", val, fraction);
-                let val = if expr.is_empty() { val } else { format!("{val}e{expr}") };
-                write_chunk!(self, loc.start(), loc.end(), "{val}")?;
+            Expression::RationalNumberLiteral(loc, val, fraction, exp) => {
+                self.write_num_literal(*loc, val, Some(fraction), exp)?;
             }
             Expression::StringLiteral(vals) => {
                 for StringLiteral { loc, string, unicode } in vals {
@@ -3399,6 +3514,10 @@ mod tests {
         }
     }
 
+    fn assert_eof(content: &str) {
+        assert!(content.ends_with("\n") && !content.ends_with("\n\n"));
+    }
+
     fn test_formatter(
         filename: &str,
         config: FormatterConfig,
@@ -3420,6 +3539,8 @@ mod tests {
             }
         }
 
+        assert_eof(expected_source);
+
         let source_parsed = parse(source).unwrap();
         let expected_parsed = parse(expected_source).unwrap();
 
@@ -3436,6 +3557,7 @@ mod tests {
 
         let mut source_formatted = String::new();
         format(&mut source_formatted, source_parsed, config.clone()).unwrap();
+        assert_eof(&source_formatted);
 
         // println!("{}", source_formatted);
         let source_formatted = PrettyString(source_formatted);
@@ -3449,6 +3571,8 @@ mod tests {
 
         let mut expected_formatted = String::new();
         format(&mut expected_formatted, expected_parsed, config).unwrap();
+        assert_eof(&expected_formatted);
+
         let expected_formatted = PrettyString(expected_formatted);
 
         pretty_assertions::assert_eq!(
@@ -3506,4 +3630,5 @@ mod tests {
     test_directory! { YulStrings }
     test_directory! { IntTypes }
     test_directory! { InlineDisable }
+    test_directory! { NumberLiteralUnderscore }
 }

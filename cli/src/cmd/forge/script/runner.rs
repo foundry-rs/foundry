@@ -2,6 +2,7 @@ use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+    revm::{return_ok, Return},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
@@ -185,6 +186,12 @@ impl ScriptRunner {
         }
     }
 
+    /// Executes the call
+    ///
+    /// This will commit the changes if `commit` is true.
+    ///
+    /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
+    /// can be used as `gas_limit`.
     fn call(
         &mut self,
         from: Address,
@@ -193,24 +200,57 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
-        let RawCallResult {
-            result,
-            reverted,
-            gas: tx_gas,
-            stipend,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            ..
-        } = if !commit {
-            self.executor.call_raw(from, to, calldata.0, value)?
-        } else {
-            self.executor.call_raw_committing(from, to, calldata.0, value)?
-        };
+        let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut gas = res.gas;
+        if matches!(res.status, return_ok!()) {
+            // store the current gas limit and reset it later
+            let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
-        let gas = if commit { tx_gas } else { tx_gas.overflowing_sub(stipend).0 };
+            // the executor will return the _exact_ gas value this transaction consumed, setting
+            // this value as gas limit will result in `OutOfGas` so to come up with a
+            // better estimate we search over a possible range we pick a higher gas
+            // limit 3x of a succeeded call should be safe
+            let mut highest_gas_limit = gas * 3;
+            let mut lowest_gas_limit = gas;
+            let mut last_highest_gas_limit = highest_gas_limit;
+            while (highest_gas_limit - lowest_gas_limit) > 1 {
+                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
+                let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+                match res.status {
+                    Return::Revert |
+                    Return::OutOfGas |
+                    Return::LackOfFundForGasLimit |
+                    Return::OutOfFund => {
+                        lowest_gas_limit = mid_gas_limit;
+                    }
+                    _ => {
+                        highest_gas_limit = mid_gas_limit;
+                        // if last two successful estimations only vary by 10%, we consider this to
+                        // sufficiently accurate
+                        const ACCURACY: u64 = 10;
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                            last_highest_gas_limit <
+                            1
+                        {
+                            // update the gas
+                            gas = highest_gas_limit;
+                            break
+                        }
+                        last_highest_gas_limit = highest_gas_limit;
+                    }
+                }
+            }
+            // reset gas limit in the
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
+        }
+
+        if commit {
+            // if explicitly requested we can now commit the call
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
 
         Ok(ScriptResult {
             returned: result,

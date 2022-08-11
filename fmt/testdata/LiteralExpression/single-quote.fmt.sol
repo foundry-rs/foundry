@@ -11,8 +11,8 @@ contract LiteralExpressions {
 
         // number literals
         1;
-        123000;
-        12e345678;
+        123_000;
+        1_2e345_678;
         -1;
         2e-10;
         // comment5
@@ -25,7 +25,7 @@ contract LiteralExpressions {
         0x2eff_abde;
 
         // rational number literals
-        .1;
+        0.1;
         1.3;
         2.5e1;
 

@@ -30,7 +30,7 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::{evm::EvmArgs, CONTRACT_MAX_SIZE};
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,7 @@ impl ScriptArgs {
         &self,
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let etherscan_identifier = EtherscanIdentifier::new(
             script_config.evm_opts.get_remote_chain_id(),
@@ -380,8 +380,10 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         let (sources, artifacts) =
             filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
-        let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
-        let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+        let flattened = result
+            .debug
+            .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
+            .expect("We should have collected debug information");
         let identified_contracts = decoder
             .contracts
             .iter()
@@ -518,7 +520,7 @@ pub struct ScriptConfig {
 /// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub known_contracts: ContractsByArtifact,
     pub etherscan_key: Option<String>,
     pub project_paths: ProjectPathsArgs,
     pub retry: RetryArgs,
@@ -528,7 +530,7 @@ impl VerifyBundle {
     pub fn new(
         project: &Project,
         config: &Config,
-        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: ContractsByArtifact,
         retry: RetryArgs,
     ) -> Self {
         let num_of_optimizations =

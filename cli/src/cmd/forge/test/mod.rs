@@ -496,7 +496,7 @@ fn test(
         let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
-        let mut gas_report = GasReport::new(config.gas_reports);
+        let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();

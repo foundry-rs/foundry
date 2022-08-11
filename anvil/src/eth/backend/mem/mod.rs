@@ -203,22 +203,28 @@ impl Backend {
             return true
         }
         // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
-        // the code hash to `KECCAK_EMPTY` temporarily
+        // the code hash to `KECCAK_EMPTY` temporarily and also remove the code itself and add back
+        // when we stop impersonating
         let mut account = self.db.read().await.basic(addr);
         let mut code_hash = None;
+        let mut code = None;
         if account.code_hash != KECCAK_EMPTY {
             code_hash = Some(std::mem::replace(&mut account.code_hash, KECCAK_EMPTY));
+            code = account.code.take();
             self.db.write().await.insert_account(addr, account);
         }
-        self.cheats.impersonate(addr, code_hash)
+        self.cheats.impersonate(addr, code_hash, code)
     }
 
     /// Removes the account that from the impersonated set
+    ///
+    /// If the impersonated `addr` is a contract then we also reset the code here
     pub async fn stop_impersonating(&self, addr: Address) {
-        if let Some(code_hash) = self.cheats.stop_impersonating(&addr) {
+        if let Some((Some(code_hash), code)) = self.cheats.stop_impersonating(&addr) {
             let mut db = self.db.write().await;
             let mut account = db.basic(addr);
             account.code_hash = code_hash;
+            account.code = code;
             db.insert_account(addr, account)
         }
     }
@@ -866,7 +872,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_block_by_hash(hash)) {
+        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx)
         }
 
@@ -882,7 +888,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.get_full_block(hash)) {
+        if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx)
         }
 
@@ -918,7 +924,7 @@ impl Backend {
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_block_by_number(number)) {
+        if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx)
         }
 
@@ -934,7 +940,7 @@ impl Backend {
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.get_full_block(number)) {
+        if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx)
         }
 
@@ -1119,6 +1125,10 @@ impl Backend {
         self.with_database_at(number, |db| {
             trace!(target: "backend", "get code for {:?}", address);
             let account = db.basic(address);
+            if account.code_hash == KECCAK_EMPTY {
+                // if the code hash is `KECCAK_EMPTY`, we check no further
+                return Ok(Default::default())
+            }
             let code = if let Some(code) = account.code {
                 code
             } else {
@@ -1161,9 +1171,7 @@ impl Backend {
 
     /// Returns the traces for the given transaction
     pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, BlockchainError> {
-        if let Some(traces) =
-            tokio::task::block_in_place(|| self.mined_parity_trace_transaction(hash))
-        {
+        if let Some(traces) = self.mined_parity_trace_transaction(hash) {
             return Ok(traces)
         }
 
@@ -1193,8 +1201,7 @@ impl Backend {
     /// Returns the traces for the given block
     pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>, BlockchainError> {
         let number = self.convert_block_number(Some(block));
-        if let Some(traces) = tokio::task::block_in_place(|| self.mined_parity_trace_block(number))
-        {
+        if let Some(traces) = self.mined_parity_trace_block(number) {
             return Ok(traces)
         }
 
@@ -1211,7 +1218,7 @@ impl Backend {
         &self,
         hash: H256,
     ) -> Result<Option<TransactionReceipt>, BlockchainError> {
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_transaction_receipt(hash)) {
+        if let tx @ Some(_) = self.mined_transaction_receipt(hash) {
             return Ok(tx)
         }
 
@@ -1318,9 +1325,7 @@ impl Backend {
         number: BlockNumber,
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
-        if let Some(hash) =
-            tokio::task::block_in_place(|| self.mined_block_by_number(number).and_then(|b| b.hash))
-        {
+        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.hash) {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
@@ -1339,9 +1344,7 @@ impl Backend {
         hash: H256,
         index: Index,
     ) -> Result<Option<Transaction>, BlockchainError> {
-        if let tx @ Some(_) = tokio::task::block_in_place(|| {
-            self.mined_transaction_by_block_hash_and_index(hash, index)
-        }) {
+        if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
             return Ok(tx)
         }
 
@@ -1374,7 +1377,7 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<Transaction>, BlockchainError> {
         trace!(target: "backend", "transaction_by_hash={:?}", hash);
-        if let tx @ Some(_) = tokio::task::block_in_place(|| self.mined_transaction_by_hash(hash)) {
+        if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
             return Ok(tx)
         }
 

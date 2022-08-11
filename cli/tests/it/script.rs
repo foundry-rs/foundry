@@ -1,14 +1,15 @@
 //! Contains various tests related to forge script
 use anvil::{spawn, NodeConfig};
+use cast::SimpleCast;
 use ethers::abi::Address;
 use foundry_cli_test_utils::{
     forgetest, forgetest_async, forgetest_init,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
 use foundry_utils::rpc;
-
 use regex::Regex;
+use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
 
 // Tests that fork cheat codes can be used in script
@@ -45,7 +46,7 @@ contract ContractScript is Script {
 );
 
 // Tests that the `run` command works correctly
-forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command2, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -64,16 +65,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command.stdout"),
+    );
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
@@ -96,16 +91,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(format!("{}:Demo", script.display()));
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_fqn.stdout"),
+    );
 });
 
 // Tests that the run command can run arbitrary functions
@@ -128,16 +117,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with arguments
@@ -163,18 +146,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 3957
-
-== Logs ==
-  script ran
-  1
-  2
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_args.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with return values
@@ -196,20 +171,10 @@ contract Demo {
         )
         .unwrap();
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1836
-
-== Return ==
-result: uint256 255
-1: uint8 3
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_returned.stdout"),
+    );
 });
 
 forgetest_async!(
@@ -217,10 +182,10 @@ forgetest_async!(
     |prj: TestProject, mut cmd: TestCommand| async move {
         foundry_cli_test_utils::util::initialize(prj.root());
         // This example script would fail in on-chain simulation
-        let script = prj
+        let deploy_script = prj
             .inner()
             .add_source(
-                "Foo",
+                "DeployScript",
                 r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.10;
@@ -233,36 +198,90 @@ contract HashChecker {
         require(newHash != lastHash, "Hash didn't change");
         lastHash = newHash;
     }
+
+    function checkLastHash() public {
+        require(lastHash != bytes32(0),  "Hash shouldn't be zero");
+    }
 }
-contract Demo is Script {
+contract DeployScript is Script {
     function run() external returns (uint256 result, uint8) {
         vm.startBroadcast();
         HashChecker hashChecker = new HashChecker();
-        uint numUpdates = 8;
-        vm.roll(block.number - numUpdates);
-        for(uint i = 0; i < numUpdates; i++) {
-            vm.roll(block.number + 1);
-            hashChecker.update();
-        }
     }
 }"#,
             )
             .unwrap();
 
+        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
         let node_config = NodeConfig::test()
             .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
             .silent();
-
         let (_api, handle) = spawn(node_config).await;
-        let target_contract = script.display().to_string() + ":Demo";
-
-        let wallet = handle.dev_wallets().next().unwrap();
-        let private_key = hex::encode(wallet.signer().to_bytes());
+        let private_key =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
         cmd.set_current_dir(prj.root());
 
         cmd.args([
             "script",
-            &target_contract,
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--private-key",
+            &private_key,
+        ]);
+
+        let output = cmd.stdout_lossy();
+
+        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+        let run_log =
+            std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
+        let run_object: Value = serde_json::from_str(&run_log).unwrap();
+        let contract_address = SimpleCast::checksum_address(
+            &ethers::prelude::H160::from_str(
+                run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let run_code = r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "forge-std/Script.sol";
+import { HashChecker } from "./DeployScript.sol";
+
+contract RunScript is Script {
+    function run() external returns (uint256 result, uint8) {
+        vm.startBroadcast();
+        HashChecker hashChecker = HashChecker(CONTRACT_ADDRESS);
+        uint numUpdates = 8;
+        vm.roll(block.number - numUpdates);
+        for(uint i = 0; i < numUpdates; i++) {
+            vm.roll(block.number + 1);
+            hashChecker.update();
+            hashChecker.checkLastHash();
+        }
+    }
+}"#
+        .replace("CONTRACT_ADDRESS", &contract_address);
+
+        let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
+        let run_contract = run_script.display().to_string() + ":RunScript";
+
+        cmd.forge_fuse();
+        cmd.set_current_dir(prj.root());
+        cmd.args([
+            "script",
+            &run_contract,
             "--root",
             prj.root().to_str().unwrap(),
             "--fork-url",
@@ -278,7 +297,6 @@ contract Demo is Script {
         ]);
 
         let output = cmd.stdout_lossy();
-
         assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
         assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
     }

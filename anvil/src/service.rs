@@ -49,12 +49,14 @@ impl NodeService {
         fee_history: FeeHistoryService,
         filters: Filters,
     ) -> Self {
+        let start = tokio::time::Instant::now() + filters.keep_alive();
+        let filter_eviction_interval = tokio::time::interval_at(start, filters.keep_alive());
         Self {
             pool,
             block_producer: BlockProducer::new(backend),
             miner,
             fee_history,
-            filter_eviction_interval: tokio::time::interval(filters.keep_alive()),
+            filter_eviction_interval,
             filters,
         }
     }

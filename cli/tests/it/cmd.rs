@@ -856,3 +856,399 @@ contract MyTokenCopy is MyToken {
         assert!(output.contains("Compiler run successful",));
     }
 );
+
+forgetest!(gas_report_all_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for all
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_report_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for One
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractOne".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Two
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Three
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_ignore_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // ignore ContractOne
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec!["ContractOne".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractTwo
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![]),
+        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractThree
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        gas_reports_ignore: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+});

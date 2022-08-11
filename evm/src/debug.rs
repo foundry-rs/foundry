@@ -110,8 +110,6 @@ impl DebugNode {
 /// pushed onto the stack, and the instruction counter for use with sourcemap.
 #[derive(Debug, Clone)]
 pub struct DebugStep {
-    /// The program counter
-    pub pc: usize,
     /// Stack *prior* to running the associated opcode
     pub stack: Vec<U256>,
     /// Memory *prior* to running the associated opcode
@@ -120,8 +118,11 @@ pub struct DebugStep {
     pub instruction: Instruction,
     /// Optional bytes that are being pushed onto the stack
     pub push_bytes: Option<Vec<u8>>,
-    /// Instruction counter, used to map this instruction to source code
-    pub ic: usize,
+    /// The program counter at this step.
+    ///
+    /// Note: To map this step onto source code using a source map, you must convert the program
+    /// counter to an instruction counter.
+    pub pc: usize,
     /// Cumulative gas usage
     pub total_gas_used: u64,
 }
@@ -129,12 +130,11 @@ pub struct DebugStep {
 impl Default for DebugStep {
     fn default() -> Self {
         Self {
-            pc: 0,
             stack: vec![],
             memory: Memory::new(),
             instruction: Instruction::OpCode(revm::opcode::INVALID),
             push_bytes: None,
-            ic: 0,
+            pc: 0,
             total_gas_used: 0,
         }
     }

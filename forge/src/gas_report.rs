@@ -11,6 +11,7 @@ use std::{collections::BTreeMap, fmt::Display};
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct GasReport {
     pub report_for: Vec<String>,
+    pub ignore: Vec<String>,
     pub contracts: BTreeMap<String, ContractInfo>,
 }
 
@@ -31,22 +32,17 @@ pub struct GasInfo {
 }
 
 impl GasReport {
-    pub fn new(report_for: Vec<String>) -> Self {
-        Self { report_for, ..Default::default() }
+    pub fn new(report_for: Vec<String>, ignore: Vec<String>) -> Self {
+        Self { report_for, ignore, ..Default::default() }
     }
 
     pub fn analyze(&mut self, traces: &[(TraceKind, CallTraceArena)]) {
-        let report_for_all = self.report_for.is_empty() || self.report_for.iter().any(|s| s == "*");
         traces.iter().for_each(|(_, trace)| {
-            self.analyze_trace(trace, report_for_all);
+            self.analyze_node(0, trace);
         });
     }
 
-    fn analyze_trace(&mut self, trace: &CallTraceArena, report_for_all: bool) {
-        self.analyze_node(0, trace, report_for_all);
-    }
-
-    fn analyze_node(&mut self, node_index: usize, arena: &CallTraceArena, report_for_all: bool) {
+    fn analyze_node(&mut self, node_index: usize, arena: &CallTraceArena) {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
@@ -55,12 +51,24 @@ impl GasReport {
         }
 
         if let Some(name) = &trace.contract {
-            // checking contract allowlist for reporting by extracting name out of identifier
-            let report_for = self
-                .report_for
-                .iter()
-                .any(|s| s == name.rsplit(':').next().unwrap_or(name.as_str()));
-            if report_for || report_for_all {
+            let contract_name = name.rsplit(':').next().unwrap_or(name.as_str()).to_string();
+            // If the user listed the contract in 'gas_reports' (the foundry.toml field) a
+            // report for the contract is generated even if it's listed in the ignore
+            // list. This is addressed this way because getting a report you don't expect is
+            // preferable than not getting one you expect. A warning is printed to stderr
+            // indicating the "double listing".
+            if self.report_for.contains(&contract_name) && self.ignore.contains(&contract_name) {
+                eprintln!(
+                    "{}: {} is listed in both 'gas_reports' and 'gas_reports_ignore'.",
+                    yansi::Paint::yellow("warning").bold(),
+                    contract_name
+                );
+            }
+            let report_contract = (!self.ignore.contains(&contract_name) &&
+                self.report_for.contains(&"*".to_string())) ||
+                (!self.ignore.contains(&contract_name) && self.report_for.is_empty()) ||
+                (self.report_for.contains(&contract_name));
+            if report_contract {
                 let mut contract_report =
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);
 
@@ -87,7 +95,7 @@ impl GasReport {
         }
 
         node.children.iter().for_each(|index| {
-            self.analyze_node(*index, arena, report_for_all);
+            self.analyze_node(*index, arena);
         });
     }
 

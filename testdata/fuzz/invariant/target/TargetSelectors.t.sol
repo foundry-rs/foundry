@@ -14,7 +14,7 @@ contract Hello {
     function change() public {
         world = true;
     }
-    
+
     function real_change() public {
         world = false;
     }

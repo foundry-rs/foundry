@@ -7,7 +7,7 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
-use foundry_common::calc;
+use foundry_common::{calc, contracts::ContractsByAddress};
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -78,9 +78,9 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("could not make raw evm call");
+                .expect("Could not call contract with fuzzed input.");
             let state_changeset =
-                call.state_changeset.as_ref().expect("we should have a state changeset");
+                call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
             collect_state_from_call(&call.logs, state_changeset, state.clone());
@@ -193,7 +193,7 @@ impl BaseCounterExample {
         sender: Address,
         addr: Address,
         bytes: &Bytes,
-        contracts: &BTreeMap<Address, (String, Abi)>,
+        contracts: &ContractsByAddress,
     ) -> Self {
         let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
 

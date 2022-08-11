@@ -4,11 +4,13 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    prelude::ArtifactId,
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{
+    contracts::{ContractsByAddress, ContractsByArtifact},
+    TestFunctionExt,
+};
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
@@ -20,7 +22,7 @@ use foundry_evm::{
     trace::{load_contracts, TraceKind},
     CALLER,
 };
-use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
+use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::BTreeMap, time::Instant};
 use tracing::{error, trace};
@@ -182,7 +184,7 @@ impl<'a> ContractRunner<'a> {
         mut self,
         filter: &impl TestFilter,
         test_options: TestOptions,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
+        known_contracts: Option<&ContractsByArtifact>,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -268,61 +270,27 @@ impl<'a> ContractRunner<'a> {
 
         let mut test_results = BTreeMap::new();
         if !tests.is_empty() {
-            // TODO: Add Options to modify the persistence
-            let cfg = proptest::test_runner::Config {
-                failure_persistence: None,
-                cases: test_options.fuzz_runs,
-                max_local_rejects: test_options.fuzz_max_local_rejects,
-                max_global_rejects: test_options.fuzz_max_global_rejects,
-                ..Default::default()
-            };
-
-            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
-                let mut bytes: [u8; 32] = [0; 32];
-                fuzz_seed.to_big_endian(&mut bytes);
-                trace!(target: "forge::test", "executing test command");
-                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
-                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
-            } else {
-                proptest::test_runner::TestRunner::new(cfg)
-            };
-
             test_results.extend(
                 tests
                     .par_iter()
                     .flat_map(|(func, should_fail)| {
-                        let result = if func.is_fuzz_test() {
-                            self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+                        if func.is_fuzz_test() {
+                            self.run_fuzz_test(
+                                func,
+                                *should_fail,
+                                test_options.fuzzer(),
+                                setup.clone(),
+                            )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
-                        };
-
-                        result.map(|result| Ok((func.signature(), result)))
+                        }
+                        .map(|result| Ok((func.signature(), result)))
                     })
                     .collect::<Result<BTreeMap<_, _>>>()?,
             );
         }
 
         if has_invariants {
-            // TODO: Add Options to modify the persistence
-            let cfg = proptest::test_runner::Config {
-                failure_persistence: None,
-                cases: test_options.invariant_runs,
-                max_local_rejects: test_options.fuzz_max_local_rejects,
-                max_global_rejects: test_options.fuzz_max_global_rejects,
-                ..Default::default()
-            };
-
-            let fuzzer = if let Some(ref fuzz_seed) = test_options.fuzz_seed {
-                let mut bytes: [u8; 32] = [0; 32];
-                fuzz_seed.to_big_endian(&mut bytes);
-                trace!(target: "forge::test", "executing invariant test command");
-                let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &bytes);
-                proptest::test_runner::TestRunner::new_with_rng(cfg, rng)
-            } else {
-                proptest::test_runner::TestRunner::new(cfg)
-            };
-
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
             let functions: Vec<&Function> = self
                 .contract
@@ -334,7 +302,7 @@ impl<'a> ContractRunner<'a> {
                 .collect();
 
             let results = self.run_invariant_test(
-                fuzzer,
+                test_options.fuzzer(),
                 setup,
                 test_options,
                 functions.clone(),
@@ -462,11 +430,11 @@ impl<'a> ContractRunner<'a> {
         setup: TestSetup,
         test_options: TestOptions,
         functions: Vec<&Function>,
-        known_contracts: Option<&BTreeMap<ArtifactId, (Abi, Vec<u8>)>>,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        known_contracts: Option<&ContractsByArtifact>,
+        identified_contracts: ContractsByAddress,
     ) -> Result<Vec<TestResult>> {
         trace!(target: "forge::test::fuzz", "executing invariant test with invariant functions {:?}",  functions.iter().map(|f|&f.name).collect::<Vec<_>>());
-        let empty = BTreeMap::new();
+        let empty = ContractsByArtifact::default();
         let project_contracts = known_contracts.unwrap_or(&empty);
         let TestSetup { address, logs, traces, labeled_addresses, .. } = setup;
 
