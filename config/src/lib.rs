@@ -488,6 +488,8 @@ impl Config {
         self.test = p(&root, &self.test);
         self.script = p(&root, &self.script);
         self.out = p(&root, &self.out);
+        self.broadcast = p(&root, &self.broadcast);
+        self.cache_path = p(&root, &self.cache_path);
 
         if let Some(build_info_path) = self.build_info_path {
             self.build_info_path = Some(p(&root, &build_info_path));
@@ -497,8 +499,6 @@ impl Config {
 
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
-
-        self.cache_path = p(&root, &self.cache_path);
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
