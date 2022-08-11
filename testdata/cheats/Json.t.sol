@@ -3,6 +3,7 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 import "./Cheats.sol";
+import "../logs/console.sol";
 
 contract ParseJson is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
@@ -78,7 +79,10 @@ contract ParseJson is DSTest {
     }
 
     function test_wholeObject() public {
-        string memory path = "../testdata/fixtures/ParseJson/wholeJson.json";
+        // we need to make the path relative to the crate that's running tests for it (forge crate)
+        string memory root = cheats.envString("CARGO_MANIFEST_DIR");
+        string memory path = string.concat(root, "/../testdata/fixtures/Json/wholeJson.json");
+        console.log(path);
         json = cheats.readFile(path);
         bytes memory data = cheats.parseJson(json);
         Whole memory whole = abi.decode(data, (Whole));
