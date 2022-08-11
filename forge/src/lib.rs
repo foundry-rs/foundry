@@ -52,11 +52,11 @@ pub struct TestOptions {
 
 impl TestOptions {
     pub fn invariant_fuzzer(&self) -> TestRunner {
-        return self.fuzzer_with_cases(self.invariant_runs)
+        self.fuzzer_with_cases(self.invariant_runs)
     }
 
     pub fn fuzzer(&self) -> TestRunner {
-        return self.fuzzer_with_cases(self.fuzz_runs)
+        self.fuzzer_with_cases(self.fuzz_runs)
     }
 
     pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {

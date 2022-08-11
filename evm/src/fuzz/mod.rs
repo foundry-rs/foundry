@@ -62,9 +62,9 @@ impl<'a> FuzzedExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(fork_db)
+            build_initial_state(address, fork_db)
         } else {
-            build_initial_state(self.executor.backend().mem_db())
+            build_initial_state(address, self.executor.backend().mem_db())
         };
 
         // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
@@ -83,7 +83,7 @@ impl<'a> FuzzedExecutor<'a> {
                 call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
-            collect_state_from_call(&call.logs, state_changeset, state.clone());
+            collect_state_from_call(address, &call.logs, state_changeset, state.clone());
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
@@ -123,6 +123,7 @@ impl<'a> FuzzedExecutor<'a> {
                 ))
             }
         });
+        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(|a| hex::encode(a)));
 
         let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {

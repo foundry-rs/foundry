@@ -132,7 +132,10 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
 
 #[cfg(test)]
 mod tests {
-    use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
+    use crate::{
+        fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        CALLER,
+    };
     use ethers::abi::HumanReadableParser;
     use revm::db::{CacheDB, EmptyDB};
 
@@ -142,7 +145,7 @@ mod tests {
         let func = HumanReadableParser::parse_function(f).unwrap();
 
         let db = CacheDB::new(EmptyDB());
-        let state = build_initial_state(&db);
+        let state = build_initial_state(CALLER, &db);
 
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),
