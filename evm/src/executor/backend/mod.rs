@@ -112,9 +112,10 @@ pub trait DatabaseExt: Database {
     /// Returns an error if not matching fork was found.
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -424,7 +425,7 @@ impl Backend {
             "Test contract address must be set"
         );
         self.update_fork_db_contracts(
-            self.inner.persistent_accounts.iter().cloned(),
+            self.inner.persistent_accounts.iter().copied(),
             subroutine,
             fork,
         )
@@ -646,9 +647,10 @@ impl DatabaseExt for Backend {
 
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
@@ -656,10 +658,27 @@ impl DatabaseExt for Backend {
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
-        if self.active_fork_id() == Some(id) {
-            // need to update the block's env settings right away, which is otherwise set when forks
-            // are selected `select_fork`
-            update_current_env_with_fork_env(env, fork_env);
+
+        if let Some((active_id, active_idx)) = self.active_fork_ids {
+            // the currently active fork is the targeted fork of this call
+            if active_id == id {
+                // need to update the block's env settings right away, which is otherwise set when
+                // forks are selected `select_fork`
+                update_current_env_with_fork_env(env, fork_env);
+
+                // we also need to update the subroutine right away, this has essentially the same
+                // effect as selecting (`select_fork`) by discarding non-persistent storage from the
+                // subroutine. This which will reset cached state from the previous block
+                let persitent_addrs = self.inner.persistent_accounts.clone();
+                let active = self.inner.get_fork_mut(active_idx);
+                for addr in persitent_addrs {
+                    if let Some(acc) = subroutine.state.get(&addr).cloned() {
+                        trace!(?addr, "updating subroutine account data");
+                        active.subroutine.state.insert(addr, acc);
+                    }
+                }
+                *subroutine = active.subroutine.clone();
+            }
         }
         Ok(())
     }
