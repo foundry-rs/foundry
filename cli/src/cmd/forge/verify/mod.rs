@@ -17,7 +17,7 @@ use sourcify::SourcifyVerificationProvider;
 mod etherscan;
 mod sourcify;
 
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some(10) };
+pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 };
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
