@@ -468,7 +468,7 @@ impl Executor {
         self.backend.add_persistent_account(address);
 
         // Persist the changed block environment
-        self.inspector_config.block = env.block.clone();
+        self.inspector_config.block = env.block;
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
