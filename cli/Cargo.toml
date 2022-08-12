@@ -53,6 +53,7 @@ dialoguer = { version = "0.8.0", default-features = false }
 tokio = { version = "1", features = ["macros"] }
 futures = "0.3.17"
 rayon = "1.5.1"
+async-trait = "0.1.53"
 
 # disk / paths
 walkdir = "2.3.2"

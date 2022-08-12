@@ -85,7 +85,7 @@ pub struct CreateArgs {
         help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
         default_value = "etherscan"
     )]
-    verification_provider: verify::VerificationProvider,
+    verification_provider: verify::VerificationProviderType,
 }
 
 impl CreateArgs {
@@ -295,7 +295,6 @@ impl CreateArgs {
                 .eth
                 .etherscan_api_key
                 .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            project_paths: self.opts.project_paths,
             flatten: false,
             force: false,
             watch: true,
