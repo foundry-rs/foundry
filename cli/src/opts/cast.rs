@@ -8,6 +8,7 @@ use crate::{
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
+use eyre::WrapErr;
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Parser)]
@@ -867,7 +868,7 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         let padded = format!("{:0>64}", s.strip_prefix("0x").unwrap());
         H256::from_str(&padded)?
     } else {
-        H256::from_low_u64_be(u64::from_str(s)?)
+        H256::from_low_u64_be(u64::from_str(s).wrap_err("The slot is too large to parse from decimal. Please input the slot number in hexadecimal instead, prefixed by 0x")?)
     })
 }
 
