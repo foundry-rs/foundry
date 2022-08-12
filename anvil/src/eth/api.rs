@@ -26,6 +26,7 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         proof::AccountProof,
+        state::StateOverride,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -199,7 +200,9 @@ impl EthApi {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::EthCall(call, block) => self.call(call, block).await.to_rpc_result(),
+            EthRequest::EthCall(call, block, overrides) => {
+                self.call(call, block, overrides).await.to_rpc_result()
+            }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
@@ -746,6 +749,7 @@ impl EthApi {
         &self,
         request: EthTransactionRequest,
         block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
         node_info!("eth_call");
         let block_request = self.block_request(block_number)?;
@@ -753,6 +757,11 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.as_u64()) {
+                    if overrides.is_some() {
+                        return Err(BlockchainError::StateOverrideError(
+                            "not available on past forked blocks".into(),
+                        ))
+                    }
                     return Ok(fork.call(&request, Some(number.into())).await?)
                 }
             }
@@ -765,7 +774,8 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, Some(block_request)).await?;
+        let (exit, out, gas, _) =
+            self.backend.call(request, fees, Some(block_request), overrides).await?;
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
         ensure_return_ok(exit, &out)

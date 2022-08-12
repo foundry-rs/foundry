@@ -30,6 +30,7 @@ use anvil_core::{
         block::{Block, BlockInfo, Header},
         proof::{AccountProof, BasicAccount, StorageProof},
         receipt::{EIP658Receipt, TypedReceipt},
+        state::StateOverride,
         transaction::{
             EthTransactionRequest, PendingTransaction, TransactionInfo, TypedTransaction,
         },
@@ -759,10 +760,17 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
+        overrides: Option<StateOverride>,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number.as_u64();
-            let (exit, out, gas, state) = self.call_with_state(state, request, fee_details, block)?;
+            let (exit, out, gas, state) = match overrides {
+                None => self.call_with_state(state, request, fee_details, block),
+                Some(overrides) => {
+                    let state = state::apply_state_override(overrides, state)?;
+                    self.call_with_state(state, request, fee_details, block)
+                },
+            }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
         }).await?

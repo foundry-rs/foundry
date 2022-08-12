@@ -576,7 +576,11 @@ async fn test_fork_call() {
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
     let res1 = api
-        .call(EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() }, None)
+        .call(
+            EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() },
+            None,
+            None,
+        )
         .await
         .unwrap();
 
