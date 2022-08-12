@@ -17,6 +17,7 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use forge::revm::ExecutionResult;
 use foundry_evm::{
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
@@ -238,25 +239,26 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.inspect_commit(&mut inspector);
+        let ExecutionResult { exit_reason, out, gas_used, logs, .. } =
+            evm.inspect_commit(&mut inspector);
         inspector.print_logs();
 
-        if exit == Return::OutOfGas {
+        if exit_reason == Return::OutOfGas {
             // this currently useful for debugging estimations
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
 
-        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas);
+        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas_used);
 
-        self.gas_used.saturating_add(U256::from(gas));
+        self.gas_used.saturating_add(U256::from(gas_used));
 
-        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit, gas);
+        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 
         let tx = ExecutedTransaction {
             transaction,
-            exit,
+            exit: exit_reason,
             out,
-            gas,
+            gas: gas_used,
             logs: logs.into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
         };

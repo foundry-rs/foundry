@@ -14,8 +14,8 @@ use ethers::{
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, Return, TransactOut,
-    TransactTo, TxEnv, EVM,
+    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, ExecutionResult,
+    Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 /// Reexport commonly used revm types
 pub use revm::{db::DatabaseRef, Env, SpecId};
@@ -274,7 +274,7 @@ impl Executor {
         evm.database(self.backend_mut());
 
         // Run the call
-        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
+        let ExecutionResult { exit_reason, out, gas_used, .. } = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
@@ -306,10 +306,10 @@ impl Executor {
         self.inspector_config.cheatcodes = cheatcodes;
 
         Ok(RawCallResult {
-            status,
-            reverted: !matches!(status, return_ok!()),
+            status: exit_reason,
+            reverted: !matches!(exit_reason, return_ok!()),
             result,
-            gas,
+            gas: gas_used,
             stipend,
             logs,
             labels,
@@ -352,13 +352,20 @@ impl Executor {
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
         let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
-        let (status, out, gas, state_changeset, logs) =
+        let (ExecutionResult { exit_reason, out, gas_used, logs, .. }, state_changeset) =
             self.backend_mut().inspect_ref(env, &mut inspector);
 
         // if there are multiple forks we need to merge them
         let logs = self.backend.merged_logs(logs);
 
-        let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
+        let executed_call = ExecutedCall {
+            status: exit_reason,
+            out,
+            gas: gas_used,
+            state_changeset,
+            logs,
+            stipend,
+        };
         let call_result = convert_executed_call(inspector, executed_call)?;
 
         convert_call_result(abi, &func, call_result)
@@ -399,11 +406,19 @@ impl Executor {
         // Build VM
         let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
-        let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+        let (ExecutionResult { exit_reason, out, gas_used, logs, .. }, state_changeset) =
+            db.inspect_ref(env, &mut inspector);
 
         let logs = db.backend.merged_logs(logs);
 
-        let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
+        let executed_call = ExecutedCall {
+            status: exit_reason,
+            out,
+            gas: gas_used,
+            state_changeset,
+            logs,
+            stipend,
+        };
         convert_executed_call(inspector, executed_call)
     }
 
@@ -417,7 +432,7 @@ impl Executor {
         trace!(sender=?env.tx.caller, "deploying contract");
 
         let mut inspector = self.inspector_config.stack();
-        let ((status, out, gas, _), env) = {
+        let (ExecutionResult { exit_reason, out, gas_used, .. }, env) = {
             let mut evm = EVM::new();
             evm.env = env;
             evm.database(self.backend_mut());
@@ -433,7 +448,7 @@ impl Executor {
             _ => Bytes::default(),
         };
 
-        let address = match status {
+        let address = match exit_reason {
             return_ok!() => {
                 if let TransactOut::Create(_, Some(addr)) = out {
                     addr
@@ -442,7 +457,7 @@ impl Executor {
                         reverted: true,
                         reason: "Deployment succeeded, but no address was returned. This is a bug, please report it".to_string(),
                         traces,
-                        gas,
+                        gas: gas_used,
                         stipend: 0,
                         logs,
                         debug,
@@ -453,13 +468,13 @@ impl Executor {
                 }
             }
             _ => {
-                let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                    .unwrap_or_else(|_| format!("{:?}", status));
+                let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
+                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
                 return Err(EvmError::Execution {
                     reverted: true,
                     reason,
                     traces,
-                    gas,
+                    gas: gas_used,
                     stipend: 0,
                     logs,
                     debug,
@@ -482,7 +497,7 @@ impl Executor {
 
         trace!(address=?address, "deployed contract");
 
-        Ok(DeployResult { address, gas, logs, traces, debug })
+        Ok(DeployResult { address, gas: gas_used, logs, traces, debug })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.

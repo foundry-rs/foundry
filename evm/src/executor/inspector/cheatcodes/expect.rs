@@ -218,16 +218,18 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
-        HEVMCalls::ExpectRevert0(_) => expect_revert(state, Bytes::new(), data.subroutine.depth()),
+        HEVMCalls::ExpectRevert0(_) => {
+            expect_revert(state, Bytes::new(), data.journaled_state.depth())
+        }
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
+            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
+            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(inner) => {
             state.expected_emits.push(ExpectedEmit {
-                depth: data.subroutine.depth() - 1,
+                depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 ..Default::default()
             });
@@ -235,7 +237,7 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::ExpectEmit1(inner) => {
             state.expected_emits.push(ExpectedEmit {
-                depth: data.subroutine.depth() - 1,
+                depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 address: Some(inner.4),
                 ..Default::default()
@@ -260,12 +262,12 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            data.subroutine.load_account(inner.0, data.db);
+            data.journaled_state.load_account(inner.0, data.db);
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
             // check Solidity might perform.
             if data
-                .subroutine
+                .journaled_state
                 .account(inner.0)
                 .info
                 .code
@@ -274,7 +276,7 @@ pub fn apply<DB: Database>(
                 .unwrap_or(true)
             {
                 let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
-                data.subroutine.set_code(inner.0, code);
+                data.journaled_state.set_code(inner.0, code);
             }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },

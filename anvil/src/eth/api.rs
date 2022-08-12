@@ -50,7 +50,10 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge::{executor::DatabaseRef, revm::BlockEnv};
+use forge::{
+    executor::DatabaseRef,
+    revm::{BlockEnv, ExecutionResult},
+};
 use foundry_common::ProviderBuilder;
 use foundry_evm::revm::{return_ok, return_revert, Return};
 use futures::channel::mpsc::Receiver;
@@ -765,10 +768,11 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, Some(block_request)).await?;
-        trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
+        let (ExecutionResult { exit_reason, out, gas_used, .. }, _) =
+            self.backend.call(request, fees, Some(block_request)).await?;
+        trace!(target = "node", "Call status {:?}, gas {}", exit_reason, gas_used);
 
-        ensure_return_ok(exit, &out)
+        ensure_return_ok(exit_reason, &out)
     }
 
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
@@ -802,24 +806,22 @@ impl EthApi {
 
         self.backend
             .with_database_at(Some(block_request), |state, block_env| {
-                let (exit, out, _, access_list) = self.backend.build_access_list_with_state(
-                    &state,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env.clone(),
-                )?;
-                ensure_return_ok(exit, &out)?;
+                let (ExecutionResult { exit_reason, out, .. }, access_list) =
+                    self.backend.build_access_list_with_state(
+                        &state,
+                        request.clone(),
+                        FeeDetails::zero(),
+                        block_env.clone(),
+                    )?;
+                ensure_return_ok(exit_reason, &out)?;
 
                 // execute again but with access list set
                 request.access_list = Some(access_list.0.clone());
 
-                let (exit, out, gas_used, _) = self.backend.call_with_state(
-                    &state,
-                    request.clone(),
-                    FeeDetails::zero(),
-                    block_env,
-                )?;
-                ensure_return_ok(exit, &out)?;
+                let (ExecutionResult { exit_reason, out, gas_used, .. }, _) = self
+                    .backend
+                    .call_with_state(&state, request.clone(), FeeDetails::zero(), block_env)?;
+                ensure_return_ok(exit_reason, &out)?;
 
                 Ok(AccessListWithGasUsed {
                     access_list: AccessList(access_list.0),
@@ -1723,13 +1725,10 @@ impl EthApi {
         call_to_estimate.gas = Some(gas_limit);
 
         // execute the call without writing to db
-        let (exit, out, gas, _) = self.backend.call_with_state(
-            &state,
-            call_to_estimate,
-            fees.clone(),
-            block_env.clone(),
-        )?;
-        match exit {
+        let (ExecutionResult { exit_reason, out, gas_used, .. }, _) = self
+            .backend
+            .call_with_state(&state, call_to_estimate, fees.clone(), block_env.clone())?;
+        match exit_reason {
             return_ok!() => {
                 // succeeded
             }
@@ -1742,9 +1741,9 @@ impl EthApi {
                 // again with the max gas limit to check if revert is gas related or not
                 return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
-                    let (exit, out, _, _) =
+                    let (ExecutionResult { exit_reason, out, .. }, _) =
                         self.backend.call_with_state(&state, request, fees, block_env)?;
-                    match exit {
+                    match exit_reason {
                         return_ok!() => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
@@ -1772,7 +1771,7 @@ impl EthApi {
         // at this point we know the call succeeded but want to find the best gas, so we do a binary
         // search over the possible range
 
-        let gas: U256 = gas.into();
+        let gas: U256 = gas_used.into();
         let mut lowest_gas_limit = MIN_GAS;
 
         // pick a point that's close to the estimated gas
@@ -1782,13 +1781,13 @@ impl EthApi {
 
         while (highest_gas_limit - lowest_gas_limit) > U256::one() {
             request.gas = Some(mid_gas_limit);
-            let (exit, _, _gas, _) = self.backend.call_with_state(
+            let (ExecutionResult { exit_reason, .. }, _) = self.backend.call_with_state(
                 &state,
                 request.clone(),
                 fees.clone(),
                 block_env.clone(),
             )?;
-            match exit {
+            match exit_reason {
                 return_ok!() => {
                     highest_gas_limit = mid_gas_limit;
                     // if last two successful estimations only vary by 10%, we consider this to

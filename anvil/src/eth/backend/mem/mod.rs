@@ -50,15 +50,12 @@ use ethers::{
 };
 use forge::{
     executor::inspector::AccessListTracer,
-    revm::{return_ok, return_revert, BlockEnv, Return},
+    revm::{return_ok, return_revert, BlockEnv, ExecutionResult, Return},
 };
 use foundry_evm::{
     decode::decode_revert,
     revm,
-    revm::{
-        db::CacheDB, Account, CreateScheme, Env, SpecId, TransactOut, TransactTo, TxEnv,
-        KECCAK_EMPTY,
-    },
+    revm::{db::CacheDB, Account, CreateScheme, Env, SpecId, TransactTo, TxEnv, KECCAK_EMPTY},
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -543,10 +540,7 @@ impl Backend {
     }
 
     /// executes the transactions without writing to the underlying database
-    pub async fn inspect_tx(
-        &self,
-        tx: Arc<PoolTransaction>,
-    ) -> (Return, TransactOut, u64, State, Vec<revm::Log>) {
+    pub async fn inspect_tx(&self, tx: Arc<PoolTransaction>) -> (ExecutionResult, State) {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
@@ -752,12 +746,12 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-    ) -> Result<(Return, TransactOut, u64, State), BlockchainError> {
+    ) -> Result<(ExecutionResult, State), BlockchainError> {
         self.with_database_at(block_request, |state, block| {
             let block_number = block.number.as_u64();
-            let (exit, out, gas, state) = self.call_with_state(state, request, fee_details, block)?;
-            trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
-            Ok((exit, out, gas, state))
+            let (res, state) = self.call_with_state(state, request, fee_details, block)?;
+            trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", res.exit_reason, res.out, res.gas_used, block_number);
+            Ok((res, state))
         }).await?
     }
 
@@ -806,7 +800,7 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
+    ) -> Result<(ExecutionResult, State), BlockchainError>
     where
         D: DatabaseRef,
     {
@@ -814,9 +808,9 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (exit, out, gas, state, _) = evm.inspect_ref(&mut inspector);
+        let out = evm.inspect_ref(&mut inspector);
         inspector.print_logs();
-        Ok((exit, out, gas, state))
+        Ok(out)
     }
 
     pub fn build_access_list_with_state<D>(
@@ -825,7 +819,7 @@ impl Backend {
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(Return, TransactOut, u64, AccessList), BlockchainError>
+    ) -> Result<(ExecutionResult, AccessList), BlockchainError>
     where
         D: DatabaseRef,
     {
@@ -845,9 +839,9 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (exit, out, gas, _, _) = evm.inspect_ref(&mut tracer);
+        let (out, _) = evm.inspect_ref(&mut tracer);
         let access_list = tracer.access_list();
-        Ok((exit, out, gas, access_list))
+        Ok((out, access_list))
     }
 
     /// returns all receipts for the given transactions
