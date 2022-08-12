@@ -68,6 +68,8 @@ libs = ['lib']
 remappings = []
 # additional solc allow paths
 allow_paths = []
+# additional solc include paths
+include_paths = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings 
 libraries = []

@@ -128,8 +128,10 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// where the broadcast logs are stored
     pub broadcast: PathBuf,
-    /// additional solc allow paths
+    /// additional solc allow paths for `--allow-paths`
     pub allow_paths: Vec<PathBuf>,
+    /// additional solc include paths for `--include-path`
+    pub include_paths: Vec<PathBuf>,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -502,6 +504,8 @@ impl Config {
 
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
+        self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
+
         if let Some(ref mut model_checker) = self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
                 .into_iter()
@@ -588,6 +592,7 @@ impl Config {
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .allowed_paths(&self.allow_paths)
+            .include_paths(&self.include_paths)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
@@ -714,13 +719,7 @@ impl Config {
     /// contracts/math/math.sol
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
-        self.remappings
-            .iter()
-            .map(|m| m.clone().into())
-            .chain(self.get_source_dir_remapping())
-            .chain(self.get_test_dir_remapping())
-            .chain(self.get_script_dir_remapping())
-            .collect()
+        self.remappings.iter().map(|m| m.clone().into()).collect()
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -1469,6 +1468,7 @@ impl Default for Config {
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             allow_paths: vec![],
+            include_paths: vec![],
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
@@ -2634,7 +2634,6 @@ mod tests {
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
-                    Remapping::from_str("some-source/=some-source/").unwrap(),
                 ],
             );
 
