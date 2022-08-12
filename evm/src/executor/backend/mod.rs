@@ -645,6 +645,7 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
+    /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing fork
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
@@ -671,11 +672,9 @@ impl DatabaseExt for Backend {
                 // subroutine. This which will reset cached state from the previous block
                 let persitent_addrs = self.inner.persistent_accounts.clone();
                 let active = self.inner.get_fork_mut(active_idx);
+                active.subroutine = self.fork_init_subroutine.clone();
                 for addr in persitent_addrs {
-                    if let Some(acc) = subroutine.state.get(&addr).cloned() {
-                        trace!(?addr, "updating subroutine account data");
-                        active.subroutine.state.insert(addr, acc);
-                    }
+                    clone_subroutine_data(addr, subroutine, &mut active.subroutine);
                 }
                 *subroutine = active.subroutine.clone();
             }
@@ -1039,10 +1038,14 @@ impl BackendInner {
         let fork_id = self.ensure_fork_id(id)?;
         let idx = self.ensure_fork_index(fork_id)?;
 
-        if let Some(f) = self.forks[idx].as_mut() {
-            f.db.db = backend;
+        if let Some(active) = self.forks[idx].as_mut() {
+            // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
+            let mut new_db = ForkDB::new(backend);
+            for addr in self.persistent_accounts.iter().copied() {
+                clone_db_account_data(addr, &active.db, &mut new_db);
+            }
+            active.db = new_db;
         }
-
         // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
         self.created_forks.insert(new_fork_id, idx);
@@ -1099,18 +1102,35 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
-        trace!(?addr, "cloning data");
-        let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
-        if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-            fork.db.contracts.insert(acc.info.code_hash, code);
-        }
-        fork.db.accounts.insert(addr, acc);
-
-        if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-            trace!(?addr, "updating subroutine account data");
-            fork.subroutine.state.insert(addr, acc);
-        }
+        clone_db_account_data(addr, active, &mut fork.db);
+        clone_subroutine_data(addr, active_subroutine, &mut fork.subroutine);
     }
 
     *active_subroutine = fork.subroutine.clone();
+}
+
+/// Clones the account data from the `active_subroutine`  into the `fork_subroutine`
+fn clone_subroutine_data(
+    addr: Address,
+    active_subroutine: &mut SubRoutine,
+    fork_subroutine: &mut SubRoutine,
+) {
+    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
+        trace!(?addr, "updating subroutine account data");
+        fork_subroutine.state.insert(addr, acc);
+    }
+}
+
+/// Clones the account data from the `active` db into the `ForkDB`
+fn clone_db_account_data<ExtDB: DatabaseRef>(
+    addr: Address,
+    active: &CacheDB<ExtDB>,
+    fork_db: &mut ForkDB,
+) {
+    trace!(?addr, "cloning database data");
+    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
+        fork_db.contracts.insert(acc.info.code_hash, code);
+    }
+    fork_db.accounts.insert(addr, acc);
 }

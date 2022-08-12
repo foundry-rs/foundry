@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
 
 // https://github.com/foundry-rs/foundry/issues/2723
-contract Issue2629Test is DSTest {
+contract Issue2723Test is DSTest {
     Cheats constant vm = Cheats(HEVM_ADDRESS);
 
     function testRollFork() public {
@@ -18,7 +18,7 @@ contract Issue2629Test is DSTest {
 
         vm.rollFork(10);
 
-//        assertEq(block.number, 10);
-//        assertEq(coinbase.balance, 16250000000000000000);
+        assertEq(block.number, 10);
+        assertEq(coinbase.balance, 16250000000000000000);
     }
 }
