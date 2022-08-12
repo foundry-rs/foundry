@@ -316,13 +316,12 @@ impl TestProject {
     pub fn wipe_contracts(&self) {
         fn rm_create(path: &Path) {
             pretty_err(path, fs::remove_dir_all(path));
-            pretty_err(path,  fs::create_dir(path));
+            pretty_err(path, fs::create_dir(path));
         }
         rm_create(&self.paths().sources);
         rm_create(&self.paths().tests);
         rm_create(&self.paths().scripts);
     }
-
 }
 
 impl Drop for TestCommand {
