@@ -62,9 +62,9 @@ Examples: 1ether, 10gwei, 0.01ether"#,
 impl EstimateArgs {
     pub async fn run(self) -> eyre::Result<()> {
         let EstimateArgs { to, sig, args, value, eth, command } = self;
-        let config = Config::from(&eth);
+        let mut config = Config::from(&eth);
         let provider = get_http_provider(
-            config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            config.eth_rpc_url.take().unwrap_or_else(|| "http://localhost:8545".to_string()),
         );
 
         let chain: Chain =
@@ -72,9 +72,10 @@ impl EstimateArgs {
 
         let from = eth.sender().await;
         let mut builder = TxBuilder::new(&provider, from, to, chain, false).await?;
+        builder.etherscan_api_key(config.get_etherscan_api_key(Some(chain)));
         match command {
             Some(EstimateSubcommands::Create { code, sig, args, value }) => {
-                builder.etherscan_api_key(config.etherscan_api_key).value(value);
+                builder.value(value);
 
                 let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
 
@@ -86,11 +87,7 @@ impl EstimateArgs {
                 builder.set_data(data);
             }
             _ => {
-                builder
-                    .etherscan_api_key(config.etherscan_api_key)
-                    .value(value)
-                    .set_args(sig.unwrap().as_str(), args)
-                    .await?;
+                builder.value(value).set_args(sig.unwrap().as_str(), args).await?;
             }
         };
 

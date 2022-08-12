@@ -357,8 +357,7 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -734,8 +733,8 @@ impl Config {
     /// Returns the `EtherscanConfig` to use, if any
     ///
     /// Returns
-    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if
-    ///    `etherscan_api_key` is an alias
+    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if `etherscan_api_key` is
+    ///    an alias
     ///  - the Mainnet  `ResolvedEtherscanConfig` if `etherscan_api_key` is set, `None` otherwise
     ///
     /// # Example
@@ -779,6 +778,11 @@ impl Config {
             return Ok(Some(config))
         }
         Ok(None)
+    }
+
+    /// Helper function to just get the API key
+    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
     /// Returns the remapping for the project's _src_ directory
