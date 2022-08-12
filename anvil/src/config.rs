@@ -5,6 +5,7 @@ use crate::{
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
+            time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
@@ -83,6 +84,8 @@ pub struct NodeConfig {
     pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
     pub genesis_balance: U256,
+    /// Genesis block timestamp
+    pub genesis_timestamp: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
@@ -201,6 +204,16 @@ Gas Limit
             Paint::green(format!("\n{}", self.gas_limit))
         );
 
+        let _ = write!(
+            config_string,
+            r#"
+Genesis Timestamp
+==================
+{}
+"#,
+            Paint::green(format!("\n{}", self.get_genesis_timestamp()))
+        );
+
         if let Some(fork) = fork {
             let _ = write!(
                 config_string,
@@ -262,6 +275,7 @@ Chain ID:       {}
               "base_fee": format!("{}", self.get_base_fee()),
               "gas_price": format!("{}", self.get_gas_price()),
               "gas_limit": format!("{}", self.gas_limit),
+              "genesis_timestamp": format!("{}", self.get_genesis_timestamp()),
             })
         }
     }
@@ -288,6 +302,7 @@ impl Default for NodeConfig {
             gas_price: None,
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
+            genesis_timestamp: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
@@ -371,6 +386,20 @@ impl NodeConfig {
     #[must_use]
     pub fn with_base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
         self.base_fee = base_fee.map(Into::into);
+        self
+    }
+
+    /// Returns the genesis timestamp to use
+    pub fn get_genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp.unwrap_or_else(|| duration_since_unix_epoch().as_secs())
+    }
+
+    /// Sets the genesis timestamp
+    #[must_use]
+    pub fn with_genesis_timestamp<U: Into<u64>>(mut self, timestamp: Option<U>) -> Self {
+        if let Some(timestamp) = timestamp {
+            self.genesis_timestamp = Some(timestamp.into());
+        }
         self
     }
 
@@ -680,6 +709,7 @@ impl NodeConfig {
             };
 
         let genesis = GenesisConfig {
+            timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
         };
@@ -690,6 +720,8 @@ impl NodeConfig {
 
         if let Some(timestamp) = fork_timestamp {
             backend.time().set_start_timestamp(timestamp.as_u64());
+        } else {
+            backend.time().set_start_timestamp(self.get_genesis_timestamp());
         }
         backend
     }

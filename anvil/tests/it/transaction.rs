@@ -389,14 +389,25 @@ async fn get_blocktimestamp_works() {
 
     assert!(timestamp > U256::one());
 
-    // mock timestamp
-    api.evm_set_next_block_timestamp(1337).unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
 
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, latest_block.timestamp.into());
 
     // repeat call same result
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+    assert_eq!(timestamp, latest_block.timestamp.into());
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(1337).unwrap();
+
+    let timestamp =
+        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
+    assert_eq!(timestamp, 1337u64.into());
+
+    // repeat call same result
+    let timestamp =
+        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
     assert_eq!(timestamp, 1337u64.into());
 }
 
