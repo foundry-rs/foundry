@@ -531,7 +531,7 @@ impl VerifyBundle {
         project: &Project,
         config: &Config,
         known_contracts: ContractsByArtifact,
-        mut retry: RetryArgs,
+        retry: RetryArgs,
     ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
@@ -548,12 +548,6 @@ impl VerifyBundle {
             hardhat: config.profile == Config::HARDHAT_PROFILE,
             config_path: if config_path.exists() { Some(config_path) } else { None },
         };
-
-        // Default from `RetryArgs` struct.
-        if retry.delay.is_none() && retry.retries == 1 {
-            retry.delay = Some(5);
-            retry.retries = 5;
-        }
 
         VerifyBundle {
             num_of_optimizations,

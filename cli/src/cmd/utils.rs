@@ -118,7 +118,7 @@ pub struct RetryArgs {
     #[clap(
         long,
         help = "Number of attempts for retrying verification",
-        default_value = "1",
+        default_value = "5",
         validator = u32_validator(1, 10),
         value_name = "RETRIES"
     )]
@@ -127,10 +127,11 @@ pub struct RetryArgs {
     #[clap(
         long,
         help = "Optional delay to apply inbetween verification attempts in seconds.",
+        default_value = "5",
         validator = u32_validator(0, 30),
         value_name = "DELAY"
     )]
-    pub delay: Option<u32>,
+    pub delay: u32,
 }
 
 fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
@@ -146,7 +147,7 @@ fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
 
 impl From<RetryArgs> for Retry {
     fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, r.delay)
+        Retry::new(r.retries, Some(r.delay))
     }
 }
 
