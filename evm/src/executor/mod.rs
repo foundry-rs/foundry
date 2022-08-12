@@ -39,7 +39,10 @@ pub mod snapshot;
 
 use crate::{
     coverage::HitMaps,
-    executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
+    executor::{
+        backend::DatabaseExt,
+        inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
+    },
 };
 pub use builder::ExecutorBuilder;
 
@@ -405,13 +408,16 @@ impl Executor {
         abi: Option<&Abi>,
     ) -> Result<DeployResult, EvmError> {
         trace!(sender=?from, "deploying contract");
-        let mut evm = EVM::new();
-        evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
 
         let mut inspector = self.inspector_config.stack();
-        evm.database(self.backend_mut());
+        let ((status, out, gas, _), env) = {
+            let mut evm = EVM::new();
+            evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
+            evm.database(self.backend_mut());
+            let out = evm.inspect_commit(&mut inspector);
+            (out, evm.env)
+        };
 
-        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
             inspector.collect_inspector_states();
 
@@ -457,8 +463,12 @@ impl Executor {
             }
         };
 
+        // also mark this library as persistent, this will ensure that the state of the library is
+        // persistent across fork swaps in forking mode
+        self.backend.add_persistent_account(address);
+
         // Persist the changed block environment
-        self.inspector_config.block = evm.env.block.clone();
+        self.inspector_config.block = env.block;
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
