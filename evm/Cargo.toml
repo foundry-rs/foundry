@@ -41,7 +41,6 @@ revm = { version = "1.9", default-features = false, features = ["std", "k256", "
 
 # Fuzzer
 proptest = "1.0.0"
-lru = "0.7.8"
 
 # Display
 yansi = "0.5.1"

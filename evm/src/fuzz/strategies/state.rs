@@ -10,7 +10,7 @@ use ethers::{
     types::{Address, Log, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
-use lru::LruCache;
+use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -29,23 +29,11 @@ use std::{
 /// Wrapped in a shareable container.
 pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FuzzDictionary {
     inner: BTreeSet<[u8; 32]>,
     /// Addresses that already had their PUSH bytes collected.
-    cache: LruCache<Address, u8>,
-}
-
-impl FuzzDictionary {
-    pub fn new() -> Self {
-        FuzzDictionary { inner: BTreeSet::new(), cache: LruCache::new(100) }
-    }
-}
-
-impl Default for FuzzDictionary {
-    fn default() -> Self {
-        Self::new()
-    }
+    cache: HashSet<Address>,
 }
 
 impl Deref for FuzzDictionary {
@@ -143,7 +131,7 @@ pub fn collect_state_from_call(
         // Insert push bytes
         if let Some(code) = &account.info.code {
             if !state.cache.contains(address) {
-                state.cache.put(*address, 1);
+                state.cache.insert(*address);
 
                 for push_byte in collect_push_bytes(code.bytes().clone()) {
                     state.insert(push_byte);

@@ -2092,7 +2092,6 @@ dependencies = [
  "hashbrown 0.12.0",
  "hex",
  "jsonpath-rust",
- "lru",
  "once_cell",
  "parking_lot 0.12.0",
  "proptest",
@@ -3006,15 +3005,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abb12e687cfb44aa40f41fc3978ef76448f9b6038cad6aef4259d3c095a2382e"
 dependencies = [
  "cfg-if 1.0.0",
-]
-
-[[package]]
-name = "lru"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e999beba7b6e8345721bd280141ed958096a2e4abdf74f67ff4ce49b4b54e47a"
-dependencies = [
- "hashbrown 0.12.0",
 ]
 
 [[package]]
