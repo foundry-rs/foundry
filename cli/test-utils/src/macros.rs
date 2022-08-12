@@ -79,24 +79,6 @@ macro_rules! casttest {
     };
 }
 
-/// A helper macro to ignore `forgetest!` that should not run on CI
-#[macro_export]
-macro_rules! forgetest_ignore {
-    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
-        $crate::forgetest_ignore!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
-    };
-    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
-        #[test]
-        #[ignore]
-        $(#[$meta])*
-        fn $test() {
-            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            let f = $fun;
-            f(prj, cmd);
-        }
-    };
-}
-
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
 macro_rules! forgetest_init {

@@ -5,7 +5,8 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Test is DSTest {
-    uint256 public changed = 0; 
+    uint256 public changed = 0;
+
     function t(uint256 a) public returns (uint256) {
         uint256 b = 0;
         for (uint256 i; i < a; i++) {
@@ -19,12 +20,14 @@ contract Test is DSTest {
         changed += 1;
     }
 
-    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {
-    }
+    function multiple_arguments(uint256 a, address b, uint256[] memory c)
+        public
+        returns (uint256)
+    {}
 
     function echoSender() public view returns (address) {
         return msg.sender;
-    } 
+    }
 }
 
 library F {
@@ -50,7 +53,7 @@ contract BroadcastTest is DSTest {
 
         // this will
         cheats.broadcast(ACCOUNT_B);
-        test.t(2);     
+        test.t(2);
     }
 
     function deployOther() public {
@@ -71,7 +74,7 @@ contract BroadcastTest is DSTest {
         test.inc();
 
         cheats.stopBroadcast();
-        
+
         require(test.echoSender() == address(this));
 
         cheats.broadcast(ACCOUNT_B);
@@ -89,12 +92,10 @@ contract BroadcastTest is DSTest {
         // will trigger a transaction
         test.inc();
 
-        assert(test.changed() == 2); 
-
+        assert(test.changed() == 2);
     }
 
     function deployPanics() public {
-
         cheats.broadcast(address(0x1337));
         Test test = new Test();
 
@@ -106,20 +107,18 @@ contract BroadcastTest is DSTest {
         new Test();
 
         cheats.broadcast(address(0x1338));
-        test.t(0);     
+        test.t(0);
     }
 
     function deployNoArgs() public {
         cheats.broadcast();
         Test test1 = new Test();
-    
+
         cheats.startBroadcast();
         Test test2 = new Test();
         cheats.stopBroadcast();
-
     }
 }
-
 
 contract NoLink is DSTest {
     function t(uint256 a) public returns (uint256) {
@@ -130,6 +129,7 @@ contract NoLink is DSTest {
         emit log_string("here");
         return b;
     }
+
     function view_me() public pure returns (uint256) {
         return 1337;
     }
@@ -156,13 +156,15 @@ contract BroadcastTestNoLinking is DSTest {
         new NoLink();
 
         cheats.broadcast(address(ACCOUNT_B));
-        test.t(0);     
+        test.t(0);
     }
 
     function deployMany() public {
+        assert(cheats.getNonce(msg.sender) == 0);
+
         cheats.startBroadcast();
 
-        for(uint i; i< 100; i++) {
+        for (uint256 i; i < 100; i++) {
             NoLink test9 = new NoLink();
         }
 
@@ -172,11 +174,29 @@ contract BroadcastTestNoLinking is DSTest {
     function deployCreate2() public {
         cheats.startBroadcast();
         NoLink test_c2 = new NoLink{salt: bytes32(uint256(1337))}();
-        assert(test_c2.view_me() == 1337); 
+        assert(test_c2.view_me() == 1337);
         NoLink test2 = new NoLink();
         cheats.stopBroadcast();
-    
     }
+
+    function errorStaticCall() public {
+        cheats.broadcast();
+        NoLink test11 = new NoLink();
+
+        cheats.broadcast();
+        test11.view_me();
+    }
+}
+
+contract BroadcastMix is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+
     function more() internal {
         cheats.broadcast();
         NoLink test11 = new NoLink();
@@ -224,21 +244,15 @@ contract BroadcastTestNoLinking is DSTest {
 
         more();
     }
-
-    function errorStaticCall() public {
-        cheats.broadcast();
-        NoLink test11 = new NoLink();
-
-        cheats.broadcast();
-        test11.view_me();
-    }
 }
-
 
 contract BroadcastTestSetup is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function setUp() public {
+        // It predeployed a library first
+        assert(cheats.getNonce(msg.sender) == 1);
+
         cheats.broadcast();
         Test t = new Test();
 
@@ -252,7 +266,7 @@ contract BroadcastTestSetup is DSTest {
 
         cheats.broadcast();
         Test t = new Test();
-        
+
         cheats.broadcast();
         t.t(3);
     }
@@ -274,9 +288,38 @@ contract BroadcastTestLog is DSTest {
             c1.multiple_arguments(1, address(0x1337), arr);
             c1.inc();
             c2.t(1);
-            
+
             payable(address(0x1337)).transfer(0.0001 ether);
         }
         cheats.stopBroadcast();
+    }
+}
+
+contract TestInitialBalance is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+    function runCustomSender() public {
+        // Make sure we're testing a different caller than the default one.
+        assert(
+            msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
+        );
+
+        // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
+        assert(msg.sender.balance == 100 ether);
+
+        cheats.broadcast();
+        new NoLink();
+    }
+
+    function runDefaultSender() public {
+        // Make sure we're testing with the default caller.
+        assert(
+            msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
+        );
+
+        assert(msg.sender.balance == type(uint256).max);
+
+        cheats.broadcast();
+        new NoLink();
     }
 }

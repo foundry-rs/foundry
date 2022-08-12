@@ -1,5 +1,8 @@
 use super::{build::BuildArgs, script::ScriptArgs, watch::WatchArgs};
-use crate::{cmd::forge::build::CoreBuildArgs, opts::MultiWallet};
+use crate::{
+    cmd::forge::{build::CoreBuildArgs, create::RETRY_VERIFY_ON_CREATE},
+    opts::MultiWallet,
+};
 use clap::{Parser, ValueHint};
 use foundry_common::evm::EvmArgs;
 use std::path::PathBuf;
@@ -48,6 +51,8 @@ impl DebugArgs {
             sig: self.sig,
             legacy: false,
             broadcast: false,
+            skip_simulation: false,
+            gas_estimate_multiplier: 130,
             opts: BuildArgs {
                 args: self.opts,
                 names: false,
@@ -63,6 +68,7 @@ impl DebugArgs {
             verify: false,
             json: false,
             with_gas_price: None,
+            retry: RETRY_VERIFY_ON_CREATE,
         };
         script.run_script().await
     }

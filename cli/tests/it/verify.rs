@@ -2,7 +2,6 @@
 //! and sourcify
 
 use crate::utils::{self, EnvExternalities};
-
 use foundry_cli_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
@@ -138,7 +137,7 @@ fn verify_watch_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut c
             "--watch".to_string(),
             address,
             contract_path.to_string(),
-            info.etherscan.to_string(),
+            info.etherscan,
         ]);
         parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
     }
@@ -293,7 +292,7 @@ forgetest!(
                     "--rpc-url".to_string(),
                     info.rpc.clone(),
                     "--private-key".to_string(),
-                    info.pk.clone(),
+                    info.pk,
                 ])
                 .arg("--broadcast")
                 .arg("--verify")

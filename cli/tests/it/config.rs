@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge commands related to config values
+use crate::forge_utils;
 use ethers::{
     prelude::artifacts::YulDetails,
     solc::artifacts::RevertStrings,
@@ -14,12 +15,8 @@ use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, OptimizerDetails, SolcReq,
 };
+use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
 
 // tests all config values that are in use
 forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
@@ -38,6 +35,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         force: true,
         evm_version: EvmVersion::Byzantium,
         gas_reports: vec!["Contract".to_string()],
+        gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
         offline: true,
@@ -62,6 +60,11 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         fuzz_runs: 1000,
         fuzz_max_local_rejects: 2000,
         fuzz_max_global_rejects: 100203,
+        fuzz_seed: Some(1000.into()),
+        invariant_runs: 256,
+        invariant_depth: 15,
+        invariant_fail_on_revert: false,
+        invariant_call_override: false,
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -95,7 +98,12 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],
+        rpc_endpoints: Default::default(),
+        build_info: false,
+        build_info_path: None,
+        fmt: Default::default(),
         __non_exhaustive: (),
+        __warnings: vec![],
     };
     prj.write_config(input.clone());
     let config = cmd.config();
@@ -129,10 +137,7 @@ forgetest_init!(
 
         // ensure remappings contain test
         assert_eq!(profile.remappings.len(), 2);
-        assert_eq!(
-            "ds-test/=lib/forge-std/lib/ds-test/src/".to_string(),
-            profile.remappings[0].to_string()
-        );
+        assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/", profile.remappings[0].to_string());
         // the loaded config has resolved, absolute paths
         assert_eq!(
             "ds-test/=lib/forge-std/lib/ds-test/src/",
@@ -150,7 +155,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-file").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-file").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -161,7 +166,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-env").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-env").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -171,7 +176,7 @@ forgetest_init!(
         assert_eq!(
             format!(
                 "ds-test/={}/",
-                prj.root().join("lib/forge-std/lib/ds-test/from-cli").display()
+                prj.root().join("lib/forge-std/lib/ds-test/from-cli").to_slash_lossy()
             ),
             Remapping::from(config.remappings[0].clone()).to_string()
         );
@@ -179,7 +184,7 @@ forgetest_init!(
         let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
         assert_eq!(config.remappings.len(), 3);
         assert_eq!(
-            format!("other-key/={}/", prj.root().join("lib/other").display()),
+            format!("other-key/={}/", prj.root().join("lib/other").to_slash_lossy()),
             Remapping::from(config.remappings[2].clone()).to_string()
         );
 
@@ -385,11 +390,11 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
         remappings,
         vec![
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
-            "forge-std/=lib/forge-std/src/".parse().unwrap()
+            "forge-std/=lib/forge-std/src/".parse().unwrap(),
         ]
     );
     // create a new lib directly in the `lib` folder
-    let mut config = config.clone();
+    let mut config = config;
     config.remappings = vec![Remapping::from_str("nested/=lib/nested").unwrap().into()];
     let nested = prj.paths().libraries[0].join("nested-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -409,7 +414,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     );
 
     // nest another lib under the already nested lib
-    let mut config = config.clone();
+    let mut config = config;
     config.remappings = vec![Remapping::from_str("nested-twice/=lib/nested-twice").unwrap().into()];
     let nested = nested.join("lib/another-lib");
     pretty_err(&nested, fs::create_dir_all(&nested));
@@ -457,7 +462,7 @@ forgetest_init!(
         let config = cmd.config();
 
         // create a new lib directly in the `lib` folder with conflicting remapping `forge-std/`
-        let mut config = config.clone();
+        let mut config = config;
         config.remappings =
             vec![Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into()];
         let nested = prj.paths().libraries[0].join("dep1");
@@ -485,7 +490,7 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
 
     // explicitly set gas_price
     let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
-    prj.write_config(init.clone());
+    prj.write_config(init);
 
     cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
     cmd.assert_non_empty_stdout();
@@ -501,4 +506,32 @@ forgetest!(can_update_libs_section, |prj: TestProject, mut cmd: TestCommand| {
 
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
+});
+
+// test to check that loading the config emits warnings on the root foundry.toml and
+// is silent for any libs
+forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]);
+    cmd.assert_non_empty_stdout();
+
+    let faulty_toml = r#"[default]
+    src = 'src'
+    out = 'out'
+    libs = ['lib']"#;
+
+    fs::write(prj.root().join("foundry.toml"), faulty_toml).unwrap();
+    fs::write(prj.root().join("lib").join("forge-std").join("foundry.toml"), faulty_toml).unwrap();
+
+    cmd.forge_fuse().args(["config"]);
+    let output = cmd.execute();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| { line.contains("Unknown section [default]") })
+            .count(),
+        1
+    )
 });

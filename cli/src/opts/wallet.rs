@@ -3,15 +3,15 @@ use std::{str::FromStr, sync::Arc};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::{RetryClient, Signer},
-    providers::{Http, Provider},
+    prelude::Signer,
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
 use eyre::{eyre, Result};
+use foundry_common::{fs, RetryProvider};
 use serde::Serialize;
 
-type SignerClient<T> = SignerMiddleware<Arc<Provider<RetryClient<Http>>>, T>;
+type SignerClient<T> = SignerMiddleware<Arc<RetryProvider>, T>;
 
 #[derive(Debug)]
 pub enum WalletType {
@@ -48,7 +48,7 @@ impl WalletType {
     }
 }
 
-#[derive(Parser, Debug, Clone, Serialize)]
+#[derive(Parser, Debug, Default, Clone, Serialize)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
     doc,
@@ -186,13 +186,13 @@ pub trait WalletTrait {
     }
 
     fn get_from_private_key(&self, private_key: &str) -> Result<LocalWallet> {
-        let privk = private_key.strip_prefix("0x").unwrap_or(private_key);
+        let privk = private_key.trim().strip_prefix("0x").unwrap_or(private_key);
         LocalWallet::from_str(privk)
             .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
     }
 
     fn get_from_mnemonic(&self, path: &str, index: u32) -> Result<LocalWallet> {
-        let mnemonic = std::fs::read_to_string(path)?.replace('\n', "");
+        let mnemonic = fs::read_to_string(path)?.replace('\n', "");
         Ok(MnemonicBuilder::<English>::default().phrase(mnemonic.as_str()).index(index)?.build()?)
     }
 
@@ -210,5 +210,37 @@ pub trait WalletTrait {
             }
             (None, _) => None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn illformed_private_key_generates_user_friendly_error() {
+        let wallet = Wallet {
+            from: None,
+            interactive: false,
+            private_key: Some("123".to_string()),
+            keystore_path: None,
+            keystore_password: None,
+            mnemonic_path: None,
+            ledger: false,
+            trezor: false,
+            hd_path: None,
+            mnemonic_index: 0,
+        };
+        match wallet.private_key() {
+            Ok(_) => {
+                panic!("illformed private key shouldn't decode")
+            }
+            Err(x) => {
+                assert!(
+                    x.to_string().contains("Failed to create wallet"),
+                    "Error message is not user-friendly"
+                );
+            }
+        }
     }
 }

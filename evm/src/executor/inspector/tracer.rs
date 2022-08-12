@@ -11,7 +11,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug)]
@@ -71,29 +73,36 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        node.logs
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
+        let (from, to) = match call.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (call.context.address, call.context.code_address)
+            }
+            _ => (call.context.caller, call.context.address),
+        };
+
         self.start_trace(
             data.subroutine.depth() as usize,
-            call.context.code_address,
+            to,
             call.input.to_vec(),
             call.transfer.value,
             call.context.scheme.into(),
-            call.context.caller,
+            from,
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
     fn call_end(
@@ -151,7 +160,7 @@ where
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(

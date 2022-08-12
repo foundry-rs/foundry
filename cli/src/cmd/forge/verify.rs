@@ -1,8 +1,11 @@
 //! Verify contract source on etherscan
 
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::{cmd::RetryArgs, opts::forge::ContractInfo};
-use clap::Parser;
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    LoadConfig, RetryArgs,
+};
+use cast::SimpleCast;
+use clap::{Parser, ValueHint};
 use ethers::{
     abi::Address,
     etherscan::{
@@ -14,11 +17,12 @@ use ethers::{
     solc::{
         artifacts::{BytecodeHash, Source},
         cache::CacheEntry,
+        info::ContractInfo,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{find_project_root_path, Chain, Config, SolcReq};
+use foundry_config::{impl_figment_convert_basic, Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -99,7 +103,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "Wait for verification result after submission")]
     pub watch: bool,
 
-    #[clap(flatten)]
+    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
     pub retry: RetryArgs,
 
     #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
@@ -115,6 +119,14 @@ pub struct VerifyArgs {
     pub libraries: Vec<String>,
 
     #[clap(
+        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
+        long,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
+    )]
+    pub root: Option<PathBuf>,
+
+    #[clap(
         long = "verifier",
         help_heading = "VERIFICATION PROVIDER",
         help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
@@ -122,6 +134,8 @@ pub struct VerifyArgs {
     )]
     pub verifier: VerificationProvider,
 }
+
+impl_figment_convert_basic!(VerifyArgs);
 
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
@@ -143,7 +157,7 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
@@ -242,10 +256,12 @@ impl VerifyArgs {
             via_ir: false,
             revert_strings: None,
             silent: false,
+            build_info: false,
+            build_info_path: None,
         };
 
         let project = build_args.project()?;
-        let config = Config::load_with_root(find_project_root_path().unwrap());
+        let config = self.load_config_emit_warnings();
 
         if self.contract.path.is_none() && !config.cache {
             eyre::bail!(
@@ -304,7 +320,7 @@ impl VerifyArgs {
     /// Parse the compiler version.
     /// The priority desc:
     ///     1. Through CLI arg `--compiler-version`
-    ///     2. `solc` defined in foundry.toml  
+    ///     2. `solc` defined in foundry.toml
     fn compiler_version(
         &self,
         config: &Config,

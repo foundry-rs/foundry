@@ -35,6 +35,9 @@ foundry-config = { path = "../config" }
 # evm support
 bytes = "1.1.0"
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
+trie-db = { version = "0.23" }
+hash-db = { version = "0.15" }
+memory-db = { version = "0.29" }
 
 # axum related
 axum = { version = "0.5", features = ["ws"] }
@@ -43,13 +46,14 @@ tower = "0.4"
 tower-http = { version = "0.3", features = ["trace"] }
 
 # tracing
-tracing = "0.1.32"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # async
-tokio = { version = "1.10", features = ["time"] }
+tokio = { version = "1", features = ["time"] }
 parking_lot = "0.12"
 futures = "0.3"
+async-trait = "0.1"
 
 # misc
 serde_json = "1.0.67"
@@ -63,7 +67,7 @@ clap = { version = "3.0.10", features = [
     "env",
     "wrap_help",
 ], optional = true }
-async-trait = "0.1.53"
+clap_complete =  { version = "3.0.4", optional = true }
 chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
@@ -73,9 +77,9 @@ fdlimit = { version = "0.2.1", optional = true }
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
 pretty_assertions = "1.2.1"
-tokio = { version = "1.10", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 
 [features]
 default = ["cli"]
-cmd = ["foundry-common", "forge", "clap", "ctrlc", "anvil-server/clap"]
+cmd = ["foundry-common", "forge", "clap", "clap_complete", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd", "fdlimit"]

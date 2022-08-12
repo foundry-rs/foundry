@@ -1,29 +1,15 @@
 //! Contains various tests for checking forge's commands
-use crate::next_port;
-use anvil::{spawn, NodeConfig};
-use ethers::{
-    abi::Address,
-    solc::{
-        artifacts::{BytecodeHash, Metadata},
-        ConfigurableContractArtifact,
-    },
+use ethers::solc::{
+    artifacts::{BytecodeHash, Metadata},
+    ConfigurableContractArtifact,
 };
-
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
-    forgetest, forgetest_async, forgetest_ignore, forgetest_init,
-    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
-    ScriptOutcome, ScriptTester,
+    forgetest, forgetest_init,
+    util::{read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use regex::Regex;
-use std::{env, fs, path::PathBuf, str::FromStr};
-use yansi::Paint;
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
+use std::{env, fs, path::PathBuf};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -39,154 +25,183 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that `cache ls` can be invoked and displays the foundry cache
-forgetest_ignore!(can_cache_ls, |_: TestProject, mut cmd: TestCommand| {
-    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
-    let block1 = 100;
-    let block2 = 101;
+forgetest!(
+    #[ignore]
+    can_cache_ls,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let block1 = 100;
+        let block2 = 101;
 
-    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-    let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
-    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-    let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    fs::create_dir_all(block1_cache_dir).unwrap();
-    fs::write(block1_file, "{}").unwrap();
-    fs::create_dir_all(block2_cache_dir).unwrap();
-    fs::write(block2_file, "{}").unwrap();
-    fs::create_dir_all(etherscan_cache_dir).unwrap();
+        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+        let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
+        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+        let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        fs::create_dir_all(block1_cache_dir).unwrap();
+        fs::write(block1_file, "{}").unwrap();
+        fs::create_dir_all(block2_cache_dir).unwrap();
+        fs::write(block2_file, "{}").unwrap();
+        fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-    cmd.args(["cache", "ls"]);
-    let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
-    let output_lines = output_string.split("\n").collect::<Vec<_>>();
-    println!("{output_string}");
+        cmd.args(["cache", "ls"]);
+        let output_string = String::from_utf8_lossy(&cmd.output().stdout).to_string();
+        let output_lines = output_string.split('\n').collect::<Vec<_>>();
+        println!("{output_string}");
 
-    assert_eq!(output_lines.len(), 6);
-    assert!(output_lines[0].starts_with("-️ mainnet ("));
-    assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
-    assert_eq!(output_lines[2], "");
-    assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
-    assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
-    assert_eq!(output_lines[5], "");
+        assert_eq!(output_lines.len(), 6);
+        assert!(output_lines[0].starts_with("-️ mainnet ("));
+        assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
+        assert_eq!(output_lines[2], "");
+        assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
+        assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
+        assert_eq!(output_lines[5], "");
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean` can be invoked and cleans the foundry cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir = Config::foundry_cache_dir().unwrap();
-    let path = cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    cmd.args(["cache", "clean"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let path = cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        cmd.args(["cache", "clean"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!path.exists());
-});
+        assert!(!path.exists());
+    }
+);
 
 // checks that `cache clean --etherscan` can be invoked and only cleans the foundry etherscan cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_etherscan, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir = Config::foundry_cache_dir().unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "--etherscan"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "--etherscan"]);
+        cmd.assert_empty_stdout();
 
-    assert!(path.exists());
-    assert!(!etherscan_path.exists());
+        assert!(path.exists());
+        assert!(!etherscan_path.exists());
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean all --etherscan` can be invoked and only cleans the foundry etherscan
 // cache. This test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_all_etherscan, |_: TestProject, mut cmd: TestCommand| {
-    let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-    let rpc_path = rpc_cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(rpc_path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "all", "--etherscan"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_all_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
+        let rpc_path = rpc_cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(rpc_path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "all", "--etherscan"]);
+        cmd.assert_empty_stdout();
 
-    assert!(rpc_path.exists());
-    assert!(!etherscan_path.exists());
+        assert!(rpc_path.exists());
+        assert!(!etherscan_path.exists());
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean <chain>` can be invoked and cleans the chain cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
-    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
-    let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_chain,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!path.exists());
-    assert!(!etherscan_path.exists());
+        assert!(!path.exists());
+        assert!(!etherscan_path.exists());
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
 // caches this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
-    let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
-    let block1 = 100;
-    let block2 = 101;
-    let block3 = 102;
-    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-    let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    let block1_path = block1_cache_dir.as_path();
-    let block2_path = block2_cache_dir.as_path();
-    let block3_path = block3_cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(block1_path).unwrap();
-    fs::create_dir_all(block2_path).unwrap();
-    fs::create_dir_all(block3_path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_blocks,
+    |_: TestProject, mut cmd: TestCommand| {
+        let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
+        let block1 = 100;
+        let block2 = 101;
+        let block3 = 102;
+        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
+        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
+        let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
+        let block1_path = block1_cache_dir.as_path();
+        let block2_path = block2_cache_dir.as_path();
+        let block3_path = block3_cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(block1_path).unwrap();
+        fs::create_dir_all(block2_path).unwrap();
+        fs::create_dir_all(block3_path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
+        cmd.assert_empty_stdout();
 
-    assert!(!block1_path.exists());
-    assert!(!block2_path.exists());
-    assert!(block3_path.exists());
-    assert!(etherscan_path.exists());
+        assert!(!block1_path.exists());
+        assert!(!block2_path.exists());
+        assert!(block3_path.exists());
+        assert!(etherscan_path.exists());
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that `cache clean <chain> --etherscan` can be invoked and cleans the etherscan chain cache
 // this test is not isolated and modifies ~ so it is ignored
-forgetest_ignore!(can_cache_clean_chain_etherscan, |_: TestProject, mut cmd: TestCommand| {
-    let cache_dir =
-        Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
-    let etherscan_cache_dir =
-        Config::foundry_etherscan_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet))
-            .unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
-    cmd.assert_empty_stdout();
+forgetest!(
+    #[ignore]
+    can_cache_clean_chain_etherscan,
+    |_: TestProject, mut cmd: TestCommand| {
+        let cache_dir =
+            Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
+        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(Chain::Named(
+            ethers::prelude::Chain::Mainnet,
+        ))
+        .unwrap();
+        let path = cache_dir.as_path();
+        let etherscan_path = etherscan_cache_dir.as_path();
+        fs::create_dir_all(path).unwrap();
+        fs::create_dir_all(etherscan_path).unwrap();
+        cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
+        cmd.assert_empty_stdout();
 
-    assert!(path.exists());
-    assert!(!etherscan_path.exists());
+        assert!(path.exists());
+        assert!(!etherscan_path.exists());
 
-    Config::clean_foundry_cache().unwrap();
-});
+        Config::clean_foundry_cache().unwrap();
+    }
+);
 
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
@@ -200,23 +215,29 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
-// checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(!foundry_toml.exists());
-
+// Checks that a forge project fails to initialise if dir is already git repo and dirty
+forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
+    use std::process::Command;
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    // initialise new git
+    Command::new("git").arg("init").current_dir(prj.root()).output().unwrap();
 
-    cmd.arg("--force");
+    std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
 
-    for _ in 0..2 {
-        assert!(foundry_toml.exists());
-        pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
-        cmd.assert_non_empty_stdout();
-    }
+    // create nested dir and execute init in nested dir
+    let nested = prj.root().join("nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    cmd.current_dir(&nested);
+    cmd.arg("init");
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_detect_dirty_git_status_on_init.stderr"),
+    );
+
+    // ensure nothing was emitted, dir is empty
+    assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
 });
 
 // Checks that a forge project can be initialized without creating a git repository
@@ -273,7 +294,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
+    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template
@@ -411,7 +432,23 @@ warning[5667]: Warning: Unused function parameter. Remove or comment out the var
     ));
 });
 
-// tests that direct import paths are handled correctly
+// Tests that direct import paths are handled correctly
+//
+// NOTE(onbjerg): Disabled for Windows -- for some reason solc fails with a bogus error message
+// here: error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit
+// conversion from struct Bar memory to struct Bar memory requested.   --> src\Foo.sol:12:22:
+//    |
+// 12 |         FooLib.check(b);
+//    |                      ^
+//
+//
+//
+// error[9553]: TypeError: Invalid type for argument in function call. Invalid implicit conversion
+// from contract Foo to contract Foo requested.   --> src\Foo.sol:15:23:
+//    |
+// 15 |         FooLib.check2(this);
+//    |                       ^^^^
+#[cfg(not(target_os = "windows"))]
 forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()
         .add_source(
@@ -461,153 +498,13 @@ Compiler run successful
     ));
 });
 
-// Tests that the `run` command works correctly
-forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function run() external {
-        emit log_string("script ran");
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1751
-
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run arbitrary functions
-forgetest!(can_execute_script_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function myFunction() external {
-        emit log_string("script ran");
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1751
-
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run functions with arguments
-forgetest!(can_execute_script_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    event log_uint(uint);
-    function run(uint256 a, uint256 b) external {
-        emit log_string("script ran");
-        emit log_uint(a);
-        emit log_uint(b);
-    }
-}
-   "#,
-        )
-        .unwrap();
-
-    cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 3957
-
-== Logs ==
-  script ran
-  1
-  2
-",
-        Paint::green("Script ran successfully.")
-    ),));
-});
-
-// Tests that the run command can run functions with return values
-forgetest!(can_execute_script_command_with_returned, |prj: TestProject, mut cmd: TestCommand| {
-    let script = prj
-        .inner()
-        .add_source(
-            "Foo",
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.10;
-contract Demo {
-    event log_string(string);
-    function run() external returns (uint256 result, uint8) {
-        emit log_string("script ran");
-        return (255, 3);
-    }
-}"#,
-        )
-        .unwrap();
-    cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(&format!(
-        "Compiler run successful
-{}
-Gas used: 1836
-
-== Return ==
-result: uint256 255
-1: uint8 3
-
-== Logs ==
-  script ran
-",
-        Paint::green("Script ran successfully.")
-    )));
-});
-
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
     // explicitly set to include the ipfs bytecode hash
     let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
     prj.write_config(config);
     let contract_name = "Foo";
-    let _ = prj
+    let path = prj
         .inner()
         .add_source(
             contract_name,
@@ -629,12 +526,18 @@ contract Foo {
     let ipfs_start = dynamic_bytecode.len() - (24 + 64);
     let ipfs_end = ipfs_start + 65;
     dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    let mut output = cmd.stdout_lossy();
-    output.replace_range(ipfs_start..ipfs_end, "");
 
-    // Compare the static bytecode
-    assert_eq!(dynamic_bytecode, output);
+    let check_output = |mut output: String| {
+        output.replace_range(ipfs_start..ipfs_end, "");
+        assert_eq!(dynamic_bytecode, output);
+    };
+
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
+    check_output(cmd.stdout_lossy());
+
+    let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
+    check_output(cmd.stdout_lossy());
 });
 
 // test that `forge snapshot` commands work
@@ -711,31 +614,35 @@ contract A {
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
-forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
-    let current_dir = std::env::current_dir().unwrap();
-    let root = current_dir
-        .join("../../foundry-integration-tests/testdata/spells-mainnet")
-        .to_string_lossy()
-        .to_string();
-    println!("project root: \"{root}\"");
+forgetest!(
+    #[ignore]
+    can_compile_local_spells,
+    |_: TestProject, mut cmd: TestCommand| {
+        let current_dir = std::env::current_dir().unwrap();
+        let root = current_dir
+            .join("../../foundry-integration-tests/testdata/spells-mainnet")
+            .to_string_lossy()
+            .to_string();
+        println!("project root: \"{root}\"");
 
-    let eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
-    let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
+        let eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
+        let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
-    cmd.args([
-        "test",
-        "--root",
-        root.as_str(),
-        "--fork-url",
-        eth_rpc_url.as_str(),
-        "--fork-block-number",
-        "14435000",
-        "--libraries",
-        dss_exec_lib,
-        "-vvv",
-    ]);
-    cmd.print_output();
-});
+        cmd.args([
+            "test",
+            "--root",
+            root.as_str(),
+            "--fork-url",
+            eth_rpc_url.as_str(),
+            "--fork-block-number",
+            "14435000",
+            "--libraries",
+            dss_exec_lib,
+            "-vvv",
+        ]);
+        cmd.print_output();
+    }
+);
 
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj: TestProject, mut cmd: TestCommand| {
@@ -836,227 +743,6 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0, 1])
-        .await
-        .add_sig("BroadcastTestNoLinking", "deployDoesntPanic()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 1), (1, 2)])
-        .await;
-});
-
-forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0, 1])
-        .await
-        .add_sig("BroadcastTest", "deploy()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2), (1, 1)])
-        .await;
-});
-
-forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTest", "deploy()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .resume(ScriptOutcome::MissingWallet)
-        // load missing wallet
-        .load_private_keys(vec![1])
-        .await
-        .run(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2), (1, 1)])
-        .await;
-});
-
-forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .add_deployer(2)
-        .load_private_keys(vec![0, 1, 2])
-        .await
-        .add_sig("BroadcastTest", "deployOther()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 4), (1, 4), (2, 1)])
-        .await;
-});
-
-forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0, 1])
-        .await
-        .add_sig("BroadcastTest", "deployOther()")
-        .simulate(ScriptOutcome::WarnSpecifyDeployer)
-        .broadcast(ScriptOutcome::MissingSender);
-});
-
-forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .add_deployer(0)
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTest", "deployNoArgs()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 3)])
-        .await;
-});
-
-forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-    api.anvil_set_code(addr, code).await.unwrap();
-
-    tester
-        .add_deployer(0)
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTestNoLinking", "deployCreate2()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 2)])
-        .await
-        // Running again results in error, since we're repeating the salt passed to CREATE2
-        .run(ScriptOutcome::FailedScript);
-});
-
-forgetest_async!(
-    can_deploy_100_txes_concurrently,
-    |prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-        tester
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployMany()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 100)])
-            .await;
-    }
-);
-
-forgetest_async!(
-    can_deploy_mixed_broadcast_modes,
-    |prj: TestProject, cmd: TestCommand| async move {
-        let port = next_port();
-        spawn(NodeConfig::test().with_port(port)).await;
-        let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-        tester
-            .load_private_keys(vec![0])
-            .await
-            .add_sig("BroadcastTestNoLinking", "deployMix()")
-            .simulate(ScriptOutcome::OkSimulation)
-            .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 15)])
-            .await;
-    }
-);
-
-forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTestSetup", "run()")
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 6)])
-        .await;
-});
-
-forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    tester
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
-        .simulate(ScriptOutcome::FailedScript);
-});
-
-forgetest_async!(check_broadcast_log, |prj: TestProject, cmd: TestCommand| async move {
-    let port = next_port();
-    let (api, _) = spawn(NodeConfig::test().with_port(port)).await;
-    let mut tester = ScriptTester::new(cmd, port, prj.root());
-
-    // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
-    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
-    api.anvil_set_code(addr, code).await.unwrap();
-
-    tester
-        .load_private_keys(vec![0])
-        .await
-        .add_sig("BroadcastTestLog", "run()")
-        .slow()
-        .simulate(ScriptOutcome::OkSimulation)
-        .broadcast(ScriptOutcome::OkBroadcast)
-        .assert_nonce_increment(vec![(0, 7)])
-        .await;
-
-    // Uncomment to recreate log
-    // std::fs::copy("broadcast/Broadcast.t.sol/31337/run-latest.json",
-    // PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"));
-
-    // Ignore blockhash since it changes inbetween runs.
-    let re = Regex::new(r"blockHash.*?blockNumber").unwrap();
-
-    let fixtures_log = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/fixtures/broadcast.log.json"),
-    )
-    .unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "");
-
-    let run_log =
-        std::fs::read_to_string("broadcast/Broadcast.t.sol/31337/run-latest.json").unwrap();
-    let run_log = re.replace_all(&run_log, "");
-
-    // Ignore timestamp with `-11` since it changes inbetween runs.
-    assert!(&fixtures_log[..(fixtures_log.len() - 11)] == &run_log[..(run_log.len() - 11)]);
-});
-
 // test to check that install/remove works properly
 forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     cmd.git_init();
@@ -1093,4 +779,476 @@ forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     // install again and remove via relative path
     install(&mut cmd);
     remove(&mut cmd, "lib/forge-std");
+});
+
+// test to check that package can be reinstalled after manually removing the directory
+forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
+
+    // install again
+    install(&mut cmd);
+});
+
+// Tests that forge update doesn't break a working depencency by recursively updating nested
+// dependencies
+forgetest!(
+    can_update_library_with_outdated_nested_dependency,
+    |prj: TestProject, mut cmd: TestCommand| {
+        cmd.git_init();
+
+        let libs = prj.root().join("lib");
+        let git_mod = prj.root().join(".git/modules/lib");
+        let git_mod_file = prj.root().join(".gitmodules");
+
+        let package = libs.join("issue-2264-repro");
+        let package_mod = git_mod.join("issue-2264-repro");
+
+        let install = |cmd: &mut TestCommand| {
+            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
+            cmd.assert_non_empty_stdout();
+            assert!(package.exists());
+            assert!(package_mod.exists());
+
+            let submods = read_string(&git_mod_file);
+            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
+        };
+
+        install(&mut cmd);
+        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
+        cmd.stdout_lossy();
+
+        prj.inner()
+            .add_source(
+                "MyTokenCopy",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.6.0;
+import "issue-2264-repro/MyToken.sol";
+contract MyTokenCopy is MyToken {
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.forge_fuse().args(["build"]);
+        let output = cmd.stdout_lossy();
+
+        assert!(output.contains("Compiler run successful",));
+    }
+);
+
+forgetest!(gas_report_all_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for all
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_report_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for One
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractOne".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Two
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Three
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_ignore_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // ignore ContractOne
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec!["ContractOne".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractTwo
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![]),
+        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractThree
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        gas_reports_ignore: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
 });

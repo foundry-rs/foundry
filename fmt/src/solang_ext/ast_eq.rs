@@ -1,5 +1,28 @@
 use super::AttrSortKeyIteratorExt;
+use ethers_core::types::H160;
 use solang_parser::pt::*;
+use std::str::FromStr;
+
+/// Helper to convert a string number into a comparable one
+fn to_num(string: &str) -> isize {
+    if string.is_empty() {
+        return 0
+    }
+    string.replace('_', "").trim().parse().unwrap()
+}
+
+/// Helper to convert the fractional part of a number into a comparable one.
+/// This will reverse the number so that 0's can be ignored
+fn to_num_reversed(string: &str) -> usize {
+    if string.is_empty() {
+        return 0
+    }
+    let mut string = dbg!(string.replace('_', ""));
+    unsafe {
+        string.as_mut_vec().reverse();
+    }
+    dbg!(dbg!(string).trim().parse().unwrap())
+}
 
 /// Check if two ParseTrees are equal ignoring location information or ordering if ordering does
 /// not matter
@@ -61,12 +84,6 @@ impl AstEq for Base {
     }
 }
 
-impl AstEq for DocComment {
-    fn ast_eq(&self, other: &Self) -> bool {
-        self.ty == other.ty
-    }
-}
-
 impl<T> AstEq for Vec<T>
 where
     T: AstEq,
@@ -117,6 +134,176 @@ where
     }
 }
 
+impl AstEq for String {
+    fn ast_eq(&self, other: &Self) -> bool {
+        match (H160::from_str(self), H160::from_str(other)) {
+            (Ok(left), Ok(right)) => left.eq(&right),
+            _ => self == other,
+        }
+    }
+}
+
+macro_rules! ast_eq_field {
+    (#[ast_eq_use($convert_func:ident)] $field:ident) => {
+        $convert_func($field)
+    };
+    ($field:ident) => {
+        $field
+    };
+}
+
+macro_rules! gen_ast_eq_enum {
+    ($self:expr, $other:expr, $name:ident {
+        $($unit_variant:ident),* $(,)?
+        _
+        $($tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? )),*  $(,)?
+        _
+        $($struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? }),*  $(,)?
+    }) => {
+        match $self {
+            $($name::$unit_variant => gen_ast_eq_enum!($other, $name, $unit_variant),)*
+            $($name::$tuple_variant($($tuple_field),*) =>
+                gen_ast_eq_enum!($other, $name, $tuple_variant ($($(#[ast_eq_use($tuple_convert_func)])? $tuple_field),*)),)*
+            $($name::$struct_variant { $($struct_field),* } =>
+                gen_ast_eq_enum!($other, $name, $struct_variant {$($(#[ast_eq_use($struct_convert_func)])? $struct_field),*}),)*
+        }
+    };
+    ($other:expr, $name:ident, $unit_variant:ident) => {
+        {
+            matches!($other, $name::$unit_variant)
+        }
+    };
+    ($other:expr, $name:ident, $tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? ) ) => {
+        {
+            let left = ($(ast_eq_field!($(#[ast_eq_use($tuple_convert_func)])? $tuple_field)),*);
+            if let $name::$tuple_variant($($tuple_field),*) = $other {
+                let right = ($(ast_eq_field!($(#[ast_eq_use($tuple_convert_func)])? $tuple_field)),*);
+                left.ast_eq(&right)
+            } else {
+                false
+            }
+        }
+    };
+    ($other:expr, $name:ident, $struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? } ) => {
+        {
+            let left = ($(ast_eq_field!($(#[ast_eq_use($struct_convert_func)])? $struct_field)),*);
+            if let $name::$struct_variant { $($struct_field),* } = $other {
+                let right = ($(ast_eq_field!($(#[ast_eq_use($struct_convert_func)])? $struct_field)),*);
+                left.ast_eq(&right)
+            } else {
+                false
+            }
+        }
+    };
+}
+
+macro_rules! wrap_in_box {
+    ($stmt:expr, $loc:expr) => {
+        if !matches!(**$stmt, Statement::Block { .. }) {
+            Box::new(Statement::Block {
+                loc: $loc,
+                unchecked: false,
+                statements: vec![*$stmt.clone()],
+            })
+        } else {
+            $stmt.clone()
+        }
+    };
+}
+
+impl AstEq for Statement {
+    fn ast_eq(&self, other: &Self) -> bool {
+        match self {
+            Statement::If(loc, expr, stmt1, stmt2) => {
+                let wrap_if = |stmt1: &Box<Statement>, stmt2: &Option<Box<Statement>>| {
+                    (
+                        wrap_in_box!(stmt1, *loc),
+                        stmt2.as_ref().map(|stmt2| {
+                            if matches!(**stmt2, Statement::If(..)) {
+                                stmt2.clone()
+                            } else {
+                                wrap_in_box!(stmt2, *loc)
+                            }
+                        }),
+                    )
+                };
+                let (stmt1, stmt2) = wrap_if(stmt1, stmt2);
+                let left = (loc, expr, &stmt1, &stmt2);
+                if let Statement::If(loc, expr, stmt1, stmt2) = other {
+                    let (stmt1, stmt2) = wrap_if(stmt1, stmt2);
+                    let right = (loc, expr, &stmt1, &stmt2);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
+            Statement::While(loc, expr, stmt1) => {
+                let stmt1 = wrap_in_box!(stmt1, *loc);
+                let left = (loc, expr, &stmt1);
+                if let Statement::While(loc, expr, stmt1) = other {
+                    let stmt1 = wrap_in_box!(stmt1, *loc);
+                    let right = (loc, expr, &stmt1);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
+            Statement::DoWhile(loc, stmt1, expr) => {
+                let stmt1 = wrap_in_box!(stmt1, *loc);
+                let left = (loc, &stmt1, expr);
+                if let Statement::DoWhile(loc, stmt1, expr) = other {
+                    let stmt1 = wrap_in_box!(stmt1, *loc);
+                    let right = (loc, &stmt1, expr);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
+            Statement::For(loc, stmt1, expr, stmt2, stmt3) => {
+                let stmt3 = stmt3.as_ref().map(|stmt3| wrap_in_box!(stmt3, *loc));
+                let left = (loc, stmt1, expr, stmt2, &stmt3);
+                if let Statement::For(loc, stmt1, expr, stmt2, stmt3) = other {
+                    let stmt3 = stmt3.as_ref().map(|stmt3| wrap_in_box!(stmt3, *loc));
+                    let right = (loc, stmt1, expr, stmt2, &stmt3);
+                    left.ast_eq(&right)
+                } else {
+                    false
+                }
+            }
+            _ => gen_ast_eq_enum!(self, other, Statement {
+                _
+                // provide overridden variants regardless
+                If(loc, expr, stmt1, stmt2),
+                While(loc, expr, stmt1),
+                DoWhile(loc, stmt1, expr),
+                For(loc, stmt1, expr, stmt2, stmt3),
+                Args(loc, args),
+                Expression(loc, expr),
+                VariableDefinition(loc, decl, expr),
+                Continue(loc, ),
+                Break(loc, ),
+                Return(loc, expr),
+                Revert(loc, expr, expr2),
+                RevertNamedArgs(loc, expr, args),
+                Emit(loc, expr),
+                Try(loc, expr, params, claus),
+                _
+                Block {
+                    loc,
+                    unchecked,
+                    statements,
+                },
+                Assembly {
+                    loc,
+                    dialect,
+                    block,
+                    flags,
+                },
+            }),
+        }
+    }
+}
+
 macro_rules! derive_ast_eq {
     ($name:ident) => {
         impl AstEq for $name {
@@ -151,41 +338,19 @@ macro_rules! derive_ast_eq {
     (enum $name:ident {
         $($unit_variant:ident),* $(,)?
         _
-        $($tuple_variant:ident ( $($tuple_field:ident),* $(,)? )),*  $(,)?
+        $($tuple_variant:ident ( $($(#[ast_eq_use($tuple_convert_func:ident)])? $tuple_field:ident),* $(,)? )),*  $(,)?
         _
-        $($struct_variant:ident { $($struct_field:ident),* $(,)? }),*  $(,)?
+        $($struct_variant:ident { $($(#[ast_eq_use($struct_convert_func:ident)])? $struct_field:ident),* $(,)? }),*  $(,)?
     }) => {
         impl AstEq for $name {
             fn ast_eq(&self, other: &Self) -> bool {
-                match self {
-                    $(
-                    $name::$unit_variant => {
-                        return matches!(other, $name::$unit_variant)
-                    }
-                    )*
-                    $(
-                    $name::$tuple_variant($($tuple_field),*) =>  {
-                        let left = ($($tuple_field),*);
-                        if let $name::$tuple_variant($($tuple_field),*) = other {
-                            let right = ($($tuple_field),*);
-                            left.ast_eq(&right)
-                        } else {
-                            false
-                        }
-                    }
-                    )*
-                    $(
-                    $name::$struct_variant { $($struct_field),* } => {
-                        let left = ($($struct_field),*);
-                        if let $name::$struct_variant { $($struct_field),* } = other {
-                            let right = ($($struct_field),*);
-                            left.ast_eq(&right)
-                        } else {
-                            false
-                        }
-                    }
-                    )*
-                }
+                gen_ast_eq_enum!(self, other, $name {
+                    $($unit_variant),*
+                    _
+                    $($tuple_variant ( $($(#[ast_eq_use($tuple_convert_func)])? $tuple_field),* )),*
+                    _
+                    $($struct_variant { $($(#[ast_eq_use($struct_convert_func)])? $struct_field),* }),*
+                })
             }
         }
     }
@@ -196,13 +361,14 @@ derive_ast_eq! { (0 A, 1 B) }
 derive_ast_eq! { (0 A, 1 B, 2 C) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
-derive_ast_eq! { String }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
+derive_ast_eq! { isize }
+derive_ast_eq! { usize }
 derive_ast_eq! { struct Identifier { loc, name } }
 derive_ast_eq! { struct HexLiteral { loc, hex } }
-derive_ast_eq! { struct StringLiteral { loc, string } }
+derive_ast_eq! { struct StringLiteral { loc, unicode, string } }
 derive_ast_eq! { struct Parameter { loc, ty, storage, name } }
 derive_ast_eq! { struct NamedArgument { loc, name, expr } }
 derive_ast_eq! { struct YulBlock { loc, statements } }
@@ -227,12 +393,6 @@ derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
 derive_ast_eq! { struct ErrorDefinition { loc, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
-derive_ast_eq! { enum CommentType {
-    Line,
-    Block,
-    _
-    _
-}}
 derive_ast_eq! { enum UsingList {
     _
     Library(expr),
@@ -300,36 +460,6 @@ derive_ast_eq! { enum Type {
     _
     Function { params, attributes, returns },
 }}
-derive_ast_eq! { enum Statement {
-    _
-    Args(loc, args),
-    If(loc, expr, stmt1, stmt2),
-    While(loc, expr, stmt1),
-    Expression(loc, expr),
-    VariableDefinition(loc, decl, expr),
-    For(loc, stmt1, expr, stmt2, stmt3),
-    DoWhile(loc, stmt1, expr),
-    Continue(loc, ),
-    Break(loc, ),
-    Return(loc, expr),
-    Revert(loc, expr, expr2),
-    RevertNamedArgs(loc, expr, args),
-    Emit(loc, expr),
-    Try(loc, expr, params, claus),
-    DocComment(comment),
-    _
-    Block {
-        loc,
-        unchecked,
-        statements,
-    },
-    Assembly {
-        loc,
-        dialect,
-        block,
-        flags,
-    },
-}}
 derive_ast_eq! { enum Expression {
     _
     PostIncrement(loc, expr1),
@@ -385,8 +515,13 @@ derive_ast_eq! { enum Expression {
     AssignDivide(loc, expr1, expr2),
     AssignModulo(loc, expr1, expr2),
     BoolLiteral(loc, bool1),
-    NumberLiteral(loc, str1, str2),
-    RationalNumberLiteral(loc, str1, str2, str3),
+    NumberLiteral(loc, #[ast_eq_use(to_num)] str1, #[ast_eq_use(to_num)] str2),
+    RationalNumberLiteral(
+        loc,
+        #[ast_eq_use(to_num)] str1,
+        #[ast_eq_use(to_num_reversed)] str2,
+        #[ast_eq_use(to_num)] str3
+    ),
     HexNumberLiteral(loc, str1),
     StringLiteral(strs1),
     Type(loc, ty1),
@@ -396,7 +531,8 @@ derive_ast_eq! { enum Expression {
     List(loc, params1),
     ArrayLiteral(loc, exprs1),
     Unit(loc, expr1, unit1),
-    This(loc)
+    This(loc),
+    Parenthesis(loc, expr)
     _
 }}
 derive_ast_eq! { enum CatchClause {
@@ -450,7 +586,6 @@ derive_ast_eq! { enum SourceUnitPart {
     FunctionDefinition(def),
     VariableDefinition(def),
     TypeDefinition(def),
-    DocComment(comment),
     Using(using),
     StraySemicolon(loc),
     _
@@ -482,7 +617,6 @@ derive_ast_eq! { enum ContractPart {
     TypeDefinition(def),
     StraySemicolon(loc),
     Using(using),
-    DocComment(comment),
     _
 }}
 derive_ast_eq! { enum ContractTy {

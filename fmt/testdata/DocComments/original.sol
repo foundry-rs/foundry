@@ -24,7 +24,13 @@ contract HelloWorld {
     }
 
     /** @dev does nothing */
-    function example() public {}
+    function example() public {
+          /**
+     * Does this add a whitespace error?
+    *  
+     * Let's find out.
+     */
+    }
 
     /** @dev Calculates a rectangle's surface and perimeter.
       * @param w Width of the rectangle.

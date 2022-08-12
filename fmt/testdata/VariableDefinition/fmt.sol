@@ -1,4 +1,4 @@
-// config: line-length=40
+// config: line_length = 40
 contract Contract {
     bytes32 private constant BYTES;
     bytes32

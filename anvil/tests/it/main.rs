@@ -1,27 +1,21 @@
-use std::sync::atomic::{AtomicU16, Ordering};
-
 mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
 mod fork;
 mod ganache;
+mod gas;
 mod geth;
 mod logs;
+mod proof;
 mod pubsub;
 mod revert;
+mod sign;
 mod traces;
 mod transaction;
 mod txpool;
 pub mod utils;
 mod wsapi;
-
-// keeps track of ports that can be used
-pub static NEXT_PORT: AtomicU16 = AtomicU16::new(8546);
-
-pub fn next_port() -> u16 {
-    NEXT_PORT.fetch_add(1, Ordering::SeqCst)
-}
 
 #[allow(unused)]
 pub(crate) fn init_tracing() {

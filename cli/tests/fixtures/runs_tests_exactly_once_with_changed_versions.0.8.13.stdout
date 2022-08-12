@@ -3,5 +3,5 @@ Solc 0.8.13 finished in 185.25ms
 Compiler run successful
 
 Running 1 test for src/Contract.t.sol:ContractTest
-[32m[PASS][0m testExample() (gas: 120)
-Test result: [32mok[0m. 1 passed; 0 failed; finished in 1.89ms
+[PASS] testExample() (gas: 120)
+Test result: ok. 1 passed; 0 failed; finished in 1.89ms

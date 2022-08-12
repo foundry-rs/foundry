@@ -9,23 +9,26 @@ contract HelloWorld {
     }
 
     /**
-        Here's a more double asterix comment
-    */
+     * Here's a more double asterix comment
+     */
     Person public theDude;
 
     /// Constructs the dude
     /// @param age The dude's age
     constructor(uint256 age) {
-        theDude = Person({
-            age: age,
-            wallet: msg.sender
-        });
+        theDude = Person({age: age, wallet: msg.sender});
     }
 
     /**
      * @dev does nothing
      */
-    function example() public {}
+    function example() public {
+        /**
+         * Does this add a whitespace error?
+         *
+         * Let's find out.
+         */
+    }
 
     /**
      * @dev Calculates a rectangle's surface and perimeter.

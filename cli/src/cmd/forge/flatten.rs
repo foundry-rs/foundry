@@ -1,7 +1,9 @@
-use super::build::{CoreBuildArgs, ProjectPathsArgs};
-use crate::cmd::Cmd;
+use crate::cmd::{
+    forge::build::{CoreBuildArgs, ProjectPathsArgs},
+    Cmd, LoadConfig,
+};
 use clap::{Parser, ValueHint};
-use foundry_config::Config;
+use foundry_common::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
@@ -42,9 +44,11 @@ impl Cmd for FlattenArgs {
             via_ir: false,
             revert_strings: None,
             silent: false,
+            build_info: false,
+            build_info_path: None,
         };
 
-        let config = Config::from(&build_args);
+        let config = build_args.load_config_emit_warnings();
 
         let paths = config.project_paths();
         let target_path = dunce::canonicalize(target_path)?;
@@ -54,8 +58,8 @@ impl Cmd for FlattenArgs {
 
         match output {
             Some(output) => {
-                std::fs::create_dir_all(&output.parent().unwrap())?;
-                std::fs::write(&output, flattened)?;
+                fs::create_dir_all(&output.parent().unwrap())?;
+                fs::write(&output, flattened)?;
                 println!("Flattened file written at {}", output.display());
             }
             None => println!("{flattened}"),

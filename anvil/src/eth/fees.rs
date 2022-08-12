@@ -4,11 +4,12 @@ use crate::eth::{
 };
 use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{H256, U256};
+use foundry_evm::revm::SpecId;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
-use serde::Serialize;
 use std::{
     collections::BTreeMap,
+    fmt,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -35,7 +36,15 @@ pub fn default_elasticity() -> f64 {
 /// Stores the fee related information
 #[derive(Debug, Clone)]
 pub struct FeeManager {
+    /// Hardfork identifier
+    spec_id: SpecId,
+    /// Tracks the base fee for the next block post London
+    ///
+    /// This value will be updated after a new block was mined
     base_fee: Arc<RwLock<U256>>,
+    /// The base price to use Pre London
+    ///
+    /// This will be constant value unless changed manually
     gas_price: Arc<RwLock<U256>>,
     elasticity: Arc<RwLock<f64>>,
 }
@@ -43,8 +52,9 @@ pub struct FeeManager {
 // === impl FeeManager ===
 
 impl FeeManager {
-    pub fn new(base_fee: U256, gas_price: U256) -> Self {
+    pub fn new(spec_id: SpecId, base_fee: U256, gas_price: U256) -> Self {
         Self {
+            spec_id,
             base_fee: Arc::new(RwLock::new(base_fee)),
             gas_price: Arc::new(RwLock::new(gas_price)),
             elasticity: Arc::new(RwLock::new(default_elasticity())),
@@ -55,12 +65,31 @@ impl FeeManager {
         *self.elasticity.read()
     }
 
+    /// Returns true for post London
+    pub fn is_eip1559(&self) -> bool {
+        (self.spec_id as u8) >= (SpecId::LONDON as u8)
+    }
+
+    /// Calculates the current gas price
     pub fn gas_price(&self) -> U256 {
-        *self.gas_price.read()
+        if self.is_eip1559() {
+            self.base_fee().saturating_add(self.suggested_priority_fee())
+        } else {
+            *self.gas_price.read()
+        }
+    }
+
+    /// Suggested priority fee to add to the base fee
+    pub fn suggested_priority_fee(&self) -> U256 {
+        U256::from(1e9 as u64)
     }
 
     pub fn base_fee(&self) -> U256 {
-        *self.base_fee.read()
+        if self.is_eip1559() {
+            *self.base_fee.read()
+        } else {
+            U256::zero()
+        }
     }
 
     /// Returns the current gas price
@@ -71,8 +100,48 @@ impl FeeManager {
 
     /// Returns the current base fee
     pub fn set_base_fee(&self, fee: U256) {
+        trace!(target: "backend::fees", "updated base fee {:?}", fee);
         let mut base = self.base_fee.write();
         *base = fee;
+    }
+
+    /// Calculates the base fee for the next block
+    pub fn get_next_block_base_fee_per_gas(
+        &self,
+        gas_used: U256,
+        gas_limit: U256,
+        last_fee_per_gas: U256,
+    ) -> u64 {
+        calc_next_base_fee(gas_used, gas_limit, last_fee_per_gas, *self.elasticity.read())
+    }
+}
+
+/// Calculates the base fee for the next block based on the given block parameters
+pub fn calc_next_base_fee(
+    gas_used: U256,
+    gas_limit: U256,
+    last_fee_per_gas: U256,
+    elasticity: f64,
+) -> u64 {
+    let gas_used = gas_used.as_u64() as f64;
+    let gas_limit = gas_limit.as_u64() as f64;
+    let gas_target = gas_limit / elasticity;
+    let last_gas_used = gas_used / (gas_target * elasticity);
+
+    let last_fee_per_gas = last_fee_per_gas.as_u64() as f64;
+    if last_gas_used > 0.5 {
+        // increase base gas
+        let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
+
+        (last_fee_per_gas + (last_fee_per_gas * increase)) as u64
+    } else if last_gas_used < 0.5 {
+        // decrease gas
+        let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
+
+        (last_fee_per_gas - (last_fee_per_gas * increase)) as u64
+    } else {
+        // same base gas
+        last_fee_per_gas as u64
     }
 }
 
@@ -113,6 +182,7 @@ impl FeeHistoryService {
         self.fee_history_limit
     }
 
+    /// Create a new history entry for the block
     fn create_cache_entry(
         &self,
         hash: H256,
@@ -238,25 +308,6 @@ impl Future for FeeHistoryService {
     }
 }
 
-/// Response of `eth_feeHistory`
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-// See also <https://docs.alchemy.com/alchemy/apis/ethereum/eth_feehistory>
-pub struct FeeHistory {
-    ///  Lowest number block of the returned range.
-    pub oldest_block: U256,
-    /// An array of block base fees per gas. This includes the next block after the newest of the
-    /// returned range, because this value can be derived from the newest block. Zeroes are
-    /// returned for pre-EIP-1559 blocks.
-    pub base_fee_per_gas: Vec<U256>,
-    /// An array of block gas used ratios. These are calculated as the ratio of gasUsed and
-    /// gasLimit.
-    pub gas_used_ratio: Vec<f64>,
-    /// (Optional) An array of effective priority fee per gas data points from a single block. All
-    /// zeroes are returned if the block is empty.
-    pub reward: Option<Vec<Vec<U256>>>,
-}
-
 pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 
 /// A single item in the whole fee history cache
@@ -267,7 +318,7 @@ pub struct FeeHistoryCacheItem {
     pub rewards: Vec<u64>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
@@ -332,5 +383,16 @@ impl FeeDetails {
                 })
             }
         }
+    }
+}
+
+impl fmt::Debug for FeeDetails {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "Fees {{ ")?;
+        write!(fmt, "gaPrice: {:?}, ", self.gas_price)?;
+        write!(fmt, "max_fee_per_gas: {:?}, ", self.max_fee_per_gas)?;
+        write!(fmt, "max_priority_fee_per_gas: {:?}, ", self.max_priority_fee_per_gas)?;
+        write!(fmt, "}}")?;
+        Ok(())
     }
 }

@@ -25,8 +25,8 @@ See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86
 
 - [x] Block
 - [ ] Assembly
-- [ ] Args
-- [ ] If
+- [x] Args
+- [x] If
 - [x] While
 - [x] Expression
 - [x] VariableDefinition
@@ -34,10 +34,10 @@ See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86
 - [x] DoWhile
 - [x] Continue
 - [x] Break
-- [ ] Return
-- [ ] Revert
+- [x] Return
+- [x] Revert
 - [x] Emit
-- [ ] Try
+- [x] Try
 - [x] DocComment
 
 ### Expressions
@@ -49,15 +49,15 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
 - [x] ShiftLeft, ShiftRight, BitwiseAnd, BitwiseXor, BitwiseOr
 - [x] Assign, AssignOr, AssignAnd, AssignXor, AssignShiftLeft, AssignShiftRight, AssignAdd, AssignSubtract, AssignMultiply, AssignDivide, AssignModulo
 - [x] Less, More, LessEqual, MoreEqual, Equal, NotEqual, And, Or
-- [ ] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral , AddressLiteral
-- [ ] ArraySubscript, ArraySlice
+- [x] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral, AddressLiteral
+- [x] ArraySubscript, ArraySlice
 - [x] MemberAccess
-- [ ] FunctionCall
-- [ ] FunctionCallBlock
-- [ ] NamedFunctionCall
+- [x] FunctionCall
+- [x] FunctionCallBlock
+- [x] NamedFunctionCall
 - [x] New
 - [x] Delete
-- [ ] Ternary
+- [x] Ternary
 - [x] Type
     - [x] Address
     - [x] Address Payable
@@ -73,42 +73,59 @@ See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb8
     - [x] Function
 - [x] Variable
 - [x] List
-- [ ] ArrayLiteral
-- [ ] Unit
-- [ ] This
+- [x] ArrayLiteral
+- [x] Unit
+- [x] This
 
 ### Yul Statements
 
 See [YulStatement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L658-L670) enum in Solang
 
-- [ ] Assign
-- [ ] VariableDeclaration
-- [ ] If
-- [ ] For
-- [ ] Switch
-- [ ] Leave
-- [ ] Break
-- [ ] Continue
-- [ ] Block
-- [ ] FunctionDefinition
-- [ ] FunctionCall
+- [x] Assign
+- [x] VariableDeclaration
+- [x] If
+- [x] For
+- [x] Switch
+- [x] Leave
+- [x] Break
+- [x] Continue
+- [x] Block
+- [x] FunctionDefinition
+- [x] FunctionCall
 
 ### Yul Expressions
 
 See [YulExpression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L695-L704) enum in Solang
 
-- [ ] BoolLiteral
-- [ ] NumberLiteral
-- [ ] HexNumberLiteral
-- [ ] HexStringLiteral
-- [ ] StringLiteral
-- [ ] Variable
-- [ ] FunctionCall
-- [ ] Member
+- [x] BoolLiteral
+- [x] NumberLiteral
+- [x] HexNumberLiteral
+- [X] HexStringLiteral
+- [x] StringLiteral
+- [x] Variable
+- [x] FunctionCall
+- [x] SuffixAccess
 
 ### Other
 
 - [x] Comments
+
+## Configuration
+
+### Options
+
+- [x] Line Length
+- [x] Tab Width
+- [x] Bracket Spacing
+- [x] Explicit Int Types
+- [ ] Quote style
+- [x] Function Modifiers with Parameter multiline
+- [ ] Import Order
+
+### Other
+
+- [ ] Disable Formatter Range
+- [ ] Disable Formatter Next Line
 
 ## Architecture
 

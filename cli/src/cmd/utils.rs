@@ -1,21 +1,22 @@
-use crate::{opts::forge::ContractInfo, suggestions};
+use crate::suggestions;
 
+use crate::term::cli_warn;
 use clap::Parser;
 use ethers::{
     abi::Abi,
     core::types::Chain,
     prelude::ArtifactId,
     solc::{
-        artifacts::{
-            CompactBytecode, CompactContractBytecode, CompactDeployedBytecode, ContractBytecodeSome,
-        },
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
-        Project,
+        info::ContractInfo,
+        Artifact, ProjectCompileOutput,
     },
 };
-
+use forge::executor::opts::EvmOpts;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use foundry_utils::Retry;
-
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
@@ -25,32 +26,48 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-/// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
+/// Given a `Project`'s output, removes the matching ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
 #[track_caller]
-pub fn read_artifact(
-    project: &Project,
-    contract: ContractInfo,
+pub fn remove_contract(
+    output: &mut ProjectCompileOutput,
+    info: &ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    let cache = SolFilesCache::read_joined(&project.paths)?;
-    let contract_path = match contract.path {
-        Some(path) => dunce::canonicalize(PathBuf::from(path))?,
-        None => get_cached_entry_by_name(&cache, &contract.name)?.0,
+    let contract = if let Some(contract) = output.remove_contract(info) {
+        contract
+    } else {
+        let mut err = format!("could not find artifact: `{}`", info.name);
+        if let Some(suggestion) =
+            suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
+        {
+            if suggestion != info.name {
+                err = format!(
+                    r#"{}
+
+        Did you mean `{}`?"#,
+                    err, suggestion
+                );
+            }
+        }
+        eyre::bail!(err)
     };
 
-    let artifact: CompactContractBytecode = cache.read_artifact(contract_path, &contract.name)?;
+    let abi = contract
+        .get_abi()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain abi", info))?
+        .into_owned();
 
-    Ok((
-        artifact
-            .abi
-            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-        artifact
-            .bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract.name)))?,
-        artifact.deployed_bytecode.ok_or_else(|| {
-            eyre::Error::msg(format!("deployed bytecode not found for {}", contract.name))
-        })?,
-    ))
+    let bin = contract
+        .get_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain bytecode", info))?
+        .into_owned();
+
+    let runtime = contract
+        .get_deployed_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain deployed bytecode", info))?
+        .into_owned();
+
+    Ok((abi, bin, runtime))
 }
 
 /// Helper function for finding a contract by ContractName
@@ -100,7 +117,7 @@ pub fn get_cached_entry_by_name(
 pub struct RetryArgs {
     #[clap(
         long,
-        help = "Number of attempts for retrying",
+        help = "Number of attempts for retrying verification",
         default_value = "1",
         validator = u32_validator(1, 10),
         value_name = "RETRIES"
@@ -109,7 +126,7 @@ pub struct RetryArgs {
 
     #[clap(
         long,
-        help = "Optional timeout to apply inbetween attempts in seconds.",
+        help = "Optional delay to apply inbetween verification attempts in seconds.",
         validator = u32_validator(0, 30),
         value_name = "DELAY"
     )]
@@ -134,8 +151,7 @@ impl From<RetryArgs> for Retry {
 }
 
 pub fn needs_setup(abi: &Abi) -> bool {
-    let setup_fns: Vec<_> =
-        abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+    let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
@@ -153,22 +169,24 @@ pub fn needs_setup(abi: &Abi) -> bool {
 pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     deployed_code: bool,
-) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
-    contracts
-        .iter()
-        .filter_map(|(id, c)| {
-            let bytecode = if deployed_code {
-                c.deployed_bytecode.clone().into_bytes()
-            } else {
-                c.bytecode.clone().object.into_bytes()
-            };
+) -> ContractsByArtifact {
+    ContractsByArtifact(
+        contracts
+            .iter()
+            .filter_map(|(id, c)| {
+                let bytecode = if deployed_code {
+                    c.deployed_bytecode.clone().into_bytes()
+                } else {
+                    c.bytecode.clone().object.into_bytes()
+                };
 
-            if let Some(bytecode) = bytecode {
-                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
-            }
-            None
-        })
-        .collect()
+                if let Some(bytecode) = bytecode {
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                }
+                None
+            })
+            .collect(),
+    )
 }
 
 #[macro_export]
@@ -198,8 +216,77 @@ macro_rules! update_progress {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
-    matches!(
-        Chain::try_from(chain).unwrap_or(Chain::Mainnet),
-        Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
-    )
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+    }
+    false
+}
+
+/// True if it supports broadcasting in batches.
+pub fn has_batch_support(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return !matches!(
+            chain,
+            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        )
+    }
+    true
+}
+
+/// Helpers for loading configuration.
+///
+/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
+/// definition on `T: Into<Config> + Into<Figment>` below.
+///
+/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
+/// also prints `Config::__warnings` to stderr
+pub trait LoadConfig {
+    /// Load and sanitize the [`Config`] based on the options provided in self
+    fn load_config(self) -> Config;
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
+    fn load_config_unsanitized(self) -> Config;
+
+    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
+    fn load_config_emit_warnings(self) -> Config;
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
+    fn load_config_unsanitized_emit_warnings(self) -> Config;
+}
+
+impl<T> LoadConfig for T
+where
+    T: Into<Config> + Into<Figment>,
+{
+    fn load_config(self) -> Config {
+        self.into()
+    }
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized(self) -> Config {
+        let figment: Figment = self.into();
+        Config::from_provider(figment)
+    }
+    fn load_config_emit_warnings(self) -> Config {
+        let config = self.load_config();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized_emit_warnings(self) -> Config {
+        let config = self.load_config_unsanitized();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
 }

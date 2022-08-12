@@ -1,24 +1,23 @@
+use super::*;
 use crate::{
     cmd::{get_cached_entry_by_name, unwrap_contracts},
     compile,
-    opts::forge::ContractInfo,
 };
-use eyre::{Context, ContextCompat};
-
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
-        ProjectCompileOutput, ProjectPathsConfig,
+        ProjectCompileOutput,
     },
-    solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+    solc::{
+        artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        info::ContractInfo,
+    },
     types::{Address, U256},
 };
-
+use eyre::{Context, ContextCompat};
 use foundry_utils::PostLinkInput;
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;
-
-use super::*;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
@@ -32,6 +31,7 @@ impl ScriptArgs {
             &build_output.project,
             &script_config.config,
             unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
         );
 
         Ok((build_output, verify))
@@ -99,7 +99,7 @@ impl ScriptArgs {
 
         let mut extra_info = ExtraLinkingInfo {
             no_target_name,
-            target_fname,
+            target_fname: target_fname.clone(),
             contract: &mut contract,
             dependencies: &mut run_dependencies,
             matched: false,
@@ -135,7 +135,7 @@ impl ScriptArgs {
 
                 // if it's the target contract, grab the info
                 if extra.no_target_name {
-                    if id.source == std::path::Path::new(&extra.target_fname) {
+                    if id.source == std::path::PathBuf::from(&extra.target_fname) {
                         if extra.matched {
                             eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
                         }
@@ -145,9 +145,11 @@ impl ScriptArgs {
                         extra.target_id = Some(id.clone());
                     }
                 } else {
-                    let split: Vec<&str> = extra.target_fname.split(':').collect();
-                    let path = std::path::Path::new(split[0]);
-                    let name = split[1];
+                    let (path, name) = extra
+                        .target_fname
+                        .rsplit_once(':')
+                        .expect("The target specifier is malformed.");
+                    let path = std::path::Path::new(path);
                     if path == id.source && name == id.name {
                         *extra.dependencies = dependencies;
                         *extra.contract = contract.clone();
@@ -162,7 +164,9 @@ impl ScriptArgs {
             },
         )?;
 
-        let target = extra_info.target_id.expect("Target not found?");
+        let target = extra_info
+            .target_id
+            .ok_or_else(|| eyre::eyre!("Could not find target contract: {}", target_fname))?;
 
         let (new_libraries, predeploy_libraries): (Vec<_>, Vec<_>) =
             run_dependencies.into_iter().unzip();
@@ -191,56 +195,113 @@ impl ScriptArgs {
     ) -> eyre::Result<(Project, ProjectCompileOutput)> {
         let project = script_config.config.project()?;
 
-        let output = match dunce::canonicalize(&self.path) {
-            // We got passed an existing path to the contract
-            Ok(target_contract) => {
-                self.standalone_check(&target_contract, &project.paths)?;
+        // We received a file path.
+        if let Ok(target_contract) = dunce::canonicalize(&self.path) {
+            let output = compile::compile_target(
+                &target_contract,
+                &project,
+                self.opts.args.silent,
+                self.verify,
+            )?;
+            return Ok((project, output))
+        }
 
-                compile::compile_files(&project, vec![target_contract])?
-            }
-            Err(_) => {
-                // We either got passed `contract_path:contract_name` or the contract name.
-                let contract = ContractInfo::from_str(&self.path)?;
-                let (path, output) = if let Some(path) = contract.path {
-                    let path = dunce::canonicalize(&path)?;
+        let contract = ContractInfo::from_str(&self.path)?;
+        self.target_contract = Some(contract.name.clone());
 
-                    self.standalone_check(&path, &project.paths)?;
+        // We received `contract_path:contract_name`
+        if let Some(path) = contract.path {
+            let path =
+                dunce::canonicalize(&path).wrap_err("Could not canonicalize the target path")?;
+            let output =
+                compile::compile_target(&path, &project, self.opts.args.silent, self.verify)?;
+            self.path = path.to_string_lossy().to_string();
+            return Ok((project, output))
+        }
 
-                    let output = compile::compile_files(&project, vec![path.clone()])?;
+        // We received `contract_name`, and need to find its file path.
+        let output = if self.opts.args.silent {
+            compile::suppress_compile(&project)
+        } else {
+            compile::compile(&project, false, false)
+        }?;
+        let cache =
+            SolFilesCache::read_joined(&project.paths).wrap_err("Could not open compiler cache")?;
 
-                    (path, output)
-                } else {
-                    let output = compile::compile(&project, false, false)?;
-                    let cache = SolFilesCache::read_joined(&project.paths)?;
+        let (path, _) = get_cached_entry_by_name(&cache, &contract.name)
+            .wrap_err("Could not find target contract in cache")?;
+        self.path = path.to_string_lossy().to_string();
 
-                    let res = get_cached_entry_by_name(&cache, &contract.name)?;
-                    (res.0, output)
-                };
-
-                self.path = path.to_string_lossy().to_string();
-                self.target_contract = Some(contract.name);
-                output
-            }
-        };
-
-        // We always compile our contract path, since it's not possible to get srcmaps from cached
-        // artifacts
         Ok((project, output))
     }
+}
 
-    /// Throws an error if `target` is a standalone script and `verify` is requested. We only allow
-    /// `verify` inside projects.
-    fn standalone_check(
-        &self,
-        target_contract: &PathBuf,
-        project_paths: &ProjectPathsConfig,
-    ) -> eyre::Result<()> {
-        let graph = Graph::resolve(project_paths)?;
-        if graph.files().get(target_contract).is_none() && self.verify {
-            eyre::bail!("You can only verify deployments from inside a project! Make sure it exists with `forge tree`.");
-        }
-        Ok(())
+/// Resolve the import tree of our target path, and get only the artifacts and
+/// sources we need. If it's a standalone script, don't filter anything out.
+pub fn filter_sources_and_artifacts(
+    target: &str,
+    sources: BTreeMap<u32, String>,
+    highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    project: Project,
+) -> eyre::Result<(BTreeMap<u32, String>, HashMap<String, ContractBytecodeSome>)> {
+    // Find all imports
+    let graph = Graph::resolve(&project.paths)?;
+    let target_path = project.root().join(target);
+    let mut target_tree = BTreeMap::new();
+    let mut is_standalone = false;
+
+    if let Some(target_index) = graph.files().get(&target_path) {
+        target_tree.extend(
+            graph
+                .all_imported_nodes(*target_index)
+                .map(|index| graph.node(index).unpack())
+                .collect::<BTreeMap<_, _>>(),
+        );
+
+        // Add our target into the tree as well.
+        let (target_path, target_source) = graph.node(*target_index).unpack();
+        target_tree.insert(target_path, target_source);
+    } else {
+        is_standalone = true;
     }
+
+    let sources = sources
+        .into_iter()
+        .filter_map(|(id, path)| {
+            let mut resolved = project
+                .paths
+                .resolve_library_import(&PathBuf::from(&path))
+                .unwrap_or_else(|| PathBuf::from(&path));
+
+            if !resolved.is_absolute() {
+                resolved = project.root().join(&resolved);
+            }
+
+            if !is_standalone {
+                target_tree.get(&resolved).map(|source| (id, source.content.clone()))
+            } else {
+                Some((
+                    id,
+                    fs::read_to_string(&resolved).unwrap_or_else(|_| {
+                        panic!("Something went wrong reading the source file: {:?}", path)
+                    }),
+                ))
+            }
+        })
+        .collect();
+
+    let artifacts = highlevel_known_contracts
+        .into_iter()
+        .filter_map(|(id, artifact)| {
+            if !is_standalone {
+                target_tree.get(&id.source).map(|_| (id.name, artifact))
+            } else {
+                Some((id.name, artifact))
+            }
+        })
+        .collect();
+
+    Ok((sources, artifacts))
 }
 
 struct ExtraLinkingInfo<'a> {

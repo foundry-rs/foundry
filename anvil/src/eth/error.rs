@@ -11,6 +11,7 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
+use foundry_common::SELECTOR_LEN;
 use foundry_evm::revm::Return;
 use serde::Serialize;
 use tracing::error;
@@ -33,6 +34,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error("Failed to decode transaction")]
     FailedToDecodeTransaction,
+    #[error("Failed to decode state")]
+    FailedToDecodeStateDump,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
@@ -57,6 +60,10 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("Required data unavailable")]
+    DataUnavailable,
+    #[error("Trie error: {0}")]
+    TrieError(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -120,6 +127,10 @@ pub enum InvalidTransactionError {
     ExhaustsGasResources,
     #[error("Out of gas: required gas exceeds allowance: {0:?}")]
     OutOfGas(U256),
+
+    /// Thrown post London if the transaction's fee is less than the base fee of the block
+    #[error("max fee per gas less than block base fee")]
+    FeeTooLow,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
@@ -127,10 +138,10 @@ pub enum InvalidTransactionError {
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
 fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
-    if out.len() < 4 {
+    if out.len() < SELECTOR_LEN {
         return None
     }
-    String::decode(&out[4..]).ok()
+    String::decode(&out[SELECTOR_LEN..]).ok()
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -176,12 +187,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
+                        // this mimics geth revert error
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data.as_ref().and_then(decode_revert_reason) {
                             msg = format!("{}: {}", msg, reason);
                         }
                         RpcError {
-                            code: ErrorCode::TransactionRejected,
+                            // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
+                            code: ErrorCode::ExecutionError,
                             message: msg.into(),
                             data: serde_json::to_value(data).ok(),
                         }
@@ -197,6 +210,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
+                }
+                BlockchainError::FailedToDecodeStateDump => {
+                    RpcError::invalid_params("Failed to decode state dump")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),
@@ -225,6 +241,12 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::DataUnavailable => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::TrieError(_) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
             }
             .into(),
         }

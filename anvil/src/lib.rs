@@ -1,4 +1,3 @@
-mod config;
 use crate::{
     eth::{
         backend::{info::StorageInfo, mem},
@@ -12,7 +11,6 @@ use crate::{
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
 };
-pub use config::{AccountGenerator, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 use eth::backend::fork::ClientFork;
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -36,6 +34,9 @@ use tokio::task::JoinError;
 
 /// contains the background service that drives the node
 mod service;
+
+mod config;
+pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 /// ethereum related implementations
 pub mod eth;
@@ -132,10 +133,14 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
         tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
     let host = config.host.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let socket = SocketAddr::new(host, port);
+    let mut addr = SocketAddr::new(host, port);
 
-    // launch the rpc server
-    let serve = tokio::task::spawn(server::serve(socket, api.clone(), server_config));
+    // configure the rpc server and use its actual local address
+    let server = server::serve(addr, api.clone(), server_config);
+    addr = server.local_addr();
+
+    // spawn the server on a new task
+    let serve = tokio::task::spawn(server);
 
     // select over both tasks
     let inner = futures::future::select(node_service, serve);
@@ -146,7 +151,7 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
             // wait for the first task to finish
             inner.await.into_inner().0
         }),
-        address: socket,
+        address: addr,
     };
 
     handle.print(fork.as_ref());
@@ -159,6 +164,7 @@ type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinErro
 /// A handle to the spawned node and server
 pub struct NodeHandle {
     config: NodeConfig,
+    /// the address of the running rpc server
     address: SocketAddr,
     /// the future that drives the rpc service and the node service
     inner: NodeFuture,
@@ -179,6 +185,9 @@ impl NodeHandle {
     }
 
     /// The address of the launched server
+    ///
+    /// **N.B.** this may not necessarily be the same `host + port` as configured in the
+    /// `NodeConfig`, if port was set to 0, then the OS auto picks an available port
     pub fn socket_address(&self) -> &SocketAddr {
         &self.address
     }

@@ -6,11 +6,6 @@ use foundry_cli_test_utils::{
 use foundry_config::Config;
 use std::{path::PathBuf, str::FromStr};
 
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
-
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
     let patt = regex::Regex::new("test*").unwrap();
@@ -39,7 +34,18 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that warning is displayed when there are no tests in project
-forgetest!(warn_no_tests, |_prj: TestProject, mut cmd: TestCommand| {
+forgetest!(warn_no_tests, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "dummy",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity =0.8.13;
+
+contract Dummy {}
+"#,
+        )
+        .unwrap();
     // set up command
     cmd.args(["test"]);
 
@@ -50,7 +56,19 @@ forgetest!(warn_no_tests, |_prj: TestProject, mut cmd: TestCommand| {
 });
 
 // tests that warning is displayed with pattern when no tests match
-forgetest!(warn_no_tests_match, |_prj: TestProject, mut cmd: TestCommand| {
+forgetest!(warn_no_tests_match, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "dummy",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity =0.8.13;
+
+contract Dummy {}
+"#,
+        )
+        .unwrap();
+
     // set up command
     cmd.args(["test", "--match-test", "testA.*", "--no-match-test", "testB.*"]);
     cmd.args(["--match-contract", "TestC.*", "--no-match-contract", "TestD.*"]);
@@ -271,3 +289,13 @@ contract ContractTest is DSTest {
             ));
     }
 );
+
+// checks that we can test forge std successfully
+// `forgetest_init!` will install with `forge-std` under `lib/forge-std`
+forgetest_init!(can_test_forge_std, |prj: TestProject, mut cmd: TestCommand| {
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    cmd.cmd().current_dir(forge_std_dir);
+    cmd.args(["test", "--root", "."]);
+
+    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+});

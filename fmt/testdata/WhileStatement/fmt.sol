@@ -7,6 +7,16 @@ contract WhileStatement {
             i1++;
         }
 
+        while (i1 < 10) {
+            i1++;
+        }
+
+        while (i1 < 10) {
+            while (i1 < 10) {
+                i1++;
+            }
+        }
+
         uint256 i2;
         while (i2 < 10) {
             i2++;
@@ -24,12 +34,8 @@ contract WhileStatement {
 
         uint256 someLongVariableName;
         while (
-            someLongVariableName
-                < 10
-                && someLongVariableName
-                < 11
-                && someLongVariableName
-                < 12
+            someLongVariableName < 10 && someLongVariableName < 11
+                && someLongVariableName < 12
         ) {
             someLongVariableName++;
         }

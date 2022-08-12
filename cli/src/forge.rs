@@ -1,5 +1,6 @@
 pub mod cmd;
 pub mod compile;
+mod handler;
 mod opts;
 mod suggestions;
 mod term;
@@ -18,7 +19,8 @@ use opts::forge::{Opts, Subcommands};
 use std::process::Command;
 
 fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    utils::load_dotenv();
+    handler::install()?;
     utils::subscriber();
     utils::enable_paint();
 
@@ -34,6 +36,9 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Script(cmd) => {
             utils::block_on(cmd.run_script())?;
+        }
+        Subcommands::Coverage(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
@@ -63,12 +68,12 @@ fn main() -> eyre::Result<()> {
             }
         },
         Subcommands::Create(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.run())?;
         }
         Subcommands::Update { lib } => {
             let mut cmd = Command::new("git");
 
-            cmd.args(&["submodule", "update", "--remote", "--init", "--recursive"]);
+            cmd.args(&["submodule", "update", "--remote", "--init"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {

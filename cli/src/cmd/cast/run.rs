@@ -1,18 +1,17 @@
-use crate::{cmd::Cmd, utils, utils::consume_config_rpc_url};
-use cast::trace::CallTraceDecoder;
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
-use ethers::{
-    abi::Address,
-    prelude::{Middleware, Provider},
-    solc::utils::RuntimeOrHandle,
-    types::H256,
-};
+use ethers::{abi::Address, prelude::Middleware, solc::utils::RuntimeOrHandle, types::H256};
 use forge::{
     debug::DebugArena,
-    executor::{builder::Backend, opts::EvmOpts, DeployResult, ExecutorBuilder, RawCallResult},
+    executor::{
+        inspector::CheatsConfig, opts::EvmOpts, Backend, DeployResult, ExecutorBuilder,
+        RawCallResult,
+    },
     trace::{identifier::EtherscanIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
 };
-use foundry_config::Config;
+use foundry_common::get_http_provider;
+use foundry_config::{find_project_root_path, Config};
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
@@ -35,6 +34,8 @@ pub struct RunArgs {
         help = "Executes the transaction only with the state from the previous block. May result in different results than the live execution!"
     )]
     quick: bool,
+    #[clap(long, short = 'v', help = "Prints full address")]
+    verbose: bool,
     #[clap(
         long,
         help = "Labels address in the trace. 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth",
@@ -52,13 +53,12 @@ impl Cmd for RunArgs {
 
 impl RunArgs {
     async fn run_tx(self) -> eyre::Result<()> {
-        let figment = Config::figment();
+        let figment = Config::figment_with_root(find_project_root_path().unwrap());
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
         let rpc_url = consume_config_rpc_url(self.rpc_url);
-        let provider =
-            Provider::try_from(rpc_url.as_str()).expect("could not instantiate provider");
+        let provider = get_http_provider(rpc_url.as_str());
 
         if let Some(tx) =
             provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")).await?
@@ -70,11 +70,11 @@ impl RunArgs {
 
             // Set up the execution environment
             let env = evm_opts.evm_env().await;
-            let db =
-                Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env).await;
+            let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
-            let builder = ExecutorBuilder::new()
+            let builder = ExecutorBuilder::default()
                 .with_config(env)
+                .with_cheatcodes(CheatsConfig::new(&config, &evm_opts))
                 .with_spec(crate::utils::evm_spec(&config.evm_version));
 
             let mut executor = builder.build(db);
@@ -106,11 +106,7 @@ impl RunArgs {
 
             // Execute our transaction
             let mut result = {
-                executor.set_tracing(true).set_gas_limit(tx.gas);
-
-                if self.debug {
-                    executor.set_debugger(true);
-                }
+                executor.set_tracing(true).set_gas_limit(tx.gas).set_debugger(self.debug);
 
                 if let Some(to) = tx.to {
                     let RawCallResult { reverted, gas, traces, debug: run_debug, .. } =
@@ -159,6 +155,9 @@ impl RunArgs {
 
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 
+            decoder
+                .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
+
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);
             }
@@ -166,7 +165,7 @@ impl RunArgs {
             if self.debug {
                 run_debugger(result, decoder)?;
             } else {
-                print_traces(&mut result, decoder)?;
+                print_traces(&mut result, decoder, self.verbose).await?;
             }
         }
         Ok(())
@@ -175,24 +174,31 @@ impl RunArgs {
 
 fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
     // TODO Get source from etherscan
-    let source_code: BTreeMap<u32, String> = BTreeMap::new();
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
+    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), BTreeMap::new())?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }
 }
 
-fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+async fn print_traces(
+    result: &mut RunResult,
+    decoder: CallTraceDecoder,
+    verbose: bool,
+) -> eyre::Result<()> {
     if result.traces.is_empty() {
         eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
     }
 
     println!("Traces:");
     for (_, trace) in &mut result.traces {
-        decoder.decode(trace);
-        println!("{trace}");
+        decoder.decode(trace).await;
+        if !verbose {
+            println!("{trace}");
+        } else {
+            println!("{:#}", trace);
+        }
     }
     println!();
 

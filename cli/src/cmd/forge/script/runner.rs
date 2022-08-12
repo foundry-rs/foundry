@@ -1,20 +1,27 @@
+use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
-    deploy_create2_deployer,
-    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor, RawCallResult},
+    executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+    revm::{return_ok, Return},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
 
-use super::*;
-pub struct Runner<DB: DatabaseRef> {
-    pub executor: Executor<DB>,
+/// Represents which simulation stage is the script execution at.
+pub enum SimulationStage {
+    Local,
+    OnChain,
+}
+
+/// Drives script execution
+pub struct ScriptRunner {
+    pub executor: Executor,
     pub initial_balance: U256,
     pub sender: Address,
 }
 
-impl<DB: DatabaseRef> Runner<DB> {
-    pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
+impl ScriptRunner {
+    pub fn new(executor: Executor, initial_balance: U256, sender: Address) -> Self {
         Self { executor, initial_balance, sender }
     }
 
@@ -29,18 +36,20 @@ impl<DB: DatabaseRef> Runner<DB> {
         need_create2_deployer: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
         if !is_broadcast {
-            // We max out their balance so that they can deploy and make calls.
-            self.executor.set_balance(self.sender, U256::MAX);
+            if self.sender == Config::DEFAULT_SENDER {
+                // We max out their balance so that they can deploy and make calls.
+                self.executor.set_balance(self.sender, U256::MAX);
+            }
 
             if need_create2_deployer {
-                deploy_create2_deployer(&mut self.executor)?;
+                self.executor.deploy_create2_deployer()?;
             }
         }
 
         self.executor.set_nonce(self.sender, sender_nonce.as_u64());
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(*CALLER, U256::MAX);
+        self.executor.set_balance(CALLER, U256::MAX);
 
         // Deploy libraries
         let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
@@ -63,7 +72,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(*CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
+        } = self.executor.deploy(CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
@@ -177,6 +186,12 @@ impl<DB: DatabaseRef> Runner<DB> {
         }
     }
 
+    /// Executes the call
+    ///
+    /// This will commit the changes if `commit` is true.
+    ///
+    /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
+    /// can be used as `gas_limit`.
     fn call(
         &mut self,
         from: Address,
@@ -185,24 +200,57 @@ impl<DB: DatabaseRef> Runner<DB> {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
-        let RawCallResult {
-            result,
-            reverted,
-            gas: tx_gas,
-            stipend,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            ..
-        } = if !commit {
-            self.executor.call_raw(from, to, calldata.0, value)?
-        } else {
-            self.executor.call_raw_committing(from, to, calldata.0, value)?
-        };
+        let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut gas = res.gas;
+        if matches!(res.status, return_ok!()) {
+            // store the current gas limit and reset it later
+            let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
-        let gas = if commit { tx_gas } else { tx_gas.overflowing_sub(stipend).0 };
+            // the executor will return the _exact_ gas value this transaction consumed, setting
+            // this value as gas limit will result in `OutOfGas` so to come up with a
+            // better estimate we search over a possible range we pick a higher gas
+            // limit 3x of a succeeded call should be safe
+            let mut highest_gas_limit = gas * 3;
+            let mut lowest_gas_limit = gas;
+            let mut last_highest_gas_limit = highest_gas_limit;
+            while (highest_gas_limit - lowest_gas_limit) > 1 {
+                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
+                let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+                match res.status {
+                    Return::Revert |
+                    Return::OutOfGas |
+                    Return::LackOfFundForGasLimit |
+                    Return::OutOfFund => {
+                        lowest_gas_limit = mid_gas_limit;
+                    }
+                    _ => {
+                        highest_gas_limit = mid_gas_limit;
+                        // if last two successful estimations only vary by 10%, we consider this to
+                        // sufficiently accurate
+                        const ACCURACY: u64 = 10;
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                            last_highest_gas_limit <
+                            1
+                        {
+                            // update the gas
+                            gas = highest_gas_limit;
+                            break
+                        }
+                        last_highest_gas_limit = highest_gas_limit;
+                    }
+                }
+            }
+            // reset gas limit in the
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
+        }
+
+        if commit {
+            // if explicitly requested we can now commit the call
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
 
         Ok(ScriptResult {
             returned: result,

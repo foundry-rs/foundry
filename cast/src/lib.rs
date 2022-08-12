@@ -1,29 +1,34 @@
 //! Cast
 //!
-//! TODO
+//! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
-        Abi, AbiParser, Token,
+        Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units, rlp},
+    utils::{
+        self, format_bytes32_string, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp,
+    },
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
-use serde_json::Value;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    ops::{Shl, Shr},
+    path::PathBuf,
+    str::FromStr,
+};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-mod print_utils;
 mod rlp_converter;
 mod tx;
 
@@ -68,7 +73,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.build();
@@ -100,7 +105,7 @@ where
                 .iter()
                 .map(|item| {
                     match item {
-                        Token::Address(inner) => format!("{:?}", inner),
+                        Token::Address(inner) => utils::to_checksum(inner, None),
                         // add 0x
                         Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
                         Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
@@ -130,7 +135,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.peek();
@@ -140,9 +145,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list<'a>(
+    pub async fn access_list(
         &self,
-        builder_output: TxBuilderPeekOutput<'a>,
+        builder_output: TxBuilderPeekOutput<'_>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
@@ -154,7 +159,7 @@ where
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {:?}", al.address));
+                s.push(format!("- address: {}", SimpleCast::checksum_address(&al.address)?));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
@@ -193,7 +198,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
@@ -256,7 +261,7 @@ where
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, from, to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_value(value)
     ///     .set_args(sig, args).await?;
@@ -267,7 +272,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate<'a>(&self, builder_output: TxBuilderPeekOutput<'a>) -> Result<U256> {
+    pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
         let res = self.provider.estimate_gas(tx).await?;
@@ -303,7 +308,7 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                get_pretty_block_attr(block, field.to_string())
+                get_pretty_block_attr(&block, field)
                     .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -321,7 +326,7 @@ where
                 if field == "transactions" {
                     "use --full to view transactions".to_string()
                 } else {
-                    get_pretty_block_attr(block, field.to_string())
+                    get_pretty_block_attr(&block, field)
                         .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
@@ -382,8 +387,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Cast::block(self, 1920000, false, Some(String::from("hash")), false)
-                    .await?)[..]
+                match &(Cast::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
@@ -550,7 +554,7 @@ where
         };
 
         let transaction = if let Some(ref field) = field {
-            get_pretty_tx_attr(transaction_result, field.to_string())
+            get_pretty_tx_attr(&transaction_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
@@ -617,7 +621,7 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            get_pretty_tx_receipt_attr(receipt_result, field.to_string())
+            get_pretty_tx_receipt_attr(&receipt_result, field)
                 .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
         } else if to_json {
             serde_json::to_string(&receipt)?
@@ -625,6 +629,30 @@ where
             receipt_result.pretty()
         };
         Ok(receipt)
+    }
+
+    /// Perform a raw JSON-RPC request
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let result = cast.rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
+    ///     .await?;
+    /// println!("{}", result);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn rpc<T>(&self, method: &str, params: T) -> Result<String>
+    where
+        T: std::fmt::Debug + serde::Serialize + Send + Sync,
+    {
+        let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
+        Ok(serde_json::to_string(&res)?)
     }
 }
 
@@ -897,11 +925,32 @@ impl SimpleCast {
     ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
     ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("constructor(uint a)", &["1"]).unwrap().as_str()
+    ///     );
     /// #    Ok(())
     /// # }
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = match HumanReadableParser::parse_function(sig) {
+            Ok(func) => func,
+            Err(err) => {
+                if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                    #[allow(deprecated)]
+                    Function {
+                        name: "constructor".to_string(),
+                        inputs: constructor.inputs,
+                        outputs: vec![],
+                        constant: None,
+                        state_mutability: Default::default(),
+                    }
+                } else {
+                    // we return the `Function` parse error as this case is more likely
+                    return Err(err.into())
+                }
+            }
+        };
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
         Ok(format!("0x{encoded}"))
@@ -1008,6 +1057,22 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
+    pub fn left_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input as base {base_in}")?;
+        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+
+        Ok(value.shl(bits))
+    }
+
+    pub fn right_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
+        let value = U256::from_str_radix(value, base_in)
+            .wrap_err("Cannot parse input as base {base_in}")?;
+        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+
+        Ok(value.shr(bits))
+    }
+
     /// Converts an eth amount into a specified unit
     ///
     /// ```
@@ -1098,7 +1163,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(Value::String(value.parse()?));
+        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
@@ -1117,8 +1182,9 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn from_rlp(value: String) -> Result<String> {
-        let striped_value = strip_0x(&value);
+    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+        let value = value.as_ref();
+        let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
         Ok(format!("{}", item))
@@ -1247,7 +1313,7 @@ impl SimpleCast {
     /// # }
     /// ```
     pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let func = HumanReadableParser::parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
@@ -1318,21 +1384,36 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///
-    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
-    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    ///    assert_eq!(Cast::index("address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256","42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn index(
-        from_type: &str,
-        to_type: &str,
-        from_value: &str,
-        slot_number: &str,
-    ) -> Result<String> {
-        let sig = format!("x({from_type},{to_type})");
+    pub fn index(from_type: &str, from_value: &str, slot_number: &str) -> Result<String> {
+        let sig = format!("x({from_type},uint256)");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
+    }
+
+    /// Encodes string into bytes32 value
+    pub fn format_bytes32_string(s: &str) -> Result<String> {
+        let formatted = format_bytes32_string(s)?;
+        Ok(format!("0x{}", hex::encode(&formatted)))
+    }
+
+    /// Decodes string from bytes32 value
+    pub fn parse_bytes32_string(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("string not 32 bytes");
+        }
+
+        let bytes = hex::decode(&s)?;
+        let mut buffer = [0u8; 32];
+        buffer.copy_from_slice(&bytes);
+
+        Ok(parse_bytes32_string(&buffer)?.to_owned())
     }
 }
 
@@ -1352,6 +1433,15 @@ mod tests {
         );
     }
 
+    // <https://github.com/foundry-rs/foundry/issues/2681>
+    #[test]
+    fn calldata_array() {
+        assert_eq!(
+            "0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000",
+            Cast::calldata("propose(string[])", &["[\"\"]"]).unwrap().as_str()
+        );
+    }
+
     #[test]
     fn calldata_bool() {
         assert_eq!(
@@ -1364,5 +1454,15 @@ mod tests {
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
         assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+    }
+
+    #[test]
+    fn from_rlp() {
+        let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
+        let item = Cast::from_rlp(rlp).unwrap();
+        assert_eq!(
+            item,
+            r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
+        )
     }
 }

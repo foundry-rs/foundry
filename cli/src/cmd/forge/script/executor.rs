@@ -1,17 +1,21 @@
-use crate::{cmd::needs_setup, utils};
-
+use super::*;
+use crate::{
+    cmd::{
+        forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
+        needs_setup,
+    },
+    utils,
+};
 use ethers::{
     solc::artifacts::CompactContractBytecode,
     types::{transaction::eip2718::TypedTransaction, Address, U256},
 };
 use forge::{
-    executor::{builder::Backend, ExecutorBuilder},
+    executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
 };
-
 use std::collections::VecDeque;
-
-use crate::cmd::forge::script::{sequence::TransactionWithMetadata, *};
+use tracing::trace;
 
 impl ScriptArgs {
     /// Locally deploys and executes the contract method that will collect all broadcastable
@@ -23,12 +27,13 @@ impl ScriptArgs {
         sender: Address,
         predeploy_libraries: &[ethers::types::Bytes],
     ) -> eyre::Result<ScriptResult> {
+        trace!("start executing script");
         let CompactContractBytecode { abi, bytecode, .. } = contract;
 
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
 
-        let mut runner = self.prepare_runner(script_config, sender).await;
+        let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
             bytecode,
@@ -69,13 +74,14 @@ impl ScriptArgs {
     pub async fn execute_transactions(
         &self,
         transactions: VecDeque<TypedTransaction>,
-        script_config: &ScriptConfig,
+        script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
-        contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
-        let mut runner = self.prepare_runner(script_config, script_config.evm_opts.sender).await;
+        let mut runner = self
+            .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
+            .await;
         let mut failed = false;
-        let mut sum_gas = 0;
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -85,19 +91,19 @@ impl ScriptArgs {
         let address_to_abi: BTreeMap<Address, (String, &Abi)> = decoder
             .contracts
             .iter()
-            .filter_map(|(addr, contract_name)| {
-                if let Some((_, (abi, _))) =
-                    contracts.iter().find(|(artifact, _)| artifact.name == *contract_name)
+            .filter_map(|(addr, contract_id)| {
+                let contract_name = utils::get_contract_name(contract_id);
+                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(contract_name)
                 {
-                    return Some((*addr, (contract_name.clone(), abi)))
+                    return Some((*addr, (contract_name.to_string(), abi)))
                 }
                 None
             })
             .collect();
 
-        let final_txs: VecDeque<TransactionWithMetadata> = transactions
-            .into_iter()
-            .map(|tx| match tx {
+        let mut final_txs = VecDeque::new();
+        for tx in transactions {
+            match tx {
                 TypedTransaction::Legacy(mut tx) => {
                     let mut result = runner
                         .simulate(
@@ -110,64 +116,74 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
-                    // We inflate the gas used by the transaction by x1.3 since the estimation
-                    // might be off
-                    tx.gas = Some(U256::from(result.gas * 13 / 10));
+                    // Simulate mining the transaction if the user passes `--slow`.
+                    if self.slow {
+                        runner.executor.env_mut().block.number += U256::one();
+                    }
 
-                    sum_gas += result.gas;
+                    // We inflate the gas used by the user specified percentage
+                    tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
+
                     if !result.success {
                         failed = true;
                     }
 
                     if script_config.evm_opts.verbosity > 3 {
                         for (_kind, trace) in &mut result.traces {
-                            decoder.decode(trace);
+                            decoder.decode(trace).await;
                             println!("{}", trace);
                         }
                     }
 
-                    TransactionWithMetadata::new(tx.into(), &result, &address_to_abi, decoder)
-                        .unwrap()
+                    final_txs.push_back(TransactionWithMetadata::new(
+                        tx.into(),
+                        &result,
+                        &address_to_abi,
+                        decoder,
+                    )?);
                 }
                 _ => unreachable!(),
-            })
-            .collect();
+            }
+        }
 
         if failed {
-            Err(eyre::Report::msg("Simulated execution failed"))
+            eyre::bail!("Simulated execution failed")
         } else {
             Ok(final_txs)
         }
     }
 
+    /// Creates the Runner that drives script execution
     async fn prepare_runner(
         &self,
-        script_config: &ScriptConfig,
+        script_config: &mut ScriptConfig,
         sender: Address,
-    ) -> Runner<Backend> {
+        stage: SimulationStage,
+    ) -> ScriptRunner {
+        trace!("preparing script runner");
         let env = script_config.evm_opts.evm_env().await;
 
-        // the db backend that serves all the data
-        let db = Backend::new(
-            utils::get_fork(&script_config.evm_opts, &script_config.config.rpc_storage_caching),
-            &env,
-        )
-        .await;
+        // The db backend that serves all the data.
+        let db = script_config.backend.clone().unwrap_or_else(|| {
+            let backend =
+                Backend::spawn(script_config.evm_opts.get_fork(&script_config.config, env.clone()));
+            script_config.backend = Some(backend.clone());
+            backend
+        });
 
-        let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(script_config.evm_opts.ffi)
+        let mut builder = ExecutorBuilder::default()
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&script_config.config.evm_version))
-            .with_gas_limit(script_config.evm_opts.gas_limit());
+            .with_spec(utils::evm_spec(&script_config.config.evm_version))
+            .with_gas_limit(script_config.evm_opts.gas_limit())
+            // We need it enabled to decode contract names: local or external.
+            .set_tracing(true);
 
-        if script_config.evm_opts.verbosity >= 3 {
-            builder = builder.with_tracing();
+        if let SimulationStage::Local = stage {
+            builder = builder
+                .set_debugger(self.debug)
+                .with_cheatcodes(CheatsConfig::new(&script_config.config, &script_config.evm_opts));
         }
 
-        if self.debug {
-            builder = builder.with_tracing().with_debugger();
-        }
-
-        Runner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
+        ScriptRunner::new(builder.build(db), script_config.evm_opts.initial_balance, sender)
     }
 }

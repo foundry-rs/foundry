@@ -1,7 +1,10 @@
-use super::{ClapChain, EthereumOpts};
+use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, run::RunArgs, wallet::WalletSubcommands},
-    utils::{parse_ether_value, parse_u256},
+    cmd::cast::{
+        estimate::EstimateArgs, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
+        wallet::WalletSubcommands,
+    },
+    utils::parse_u256,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
@@ -19,6 +22,7 @@ pub struct Opts {
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
 )]
+
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
@@ -141,6 +145,40 @@ The input can be:
         #[clap(value_name = "VALUE")]
         value: Option<String>,
     },
+    #[clap(name = "shl")]
+    #[clap(about = "Perform a left shifting operation")]
+    LeftShift {
+        #[clap(value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BITS")]
+        bits: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+        #[clap(
+            long = "--base-out",
+            help = "The output base",
+            default_value = "16",
+            parse(try_from_str = parse_base)
+        )]
+        base_out: String,
+    },
+    #[clap(name = "shr")]
+    #[clap(about = "Perform a right shifting operation")]
+    RightShift {
+        #[clap(value_name = "VALUE")]
+        value: String,
+        #[clap(value_name = "BITS")]
+        bits: String,
+        #[clap(long = "--base-in", help = "The input base")]
+        base_in: Option<String>,
+        #[clap(
+            long = "--base-out",
+            help = "The output base",
+            default_value = "16",
+            parse(try_from_str = parse_base)
+        )]
+        base_out: String,
+    },
     #[clap(name = "--to-unit")]
     #[clap(visible_aliases = &["to-unit", "tun", "2un"])]
     #[clap(
@@ -220,23 +258,19 @@ Examples:
     #[clap(about = "Get information about a block.")]
     Block {
         #[clap(
-            long,
-            short = 'B',
             help = "The block height you want to query at.",
             long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
             parse(try_from_str = parse_block_id),
             value_name = "BLOCK"
         )]
         block: BlockId,
-        #[clap(long, env = "CAST_FULL_BLOCK")]
-        full: bool,
         #[clap(
-            long,
-            short,
             help = "If specified, only get the given field of the block.",
             value_name = "FIELD"
         )]
         field: Option<String>,
+        #[clap(long, env = "CAST_FULL_BLOCK")]
+        full: bool,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL", value_name = "URL")]
@@ -344,7 +378,13 @@ Examples:
             value_name = "CONFIRMATIONS"
         )]
         confirmations: usize,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Exit immediately if the transaction was not found."
+        )]
         cast_async: bool,
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
@@ -365,40 +405,18 @@ Examples:
         sig: Option<String>,
         #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
         args: Vec<String>,
-        #[clap(long, help = "Gas limit for the transaction.", parse(try_from_str = parse_u256), value_name = "GAS")]
-        gas: Option<U256>,
         #[clap(
-            long = "gas-price",
-            help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
-            env = "ETH_GAS_PRICE",
-            parse(try_from_str = parse_ether_value),
-            value_name = "PRICE"
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
         )]
-        gas_price: Option<U256>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
-            value_name = "VALUE"
-        )]
-        value: Option<U256>,
-        #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256), value_name = "NONCE")]
-        nonce: Option<U256>,
-        #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
-        #[clap(flatten)]
+        #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
+        tx: TransactionOpts,
+        #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
         eth: EthereumOpts,
-        #[clap(
-            long,
-            help = "Send a legacy transaction instead of an EIP1559 transaction.",
-            long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
-
-This is automatically enabled for common networks without EIP1559."#
-        )]
-        legacy: bool,
         #[clap(
             short,
             long,
@@ -422,7 +440,13 @@ This is automatically enabled for common networks without EIP1559."#
     PublishTx {
         #[clap(help = "The raw transaction", value_name = "RAW_TX")]
         raw_tx: String,
-        #[clap(long, env = "CAST_ASYNC")]
+        #[clap(
+            long = "async",
+            env = "CAST_ASYNC",
+            name = "async",
+            alias = "cast-async",
+            help = "Only print the transaction hash and exit immediately."
+        )]
         cast_async: bool,
         // FIXME: We only need the RPC URL and `--flashbots` options from this.
         #[clap(flatten)]
@@ -431,27 +455,7 @@ This is automatically enabled for common networks without EIP1559."#
     #[clap(name = "estimate")]
     #[clap(visible_alias = "e")]
     #[clap(about = "Estimate the gas cost of a transaction.")]
-    Estimate {
-        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
-        to: NameOrAddress,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: String,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
-            value_name = "VALUE"
-        )]
-        value: Option<U256>,
-        #[clap(flatten)]
-        // TODO: We only need RPC URL and Etherscan API key here.
-        eth: EthereumOpts,
-    },
+    Estimate(EstimateArgs),
     #[clap(name = "--calldata-decode")]
     #[clap(visible_alias = "cdd")]
     #[clap(about = "Decode ABI-encoded input data.")]
@@ -499,8 +503,6 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     Index {
         #[clap(help = "The mapping key type.", value_name = "KEY_TYPE")]
         key_type: String,
-        #[clap(help = "The mapping value type.", value_name = "VALUE_TYPE")]
-        value_type: String,
         #[clap(help = "The mapping key.", value_name = "KEY")]
         key: String,
         #[clap(help = "The storage slot of the mapping.", value_name = "SLOT_NUMBER")]
@@ -520,7 +522,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     #[clap(about = "Decode ABI-encoded calldata using https://sig.eth.samczsun.com.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.", value_name = "CALLDATA")]
-        calldata: String,
+        calldata: Option<String>,
     },
     #[clap(name = "4byte-event")]
     #[clap(visible_aliases = &["4e", "4be"])]
@@ -533,14 +535,16 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
     },
     #[clap(name = "upload-signature")]
     #[clap(visible_aliases = &["ups"])]
-    #[clap(about = r#"Upload the given signatures to https://sig.eth.samczsun.com.
+    #[clap(
+        about = "Upload the given signatures to https://sig.eth.samczsun.com.",
+        long_about = r#"Upload the given signatures to https://sig.eth.samczsun.com.
 
-    Examples:
-    - cast upload-signature "transfer(address,uint256)"
-    - cast upload-signature "function transfer(address,uint256)"
-    - cast upload-signature "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
-    - cast upload-signature ./out/Contract.sol/Contract.json
-    "#)]
+Examples:
+- cast upload-signature "transfer(address,uint256)"
+- cast upload-signature "function transfer(address,uint256)"
+- cast upload-signature "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
+- cast upload-signature ./out/Contract.sol/Contract.json""#
+    )]
     UploadSignature {
         #[clap(
             help = "The signatures to upload. Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given. Can also take paths to contract artifact JSON."
@@ -822,6 +826,22 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
+    #[clap(name = "rpc")]
+    #[clap(visible_alias = "rp")]
+    #[clap(about = "Perform a raw JSON-RPC request")]
+    Rpc(RpcArgs),
+    #[clap(name = "--format-bytes32-string")]
+    #[clap(about = "Formats a string into bytes32 encoding.")]
+    FormatBytes32String {
+        #[clap(value_name = "STRING")]
+        string: Option<String>,
+    },
+    #[clap(name = "--parse-bytes32-string")]
+    #[clap(about = "Parses a string from bytes32 encoding.")]
+    ParseBytes32String {
+        #[clap(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -848,5 +868,13 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
+    })
+}
+
+fn parse_base(s: &str) -> eyre::Result<String> {
+    Ok(match s {
+        "10" | "dec" => "10".to_string(),
+        "16" | "hex" => "16".to_string(),
+        _ => eyre::bail!("Provided base is not a valid."),
     })
 }

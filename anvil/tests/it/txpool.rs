@@ -1,6 +1,5 @@
 //! txpool related tests
 
-use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
@@ -9,15 +8,14 @@ use ethers::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {
-    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let account = provider.get_accounts().await.unwrap()[0];
     let value: u64 = 42;
     let gas_price: U256 = 221435145689u64.into();
-    let mut tx =
-        TransactionRequest::new().to(account).from(account).value(value).gas_price(gas_price);
+    let tx = TransactionRequest::new().to(account).from(account).value(value).gas_price(gas_price);
 
     // send a few transactions
     let mut txs = Vec::new();
@@ -46,11 +44,7 @@ async fn geth_txpool() {
     assert!(content.queued.is_empty());
     let content = content.pending.get(&account).unwrap();
 
-    // the txs get their gas and nonce auto-set upon mempool entry
-    tx = tx.gas(21000);
-    for i in 0..10 {
-        tx = tx.nonce(i);
-        let req = content.get(&i.to_string()).unwrap();
-        assert_eq!(req, &tx);
+    for nonce in 0..10 {
+        assert!(content.contains_key(&nonce.to_string()));
     }
 }

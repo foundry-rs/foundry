@@ -1,9 +1,12 @@
 //! config command
 
-use crate::cmd::{forge::build::BuildArgs, utils::Cmd};
+use crate::{
+    cmd::{forge::build::BuildArgs, utils::Cmd, LoadConfig},
+    term::cli_warn,
+};
 use clap::Parser;
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::fix::fix_tomls;
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
@@ -14,6 +17,8 @@ pub struct ConfigArgs {
     json: bool,
     #[clap(help = "prints basic set of currently set config values", long)]
     basic: bool,
+    #[clap(help = "attempts to fix any configuration warnings", long)]
+    fix: bool,
     // support nested build arguments
     #[clap(flatten)]
     opts: BuildArgs,
@@ -25,8 +30,15 @@ impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let figment: Figment = From::from(&self);
-        let config = Config::from_provider(figment);
+        if self.fix {
+            for warning in fix_tomls() {
+                cli_warn!("{warning}");
+            }
+            return Ok(())
+        }
+
+        let config = self.load_config_unsanitized_emit_warnings();
+
         let s = if self.basic {
             let config = config.into_basic();
             if self.json {

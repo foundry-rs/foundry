@@ -1,8 +1,5 @@
 //! Cache related abstraction
-use ethers::{
-    types::{Address, H256, U256},
-    utils::keccak256,
-};
+use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
 use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
@@ -197,12 +194,8 @@ impl MemDb {
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| H256::from_slice(&keccak256(code)))
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash())
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -378,7 +371,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
 
 /// A type that flushes a `JsonBlockCacheDB` on drop
 ///
-/// This type intentionally does not implement `Clone` since it's intendent that there's only once
+/// This type intentionally does not implement `Clone` since it's intended that there's only once
 /// instance that will flush the cache.
 #[derive(Debug)]
 pub struct FlushJsonBlockCacheDB(pub Arc<JsonBlockCacheDB>);

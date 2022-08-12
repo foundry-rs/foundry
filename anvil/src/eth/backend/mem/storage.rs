@@ -1,14 +1,15 @@
 //! In-memory blockchain storage
-use crate::eth::{
-    backend::{db::StateDb, time::duration_since_unix_epoch},
-    pool::transactions::PoolTransaction,
-};
+use crate::eth::{backend::db::StateDb, pool::transactions::PoolTransaction};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
+use ethers::{
+    prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
+    types::{ActionType, U256},
+};
+use forge::revm::{Env, Return};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -94,6 +95,32 @@ pub struct BlockchainStorage {
 }
 
 impl BlockchainStorage {
+    /// Creates a new storage with a genesis block
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+        // create a dummy genesis block
+        let partial_header = PartialHeader {
+            timestamp,
+            base_fee,
+            gas_limit: env.block.gas_limit,
+            beneficiary: env.block.coinbase,
+            difficulty: env.block.difficulty,
+            ..Default::default()
+        };
+        let block = Block::new(partial_header, vec![], vec![]);
+        let genesis_hash = block.header.hash();
+        let best_hash = genesis_hash;
+        let best_number: U64 = 0u64.into();
+
+        Self {
+            blocks: HashMap::from([(genesis_hash, block)]),
+            hashes: HashMap::from([(best_number, genesis_hash)]),
+            best_hash,
+            best_number,
+            genesis_hash,
+            transactions: Default::default(),
+        }
+    }
+
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
         BlockchainStorage {
             blocks: Default::default(),
@@ -118,29 +145,6 @@ impl BlockchainStorage {
     }
 }
 
-impl Default for BlockchainStorage {
-    fn default() -> Self {
-        // create a dummy genesis block
-        let partial_header = PartialHeader {
-            timestamp: duration_since_unix_epoch().as_secs(),
-            ..Default::default()
-        };
-        let block = Block::new(partial_header, vec![], vec![]);
-        let genesis_hash = block.header.hash();
-        let best_hash = genesis_hash;
-        let best_number: U64 = 0u64.into();
-
-        Self {
-            blocks: HashMap::from([(genesis_hash, block)]),
-            hashes: HashMap::from([(best_number, genesis_hash)]),
-            best_hash,
-            best_number,
-            genesis_hash,
-            transactions: Default::default(),
-        }
-    }
-}
-
 // === impl BlockchainStorage ===
 
 impl BlockchainStorage {
@@ -156,7 +160,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -165,6 +169,11 @@ pub struct Blockchain {
 // === impl BlockchainStorage ===
 
 impl Blockchain {
+    /// Creates a new storage with a genesis block
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
+    }
+
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
         Self { storage: Arc::new(RwLock::new(BlockchainStorage::forked(block_number, block_hash))) }
     }
@@ -213,16 +222,23 @@ impl MinedTransaction {
         for (idx, node) in self.info.traces.iter().cloned().enumerate() {
             let action = node.parity_action();
             let result = node.parity_result();
+
+            let action_type = if node.status() == Return::SelfDestruct {
+                ActionType::Suicide
+            } else {
+                node.kind().into()
+            };
+
             let trace = Trace {
                 action,
                 result: Some(result),
-                trace_address: self.info.trace_call_graph(idx),
+                trace_address: self.info.trace_address(idx),
                 subtraces: node.children.len(),
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
                 block_number: self.block_number,
                 block_hash: self.block_hash,
-                action_type: node.kind().into(),
+                action_type,
                 error: None,
             };
             traces.push(trace)

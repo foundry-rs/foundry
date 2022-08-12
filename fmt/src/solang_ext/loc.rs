@@ -80,10 +80,9 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::StructDefinition(structure) => structure.loc,
             SourceUnitPart::EventDefinition(event) => event.loc,
             SourceUnitPart::ErrorDefinition(error) => error.loc,
-            SourceUnitPart::FunctionDefinition(function) => function.loc,
+            SourceUnitPart::FunctionDefinition(function) => function.loc(),
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
             SourceUnitPart::TypeDefinition(def) => def.loc,
-            SourceUnitPart::DocComment(doc) => doc.loc,
             SourceUnitPart::Using(using) => using.loc,
         }
     }
@@ -101,7 +100,6 @@ impl LineOfCode for ContractPart {
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
             ContractPart::TypeDefinition(def) => def.loc,
-            ContractPart::DocComment(doc) => doc.loc,
         }
     }
 }
@@ -172,7 +170,6 @@ impl LineOfCode for Statement {
             RevertNamedArgs(loc, _, _) => *loc,
             Emit(loc, _) => *loc,
             Try(loc, _, _, _) => *loc,
-            DocComment(comment) => comment.loc,
         }
     }
 }
@@ -375,6 +372,7 @@ impl LineOfCode for Expression {
             ArrayLiteral(loc, _) => *loc,
             Unit(loc, _, _) => *loc,
             This(loc) => *loc,
+            Parenthesis(loc, _) => *loc,
         }
     }
 }
@@ -384,6 +382,8 @@ impl LineOfCode for Comment {
         match self {
             Comment::Line(loc, _) => *loc,
             Comment::Block(loc, _) => *loc,
+            Comment::DocLine(loc, _) => *loc,
+            Comment::DocBlock(loc, _) => *loc,
         }
     }
 }
@@ -424,5 +424,70 @@ impl<T> OptionalLineOfCode for Vec<(Loc, T)> {
         let mut loc = **locs.first().unwrap();
         loc.use_end_from(locs.pop().unwrap());
         Some(loc)
+    }
+}
+
+impl OptionalLineOfCode for SourceUnit {
+    fn loc(&self) -> Option<Loc> {
+        self.0.get(0).map(|unit| *unit.loc())
+    }
+}
+
+impl LineOfCode for Unit {
+    fn loc(&self) -> Loc {
+        match *self {
+            Unit::Seconds(loc) => loc,
+            Unit::Minutes(loc) => loc,
+            Unit::Hours(loc) => loc,
+            Unit::Days(loc) => loc,
+            Unit::Weeks(loc) => loc,
+            Unit::Wei(loc) => loc,
+            Unit::Gwei(loc) => loc,
+            Unit::Ether(loc) => loc,
+        }
+    }
+}
+
+macro_rules! impl_loc {
+    ($type:ty) => {
+        impl LineOfCode for $type {
+            fn loc(&self) -> Loc {
+                self.loc
+            }
+        }
+    };
+}
+
+impl_loc! { IdentifierPath }
+impl_loc! { YulTypedIdentifier }
+impl_loc! { EventParameter }
+impl_loc! { ErrorParameter }
+
+/// Extra helpers for Locs
+pub trait LocExt {
+    fn with_start_from(self, other: &Self) -> Self;
+    fn with_end_from(self, other: &Self) -> Self;
+    fn with_start(self, start: usize) -> Self;
+    fn with_end(self, end: usize) -> Self;
+    fn range(self) -> std::ops::Range<usize>;
+}
+
+impl LocExt for Loc {
+    fn with_start_from(mut self, other: &Self) -> Self {
+        self.use_start_from(other);
+        self
+    }
+    fn with_end_from(mut self, other: &Self) -> Self {
+        self.use_end_from(other);
+        self
+    }
+    fn with_start(self, start: usize) -> Self {
+        Loc::File(self.file_no(), start, self.end())
+    }
+    fn with_end(self, end: usize) -> Self {
+        Loc::File(self.file_no(), self.start(), end)
+    }
+    fn range(self) -> std::ops::Range<usize> {
+        self.start()..self.end()
     }
 }

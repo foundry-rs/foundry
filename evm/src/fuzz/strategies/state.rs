@@ -1,21 +1,27 @@
 use super::fuzz_param_from_state;
-use crate::{executor::StateChangeset, utils};
+use crate::{
+    executor::StateChangeset,
+    fuzz::invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
+    utils::{self},
+};
 use bytes::Bytes;
 use ethers::{
     abi::Function,
     types::{Address, Log, H256, U256},
 };
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, SpecId,
+    opcode, spec_opcode_gas, Filth, SpecId,
 };
-use std::{cell::RefCell, collections::HashSet, io::Write, rc::Rc};
+use std::{collections::BTreeSet, io::Write, sync::Arc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Rc<RefCell<HashSet<[u8; 32]>>>;
+pub type EvmFuzzState = Arc<RwLock<BTreeSet<[u8; 32]>>>;
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
@@ -48,8 +54,8 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
-    let mut state: HashSet<[u8; 32]> = HashSet::new();
-    for (address, storage) in db.storage() {
+    let mut state: BTreeSet<[u8; 32]> = BTreeSet::new();
+    for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
 
         // Insert basic account information
@@ -58,7 +64,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
 
         // Insert storage
-        for (slot, value) in storage {
+        for (slot, value) in &account.storage {
             state.insert(utils::u256_to_h256_le(*slot).into());
             state.insert(utils::u256_to_h256_le(*value).into());
         }
@@ -71,7 +77,7 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
         state.insert(H256::from(Address::random()).into());
     }
 
-    Rc::new(RefCell::new(state))
+    Arc::new(RwLock::new(state))
 }
 
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
@@ -80,7 +86,7 @@ pub fn collect_state_from_call(
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
 ) {
-    let state = &mut *state.borrow_mut();
+    let mut state = state.write();
 
     for (address, account) in state_changeset {
         // Insert basic account information
@@ -96,7 +102,7 @@ pub fn collect_state_from_call(
 
         // Insert push bytes
         if let Some(code) = &account.info.code {
-            for push_byte in collect_push_bytes(code.clone()) {
+            for push_byte in collect_push_bytes(code.bytes().clone()) {
                 state.insert(push_byte);
             }
         }
@@ -134,7 +140,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     let mut i = 0;
     while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
         let op = code[i];
-        if opcode_infos[op as usize].is_push {
+        if opcode_infos[op as usize].is_push() {
             let push_size = (op - opcode::PUSH1 + 1) as usize;
             let push_start = i + 1;
             let push_end = push_start + push_size;
@@ -156,4 +162,38 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     }
 
     bytes
+}
+
+/// Collects all created contracts from a StateChangeset which haven't been discovered yet. Stores
+/// them at `targeted_contracts` and `created_contracts`.
+pub fn collect_created_contracts(
+    state_changeset: &StateChangeset,
+    project_contracts: &ContractsByArtifact,
+    setup_contracts: &ContractsByAddress,
+    artifact_filters: &ArtifactFilters,
+    targeted_contracts: FuzzRunIdentifiedContracts,
+    created_contracts: &mut Vec<Address>,
+) -> eyre::Result<()> {
+    let mut writable_targeted = targeted_contracts.lock();
+
+    for (address, account) in state_changeset {
+        if !setup_contracts.contains_key(address) {
+            if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
+                if !code.is_empty() {
+                    if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
+                    {
+                        if let Some(functions) =
+                            artifact_filters.get_targeted_functions(artifact, abi)?
+                        {
+                            created_contracts.push(*address);
+                            writable_targeted
+                                .insert(*address, (artifact.name.clone(), abi.clone(), functions));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

@@ -111,13 +111,13 @@ contract Contract {
     println!("{}", compiled);
     assert!(!compiled.has_compiler_errors());
 
-    let contract = compiled.remove("Contract").unwrap();
+    let contract = compiled.remove_first("Contract").unwrap();
 
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), Arc::clone(&client));
     let contract = factory.deploy(()).unwrap().legacy().send().await;
-    assert!(contract.is_err());
+    contract.unwrap_err();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -147,7 +147,7 @@ contract Contract {
 
     let mut compiled = prj.compile().unwrap();
     assert!(!compiled.has_compiler_errors());
-    let contract = compiled.remove("Contract").unwrap();
+    let contract = compiled.remove_first("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
     let client = Arc::new(http_client());
@@ -161,7 +161,7 @@ contract Contract {
     );
     let contract = Contract::new(contract.address(), abi.unwrap(), provider);
     let resp = contract.method::<_, U256>("getSecret", ()).unwrap().legacy().call().await;
-    assert!(resp.is_err());
+    resp.unwrap_err();
 
     /*  Ganache rpc errors look like:
     <   {
