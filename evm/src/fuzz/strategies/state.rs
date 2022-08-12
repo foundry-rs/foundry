@@ -42,6 +42,12 @@ impl FuzzDictionary {
     }
 }
 
+impl Default for FuzzDictionary {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Deref for FuzzDictionary {
     type Target = BTreeSet<[u8; 32]>;
 
@@ -87,7 +93,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
-    let mut state = FuzzDictionary::new();
+    let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
