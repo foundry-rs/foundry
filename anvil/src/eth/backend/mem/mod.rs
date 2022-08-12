@@ -9,7 +9,7 @@ use crate::{
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
-            time::{utc_from_secs, TimeManager},
+            time::{duration_since_unix_epoch, utc_from_secs, TimeManager},
             validate::TransactionValidator,
         },
         error::{BlockchainError, InvalidTransactionError},
@@ -134,7 +134,11 @@ pub struct Backend {
 impl Backend {
     /// Create a new instance of in-mem backend.
     pub fn new(db: Arc<AsyncRwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
-        let blockchain = Blockchain::new(&env.read(), fees.is_eip1559().then(|| fees.base_fee()));
+        let blockchain = Blockchain::new(
+            &env.read(),
+            fees.is_eip1559().then(|| fees.base_fee()),
+            duration_since_unix_epoch().as_secs(),
+        );
         Self {
             db,
             blockchain,
@@ -170,7 +174,11 @@ impl Backend {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
-            Blockchain::new(&env.read(), fees.is_eip1559().then(|| fees.base_fee()))
+            Blockchain::new(
+                &env.read(),
+                fees.is_eip1559().then(|| fees.base_fee()),
+                genesis.timestamp,
+            )
         };
 
         let backend = Self {

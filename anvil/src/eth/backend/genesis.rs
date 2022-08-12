@@ -7,6 +7,8 @@ use foundry_evm::revm::AccountInfo;
 /// Genesis settings
 #[derive(Debug, Clone, Default)]
 pub struct GenesisConfig {
+    /// The initial timestamp for the genesis block
+    pub timestamp: u64,
     /// Balance for genesis accounts
     pub balance: U256,
     /// All accounts that should be initialised at genesis
