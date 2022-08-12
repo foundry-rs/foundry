@@ -1470,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "ethers-addressbook 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
  "ethers-contract 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
@@ -1485,7 +1485,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1507,7 +1507,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "ethers-contract-abigen 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
  "ethers-contract-derive 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
@@ -1543,7 +1543,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1589,7 +1589,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "ethers-contract-abigen 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
  "ethers-core",
@@ -1617,7 +1617,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1648,7 +1648,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1664,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "async-trait",
  "ethers-contract 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports)",
@@ -1688,7 +1688,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1724,7 +1724,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1747,7 +1747,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#c6b77bec2a06dfd864677492c4e6a2ca548e0790"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/resolve-absolute-library-imports#f1d263497bfbeecfc76b3b20f355f8ccf0d5e5e8"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
