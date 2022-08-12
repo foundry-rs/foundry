@@ -174,11 +174,11 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan_configs` table
+    /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
-    pub etherscan_configs: EtherscanConfigs,
+    pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
@@ -358,7 +358,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan_configs", "fmt"];
+        &["rpc_endpoints", "etherscan", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -734,7 +734,7 @@ impl Config {
     /// Returns the `EtherscanConfig` to use, if any
     ///
     /// Returns
-    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan_configs` table if
+    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if
     ///    `etherscan_api_key` is an alias
     ///  - the Mainnet  `ResolvedEtherscanConfig` if `etherscan_api_key` is set, `None` otherwise
     ///
@@ -753,10 +753,10 @@ impl Config {
         &self,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
         let maybe_alias = self.etherscan_api_key.as_ref()?;
-        if self.etherscan_configs.contains_key(maybe_alias) {
-            // etherscan points to an alias in the `etherscan_configs` table, so we try to resolve
+        if self.etherscan.contains_key(maybe_alias) {
+            // etherscan points to an alias in the `etherscan` table, so we try to resolve
             // that
-            let mut resolved = self.etherscan_configs.clone().resolved();
+            let mut resolved = self.etherscan.clone().resolved();
             return resolved.remove(maybe_alias)
         }
         // we treat the `etherscan_api_key` as actual API key
@@ -1583,7 +1583,7 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
-            etherscan_configs: Default::default(),
+            etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
@@ -2776,14 +2776,14 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_etherscan_configs() {
+    fn test_resolve_etherscan() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
 
-                [etherscan_configs]
+                [etherscan]
                 mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
                 moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}" }
             "#,
@@ -2791,11 +2791,11 @@ mod tests {
 
             let config = Config::load();
 
-            assert!(config.etherscan_configs.clone().resolved().has_unresolved());
+            assert!(config.etherscan.clone().resolved().has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan_configs.resolved();
+            let configs = config.etherscan.resolved();
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
