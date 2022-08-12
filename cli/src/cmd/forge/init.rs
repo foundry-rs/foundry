@@ -112,14 +112,14 @@ impl Cmd for InitArgs {
             fs::create_dir_all(&script)?;
 
             // write the contract file
-            let contract_path = src.join("Contract.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
+            let contract_path = src.join("Counter.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.sol"))?;
             // write the tests
-            let contract_path = test.join("Contract.t.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
+            let contract_path = test.join("Counter.t.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.t.sol"))?;
             // write the script
-            let contract_path = script.join("Contract.s.sol");
-            fs::write(contract_path, include_str!("../../../assets/ContractTemplate.s.sol"))?;
+            let contract_path = script.join("Counter.s.sol");
+            fs::write(contract_path, include_str!("../../../assets/CounterTemplate.s.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root);
