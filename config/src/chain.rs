@@ -32,6 +32,14 @@ impl Chain {
             Chain::Id(_) => false,
         }
     }
+
+    /// Returns the corresponding etherscan URLs
+    pub fn etherscan_urls(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Chain::Named(c) => c.etherscan_urls(),
+            Chain::Id(_) => None,
+        }
+    }
 }
 
 impl fmt::Display for Chain {

@@ -480,14 +480,7 @@ fn test(
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
         // Do not re-query etherscan for contracts that you've already queried today.
-        // TODO: Make this configurable.
-        let cache_ttl = Duration::from_secs(24 * 60 * 60);
-        let etherscan_identifier = EtherscanIdentifier::new(
-            remote_chain_id,
-            config.etherscan_api_key,
-            remote_chain_id.and_then(Config::foundry_etherscan_chain_cache_dir),
-            cache_ttl,
-        );
+        let etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
 
         // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();

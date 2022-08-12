@@ -16,7 +16,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
-    time::Duration,
 };
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
@@ -143,12 +142,8 @@ impl RunArgs {
                 }
             };
 
-            let etherscan_identifier = EtherscanIdentifier::new(
-                evm_opts.get_remote_chain_id(),
-                config.etherscan_api_key,
-                Config::foundry_etherscan_chain_cache_dir(evm_opts.get_chain_id()),
-                Duration::from_secs(24 * 60 * 60),
-            );
+            let etherscan_identifier =
+                EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
             let labeled_addresses: BTreeMap<Address, String> = self
                 .label

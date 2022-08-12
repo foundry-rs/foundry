@@ -157,10 +157,26 @@ The alias `goerli` references an endpoint that will be interpolated with the val
 Environment variables need to be wrapped in `${}`
 
 ```toml
-[profile.default.rpc_endpoints]
+[rpc_endpoints]
 optimism = "https://optimism.alchemyapi.io/v2/1234567"
 mainnet = "${RPC_MAINNET}"
 goerli = "https://eth-goerli.alchemyapi.io/v2/${GOERLI_API_KEY}"
+```
+
+#### Etherscan API Key settings
+
+The `etherscan` value accepts a list of `alias = "{key = "", url? ="", chain?= """""}"` items.
+
+the `key` attribute is always required and should contain the actual API key for that chain or an env var that holds the key in the form `${ENV_VAR}`
+The `chain` attribute is optional if the `alias` is the already the `chain` name, such as in `mainnet = { key = "${ETHERSCAN_MAINNET_KEY}"}`
+The optional `url` attribute can be used to explicitly set the Etherscan API url, this is the recommended setting for chains not natively supported by name. 
+
+```toml
+[etherscan]
+mainnet = { key = "${ETHERSCAN_MAINNET_KEY}" }
+mainnet2 = { key = "ABCDEFG", chain = "mainnet" }
+optimism = { key = "1234576" }
+unknownchain = { key = "ABCDEFG", url = "https://<etherscan-api-url-for-that-chain>" }
 ```
 
 ##### Additional Model Checker settings

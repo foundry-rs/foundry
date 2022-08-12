@@ -82,6 +82,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
+        etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
         libraries: vec![

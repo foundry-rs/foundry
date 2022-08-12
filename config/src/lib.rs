@@ -2,7 +2,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use crate::cache::StorageCachingConfig;
-use ethers_core::types::{Address, H160, U256};
+use ethers_core::types::{Address, Chain::Mainnet, H160, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
@@ -40,8 +40,11 @@ mod macros;
 pub mod utils;
 pub use crate::utils::*;
 
-mod rpc;
-pub use rpc::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints, UnresolvedEnvVarError};
+mod endpoints;
+pub use endpoints::{ResolvedRpcEndpoints, RpcEndpoint, RpcEndpoints};
+
+mod etherscan;
+mod resolve;
 
 pub mod cache;
 use cache::{Cache, ChainCache};
@@ -65,6 +68,7 @@ pub mod fix;
 pub use figment;
 
 mod providers;
+use crate::etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 use providers::*;
 
 /// Foundry configuration
@@ -172,8 +176,11 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// etherscan API key
+    /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
+    /// Multiple etherscan api configs and their aliases
+    #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
+    pub etherscan: EtherscanConfigs,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
@@ -352,7 +359,7 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan", "fmt"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -720,6 +727,61 @@ impl Config {
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
         self.remappings.iter().map(|m| m.clone().into()).collect()
+    }
+
+    /// Returns the `EtherscanConfig` to use, if any
+    ///
+    /// Returns
+    ///  - the matching `ResolvedEtherscanConfig` of the `etherscan` table if `etherscan_api_key` is
+    ///    an alias
+    ///  - the Mainnet  `ResolvedEtherscanConfig` if `etherscan_api_key` is set, `None` otherwise
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let etherscan_config = config.get_etherscan_config().unwrap().unwrap();
+    ///     let client = etherscan_config.into_client().unwrap();
+    /// # }
+    /// ```
+    pub fn get_etherscan_config(
+        &self,
+    ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
+        let maybe_alias = self.etherscan_api_key.as_ref()?;
+        if self.etherscan.contains_key(maybe_alias) {
+            // etherscan points to an alias in the `etherscan` table, so we try to resolve
+            // that
+            let mut resolved = self.etherscan.clone().resolved();
+            return resolved.remove(maybe_alias)
+        }
+        // we treat the `etherscan_api_key` as actual API key
+        // if no chain provided, we assume mainnet
+        let chain = self.chain_id.unwrap_or_else(|| Mainnet.into());
+        ResolvedEtherscanConfig::create(maybe_alias, chain).map(Ok)
+    }
+
+    /// Same as [`Self::get_etherscan_config()`] but optionally updates the config with the given
+    /// `chain`
+    pub fn get_etherscan_config_with_chain(
+        &self,
+        chain: Option<impl Into<Chain>>,
+    ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        if let Some(config) = self.get_etherscan_config() {
+            let mut config = config?;
+            if let Some(chain) = chain {
+                config.set_chain(chain);
+            }
+            return Ok(Some(config))
+        }
+        Ok(None)
+    }
+
+    /// Helper function to just get the API key
+    pub fn get_etherscan_api_key(&self, chain: Option<impl Into<Chain>>) -> Option<String> {
+        self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -1525,6 +1587,7 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
+            etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
             revert_strings: None,
@@ -2352,7 +2415,8 @@ mod tests {
 
     use super::*;
 
-    use crate::rpc::RpcEndpoint;
+    use crate::{endpoints::RpcEndpoint, etherscan::ResolvedEtherscanConfigs};
+    use ethers_core::types::Chain::Moonbeam;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
 
@@ -2709,6 +2773,59 @@ mod tests {
             jail.set_env("FOUNDRY_CONFIG", "this config does not exist");
 
             let _config = Config::load();
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_resolve_etherscan() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN" }
+                moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}" }
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert!(config.etherscan.clone().resolved().has_unresolved());
+
+            jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
+
+            let configs = config.etherscan.resolved();
+            assert!(!configs.has_unresolved());
+
+            let mb_urls = Moonbeam.etherscan_urls().unwrap();
+            let mainnet_urls = Mainnet.etherscan_urls().unwrap();
+            assert_eq!(
+                configs,
+                ResolvedEtherscanConfigs::new([
+                    (
+                        "mainnet",
+                        ResolvedEtherscanConfig {
+                            api_url: mainnet_urls.0.to_string(),
+                            chain: Some(Mainnet.into()),
+                            browser_url: Some(mainnet_urls.1.to_string()),
+                            key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
+                        }
+                    ),
+                    (
+                        "moonbeam",
+                        ResolvedEtherscanConfig {
+                            api_url: mb_urls.0.to_string(),
+                            chain: Some(Moonbeam.into()),
+                            browser_url: Some(mb_urls.1.to_string()),
+                            key: "123456789".to_string(),
+                        }
+                    ),
+                ])
+            );
 
             Ok(())
         });
