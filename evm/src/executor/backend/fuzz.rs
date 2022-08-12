@@ -95,12 +95,13 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "fuzz: roll fork");
-        self.backend.to_mut().roll_fork(env, block_number, id)
+        self.backend.to_mut().roll_fork(id, block_number, env, subroutine)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {

@@ -37,7 +37,7 @@ use tracing::{trace, warn};
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: Some(10) };
+pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 };
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]

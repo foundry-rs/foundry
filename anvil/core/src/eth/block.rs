@@ -145,7 +145,11 @@ impl Header {
 
 impl rlp::Encodable for Header {
     fn rlp_append(&self, s: &mut rlp::RlpStream) {
-        s.begin_list(15);
+        if self.base_fee_per_gas.is_none() {
+            s.begin_list(15);
+        } else {
+            s.begin_list(16);
+        }
         s.append(&self.parent_hash);
         s.append(&self.ommers_hash);
         s.append(&self.beneficiary);
@@ -407,6 +411,33 @@ mod tests {
         header.encode(&mut data);
         assert_eq!(hex::encode(&data), hex::encode(expected));
         assert_eq!(header.length(), data.len());
+    }
+
+    #[test]
+    // Test vector from: https://github.com/ethereum/tests/blob/f47bbef4da376a49c8fc3166f09ab8a6d182f765/BlockchainTests/ValidBlocks/bcEIP1559/baseFee.json#L15-L36
+    fn test_eip1559_block_header_hash() {
+        let expected_hash =
+            H256::from_str("6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f")
+                .unwrap();
+        let header = Header {
+            parent_hash: H256::from_str("e0a94a7a3c9617401586b1a27025d2d9671332d22d540e0af72b069170380f2a").unwrap(),
+            ommers_hash: H256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap(),
+            beneficiary: H160::from_str("ba5e000000000000000000000000000000000000").unwrap(),
+            state_root: H256::from_str("ec3c94b18b8a1cff7d60f8d258ec723312932928626b4c9355eb4ab3568ec7f7").unwrap(),
+            transactions_root: H256::from_str("50f738580ed699f0469702c7ccc63ed2e51bc034be9479b7bff4e68dee84accf").unwrap(),
+            receipts_root: H256::from_str("29b0562f7140574dd0d50dee8a271b22e1a0a7b78fca58f7c60370d8317ba2a9").unwrap(),
+            logs_bloom: <[u8; 256]>::from_hex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
+            difficulty: 0x020000.into(),
+            number: 0x01.into(),
+            gas_limit: U256::from_str("016345785d8a0000").unwrap(),
+            gas_used: 0x015534.into(),
+            timestamp: 0x079e,
+            extra_data: hex::decode("42").unwrap().into(),
+            mix_hash: H256::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+            nonce: H64::from_low_u64_be(0x0),
+            base_fee_per_gas: Some(0x036b.into()),
+        };
+        assert_eq!(header.hash(), expected_hash);
     }
 
     #[test]

@@ -50,6 +50,9 @@ pub struct NodeArgs {
     )]
     pub balance: u64,
 
+    #[clap(long, help = "The timestamp of the genesis block", value_name = "NUM")]
+    pub timestamp: Option<u64>,
+
     #[clap(
         long,
         short,
@@ -129,6 +132,7 @@ impl NodeArgs {
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
+            .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(
                 self.evm_opts
