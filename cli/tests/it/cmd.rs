@@ -10,6 +10,8 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
 use std::{env, fs, path::PathBuf};
+use ethers::prelude::remappings::Remapping;
+use std::str::FromStr;
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -1251,4 +1253,53 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+});
+
+
+forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestCommand| {
+    let remapping = prj.paths().libraries[0].join("myDepdendency");
+    let config = Config {
+        remappings: vec![Remapping::from_str(&format!("myDepdendency/={}",remapping.display())).unwrap().into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/interfaces/IConfig.sol",
+            r#"
+    pragma solidity ^0.8.10;
+
+    interface IConfig {}
+   "#,
+        )
+        .unwrap();
+
+     prj.inner()
+        .add_lib(
+            "myDepdendency/src/Config.sol",
+            r#"
+    pragma solidity ^0.8.10;
+    import "src/interfaces/IConfig.sol";
+
+    contract Config {}
+   "#,
+        )
+        .unwrap();
+
+     prj.inner()
+        .add_source(
+            "Greeter",
+            r#"
+    pragma solidity ^0.8.10;
+    import "myDepdendency/src/Config.sol";
+
+    contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiler run successful"));
 });
