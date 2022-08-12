@@ -65,14 +65,14 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
             data.db
-                .roll_fork(data.env, block_number, None)
+                .roll_fork(None, block_number, data.env, &mut data.subroutine)
                 .map(|_| Default::default())
                 .map_err(util::encode_error)
         }
         HEVMCalls::RollFork1(fork) => {
             let block_number = fork.1;
             data.db
-                .roll_fork(data.env, block_number, Some(fork.0))
+                .roll_fork(Some(fork.0), block_number, data.env, &mut data.subroutine)
                 .map(|_| Default::default())
                 .map_err(util::encode_error)
         }

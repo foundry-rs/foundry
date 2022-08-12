@@ -7,7 +7,10 @@ use crate::{
     utils::parse_u256,
 };
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
+use ethers::{
+    abi::ethabi::ethereum_types::BigEndianHash,
+    types::{serde_helpers::Numeric, Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Parser)]
@@ -863,12 +866,9 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
 }
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
-    Ok(if s.starts_with("0x") {
-        let padded = format!("{:0>64}", s.strip_prefix("0x").unwrap());
-        H256::from_str(&padded)?
-    } else {
-        H256::from_low_u64_be(u64::from_str(s)?)
-    })
+    Ok(H256::from_uint(&U256::from(
+        Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?,
+    )))
 }
 
 fn parse_base(s: &str) -> eyre::Result<String> {

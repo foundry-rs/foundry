@@ -24,7 +24,7 @@ use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
 
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
+pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 3 };
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
