@@ -308,7 +308,7 @@ forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestComm
             "Contract.sol",
             r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity =0.8.13;
 
 library Library {
     function f(uint256 a, uint256 b) public pure returns (uint256) {
@@ -334,7 +334,7 @@ contract Contract {
             "Contract.t.sol",
             r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity =0.8.13;
 
 import "forge-std/Test.sol";
 import "src/Contract.sol";
