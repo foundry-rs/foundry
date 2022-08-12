@@ -311,6 +311,18 @@ impl TestProject {
         pretty_err(self.root(), fs::remove_dir_all(self.root()));
         pretty_err(self.root(), fs::create_dir_all(self.root()));
     }
+
+    /// Removes all contract files from `src`, `test`, `script`
+    pub fn wipe_contracts(&self) {
+        fn rm_create(path: &Path) {
+            pretty_err(path, fs::remove_dir_all(path));
+            pretty_err(path,  fs::create_dir(path));
+        }
+        rm_create(&self.paths().sources);
+        rm_create(&self.paths().tests);
+        rm_create(&self.paths().scripts);
+    }
+
 }
 
 impl Drop for TestCommand {
