@@ -112,9 +112,10 @@ pub trait DatabaseExt: Database {
     /// Returns an error if not matching fork was found.
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -424,7 +425,7 @@ impl Backend {
             "Test contract address must be set"
         );
         self.update_fork_db_contracts(
-            self.inner.persistent_accounts.iter().cloned(),
+            self.inner.persistent_accounts.iter().copied(),
             subroutine,
             fork,
         )
@@ -644,11 +645,13 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
+    /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing fork
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
@@ -656,10 +659,25 @@ impl DatabaseExt for Backend {
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
-        if self.active_fork_id() == Some(id) {
-            // need to update the block's env settings right away, which is otherwise set when forks
-            // are selected `select_fork`
-            update_current_env_with_fork_env(env, fork_env);
+
+        if let Some((active_id, active_idx)) = self.active_fork_ids {
+            // the currently active fork is the targeted fork of this call
+            if active_id == id {
+                // need to update the block's env settings right away, which is otherwise set when
+                // forks are selected `select_fork`
+                update_current_env_with_fork_env(env, fork_env);
+
+                // we also need to update the subroutine right away, this has essentially the same
+                // effect as selecting (`select_fork`) by discarding non-persistent storage from the
+                // subroutine. This which will reset cached state from the previous block
+                let persitent_addrs = self.inner.persistent_accounts.clone();
+                let active = self.inner.get_fork_mut(active_idx);
+                active.subroutine = self.fork_init_subroutine.clone();
+                for addr in persitent_addrs {
+                    clone_subroutine_data(addr, subroutine, &mut active.subroutine);
+                }
+                *subroutine = active.subroutine.clone();
+            }
         }
         Ok(())
     }
@@ -1020,10 +1038,14 @@ impl BackendInner {
         let fork_id = self.ensure_fork_id(id)?;
         let idx = self.ensure_fork_index(fork_id)?;
 
-        if let Some(f) = self.forks[idx].as_mut() {
-            f.db.db = backend;
+        if let Some(active) = self.forks[idx].as_mut() {
+            // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
+            let mut new_db = ForkDB::new(backend);
+            for addr in self.persistent_accounts.iter().copied() {
+                clone_db_account_data(addr, &active.db, &mut new_db);
+            }
+            active.db = new_db;
         }
-
         // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
         self.created_forks.insert(new_fork_id, idx);
@@ -1080,18 +1102,35 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
-        trace!(?addr, "cloning data");
-        let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
-        if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-            fork.db.contracts.insert(acc.info.code_hash, code);
-        }
-        fork.db.accounts.insert(addr, acc);
-
-        if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-            trace!(?addr, "updating subroutine account data");
-            fork.subroutine.state.insert(addr, acc);
-        }
+        clone_db_account_data(addr, active, &mut fork.db);
+        clone_subroutine_data(addr, active_subroutine, &mut fork.subroutine);
     }
 
     *active_subroutine = fork.subroutine.clone();
+}
+
+/// Clones the account data from the `active_subroutine`  into the `fork_subroutine`
+fn clone_subroutine_data(
+    addr: Address,
+    active_subroutine: &mut SubRoutine,
+    fork_subroutine: &mut SubRoutine,
+) {
+    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
+        trace!(?addr, "updating subroutine account data");
+        fork_subroutine.state.insert(addr, acc);
+    }
+}
+
+/// Clones the account data from the `active` db into the `ForkDB`
+fn clone_db_account_data<ExtDB: DatabaseRef>(
+    addr: Address,
+    active: &CacheDB<ExtDB>,
+    fork_db: &mut ForkDB,
+) {
+    trace!(?addr, "cloning database data");
+    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
+        fork_db.contracts.insert(acc.info.code_hash, code);
+    }
+    fork_db.accounts.insert(addr, acc);
 }
