@@ -60,13 +60,12 @@ pub struct VerifyArgs {
     pub chain: Chain,
 
     #[clap(
-        long,
         help = "Your Etherscan API key.",
         env = "ETHERSCAN_API_KEY",
         value_name = "ETHERSCAN_KEY",
         required_if_eq("verifier", "etherscan")
     )]
-    pub etherscan_key: String,
+    pub etherscan_key: Option<String>,
 
     #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
     pub flatten: bool,
@@ -144,12 +143,13 @@ pub struct VerifyCheckArgs {
     retry: RetryArgs,
 
     #[clap(
+        long,
         help = "Your Etherscan API key.",
         env = "ETHERSCAN_API_KEY",
         value_name = "ETHERSCAN_KEY",
         required_if_eq("verifier", "etherscan")
     )]
-    etherscan_key: String,
+    etherscan_key: Option<String>,
 
     #[clap(
         long = "verifier",

@@ -37,8 +37,9 @@ pub struct EtherscanVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
-    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let etherscan = Client::new(args.chain.try_into()?, &args.etherscan_key)
+    async fn verify(&self, mut args: VerifyArgs) -> eyre::Result<()> {
+        let etherscan_key = args.etherscan_key.take().expect("ETHERSCAN_API_KEY must be set");
+        let etherscan = Client::new(args.chain.try_into()?, &etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
         let verify_args = self.create_verify_request(&args).await?;
@@ -91,7 +92,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     id: resp.result,
                     chain: args.chain,
                     retry: RETRY_CHECK_ON_VERIFY,
-                    etherscan_key: args.etherscan_key,
+                    etherscan_key: Some(etherscan_key),
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
@@ -106,8 +107,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
-        let etherscan = Client::new(args.chain.try_into()?, &args.etherscan_key)
-            .wrap_err("Failed to create etherscan client")?;
+        let etherscan = Client::new(
+            args.chain.try_into()?,
+            &args.etherscan_key.expect("ETHERSCAN_API_KEY must be set"),
+        )
+        .wrap_err("Failed to create etherscan client")?;
 
         println!("Waiting for verification result...");
         let retry: Retry = args.retry.into();

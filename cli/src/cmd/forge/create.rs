@@ -291,10 +291,7 @@ impl CreateArgs {
             constructor_args,
             num_of_optimizations,
             chain: chain.into(),
-            etherscan_key: self
-                .eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
+            etherscan_key: self.eth.etherscan_api_key,
             flatten: false,
             force: false,
             watch: true,
