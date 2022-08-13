@@ -24,7 +24,6 @@ foundry-common = { path = "../common" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 
-
 # eth
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 solang-parser = "0.1.11"
@@ -82,7 +81,6 @@ strum = { version = "0.24", features = ["derive"] }
 thiserror = "1.0.30"
 indicatif = "0.17.0-rc.11"
 which = "4.2.5"
-
 
 [dev-dependencies]
 anvil = { path = "../anvil" }
