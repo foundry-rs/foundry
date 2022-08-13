@@ -94,4 +94,6 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: test_issue_2623 --locked --workspace --target ${{ matrix.target }} -- --skip fork --nocapture
+          args: test_issue_2623 -p forge --target ${{ matrix.job.target }} -- --skip fork --nocapture
+#          command: cd forge && test
+#          args: test_issue_2623 --locked --workspace --target ${{ matrix.target }} -- --skip fork --nocapture
