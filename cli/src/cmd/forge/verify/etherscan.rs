@@ -33,7 +33,7 @@ use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs, RETRY_CHECK_ON_VE
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
-pub struct EtherscanVerificationProvider {}
+pub struct EtherscanVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {

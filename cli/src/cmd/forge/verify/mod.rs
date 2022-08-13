@@ -176,8 +176,8 @@ pub enum VerificationProviderType {
 impl VerificationProviderType {
     fn client(&self) -> Box<dyn VerificationProvider> {
         match self {
-            VerificationProviderType::Etherscan => Box::new(EtherscanVerificationProvider {}),
-            VerificationProviderType::Sourcify => Box::new(SourcifyVerificationProvider {}),
+            VerificationProviderType::Etherscan => Box::new(EtherscanVerificationProvider),
+            VerificationProviderType::Sourcify => Box::new(SourcifyVerificationProvider),
         }
     }
 }
