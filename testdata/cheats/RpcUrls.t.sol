@@ -13,7 +13,7 @@ contract RpcUrlTest is DSTest {
         assertEq(url, "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
     }
 
-    // returns an error if env alias does not exists
+    // returns an error if env alias does not exist
     function testRevertsOnMissingEnv() public {
          cheats.expectRevert("Failed to resolve env var `${RPC_ENV_ALIAS}` in `RPC_ENV_ALIAS`: environment variable not found");
         string memory url = cheats.rpcUrl("rpcEnvAlias");
