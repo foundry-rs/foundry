@@ -1,8 +1,5 @@
 use crate::{
-    executor::{
-        inspector::utils::{gas_used, get_create_address},
-        HARDHAT_CONSOLE_ADDRESS,
-    },
+    executor::inspector::utils::{gas_used, get_create_address},
     trace::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
@@ -14,7 +11,9 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug)]
@@ -31,6 +30,7 @@ impl Tracer {
         data: Vec<u8>,
         value: U256,
         kind: CallKind,
+        caller: Address,
     ) {
         self.trace_stack.push(self.traces.push_trace(
             0,
@@ -40,18 +40,32 @@ impl Tracer {
                 kind,
                 data: RawOrDecodedCall::Raw(data),
                 value,
+                status: Return::Continue,
+                caller,
                 ..Default::default()
             },
         ));
     }
 
-    pub fn fill_trace(&mut self, success: bool, cost: u64, output: Vec<u8>) {
+    pub fn fill_trace(
+        &mut self,
+        status: Return,
+        cost: u64,
+        output: Vec<u8>,
+        address: Option<Address>,
+    ) {
+        let success = matches!(status, return_ok!());
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
         .trace;
+        trace.status = status;
         trace.success = success;
         trace.gas_cost = cost;
         trace.output = RawOrDecodedReturnData::Raw(output);
+
+        if let Some(address) = address {
+            trace.address = address;
+        }
     }
 }
 
@@ -59,25 +73,6 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        _: bool,
-    ) -> (Return, Gas, Bytes) {
-        if call.contract != HARDHAT_CONSOLE_ADDRESS {
-            self.start_trace(
-                data.subroutine.depth() as usize,
-                call.context.code_address,
-                call.input.to_vec(),
-                call.transfer.value,
-                call.context.scheme.into(),
-            );
-        }
-
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
     fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
         let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
         node.ordering.push(LogCallOrder::Log(node.logs.len()));
@@ -85,22 +80,46 @@ where
             .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
+    fn call(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &mut CallInputs,
+        _: bool,
+    ) -> (Return, Gas, Bytes) {
+        let (from, to) = match call.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (call.context.address, call.context.code_address)
+            }
+            _ => (call.context.caller, call.context.address),
+        };
+
+        self.start_trace(
+            data.subroutine.depth() as usize,
+            to,
+            call.input.to_vec(),
+            call.transfer.value,
+            call.context.scheme.into(),
+            from,
+        );
+
+        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+    }
+
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        _call: &CallInputs,
         gas: Gas,
         status: Return,
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != HARDHAT_CONSOLE_ADDRESS {
-            self.fill_trace(
-                matches!(status, return_ok!()),
-                gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
-                retdata.to_vec(),
-            );
-        }
+        self.fill_trace(
+            status,
+            gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
+            retdata.to_vec(),
+            None,
+        );
 
         (status, gas, retdata)
     }
@@ -119,6 +138,7 @@ where
             call.init_code.to_vec(),
             call.value,
             CallKind::Create,
+            call.caller,
         );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
@@ -140,13 +160,14 @@ where
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(
-            matches!(status, return_ok!()),
+            status,
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             code,
+            address,
         );
 
         (status, address, gas, retdata)

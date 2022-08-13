@@ -6,7 +6,7 @@
 //! [`foundry_config::Config`].
 //!
 //! See [`BuildArgs`] for a reference implementation.
-//! And [`RunArgs`] for how to merge `Providers`.
+//! And [`DebugArgs`] for how to merge `Providers`.
 //!
 //! # Example
 //!
@@ -14,7 +14,7 @@
 //! `foundry_config::Config`:
 //!
 //! ```rust
-//! use crate::{cmd::build::BuildArgs, opts::evm::EvmArgs};
+//! use crate::{cmd::build::BuildArgs, foundry_common::evm::EvmArgs};
 //! use clap::Parser;
 //! use foundry_config::{figment::Figment, *};
 //!
@@ -39,15 +39,20 @@
 
 pub mod bind;
 pub mod build;
+pub mod cache;
 pub mod config;
+pub mod coverage;
 pub mod create;
+pub mod debug;
 pub mod flatten;
 pub mod fmt;
+pub mod fourbyte;
 pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod remappings;
-pub mod run;
+pub mod remove;
+pub mod script;
 pub mod snapshot;
 pub mod test;
 pub mod tree;

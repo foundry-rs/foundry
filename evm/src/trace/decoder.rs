@@ -1,13 +1,59 @@
 use super::{
-    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData, TraceIdentifier,
+    identifier::{SignaturesIdentifier, TraceIdentifier},
+    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
 };
-use crate::abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HEVM_ABI};
+use crate::{
+    abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
+    decode,
+    executor::inspector::DEFAULT_CREATE2_DEPLOYER,
+    trace::{node::CallTraceNode, utils},
+};
 use ethers::{
     abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
-use foundry_utils::format_token;
-use std::collections::BTreeMap;
+use foundry_utils::get_indexed_event;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+use tokio::sync::RwLock;
+
+/// Build a new [CallTraceDecoder].
+#[derive(Default)]
+pub struct CallTraceDecoderBuilder {
+    decoder: CallTraceDecoder,
+}
+
+impl CallTraceDecoderBuilder {
+    pub fn new() -> Self {
+        Self { decoder: CallTraceDecoder::new() }
+    }
+
+    /// Add known labels to the decoder.
+    pub fn with_labels(mut self, labels: BTreeMap<Address, String>) -> Self {
+        for (address, label) in labels.into_iter() {
+            self.decoder.labels.insert(address, label);
+        }
+        self
+    }
+
+    /// Add known events to the decoder.
+    pub fn with_events(mut self, events: Vec<Event>) -> Self {
+        events
+            .into_iter()
+            .map(|event| ((event.signature(), indexed_inputs(&event)), event))
+            .for_each(|(sig, event)| {
+                self.decoder.events.entry(sig).or_default().push(event);
+            });
+        self
+    }
+
+    /// Build the decoder.
+    pub fn build(self) -> CallTraceDecoder {
+        self.decoder
+    }
+}
 
 /// The call trace decoder.
 ///
@@ -19,19 +65,21 @@ use std::collections::BTreeMap;
 #[derive(Default, Debug)]
 pub struct CallTraceDecoder {
     /// Information for decoding precompile calls.
-    pub precompiles: BTreeMap<Address, Function>,
+    pub precompiles: HashMap<Address, Function>,
     /// Addresses identified to be a specific contract.
     ///
     /// The values are in the form `"<artifact>:<contract>"`.
-    pub contracts: BTreeMap<Address, String>,
+    pub contracts: HashMap<Address, String>,
     /// Address labels
-    pub labels: BTreeMap<Address, String>,
+    pub labels: HashMap<Address, String>,
     /// A mapping of addresses to their known functions
     pub functions: BTreeMap<[u8; 4], Vec<Function>>,
     /// All known events
     pub events: BTreeMap<(H256, usize), Vec<Event>>,
     /// All known errors
     pub errors: Abi,
+    /// A signature identifier for events and functions.
+    pub signature_identifier: Option<Arc<RwLock<SignaturesIdentifier>>>,
 }
 
 impl CallTraceDecoder {
@@ -40,6 +88,12 @@ impl CallTraceDecoder {
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
     pub fn new() -> Self {
+        let functions = HARDHAT_CONSOLE_ABI
+            .functions()
+            .map(|func| (func.short_signature(), vec![func.clone()]))
+            .chain(HEVM_ABI.functions().map(|func| (func.short_signature(), vec![func.clone()])))
+            .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
+
         Self {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
@@ -113,49 +167,51 @@ impl CallTraceDecoder {
                 ),
             ]
             .into(),
-            contracts: BTreeMap::new(),
-            labels: [(CHEATCODE_ADDRESS, "VM".to_string())].into(),
-            functions: HEVM_ABI
-                .functions()
-                .map(|func| (func.short_signature(), vec![func.clone()]))
-                .collect::<BTreeMap<[u8; 4], Vec<Function>>>(),
+            contracts: Default::default(),
+            labels: [
+                (CHEATCODE_ADDRESS, "VM".to_string()),
+                (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+                (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
+            ]
+            .into(),
+            functions,
             events: CONSOLE_ABI
                 .events()
                 .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
+            signature_identifier: None,
         }
     }
 
-    /// Creates a new call trace decoder with predetermined address labels.
-    pub fn new_with_labels(labels: BTreeMap<Address, String>) -> Self {
-        let mut info = Self::new();
-        for (address, label) in labels.into_iter() {
-            info.labels.insert(address, label);
-        }
-        info
+    pub fn add_signature_identifier(&mut self, identifier: SignaturesIdentifier) {
+        self.signature_identifier = Some(Arc::new(RwLock::new(identifier)));
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
-        trace.addresses_iter().for_each(|(address, code)| {
-            // We only try to identify addresses with missing data
-            if self.labels.contains_key(address) && self.contracts.contains_key(address) {
-                return
+        let unidentified_addresses = trace
+            .addresses()
+            .into_iter()
+            .filter(|(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+            })
+            .collect();
+
+        identifier.identify_addresses(unidentified_addresses).iter().for_each(|identity| {
+            let address = identity.address;
+
+            if let Some(contract) = &identity.contract {
+                self.contracts.entry(address).or_insert_with(|| contract.to_string());
             }
 
-            let (contract, label, abi) = identifier.identify_address(address, code);
-            if let Some(contract) = contract {
-                self.contracts.entry(*address).or_insert(contract);
+            if let Some(label) = &identity.label {
+                self.labels.entry(address).or_insert_with(|| label.to_string());
             }
 
-            if let Some(label) = label {
-                self.labels.entry(*address).or_insert(label);
-            }
-
-            if let Some(abi) = abi {
+            if let Some(abi) = &identity.abi {
                 // Store known functions for the address
                 abi.functions()
                     .map(|func| (func.short_signature(), func.clone()))
@@ -181,108 +237,49 @@ impl CallTraceDecoder {
         });
     }
 
-    pub fn decode(&self, traces: &mut CallTraceArena) {
+    pub async fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
             // Set contract name
-            if let Some(contract) = self.contracts.get(&node.trace.address) {
-                node.trace.contract = Some(contract.clone());
+            if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
+                node.trace.contract = Some(contract);
             }
 
             // Set label
-            if let Some(label) = self.labels.get(&node.trace.address) {
-                node.trace.label = Some(label.clone());
+            if let Some(label) = self.labels.get(&node.trace.address).cloned() {
+                node.trace.label = Some(label);
             }
 
             // Decode call
-            if let RawOrDecodedCall::Raw(bytes) = &node.trace.data {
-                if let Some(precompile_fn) = self.precompiles.get(&node.trace.address) {
-                    node.trace.label = Some("PRECOMPILE".to_string());
-                    node.trace.data = RawOrDecodedCall::Decoded(
-                        precompile_fn.name.clone(),
-                        precompile_fn.decode_input(&bytes[..]).map_or_else(
-                            |_| vec![hex::encode(&bytes)],
-                            |tokens| tokens.iter().map(|token| self.apply_label(token)).collect(),
-                        ),
-                    );
-
-                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                        node.trace.output = RawOrDecodedReturnData::Decoded(
-                            precompile_fn.decode_output(&bytes[..]).map_or_else(
-                                |_| hex::encode(&bytes),
-                                |tokens| {
-                                    tokens
-                                        .iter()
-                                        .map(|token| self.apply_label(token))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                },
-                            ),
-                        );
-                    }
-                } else if bytes.len() >= 4 {
+            if let Some(precompile_fn) = self.precompiles.get(&node.trace.address) {
+                node.decode_precompile(precompile_fn, &self.labels);
+            } else if let RawOrDecodedCall::Raw(ref bytes) = node.trace.data {
+                if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[0..4]) {
-                        // This is safe because (1) we would not have an entry for the given
-                        // selector if no functions with that selector were added and (2) the same
-                        // selector implies the function has the same name and inputs.
-                        let func = &funcs[0];
-
-                        // Decode inputs
-                        let inputs = if !bytes[4..].is_empty() {
-                            if node.trace.address == CHEATCODE_ADDRESS {
-                                // Try to decode cheatcode inputs in a more custom way
-                                self.decode_cheatcode_inputs(func, bytes).unwrap_or_else(|| {
-                                    func.decode_input(&bytes[4..])
-                                        .expect("bad function input decode")
-                                        .iter()
-                                        .map(|token| self.apply_label(token))
-                                        .collect()
-                                })
-                            } else {
-                                func.decode_input(&bytes[4..])
-                                    .expect("bad function input decode")
-                                    .iter()
-                                    .map(|token| self.apply_label(token))
-                                    .collect()
-                            }
-                        } else {
-                            Vec::new()
-                        };
-                        node.trace.data = RawOrDecodedCall::Decoded(func.name.clone(), inputs);
-
-                        if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                            if !bytes.is_empty() {
-                                if node.trace.success {
-                                    if let Some(tokens) = funcs
-                                        .iter()
-                                        .find_map(|func| func.decode_output(&bytes[..]).ok())
-                                    {
-                                        node.trace.output = RawOrDecodedReturnData::Decoded(
-                                            tokens
-                                                .iter()
-                                                .map(|token| self.apply_label(token))
-                                                .collect::<Vec<_>>()
-                                                .join(", "),
-                                        );
-                                    }
-                                } else if let Ok(decoded_error) =
-                                    foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                                {
-                                    node.trace.output = RawOrDecodedReturnData::Decoded(format!(
-                                        r#""{}""#,
-                                        decoded_error
-                                    ));
-                                }
-                            }
+                        node.decode_function(funcs, &self.labels, &self.errors);
+                    } else if node.trace.address == DEFAULT_CREATE2_DEPLOYER {
+                        node.trace.data =
+                            RawOrDecodedCall::Decoded("create2".to_string(), String::new(), vec![]);
+                    } else if let Some(identifier) = &self.signature_identifier {
+                        if let Some(function) =
+                            identifier.write().await.identify_function(&bytes[0..4]).await
+                        {
+                            node.decode_function(&[function], &self.labels, &self.errors);
                         }
                     }
                 } else {
-                    node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
+                    node.trace.data = RawOrDecodedCall::Decoded(
+                        "fallback".to_string(),
+                        String::new(),
+                        Vec::new(),
+                    );
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
-                            if let Ok(decoded_error) =
-                                foundry_utils::decode_revert(&bytes[..], Some(&self.errors))
-                            {
+                            if let Ok(decoded_error) = decode::decode_revert(
+                                &bytes[..],
+                                Some(&self.errors),
+                                Some(node.trace.status),
+                            ) {
                                 node.trace.output = RawOrDecodedReturnData::Decoded(format!(
                                     r#""{}""#,
                                     decoded_error
@@ -294,50 +291,52 @@ impl CallTraceDecoder {
             }
 
             // Decode events
-            node.logs.iter_mut().for_each(|log| {
-                if let RawOrDecodedLog::Raw(raw_log) = log {
-                    if let Some(events) =
-                        self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1))
-                    {
-                        for event in events {
-                            if let Ok(decoded) = event.parse_log(raw_log.clone()) {
-                                *log = RawOrDecodedLog::Decoded(
-                                    event.name.clone(),
-                                    decoded
-                                        .params
-                                        .into_iter()
-                                        .map(|param| (param.name, self.apply_label(&param.value)))
-                                        .collect(),
-                                );
-                                break
-                            }
-                        }
-                    }
+            self.decode_events(node).await;
+        }
+    }
+
+    async fn decode_events(&self, node: &mut CallTraceNode) {
+        for log in node.logs.iter_mut() {
+            self.decode_event(log).await;
+        }
+    }
+
+    async fn decode_event(&self, log: &mut RawOrDecodedLog) {
+        if let RawOrDecodedLog::Raw(raw_log) = log {
+            // do not attempt decoding if no topics
+            if raw_log.topics.is_empty() {
+                return
+            }
+
+            let mut events = vec![];
+            if let Some(evs) = self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1)) {
+                events = evs.clone();
+            } else if let Some(identifier) = &self.signature_identifier {
+                if let Some(event) =
+                    identifier.write().await.identify_event(&raw_log.topics[0].0).await
+                {
+                    events.push(get_indexed_event(event, raw_log));
                 }
-            });
+            }
+
+            for event in events {
+                if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                    *log = RawOrDecodedLog::Decoded(
+                        event.name,
+                        decoded
+                            .params
+                            .into_iter()
+                            .map(|param| (param.name, self.apply_label(&param.value)))
+                            .collect(),
+                    );
+                    break
+                }
+            }
         }
     }
 
     fn apply_label(&self, token: &Token) -> String {
-        match token {
-            Token::Address(addr) => {
-                if let Some(label) = self.labels.get(addr) {
-                    format!("{}: [{:?}]", label, addr)
-                } else {
-                    format_token(token)
-                }
-            }
-            _ => format_token(token),
-        }
-    }
-
-    fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
-        match func.name.as_str() {
-            "expectRevert" => foundry_utils::decode_revert(data, Some(&self.errors))
-                .ok()
-                .map(|decoded| vec![decoded]),
-            _ => None,
-        }
+        utils::label(token, &self.labels)
     }
 }
 

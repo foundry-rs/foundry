@@ -1,15 +1,24 @@
+use console::Emoji;
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    prelude::TransactionReceipt,
+    solc::EvmVersion,
+    types::U256,
+    utils::format_units,
+};
+use forge::executor::SpecId;
+use foundry_config::Config;
 use std::{
     future::Future,
-    path::{Path, PathBuf},
+    ops::Mul,
+    path::Path,
+    process::{Command, Output},
     str::FromStr,
     time::Duration,
 };
-
-use ethers::{solc::EvmVersion, types::U256};
-use forge::executor::{opts::EvmOpts, Fork, SpecId};
-use foundry_config::{caching::StorageCachingConfig, Config};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
+use yansi::Paint;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -75,19 +84,6 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
-/// Securely reads a secret from stdin, or proceeds to return a fallback value
-/// which was provided in cleartext via CLI or env var
-#[allow(dead_code)]
-pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
-    Ok(if secret {
-        println!("Insert secret:");
-        rpassword::read_password()?
-    } else {
-        // guaranteed to be Some(..)
-        unsafe_secret.unwrap()
-    })
-}
-
 /// Artifact/Contract identifier can take the following form:
 /// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
 /// the contract's artifact and the contract name is the name of the solidity contract, like
@@ -126,6 +122,30 @@ pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// Return `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
+/// `localhost:8545`
+pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
+    if let Some(rpc_url) = rpc_url {
+        rpc_url
+    } else {
+        Config::load().eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string())
+    }
+}
+
+/// Parses an ether value from a string.
+///
+/// The amount can be tagged with a unit, e.g. "1ether".
+///
+/// If the string represents an untagged amount (e.g. "100") then
+/// it is interpreted as wei.
+pub fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+    Ok(if value.starts_with("0x") {
+        U256::from_str(value)?
+    } else {
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
+    })
+}
+
 /// Parses a `Duration` from a &str
 pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
     let delay = if delay.ends_with("ms") {
@@ -150,60 +170,6 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     rt.block_on(future)
 }
 
-/// Helper function that returns the [Fork] to use, if any.
-///
-/// storage caching for the [Fork] will be enabled if
-///   - `fork_url` is present
-///   - `fork_block_number` is present
-///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
-///   - storage is allowed (`no_storage_caching = false`)
-///
-/// If all these criteria are met, then storage caching is enabled and storage info will be written
-/// to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
-///
-/// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will be
-/// at `~/.foundry/cache/mainnet/14435000/storage.json`
-pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
-    /// Returns the path where the cache file should be stored
-    ///
-    /// or `None` if caching should not be enabled
-    ///
-    /// See also [ Config::foundry_block_cache_file()]
-    fn get_block_storage_path(
-        evm_opts: &EvmOpts,
-        config: &StorageCachingConfig,
-        chain_id: u64,
-    ) -> Option<PathBuf> {
-        if evm_opts.no_storage_caching {
-            // storage caching explicitly opted out of
-            return None
-        }
-        let url = evm_opts.fork_url.as_ref()?;
-        // cache only if block explicitly pinned
-        let block = evm_opts.fork_block_number?;
-
-        if config.enable_for_endpoint(url) && config.enable_for_chain_id(chain_id) {
-            return Config::foundry_block_cache_file(chain_id, block)
-        }
-
-        None
-    }
-
-    if let Some(ref url) = evm_opts.fork_url {
-        let chain_id = evm_opts.get_chain_id();
-        let cache_storage = get_block_storage_path(evm_opts, config, chain_id);
-        let fork = Fork {
-            url: url.clone(),
-            pin_block: evm_opts.fork_block_number,
-            cache_path: cache_storage,
-            chain_id,
-        };
-        return Some(fork)
-    }
-
-    None
-}
-
 /// Conditionally print a message
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
@@ -221,9 +187,114 @@ macro_rules! p_println {
 }
 pub(crate) use p_println;
 
+/// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
+///
+/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// the logging behavior of Foundry.
+///
+/// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
+/// to not be able to configure the colors. It would also mess up the JSON output.
+pub fn load_dotenv() {
+    let load = |p: &Path| {
+        dotenv::from_path(p.join(".env")).ok();
+    };
+
+    // we only want the .env file of the cwd and project root
+    // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
+    // both `Err`
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root_path()) {
+        load(&prj_root);
+        if cwd != prj_root {
+            // prj root and cwd can be identical
+            load(&cwd);
+        }
+    };
+}
+
+/// Disables terminal colours if either:
+/// - Running windows and the terminal does not support colour codes.
+/// - Colour has been disabled by some environment variable.
+/// - We are running inside a test
+pub fn enable_paint() {
+    let is_windows = cfg!(windows) && !Paint::enable_windows_ascii();
+    let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
+    if is_windows || env_colour_disabled {
+        Paint::disable();
+    }
+}
+
+/// Prints parts of the receipt to stdout
+pub fn print_receipt(receipt: &TransactionReceipt) {
+    let contract_address = receipt
+        .contract_address
+        .map(|addr| format!("\nContract Address: 0x{}", hex::encode(addr.as_bytes())))
+        .unwrap_or_default();
+
+    let gas_used = receipt.gas_used.unwrap_or_default();
+    let gas_price = receipt.effective_gas_price.unwrap_or_default();
+
+    let gas_details = if gas_price.is_zero() {
+        format!("Gas Used: {gas_used}")
+    } else {
+        let paid = format_units(gas_used.mul(gas_price), 18).unwrap_or_else(|_| "N/A".into());
+        let gas_price = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".into());
+        format!(
+            "Paid: {} ETH ({gas_used} gas * {} gwei)",
+            paid.trim_end_matches('0'),
+            gas_price.trim_end_matches('0').trim_end_matches('.')
+        )
+    };
+
+    let check = if receipt.status.unwrap_or_default().is_zero() {
+        Emoji("❌ ", " [Failed] ")
+    } else {
+        Emoji("✅ ", " [Success] ")
+    };
+
+    println!(
+        "\n#####\n{}Hash: 0x{}{}\nBlock: {}\n{}\n",
+        check,
+        hex::encode(receipt.transaction_hash.as_bytes()),
+        contract_address,
+        receipt.block_number.unwrap_or_default(),
+        gas_details
+    );
+}
+
+/// Useful extensions to [`std::process::Command`].
+pub trait CommandUtils {
+    /// Returns the command's output if execution is successful, otherwise, throws an error.
+    fn exec(&mut self) -> eyre::Result<Output>;
+
+    /// Returns the command's stdout if execution is successful, otherwise, throws an error.
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String>;
+}
+
+impl CommandUtils for Command {
+    #[track_caller]
+    fn exec(&mut self) -> eyre::Result<Output> {
+        let output = self.output()?;
+        if !&output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eyre::bail!("{}", stderr.trim())
+        }
+        Ok(output)
+    }
+
+    #[track_caller]
+    fn get_stdout_lossy(&mut self) -> eyre::Result<String> {
+        let output = self.exec()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim().into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_common::fs;
+    use std::{env, fs::File, io::Write};
 
     #[test]
     fn foundry_path_ext_works() {
@@ -232,5 +303,33 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    // loads .env from cwd and project dir, See [`find_project_root_path()`]
+    #[test]
+    fn can_load_dotenv() {
+        let temp = tempdir().unwrap();
+        Command::new("git").arg("init").current_dir(temp.path()).exec().unwrap();
+        let cwd_env = temp.path().join(".env");
+        fs::create_file(temp.path().join("foundry.toml")).unwrap();
+        let nested = temp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        let mut cwd_file = File::create(cwd_env).unwrap();
+        let mut prj_file = File::create(nested.join(".env")).unwrap();
+
+        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.sync_all().unwrap();
+
+        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.sync_all().unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(nested).unwrap();
+        load_dotenv();
+        env::set_current_dir(cwd).unwrap();
+
+        assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
+        assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
     }
 }

@@ -304,4 +304,23 @@ contract PrankTest is DSTest {
 
         pranker.completePrank(victim);
     }
+
+    /// Checks that `tx.origin` is set for all subcalls of a `prank`.
+    ///
+    /// Ref: issue #1210
+    function testTxOriginInNestedPrank(address sender, address origin) public {
+        address oldSender = msg.sender;
+        address oldOrigin = tx.origin;
+
+        Victim innerVictim = new Victim();
+        NestedVictim victim = new NestedVictim(innerVictim);
+
+        cheats.prank(sender, origin);
+        victim.assertCallerAndOrigin(
+            sender,
+            "msg.sender was not set correctly",
+            origin,
+            "tx.origin was not set correctly"
+        );
+    }
 }

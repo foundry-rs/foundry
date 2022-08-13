@@ -10,9 +10,8 @@ use bytes::Bytes;
 use ethers::types::Address;
 use revm::{
     opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, Memory, Return, SpecId,
+    Interpreter, Memory, Return,
 };
-use std::collections::BTreeMap;
 
 /// An inspector that collects debug nodes on every step of the interpreter.
 #[derive(Default, Debug)]
@@ -23,13 +22,6 @@ pub struct Debugger {
     pub head: usize,
     /// The current execution address.
     pub context: Address,
-    /// A mapping of program counters to instruction counters.
-    ///
-    /// The program counter keeps track of where we are in the contract bytecode as a whole,
-    /// including push bytes, while the instruction counter ignores push bytes.
-    ///
-    /// The instruction counter is used in Solidity source maps.
-    pub ic_map: BTreeMap<Address, BTreeMap<usize, usize>>,
     /// The amount of gas spent in the current gas block.
     ///
     /// REVM adds gas in blocks, so we need to keep track of this separately to get accurate gas
@@ -48,31 +40,6 @@ pub struct Debugger {
 }
 
 impl Debugger {
-    /// Builds the instruction counter map for the given bytecode.
-    // TODO: Some of the same logic is performed in REVM, but then later discarded. We should
-    // investigate if we can reuse it
-    pub fn build_ic_map(&mut self, spec: SpecId, code: &Bytes) {
-        let opcode_infos = spec_opcode_gas(spec);
-        let mut ic_map: BTreeMap<usize, usize> = BTreeMap::new();
-
-        let mut i = 0;
-        let mut cumulative_push_size = 0;
-        while i < code.len() {
-            let op = code[i];
-            ic_map.insert(i, i - cumulative_push_size);
-            if opcode_infos[op as usize].is_push {
-                // Skip the push bytes.
-                //
-                // For more context on the math, see: https://github.com/bluealloy/revm/blob/007b8807b5ad7705d3cacce4d92b89d880a83301/crates/revm/src/interpreter/contract.rs#L114-L115
-                i += (op - opcode::PUSH1 + 1) as usize;
-                cumulative_push_size += (op - opcode::PUSH1 + 1) as usize;
-            }
-            i += 1;
-        }
-
-        self.ic_map.insert(self.context, ic_map);
-    }
-
     /// Enters a new execution context.
     pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
         self.context = address;
@@ -121,13 +88,9 @@ where
     fn initialize_interp(
         &mut self,
         interp: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
+        _: &mut EVMData<'_, DB>,
         _: bool,
     ) -> Return {
-        // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
-        // map for a given address does not exist, *but* we need to account for the fact that the
-        // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.build_ic_map(data.env.cfg.spec_id, &interp.contract().code);
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
@@ -139,31 +102,34 @@ where
         _is_static: bool,
     ) -> Return {
         let pc = interpreter.program_counter();
-        let op = interpreter.contract.code[pc];
+        let op = interpreter.contract.bytecode.bytecode()[pc];
 
         // Get opcode information
         let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
         let opcode_info = &opcode_infos[op as usize];
 
         // Extract the push bytes
-        let push_size = if opcode_info.is_push { (op - opcode::PUSH1 + 1) as usize } else { 0 };
+        let push_size = if opcode_info.is_push() { (op - opcode::PUSH1 + 1) as usize } else { 0 };
         let push_bytes = match push_size {
             0 => None,
             n => {
                 let start = pc + 1;
                 let end = start + n;
-                Some(interpreter.contract.code[start..end].to_vec())
+                Some(interpreter.contract.bytecode.bytecode()[start..end].to_vec())
             }
         };
 
         // Calculate the current amount of gas used
         let gas = interpreter.gas();
-        let total_gas_spent = gas.spend() - self.previous_gas_block + self.current_gas_block;
-        if opcode_info.gas_block_end {
+        let total_gas_spent = gas
+            .spend()
+            .saturating_sub(self.previous_gas_block)
+            .saturating_add(self.current_gas_block);
+        if opcode_info.is_gas_block_end() {
             self.previous_gas_block = interpreter.contract.gas_block(pc);
             self.current_gas_block = 0;
         } else {
-            self.current_gas_block += opcode_info.gas;
+            self.current_gas_block += opcode_info.get_gas() as u64;
         }
 
         self.arena.arena[self.head].steps.push(DebugStep {
@@ -172,12 +138,6 @@ where
             memory: interpreter.memory.clone(),
             instruction: Instruction::OpCode(op),
             push_bytes,
-            ic: *self
-                .ic_map
-                .get(&self.context)
-                .expect("no instruction counter map")
-                .get(&pc)
-                .expect("unknown ic for pc"),
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
         });
 

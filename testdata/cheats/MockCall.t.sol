@@ -5,6 +5,8 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Mock {
+    uint256 state = 0;
+
     function numberA() public pure returns (uint256) {
         return 1;
     }
@@ -15,6 +17,16 @@ contract Mock {
 
     function add(uint256 a, uint256 b) public pure returns (uint256) {
         return a + b;
+    }
+
+    function pay(uint256 a) public payable returns (uint256) {
+        return a;
+    }
+
+    function noReturnValue() public {
+        // Does nothing of value, but also ensures that Solidity will 100%
+        // generate an `extcodesize` check.
+        state += 1;
     }
 }
 
@@ -112,5 +124,94 @@ contract MockCallTest is DSTest {
 
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
+    }
+
+    function testMockCallMultiplePartialMatch() public {
+        Mock mock = new Mock();
+
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(10)
+        );
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector, 2),
+            abi.encode(20)
+        );
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector, 2, 3),
+            abi.encode(30)
+        );
+
+        assertEq(mock.add(1, 2), 10);
+        assertEq(mock.add(2, 2), 20);
+        assertEq(mock.add(2, 3), 30);
+    }
+
+    function testMockCallWithValue() public {
+        Mock mock = new Mock();
+
+        cheats.mockCall(
+            address(mock),
+            10,
+            abi.encodeWithSelector(mock.pay.selector),
+            abi.encode(10)
+        );
+
+        assertEq(mock.pay{value: 10}(1), 10);
+        assertEq(mock.pay(1), 1);
+
+        for (uint i = 0; i < 100; i++) {
+            cheats.mockCall(
+                address(mock),
+                i,
+                abi.encodeWithSelector(mock.pay.selector),
+                abi.encode(i * 2)
+            );
+        }
+
+        assertEq(mock.pay(1), 0);
+        assertEq(mock.pay{value: 10}(1), 20);
+        assertEq(mock.pay{value: 50}(1), 100);
+    }
+
+    function testMockCallWithValueCalldataPrecedence() public {
+        Mock mock = new Mock();
+
+        cheats.mockCall(
+            address(mock),
+            10,
+            abi.encodeWithSelector(mock.pay.selector),
+            abi.encode(10)
+        );
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.pay.selector, 2),
+            abi.encode(2)
+        );
+
+        assertEq(mock.pay{value: 10}(1), 10);
+        assertEq(mock.pay{value: 10}(2), 2);
+        assertEq(mock.pay(2), 2);
+    }
+
+    function testMockCallEmptyAccount() public {
+        Mock mock = Mock(address(100));
+
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.add.selector),
+            abi.encode(10)
+        );
+        cheats.mockCall(
+            address(mock),
+            abi.encodeWithSelector(mock.noReturnValue.selector),
+            abi.encode()
+        );
+
+        assertEq(mock.add(1, 2), 10);
+        mock.noReturnValue();
     }
 }

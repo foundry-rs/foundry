@@ -32,6 +32,17 @@ contract GetCodeTest is DSTest {
         //);
     }
 
+    function testGetCodeHardhatArtifact() public {
+        bytes memory fullPath = cheats.getCode("../testdata/fixtures/GetCode/HardhatWorkingContract.json");
+
+        string memory expected = string(bytes(hex"608060405234801561001057600080fd5b5060b28061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063d1efd30d14602d575b600080fd5b60336047565b604051603e91906059565b60405180910390f35b602a81565b6053816072565b82525050565b6000602082019050606c6000830184604c565b92915050565b600081905091905056fea26469706673582212202a44b7c3c3e248a5736aa9345986f7114ee9e00d36ea034566db99648a17870564736f6c63430008040033"));
+        assertEq(
+            string(fullPath),
+            expected,
+            "code for full path was incorrect"
+        );
+    }
+
     function testFailGetUnlinked() public {
         cheats.getCode("UnlinkedContract.sol");
     }

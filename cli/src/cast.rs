@@ -1,47 +1,52 @@
 pub mod cmd;
+pub mod compile;
 
+mod handler;
+mod suggestions;
 mod term;
 mod utils;
 
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
+use foundry_config::Config;
 mod opts;
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::InterfacePath;
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 use ethers::{
-    contract::BaseContract,
-    core::{
-        abi::parse_abi,
-        rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest},
+    abi::HumanReadableParser,
+    core::types::{BlockId, BlockNumber::Latest, H256},
+    providers::Middleware,
+    types::{Address, NameOrAddress, U256},
+};
+use eyre::WrapErr;
+use foundry_common::{fs, get_http_provider};
+use foundry_config::Chain;
+use foundry_utils::{
+    format_tokens,
+    selectors::{
+        decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
+        parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
-    providers::{Middleware, Provider},
-    signers::{LocalWallet, Signer},
-    types::{Address, Chain, NameOrAddress, Signature, U256},
-    utils::get_contract_address,
 };
 use opts::{
-    cast::{Opts, Subcommands, WalletSubcommands},
-    EthereumOpts, WalletType,
+    cast::{Opts, Subcommands},
+    WalletType,
 };
-use rayon::prelude::*;
-use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
-    convert::TryFrom,
     io::{self, Read, Write},
     path::Path,
     str::FromStr,
-    time::Instant,
+    sync::Arc,
 };
-
-use clap::{IntoApp, Parser};
-use clap_complete::generate;
-
-use crate::{cmd::Cmd, utils::read_secret};
-use eyre::WrapErr;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
+    utils::load_dotenv();
+    handler::install()?;
+    utils::subscriber();
+    utils::enable_paint();
 
     let opts = Opts::parse();
     match opts.sub {
@@ -54,6 +59,12 @@ async fn main() -> eyre::Result<()> {
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
+        Subcommands::AddressZero => {
+            println!("{:?}", Address::zero());
+        }
+        Subcommands::HashZero => {
+            println!("{:?}", H256::zero());
+        }
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
             println!("{}", SimpleCast::from_utf8(&val));
@@ -62,12 +73,15 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
+        Subcommands::ConcatHex { data } => {
+            println!("{}", SimpleCast::concat_hex(data))
+        }
         Subcommands::FromBin {} => {
             let hex: String = io::stdin()
                 .bytes()
                 .map(|x| format!("{:02x}", x.expect("invalid binary data")))
                 .collect();
-            println!("0x{}", hex);
+            println!("0x{hex}");
         }
 
         Subcommands::ToHexdata { input } => {
@@ -78,7 +92,7 @@ async fn main() -> eyre::Result<()> {
                     var.as_bytes().to_hex()
                 }
                 s if s.starts_with('/') => {
-                    let input = std::fs::read(s)?;
+                    let input = fs::read(s)?;
                     input.to_hex()
                 }
                 s => {
@@ -89,7 +103,7 @@ async fn main() -> eyre::Result<()> {
                     output
                 }
             };
-            println!("0x{}", output);
+            println!("0x{output}");
         }
         Subcommands::ToCheckSumAddress { address } => {
             let val = unwrap_or_stdin(address)?;
@@ -126,9 +140,27 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_int256(&val)?);
         }
+        Subcommands::LeftShift { value, bits, base_in, base_out } => {
+            println!(
+                "{}",
+                format_uint(
+                    SimpleCast::left_shift(&value, &bits, det_base_in(&value, base_in)?)?,
+                    det_base_out(&base_out)?
+                )?
+            );
+        }
+        Subcommands::RightShift { value, bits, base_in, base_out } => {
+            println!(
+                "{}",
+                format_uint(
+                    SimpleCast::right_shift(&value, &bits, det_base_in(&value, base_in)?)?,
+                    det_base_out(&base_out)?
+                )?
+            );
+        }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_unit(val, unit.unwrap_or_else(|| String::from("wei")))?);
+            println!("{}", SimpleCast::to_unit(val, unit)?);
         }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -150,76 +182,102 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::ToRlp { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_rlp(&val)?);
+        }
+        Subcommands::FromRlp { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_rlp(val)?);
+        }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .access_list(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        block,
-                        to_json,
-                    )
-                    .await?
+            let config = Config::from(&eth);
+            let provider = get_http_provider(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             );
+
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain
+            } else {
+                provider.get_chainid().await?.into()
+            };
+
+            let mut builder =
+                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
+            builder.set_args(&sig, args).await?;
+            let builder_output = builder.peek();
+
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { eth, address, sig, args, block } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .call(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        eth.etherscan_api_key,
-                        block
-                    )
-                    .await?
+
+        Subcommands::Call { address, sig, args, block, eth } => {
+            let config = Config::from(&eth);
+            let provider = get_http_provider(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             );
+
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain
+            } else {
+                provider.get_chainid().await?.into()
+            };
+
+            let mut builder =
+                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
+            builder.etherscan_api_key(config.etherscan_api_key).set_args(&sig, args).await?;
+            let builder_output = builder.build();
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
+
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).chain().await?);
         }
         Subcommands::ChainId { rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Client { rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             println!("{}", provider.client_version().await?);
         }
         Subcommands::ComputeAddress { rpc_url, address, nonce } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
-            let provider = Provider::try_from(rpc_url)?;
+            let provider = get_http_provider(rpc_url);
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {:?}", addr);
+            println!("Computed Address: {}", SimpleCast::checksum_address(&addr)?);
         }
         Subcommands::Code { block, who, rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).code(who, block).await?);
         }
         Subcommands::Namehash { name } => {
             println!("{}", SimpleCast::namehash(&name)?);
         }
         Subcommands::Tx { rpc_url, hash, field, to_json } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
         Subcommands::SendTx {
@@ -228,34 +286,57 @@ async fn main() -> eyre::Result<()> {
             sig,
             cast_async,
             args,
-            gas,
-            gas_price,
-            value,
-            nonce,
-            legacy,
+            mut tx,
             confirmations,
             to_json,
+            resend,
         } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            let chain_id = Cast::new(&provider).chain_id().await?;
+            let config = Config::from(&eth);
+            let provider = Arc::new(get_http_provider(
+                &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            ));
+            let chain: Chain = if let Some(chain) = eth.chain {
+                chain
+            } else {
+                provider.get_chainid().await?.into()
+            };
             let sig = sig.unwrap_or_default();
 
-            if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
+            if let Ok(Some(signer)) = eth.signer_with(chain.into(), provider.clone()).await {
+                let from = match &signer {
+                    WalletType::Ledger(leger) => leger.address(),
+                    WalletType::Local(local) => local.address(),
+                    WalletType::Trezor(trezor) => trezor.address(),
+                };
+
+                // prevent misconfigured hwlib from sending a transaction that defies
+                // user-specified --from
+                if let Some(specified_from) = eth.wallet.from {
+                    if specified_from != from {
+                        eyre::bail!("The specified sender via CLI/env vars does not match the sender configured via the hardware wallet's HD Path. Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which corresponds to the sender. This will be automatically detected in the future: https://github.com/foundry-rs/foundry/issues/2289")
+                    }
+                }
+
+                if resend {
+                    tx.nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 match signer {
                     WalletType::Ledger(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
-                            eth.chain,
-                            eth.etherscan_api_key,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
+                            chain,
+                            config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -264,17 +345,18 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Local(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
-                            eth.chain,
-                            eth.etherscan_api_key,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
+                            chain,
+                            config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
@@ -283,47 +365,59 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
-                            gas,
-                            gas_price,
-                            value,
-                            nonce,
-                            eth.chain,
-                            eth.etherscan_api_key,
+                            tx.gas_limit,
+                            tx.gas_price,
+                            tx.priority_gas_price,
+                            tx.value,
+                            tx.nonce,
+                            chain,
+                            config.etherscan_api_key,
                             cast_async,
-                            legacy,
+                            tx.legacy,
                             confirmations,
                             to_json,
                         )
                         .await?;
                     }
+                } // Checking if signer isn't the default value
+                  // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
+            } else if config.sender !=
+                Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            {
+                if resend {
+                    tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
                 }
-            } else if let Some(from) = eth.from {
+
                 cast_send(
                     provider,
-                    from,
+                    config.sender,
                     to,
                     (sig, args),
-                    gas,
-                    gas_price,
-                    value,
-                    nonce,
-                    eth.chain,
-                    eth.etherscan_api_key,
+                    tx.gas_limit,
+                    tx.gas_price,
+                    tx.priority_gas_price,
+                    tx.value,
+                    tx.nonce,
+                    chain,
+                    config.etherscan_api_key,
                     cast_async,
-                    legacy,
+                    tx.legacy,
                     confirmations,
                     to_json,
                 )
                 .await?;
             } else {
-                eyre::bail!("No wallet or sender address provided.")
+                eyre::bail!("No wallet or sender address provided. Consider passing it via the --from flag or setting the ETH_FROM env variable or setting in the foundry.toml file");
             }
         }
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let config = Config::from(&eth);
+            let provider = get_http_provider(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            );
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;
@@ -332,49 +426,34 @@ async fn main() -> eyre::Result<()> {
                 println!("{:?}", pending_tx);
             } else {
                 let receipt =
-                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
+                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {tx_hash} not found"))?;
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Estimate { eth, to, sig, args, value } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            let cast = Cast::new(&provider);
-            let from = eth.sender().await;
-            let gas = cast
-                .estimate(
-                    from,
-                    to,
-                    Some((sig.as_str(), args)),
-                    value,
-                    eth.chain,
-                    eth.etherscan_api_key,
-                )
-                .await?;
-            println!("{}", gas);
-        }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
-            tokens.for_each(|t| println!("{}", t));
+            let tokens = format_tokens(&tokens);
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
-            tokens.for_each(|t| println!("{}", t));
+            let tokens = format_tokens(&tokens);
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
-        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
-            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
-            println!("{}", encoded);
+        Subcommands::Index { key_type, key, slot_number } => {
+            let encoded = SimpleCast::index(&key_type, &key, &slot_number)?;
+            println!("{encoded}");
         }
         Subcommands::FourByte { selector } => {
-            let sigs = foundry_utils::fourbyte(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_function_selector(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
         }
-        Subcommands::FourByteDecode { calldata, id } => {
-            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+        Subcommands::FourByteDecode { calldata } => {
+            let calldata = unwrap_or_stdin(calldata)?;
+            let sigs = decode_calldata(&calldata).await?;
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
@@ -391,43 +470,58 @@ async fn main() -> eyre::Result<()> {
             }?;
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = foundry_utils::format_tokens(&tokens);
+            let tokens = format_tokens(&tokens);
 
-            tokens.for_each(|t| println!("{}", t));
+            tokens.for_each(|t| println!("{t}"));
         }
         Subcommands::FourByteEvent { topic } => {
-            let sigs = foundry_utils::fourbyte_event(&topic).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig.0));
+            let sigs = decode_event_topic(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
+        }
+
+        Subcommands::UploadSignature { signatures } => {
+            let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
+            if !abis.is_empty() {
+                import_selectors(SelectorImportData::Abi(abis)).await?.describe();
+            }
+            if !signatures.is_empty() {
+                import_selectors(SelectorImportData::Raw(signatures)).await?.describe();
+            }
         }
 
         Subcommands::PrettyCalldata { calldata, offline } => {
             if !calldata.starts_with("0x") {
-                eprintln!("Expected calldata hex string, received \"{}\"", calldata);
+                eprintln!("Expected calldata hex string, received \"{calldata}\"");
                 std::process::exit(0)
             }
-            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
-            println!("{}", pretty_data);
+            let pretty_data = pretty_calldata(&calldata, offline).await?;
+            println!("{pretty_data}");
         }
         Subcommands::Age { block, rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!(
                 "{}",
                 Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         Subcommands::Balance { block, who, rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).balance(who, block).await?);
         }
         Subcommands::BaseFee { block, rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             println!(
                 "{}",
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         Subcommands::GasPrice { rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).gas_price().await?);
         }
         Subcommands::Keccak { data } => {
@@ -436,17 +530,25 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::Interface {
             path_or_address,
+            name,
             pragma,
             chain,
             output_location,
             etherscan_api_key,
         } => {
             let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
+                SimpleCast::generate_interface(InterfacePath::Local { path: path_or_address, name })
+                    .await?
             } else {
                 let api_key = match etherscan_api_key {
                     Some(inner) => inner,
-                    _ => eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or the -e CLI argument.")
+                    _ => {
+                        if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
+                            etherscan_api_key
+                        } else {
+                            eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
+                        }
+                    }
                 };
                 SimpleCast::generate_interface(InterfacePath::Etherscan {
                     chain: chain.inner,
@@ -459,28 +561,29 @@ async fn main() -> eyre::Result<()> {
             };
 
             // put it all together
-            let pragma = format!("pragma solidity {};", pragma);
+            let pragma = format!("pragma solidity {pragma};");
             let interfaces = interfaces
                 .iter()
                 .map(|iface| iface.source.to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
-            let res = format!("{}\n\n{}", pragma, interfaces);
+            let res = format!("{pragma}\n\n{interfaces}");
 
             // print or write to file
             match output_location {
                 Some(loc) => {
-                    std::fs::create_dir_all(&loc.parent().unwrap())?;
-                    std::fs::write(&loc, res)?;
+                    fs::create_dir_all(&loc.parent().unwrap())?;
+                    fs::write(&loc, res)?;
                     println!("Saved interface at {}", loc.display());
                 }
                 None => {
-                    println!("{}", res);
+                    println!("{res}");
                 }
             }
         }
         Subcommands::ResolveName { who, rpc_url, verify } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             let who = unwrap_or_stdin(who)?;
             let address = provider.resolve_name(&who).await?;
             if verify {
@@ -491,10 +594,11 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{:?}", address);
+            println!("{}", SimpleCast::checksum_address(&address)?);
         }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             let who = unwrap_or_stdin(who)?;
             let name = provider.lookup_address(who).await?;
             if verify {
@@ -505,20 +609,25 @@ async fn main() -> eyre::Result<()> {
                     name, who
                 );
             }
-            println!("{}", name);
+            println!("{name}");
         }
         Subcommands::Storage { address, slot, rpc_url, block } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
         Subcommands::Proof { address, slots, rpc_url, block } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             let value = provider.get_proof(address, slots, block).await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+            let provider = get_http_provider(rpc_url);
             println!(
                 "{}",
                 Cast::new(provider)
@@ -527,16 +636,28 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Nonce { block, who, rpc_url } => {
-            let provider = Provider::try_from(rpc_url)?;
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
+            let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
+            let api_key = match etherscan_api_key {
+                Some(inner) => inner,
+                _ => {
+                    if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
+                        etherscan_api_key
+                    } else {
+                        eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
+                    }
+                }
+            };
             match directory {
                 Some(dir) => {
                     SimpleCast::expand_etherscan_source_to_directory(
                         chain.inner,
                         address,
-                        etherscan_api_key,
+                        api_key,
                         dir,
                     )
                     .await?
@@ -544,159 +665,30 @@ async fn main() -> eyre::Result<()> {
                 None => {
                     println!(
                         "{}",
-                        SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key)
-                            .await?
+                        SimpleCast::etherscan_source(chain.inner, address, api_key).await?
                     );
                 }
             }
         }
         Subcommands::Sig { sig } => {
-            let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
-            let selector = contract.abi().functions().last().unwrap().short_signature();
+            let selector = HumanReadableParser::parse_function(&sig)?.short_signature();
             println!("0x{}", hex::encode(selector));
         }
         Subcommands::FindBlock(cmd) => cmd.run()?.await?,
-        Subcommands::Wallet { command } => match command {
-            WalletSubcommands::New { path, password, unsafe_password } => {
-                let mut rng = thread_rng();
-
-                match path {
-                    Some(path) => {
-                        let password = read_secret(password, unsafe_password)?;
-                        let (key, uuid) =
-                            LocalWallet::new_keystore(&path, &mut rng, password, None)?;
-                        let address = SimpleCast::checksum_address(&key.address())?;
-                        let filepath = format!(
-                            "{}/{}",
-                            dunce::canonicalize(path)?
-                                .into_os_string()
-                                .into_string()
-                                .expect("failed to canonicalize file path"),
-                            uuid
-                        );
-                        println!(
-                            "Successfully created new keypair at `{}`.\nAddress: {}.",
-                            filepath, address
-                        );
-                    }
-                    None => {
-                        let wallet = LocalWallet::new(&mut rng);
-                        println!(
-                            "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
-                            SimpleCast::checksum_address(&wallet.address())?,
-                            hex::encode(wallet.signer().to_bytes()),
-                        );
-                    }
-                }
-            }
-            WalletSubcommands::Vanity { starts_with, ends_with, nonce } => {
-                let mut regexs = vec![];
-                if let Some(prefix) = starts_with {
-                    let pad_width = prefix.len() + prefix.len() % 2;
-                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
-                        .expect("invalid prefix hex provided");
-                    regexs.push(format!(r"^{}", prefix));
-                }
-                if let Some(suffix) = ends_with {
-                    let pad_width = suffix.len() + suffix.len() % 2;
-                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
-                        .expect("invalid suffix hex provided");
-                    regexs.push(format!(r"{}$", suffix));
-                }
-
-                assert!(
-                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
-                    "vanity patterns length exceeded. cannot be more than 40 characters",
-                );
-
-                let regex = RegexSet::new(regexs)?;
-                let match_contract = nonce.is_some();
-
-                println!("Starting to generate vanity address...");
-                let timer = Instant::now();
-                let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
-                    .par_bridge()
-                    .find_any(|wallet| {
-                        let addr = if match_contract {
-                            // looking for contract address created by wallet with CREATE + nonce
-                            let contract_addr =
-                                get_contract_address(wallet.address(), nonce.unwrap());
-                            hex::encode(contract_addr.to_fixed_bytes())
-                        } else {
-                            // looking for wallet address
-                            hex::encode(wallet.address().to_fixed_bytes())
-                        };
-                        regex.matches(&addr).into_iter().count() == regex.patterns().len()
-                    })
-                    .expect("failed to generate vanity wallet");
-
-                println!(
-                    "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
-                    timer.elapsed().as_secs(),
-                    if match_contract {"\nContract address: "} else {""},
-                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
-                    SimpleCast::checksum_address(&wallet.address())?,
-                    hex::encode(wallet.signer().to_bytes()),
-                );
-            }
-            WalletSubcommands::Address { wallet } => {
-                // TODO: Figure out better way to get wallet only.
-                let wallet = EthereumOpts {
-                    wallet,
-                    from: None,
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Chain::Mainnet,
-                    etherscan_api_key: None,
-                }
-                .signer(0.into())
-                .await?
-                .unwrap();
-
-                let addr = match wallet {
-                    WalletType::Ledger(signer) => signer.address(),
-                    WalletType::Local(signer) => signer.address(),
-                    WalletType::Trezor(signer) => signer.address(),
-                };
-                println!("Address: {}", SimpleCast::checksum_address(&addr)?);
-            }
-            WalletSubcommands::Sign { message, wallet } => {
-                // TODO: Figure out better way to get wallet only.
-                let wallet = EthereumOpts {
-                    wallet,
-                    from: None,
-                    rpc_url: Some("http://localhost:8545".to_string()),
-                    flashbots: false,
-                    chain: Chain::Mainnet,
-                    etherscan_api_key: None,
-                }
-                .signer(0.into())
-                .await?
-                .unwrap();
-
-                let sig = match wallet {
-                    WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
-                    WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
-                };
-                println!("Signature: 0x{}", sig);
-            }
-            WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
-                let signature = Signature::from_str(&signature)?;
-                match signature.verify(message, pubkey) {
-                    Ok(_) => {
-                        println!("Validation success. Address {} signed this message.", address)
-                    }
-                    Err(_) => println!(
-                        "Validation failed. Address {} did not sign this message.",
-                        address
-                    ),
-                }
-            }
-        },
+        Subcommands::Estimate(cmd) => cmd.run().await?,
+        Subcommands::Wallet { command } => command.run().await?,
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
+        }
+        Subcommands::Run(cmd) => cmd.run()?,
+        Subcommands::Rpc(cmd) => cmd.run()?.await?,
+        Subcommands::FormatBytes32String { string } => {
+            let val = unwrap_or_stdin(string)?;
+            println!("{}", SimpleCast::format_bytes32_string(&val)?);
+        }
+        Subcommands::ParseBytes32String { bytes } => {
+            let val = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_string(&val)?);
         }
     };
     Ok(())
@@ -718,6 +710,42 @@ where
     })
 }
 
+fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
+    match base_in {
+        Some(base_in) => match base_in.as_str() {
+            "10" | "dec" => Ok(10),
+            "16" | "hex" => Ok(16),
+            _ => eyre::bail!("Unknown input base: {base_in}"),
+        },
+        None if value.starts_with("0x") => Ok(16),
+        None => match U256::from_str_radix(value, 10) {
+            Ok(_) => {
+                eyre::bail!("Could not autodetect input base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter.");
+            }
+            Err(_) => {
+                U256::from_str_radix(value, 16).expect("Could not autodetect input base.");
+                Ok(16)
+            }
+        },
+    }
+}
+
+fn det_base_out(base_out: &str) -> eyre::Result<u32> {
+    match base_out {
+        "10" | "dec" => Ok(10),
+        "16" | "hex" => Ok(16),
+        _ => eyre::bail!("Provided base is not a valid."),
+    }
+}
+
+fn format_uint(val: U256, base_out: u32) -> eyre::Result<String> {
+    match base_out {
+        10 => Ok(val.to_string()),
+        16 => Ok(format!("0x{:x}", val)),
+        _ => Err(eyre::eyre!("Unknown output base: {base_out}")),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
@@ -726,6 +754,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     args: (String, Vec<String>),
     gas: Option<U256>,
     gas_price: Option<U256>,
+    priority_gas_price: Option<U256>,
     value: Option<U256>,
     nonce: Option<U256>,
     chain: Chain,
@@ -738,21 +767,31 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let cast = Cast::new(provider);
-
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast
-        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
-        .await?;
+    let mut builder = TxBuilder::new(&provider, from, Some(to), chain, legacy).await?;
+    builder
+        .etherscan_api_key(etherscan_api_key)
+        .args(params)
+        .await?
+        .gas(gas)
+        .gas_price(gas_price)
+        .priority_gas_price(priority_gas_price)
+        .value(value)
+        .nonce(nonce);
+    let builder_output = builder.build();
+
+    let cast = Cast::new(provider);
+
+    let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {
         println!("{:#x}", tx_hash);
     } else {
         let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
-        println!("{}", receipt);
+        println!("{receipt}");
     }
 
     Ok(())

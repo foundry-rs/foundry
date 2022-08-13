@@ -33,44 +33,48 @@
 /// });
 #[macro_export]
 macro_rules! forgetest {
-    ($test:ident, $fun:expr) => {
-        $crate::forgetest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
+        $crate::forgetest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! forgetest_async {
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
+        $crate::forgetest_async!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
+        #[tokio::test(flavor = "multi_thread")]
+        $(#[$meta])*
+        async fn $test() {
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            let f = $fun;
+            f(prj, cmd).await;
         }
     };
 }
 
 #[macro_export]
 macro_rules! casttest {
-    ($test:ident, $fun:expr) => {
-        $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
+        $crate::casttest!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
-            $fun(prj, cmd);
-        }
-    };
-}
-
-/// A helper macro to ignore `forgetest!` that should not run on CI
-#[macro_export]
-macro_rules! forgetest_ignore {
-    ($test:ident, $fun:expr) => {
-        $crate::forgetest_ignore!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
-    };
-    ($test:ident, $style:expr, $fun:expr) => {
-        #[test]
-        #[ignore]
-        fn $test() {
-            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -78,15 +82,17 @@ macro_rules! forgetest_ignore {
 /// Same as `forgetest` but returns an already initialized project workspace (`forge init`)
 #[macro_export]
 macro_rules! forgetest_init {
-    ($test:ident, $fun:expr) => {
-        $crate::forgetest_init!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    ($(#[$meta:meta])* $test:ident, $fun:expr) => {
+        $crate::forgetest_init!($(#[$meta])* $test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
     };
-    ($test:ident, $style:expr, $fun:expr) => {
+    ($(#[$meta:meta])* $test:ident, $style:expr, $fun:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize(prj.root());
-            $fun(prj, cmd);
+            let f = $fun;
+            f(prj, cmd);
         }
     };
 }
@@ -97,12 +103,13 @@ macro_rules! forgetest_init {
 #[macro_export]
 macro_rules! forgetest_external {
     // forgetest_external!(test_name, "owner/repo");
-    ($test:ident, $repo:literal) => {
-        $crate::forgetest_external!($test, $repo, 0, Vec::<String>::new());
+    ($(#[$meta:meta])* $test:ident, $repo:literal) => {
+        $crate::forgetest_external!($(#[$meta])* $test, $repo, 0, Vec::<String>::new());
     };
     // forgetest_external!(test_name, "owner/repo", 1234);
-    ($test:ident, $repo:literal, $fork_block:literal) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal) => {
         $crate::forgetest_external!(
+            $(#[$meta])*
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
@@ -111,12 +118,13 @@ macro_rules! forgetest_external {
         );
     };
     // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
-    ($test:ident, $repo:literal, $forge_opts:expr) => {
-        $crate::forgetest_external!($test, $repo, 0, $forge_opts);
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $forge_opts:expr) => {
+        $crate::forgetest_external!($(#[$meta])* $test, $repo, 0, $forge_opts);
     };
     // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
-    ($test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
         $crate::forgetest_external!(
+            $(#[$meta])*
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
@@ -125,8 +133,9 @@ macro_rules! forgetest_external {
         );
     };
     // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
-    ($test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
+    ($(#[$meta:meta])* $test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
         #[test]
+        $(#[$meta])*
         fn $test() {
             use std::process::{Command, Stdio};
 
@@ -164,13 +173,15 @@ macro_rules! forgetest_external {
             // Run the tests
             cmd.arg("test").args($forge_opts).args([
                 "--optimize",
-                "--optimize-runs",
+                "--optimizer-runs",
                 "20000",
                 "--ffi",
             ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
+
+            let next_eth_rpc_url = foundry_utils::rpc::next_http_archive_rpc_endpoint();
             if $fork_block > 0 {
-                cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
+                cmd.set_env("FOUNDRY_ETH_RPC_URL", next_eth_rpc_url);
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
             }
             cmd.assert_non_empty_stdout();

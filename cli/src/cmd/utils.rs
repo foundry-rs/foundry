@@ -1,13 +1,24 @@
-use crate::{opts::forge::ContractInfo, term};
+use crate::suggestions;
+
+use crate::term::cli_warn;
+use clap::Parser;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        report::NoReporter,
+    core::types::Chain,
+    prelude::ArtifactId,
+    solc::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
+        cache::{CacheEntry, SolFilesCache},
+        info::ContractInfo,
+        Artifact, ProjectCompileOutput,
     },
-    solc::cache::SolFilesCache,
 };
+use forge::executor::opts::EvmOpts;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
+use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
+use yansi::Paint;
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -15,190 +26,268 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Artifact, Project, ProjectCompileOutput};
-
-use foundry_utils::to_table;
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
-    let output = term::with_spinner_reporter(|| project.compile())?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    } else if output.is_unchanged() {
-        println!("No files changed, compilation skipped");
-    } else {
-        // print the compiler output / warnings
-        println!("{}", output);
-
-        // print any sizes or names
-        if print_names {
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            for (version, contracts) in compiled_contracts.into_iter() {
-                println!(
-                    "  compiler version: {}.{}.{}",
-                    version.major, version.minor, version.patch
-                );
-                for (name, _) in contracts {
-                    println!("    - {}", name);
-                }
-            }
-        }
-        if print_sizes {
-            // add extra newline if names were already printed
-            if print_names {
-                println!();
-            }
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            let mut sizes = BTreeMap::new();
-            for (_, contracts) in compiled_contracts.into_iter() {
-                for (name, contract) in contracts {
-                    let size = contract
-                        .get_bytecode_bytes()
-                        .map(|bytes| bytes.0.len())
-                        .unwrap_or_default();
-                    sizes.insert(name, size);
-                }
-            }
-            let json = serde_json::to_value(&sizes)?;
-            println!("name             size (bytes)");
-            println!("-----------------------------");
-            println!("{}", to_table(json));
-        }
-    }
-
-    Ok(output)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
-    let output = ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(NoReporter::default()),
-        || project.compile(),
-    )?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Compile a set of files not necessarily included in the `project`'s source dir
-pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-    println!("{}", output);
-    Ok(output)
-}
-
-/// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
+/// Given a `Project`'s output, removes the matching ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
-pub fn read_artifact(
-    project: &Project,
-    compiled: ProjectCompileOutput,
-    contract: ContractInfo,
+#[track_caller]
+pub fn remove_contract(
+    output: &mut ProjectCompileOutput,
+    info: &ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    Ok(match contract.path {
-        Some(path) => get_artifact_from_path(project, path, contract.name)?,
-        None => get_artifact_from_name(contract, compiled)?,
-    })
+    let contract = if let Some(contract) = output.remove_contract(info) {
+        contract
+    } else {
+        let mut err = format!("could not find artifact: `{}`", info.name);
+        if let Some(suggestion) =
+            suggestions::did_you_mean(&info.name, output.artifacts().map(|(name, _)| name)).pop()
+        {
+            if suggestion != info.name {
+                err = format!(
+                    r#"{}
+
+        Did you mean `{}`?"#,
+                    err, suggestion
+                );
+            }
+        }
+        eyre::bail!(err)
+    };
+
+    let abi = contract
+        .get_abi()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain abi", info))?
+        .into_owned();
+
+    let bin = contract
+        .get_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain bytecode", info))?
+        .into_owned();
+
+    let runtime = contract
+        .get_deployed_bytecode()
+        .ok_or_else(|| eyre::eyre!("contract {} does not contain deployed bytecode", info))?
+        .into_owned();
+
+    Ok((abi, bin, runtime))
 }
 
 /// Helper function for finding a contract by ContractName
 // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
 // contract name?
-fn get_artifact_from_name(
-    contract: ContractInfo,
-    compiled: ProjectCompileOutput,
-) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    let mut has_found_contract = false;
-    let mut contract_artifact = None;
+pub fn get_cached_entry_by_name(
+    cache: &SolFilesCache,
+    name: &str,
+) -> eyre::Result<(PathBuf, CacheEntry)> {
+    let mut cached_entry = None;
+    let mut alternatives = Vec::new();
 
-    for (artifact_id, artifact) in compiled.into_artifacts() {
-        if artifact_id.name == contract.name {
-            if has_found_contract {
-                eyre::bail!("contract with duplicate name. pass path")
+    for (abs_path, entry) in cache.files.iter() {
+        for (artifact_name, _) in entry.artifacts.iter() {
+            if artifact_name == name {
+                if cached_entry.is_some() {
+                    eyre::bail!(
+                        "contract with duplicate name `{}`. please pass the path instead",
+                        name
+                    )
+                }
+                cached_entry = Some((abs_path.to_owned(), entry.to_owned()));
+            } else {
+                alternatives.push(artifact_name);
             }
-            has_found_contract = true;
-            contract_artifact = Some(artifact);
         }
     }
 
-    Ok(match contract_artifact {
-        Some(artifact) => (
-            artifact
-                .abi
-                .map(Into::into)
-                .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-            artifact.bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-            artifact.deployed_bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-        ),
-        None => {
-            eyre::bail!("could not find artifact")
-        }
-    })
+    if let Some(entry) = cached_entry {
+        return Ok(entry)
+    }
+
+    let mut err = format!("could not find artifact: `{}`", name);
+    if let Some(suggestion) = suggestions::did_you_mean(name, &alternatives).pop() {
+        err = format!(
+            r#"{}
+
+        Did you mean `{}`?"#,
+            err, suggestion
+        );
+    }
+    eyre::bail!(err)
 }
 
-/// Find using src/ContractSource.sol:ContractName
-fn get_artifact_from_path(
-    project: &Project,
-    contract_path: String,
-    contract_name: String,
-) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    // Get sources from the requested location
-    let abs_path = dunce::canonicalize(PathBuf::from(contract_path))?;
+/// A type that keeps track of attempts
+#[derive(Debug, Clone, Parser)]
+pub struct RetryArgs {
+    #[clap(
+        long,
+        help = "Number of attempts for retrying verification",
+        default_value = "5",
+        validator = u32_validator(1, 10),
+        value_name = "RETRIES"
+    )]
+    pub retries: u32,
 
-    let cache = SolFilesCache::read_joined(&project.paths)?;
+    #[clap(
+        long,
+        help = "Optional delay to apply inbetween verification attempts in seconds.",
+        default_value = "5",
+        validator = u32_validator(0, 30),
+        value_name = "DELAY"
+    )]
+    pub delay: u32,
+}
 
-    // Read the artifact from disk
-    let artifact: CompactContractBytecode = cache.read_artifact(abs_path, &contract_name)?;
+fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
+    move |v: &str| -> eyre::Result<()> {
+        let v = v.parse::<u32>()?;
+        if v >= min && v <= max {
+            Ok(())
+        } else {
+            Err(eyre::eyre!("Expected between {} and {} inclusive.", min, max))
+        }
+    }
+}
 
-    Ok((
-        artifact
-            .abi
-            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract_name)))?,
-        artifact
-            .bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
-        artifact
-            .deployed_bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
-    ))
+impl From<RetryArgs> for Retry {
+    fn from(r: RetryArgs) -> Self {
+        Retry::new(r.retries, Some(r.delay))
+    }
+}
+
+pub fn needs_setup(abi: &Abi) -> bool {
+    let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
+
+    for setup_fn in setup_fns.iter() {
+        if setup_fn.name != "setUp" {
+            println!(
+                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                Paint::yellow("Warning:").bold(),
+                setup_fn.signature()
+            );
+        }
+    }
+
+    setup_fns.len() == 1 && setup_fns[0].name == "setUp"
+}
+
+pub fn unwrap_contracts(
+    contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    deployed_code: bool,
+) -> ContractsByArtifact {
+    ContractsByArtifact(
+        contracts
+            .iter()
+            .filter_map(|(id, c)| {
+                let bytecode = if deployed_code {
+                    c.deployed_bytecode.clone().into_bytes()
+                } else {
+                    c.bytecode.clone().object.into_bytes()
+                };
+
+                if let Some(bytecode) = bytecode {
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                }
+                None
+            })
+            .collect(),
+    )
+}
+
+#[macro_export]
+macro_rules! init_progress {
+    ($local:expr, $label:expr) => {{
+        let pb = ProgressBar::new($local.len() as u64);
+        let mut template =
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ".to_string();
+        template += $label;
+        template += " ({eta})";
+        pb.set_style(
+            ProgressStyle::with_template(&template)
+                .unwrap()
+                .with_key("eta", |state| format!("{:.1}s", state.eta().as_secs_f64()))
+                .progress_chars("#>-"),
+        );
+        pb
+    }};
+}
+
+#[macro_export]
+macro_rules! update_progress {
+    ($pb:ident, $index:expr) => {
+        $pb.set_position(($index + 1) as u64);
+    };
+}
+
+/// True if the network calculates gas costs differently.
+pub fn has_different_gas_calc(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+    }
+    false
+}
+
+/// True if it supports broadcasting in batches.
+pub fn has_batch_support(chain: u64) -> bool {
+    if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
+        return !matches!(
+            chain,
+            Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
+        )
+    }
+    true
+}
+
+/// Helpers for loading configuration.
+///
+/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
+/// definition on `T: Into<Config> + Into<Figment>` below.
+///
+/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
+/// also prints `Config::__warnings` to stderr
+pub trait LoadConfig {
+    /// Load and sanitize the [`Config`] based on the options provided in self
+    fn load_config(self) -> Config;
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
+    fn load_config_unsanitized(self) -> Config;
+
+    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
+    fn load_config_emit_warnings(self) -> Config;
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
+    fn load_config_unsanitized_emit_warnings(self) -> Config;
+}
+
+impl<T> LoadConfig for T
+where
+    T: Into<Config> + Into<Figment>,
+{
+    fn load_config(self) -> Config {
+        self.into()
+    }
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized(self) -> Config {
+        let figment: Figment = self.into();
+        Config::from_provider(figment)
+    }
+    fn load_config_emit_warnings(self) -> Config {
+        let config = self.load_config();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized_emit_warnings(self) -> Config {
+        let config = self.load_config_unsanitized();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
 }

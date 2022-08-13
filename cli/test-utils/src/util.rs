@@ -1,15 +1,16 @@
+use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use regex::Regex;
 use std::{
-    collections::HashMap,
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Display,
     fs,
     fs::File,
@@ -23,6 +24,16 @@ use std::{
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// A lock used for pre-installing commonly used solc versions once.
+/// Pre-installing is useful, because if two forge test require a missing solc at the same time, one
+/// can encounter an OS error 26 textfile busy if it tries to write the freshly downloaded solc to
+/// the right location while the other test already did that and is currently executing this solc
+/// binary.
+static PRE_INSTALL_SOLC_LOCK: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+
+// This stores `true` if the current terminal is a tty
+pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -62,11 +73,16 @@ pub fn clone_remote(
 ///
 /// The name given will be used to create the directory. Generally, it should
 /// correspond to the test name.
+#[track_caller]
 pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
     setup_forge_project(TestProject::new(name, style))
 }
 
 pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    // preinstall commonly used solc once, we execute this here because this is the shared
+    // entrypoint used by all `forgetest!` macros
+    install_commonly_used_solc();
+
     let cmd = test.forge_command();
     (test, cmd)
 }
@@ -78,6 +94,19 @@ pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
 pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
     let cmd = test.cast_command();
     (test, cmd)
+}
+
+/// pre-installs commonly used solc versions
+fn install_commonly_used_solc() {
+    let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock();
+    if !*is_preinstalled {
+        let v0_8_10 = std::thread::spawn(|| Solc::blocking_install(&"0.8.10".parse().unwrap()));
+        let v0_8_13 = std::thread::spawn(|| Solc::blocking_install(&"0.8.13".parse().unwrap()));
+        v0_8_10.join().unwrap().unwrap();
+        v0_8_13.join().unwrap().unwrap();
+
+        *is_preinstalled = true;
+    }
 }
 
 /// `TestProject` represents a temporary project to run tests against.
@@ -97,7 +126,7 @@ impl TestProject {
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let project = pretty_err(name, TempProject::with_style(&format!("{}-{}", name, id), style));
+        let project = pretty_err(name, TempProject::with_style(&format!("{name}-{id}"), style));
         Self::with_project(project)
     }
 
@@ -125,6 +154,11 @@ impl TestProject {
         self.root().join(Config::FILE_NAME)
     }
 
+    /// Returns the path to the project's cache file
+    pub fn cache_path(&self) -> &PathBuf {
+        &self.paths().cache
+    }
+
     /// Writes the given config as toml to `foundry.toml`
     pub fn write_config(&self, config: Config) {
         let file = self.config_path();
@@ -134,6 +168,16 @@ impl TestProject {
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
         assert!(self.config_path().exists());
+    }
+
+    /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    pub fn assert_cache_exists(&self) {
+        assert!(self.cache_path().exists());
+    }
+
+    /// Asserts that the `<root>/out` file exits
+    pub fn assert_artifacts_dir_exists(&self) {
+        assert!(self.paths().artifacts.exists());
     }
 
     /// Creates all project dirs and ensure they were created
@@ -179,6 +223,12 @@ impl TestProject {
         self.inner().add_source("test.sol", s).unwrap()
     }
 
+    /// Adds `console.sol` as a source under "console.sol"
+    pub fn insert_console(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/logs/console.sol");
+        self.inner().add_source("console.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
@@ -198,16 +248,16 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
+    #[track_caller]
     pub fn forge_command(&self) -> TestCommand {
-        let mut cmd = self.forge_bin();
-        cmd.current_dir(&self.inner.root());
+        let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
@@ -219,22 +269,27 @@ impl TestProject {
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
+            stdin_fun: None,
         }
     }
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        process::Command::new(forge)
+        let mut cmd = process::Command::new(forge);
+        cmd.current_dir(self.inner.root());
+        cmd.env("NO_COLOR", "1");
+        cmd
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> process::Command {
         let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
-        process::Command::new(cast)
+        let mut cmd = process::Command::new(cast);
+        cmd.env("NO_COLOR", "1");
+        cmd
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -256,18 +311,25 @@ impl TestProject {
         pretty_err(self.root(), fs::remove_dir_all(self.root()));
         pretty_err(self.root(), fs::create_dir_all(self.root()));
     }
+
+    /// Removes all contract files from `src`, `test`, `script`
+    pub fn wipe_contracts(&self) {
+        fn rm_create(path: &Path) {
+            pretty_err(path, fs::remove_dir_all(path));
+            pretty_err(path, fs::create_dir(path));
+        }
+        rm_create(&self.paths().sources);
+        rm_create(&self.paths().tests);
+        rm_create(&self.paths().scripts);
+    }
 }
 
 impl Drop for TestCommand {
     fn drop(&mut self) {
-        for (key, value) in self.saved_env_vars.iter() {
-            match value {
-                Some(val) => std::env::set_var(key, val),
-                None => std::env::remove_var(key),
-            }
-        }
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
-        let _ = std::env::set_current_dir(&self.saved_cwd);
+        if self.saved_cwd.exists() {
+            let _ = std::env::set_current_dir(&self.saved_cwd);
+        }
     }
 }
 
@@ -294,15 +356,15 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 }
 
 /// A simple wrapper around a process::Command with some conveniences.
-#[derive(Debug)]
 pub struct TestCommand {
     saved_cwd: PathBuf,
     /// The project used to launch this command.
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
-    saved_env_vars: HashMap<OsString, Option<OsString>>,
+    // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    stdin_fun: Option<Box<dyn FnOnce(process::ChildStdin)>>,
 }
 
 impl TestCommand {
@@ -351,28 +413,25 @@ impl TestCommand {
         self
     }
 
+    pub fn stdin(&mut self, fun: impl FnOnce(process::ChildStdin) + 'static) -> &mut TestCommand {
+        self.stdin_fun = Some(Box::new(fun));
+        self
+    }
+
     /// Convenience function to add `--root project.root()` argument
     pub fn root_arg(&mut self) -> &mut TestCommand {
         let root = self.project.root().to_path_buf();
         self.arg("--root").arg(root)
     }
 
-    /// Set the environment variable `k` to value `v`. The variable will be
-    /// removed when the command is dropped.
-    pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
-        let key = k.as_ref();
-        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
-            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
-        }
-
-        std::env::set_var(key, v.to_string());
+    /// Set the environment variable `k` to value `v` for the command.
+    pub fn set_env(&mut self, k: impl AsRef<OsStr>, v: impl Display) {
+        self.cmd.env(k, v.to_string());
     }
 
-    /// Unsets the environment variable `k`
-    pub fn unset_env(&mut self, k: impl AsRef<str>) {
-        let key = k.as_ref();
-        let _ = self.saved_env_vars.remove(OsStr::new(key));
-        std::env::remove_var(key);
+    /// Unsets the environment variable `k` for the command.
+    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
+        self.cmd.env_remove(k);
     }
 
     /// Set the working directory for this command.
@@ -387,7 +446,7 @@ impl TestCommand {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config(&mut self) -> Config {
-        self.forge_fuse().args(["config", "--json"]);
+        self.cmd.args(["config", "--json"]);
         let output = self.output();
         let c = String::from_utf8_lossy(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
@@ -395,12 +454,20 @@ impl TestCommand {
         config
     }
 
+    /// Runs `git init` inside the project's dir
+    pub fn git_init(&self) -> process::Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("init").current_dir(self.project.root());
+        let output = cmd.output().unwrap();
+        self.expect_success(output)
+    }
+
     /// Runs and captures the stdout of the given command.
     pub fn stdout(&mut self) -> String {
         let o = self.output();
         let stdout = String::from_utf8_lossy(&o.stdout);
-        match stdout.parse() {
-            Ok(t) => t,
+        match stdout.parse::<String>() {
+            Ok(t) => t.replace("\r\n", "\n"),
             Err(err) => {
                 panic!("could not convert from string: {:?}\n\n{}", err, stdout);
             }
@@ -409,31 +476,64 @@ impl TestCommand {
 
     /// Returns the `stderr` of the output as `String`.
     pub fn stderr_lossy(&mut self) -> String {
-        let output = self.cmd.output().unwrap();
-        String::from_utf8_lossy(&output.stderr).to_string()
+        let output = self.execute();
+        String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n")
     }
 
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
-        String::from_utf8_lossy(&self.output().stdout).to_string()
+        String::from_utf8_lossy(&self.output().stdout).to_string().replace("\r\n", "\n")
+    }
+
+    /// Returns the output but does not expect that the command was successful
+    pub fn unchecked_output(&mut self) -> process::Output {
+        self.execute()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
     pub fn output(&mut self) -> process::Output {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         self.expect_success(output)
     }
 
+    /// Executes command, applies stdin function and returns output
+    pub fn execute(&mut self) -> process::Output {
+        let mut child = self
+            .cmd
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .stdin(process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        if let Some(fun) = self.stdin_fun.take() {
+            fun(child.stdin.take().unwrap())
+        }
+        child.wait_with_output().unwrap()
+    }
+
     /// Runs the command and prints its output
+    /// You have to pass --nocapture to cargo test or the print won't be displayed.
+    /// The full command would be: cargo test -- --nocapture
     pub fn print_output(&mut self) {
-        let output = self.cmd.output().unwrap();
+        let output = self.execute();
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
         println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 
+    /// Writes the content of the output to new fixture files
+    pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
+        let name = name.as_ref();
+        if let Some(parent) = name.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let output = self.execute();
+        fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
+        fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
+    }
+
     /// Runs the command and asserts that it resulted in an error exit code.
     pub fn assert_err(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -453,7 +553,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stderr.
     pub fn assert_non_empty_stderr(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if o.status.success() || o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -473,7 +573,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that something was printed to stdout.
     pub fn assert_non_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -493,7 +593,7 @@ impl TestCommand {
 
     /// Runs the command and asserts that nothing was printed to stdout.
     pub fn assert_empty_stdout(&mut self) {
-        let o = self.cmd.output().unwrap();
+        let o = self.execute();
         if !o.status.success() || !o.stderr.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
@@ -540,6 +640,66 @@ impl TestCommand {
     }
 }
 
+/// Extension trait for `std::process::Output`
+///
+/// These function will read the path's content and assert that the process' output matches the
+/// fixture. Since `forge` commands may emit colorized output depending on whether the current
+/// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
+pub trait OutputExt {
+    /// Ensure the command wrote the expected data to `stdout`.
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+
+    /// Ensure the command wrote the expected data to `stderr`.
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+}
+
+/// Patterns to remove from fixtures before comparing output
+///
+/// This should strip everything that can vary from run to run, like elapsed time, file paths
+static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
+});
+
+impl OutputExt for process::Output {
+    #[track_caller]
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
+        let stdout = String::from_utf8_lossy(&self.stdout);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "").replace('\\', "/");
+
+        pretty_assertions::assert_eq!(expected, out);
+
+        self
+    }
+
+    #[track_caller]
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "").replace('\\', "/");
+        let stderr = String::from_utf8_lossy(&self.stderr);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "").replace('\\', "/");
+
+        pretty_assertions::assert_eq!(expected, out);
+        self
+    }
+}
+
+/// Returns the fixture path depending on whether the current terminal is tty
+///
+/// This is useful in combination with [OutputExt]
+pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if *IS_TTY {
+        return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            path.with_extension(format!("tty.{}", ext))
+        } else {
+            path.with_extension("tty")
+        }
+    }
+    path.to_path_buf()
+}
+
 /// Return a recursive listing of all files and directories in the given
 /// directory. This is useful for debugging transient and odd failures in
 /// integration tests.
@@ -549,4 +709,31 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tty_path_works() {
+        let path = "tests/fixture/test.stdout";
+        if *IS_TTY {
+            assert_eq!(tty_fixture_path(path), PathBuf::from("tests/fixture/test.tty.stdout"));
+        } else {
+            assert_eq!(tty_fixture_path(path), PathBuf::from(path));
+        }
+    }
+
+    #[test]
+    fn fixture_regex_matches() {
+        assert!(IGNORE_IN_FIXTURES.is_match(
+            r#"
+Location:
+   [35mcli/src/compile.rs[0m:[35m151[0m
+
+Backtrace omitted.
+        "#
+        ));
+    }
 }

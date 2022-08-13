@@ -1,36 +1,73 @@
-use std::{fmt::Write, path::PathBuf};
-
-use clap::Parser;
+use crate::{
+    cmd::{Cmd, LoadConfig},
+    term::cli_warn,
+    utils::FoundryPathExt,
+};
+use clap::{Parser, ValueHint};
 use console::{style, Style};
-use ethers::solc::ProjectPathsConfig;
-
+use forge_fmt::{format, parse};
+use foundry_common::fs;
+use foundry_config::{impl_figment_convert_basic, Config};
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
-
-use forge_fmt::{Formatter, FormatterConfig, Visitable};
-
-use crate::cmd::Cmd;
+use std::{
+    fmt::{self, Write},
+    io,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
-    #[clap(help = "path to the file or directory", conflicts_with = "root")]
+    #[clap(
+        help = "path to the file, directory or '-' to read from stdin",
+        conflicts_with = "root",
+        value_hint = ValueHint::FilePath,
+        value_name = "PATH"
+    )]
     path: Option<PathBuf>,
-    #[clap(help = "project's root path, default being the current working directory", long)]
+    #[clap(
+        help = "The project's root path.",
+        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
+        long,
+        value_hint = ValueHint::DirPath,
+        value_name = "PATH"
+    )]
     root: Option<PathBuf>,
     #[clap(
         help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
         long
     )]
     check: bool,
+    #[clap(
+        help = "in 'check' and stdin modes, outputs raw formatted code instead of diff",
+        long = "raw",
+        short
+    )]
+    raw: bool,
 }
 
-struct Line(Option<usize>);
+impl_figment_convert_basic!(FmtArgs);
 
-impl std::fmt::Display for Line {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.0 {
-            None => write!(f, "    "),
-            Some(idx) => write!(f, "{:<4}", idx + 1),
+// === impl FmtArgs ===
+
+impl FmtArgs {
+    /// Returns all inputs to format
+    fn inputs(&self, config: &Config) -> Vec<Input> {
+        if let Some(ref path) = self.path {
+            if path.is_dir() {
+                ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
+            } else if path.is_sol() {
+                vec![Input::Path(path.to_path_buf())]
+            } else if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
+                let mut buf = String::new();
+                io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
+                vec![Input::Stdin(buf)]
+            } else {
+                vec![]
+            }
+        } else {
+            config.project_paths().input_files().into_iter().map(Input::Path).collect()
         }
     }
 }
@@ -39,60 +76,62 @@ impl Cmd for FmtArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let root = if let Some(path) = self.path {
-            path
-        } else {
-            let root = self.root.unwrap_or_else(|| {
-                std::env::current_dir().expect("failed to get current directory")
-            });
-            if !root.is_dir() {
-                return Err(eyre::eyre!("Root path should be a directory"))
-            }
+        let config = self.load_config_emit_warnings();
+        let inputs = self.inputs(&config);
 
-            ProjectPathsConfig::find_source_dir(&root)
-        };
-
-        let paths = if root.is_dir() {
-            ethers::solc::utils::source_files(root)
-        } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
-            vec![root]
-        } else {
-            vec![]
-        };
-
-        let diffs = paths
+        let diffs = inputs
             .par_iter()
-            .enumerate()
-            .map(|(i, path)| {
-                let source = std::fs::read_to_string(&path)?;
-                let (mut source_unit, _comments) = solang_parser::parse(&source, i)
+            .map(|input| {
+                let source = match input {
+                    Input::Path(path) => fs::read_to_string(&path)?,
+                    Input::Stdin(source) => source.to_string()
+                };
+
+                let parsed = parse(&source)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            path.to_string_lossy(),
+                            input,
                             diags
                         ))?;
 
-                let mut output = String::new();
-                let mut formatter =
-                    Formatter::new(&mut output, &source, FormatterConfig::default());
+                if !parsed.invalid_inline_config_items.is_empty() {
+                    let path = match input {
+                        Input::Path(path) => {
+                            let path = path.strip_prefix(&config.__root.0).unwrap_or(path);
+                            format!("{}", path.display())
+                        }
+                        Input::Stdin(_) => "stdin".to_string()
+                    };
+                    for (loc, warning) in &parsed.invalid_inline_config_items {
+                        let mut lines = source[..loc.start().min(source.len())].split('\n');
+                        let col = lines.next_back().unwrap().len() + 1;
+                        let row = lines.count() + 1;
+                        cli_warn!("[{}:{}:{}] {}", path, row, col, warning);
+                    }
+                }
 
-                source_unit.visit(&mut formatter).unwrap();
+                let mut output = String::new();
+                format(&mut output, parsed, config.fmt.clone()).unwrap();
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
                             "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            path.to_string_lossy(),
+                            input,
                             diags
                         )
                 })?;
 
-                if self.check {
+                if self.check || matches!(input, Input::Stdin(_)) {
+                    if self.raw {
+                        print!("{}", output);
+                    }
+
                     let diff = TextDiff::from_lines(&source, &output);
 
                     if diff.ratio() < 1.0 {
                         let mut diff_summary = String::new();
 
-                        writeln!(diff_summary, "Diff in {}:", path.to_string_lossy())?;
+                        writeln!(diff_summary, "Diff in {input}:")?;
                         for (j, group) in diff.grouped_ops(3).iter().enumerate() {
                             if j > 0 {
                                 writeln!(diff_summary, "{:-^1$}", "-", 80)?;
@@ -127,25 +166,59 @@ impl Cmd for FmtArgs {
 
                         return Ok(Some(diff_summary))
                     }
-                } else {
-                    std::fs::write(path, output)?;
+                } else if let Input::Path(path) = input {
+                    fs::write(path, output)?;
                 }
 
                 Ok(None)
             })
-            .collect::<eyre::Result<Vec<Option<String>>>>()?;
+            .collect::<eyre::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<String>>();
 
         if !diffs.is_empty() {
-            for (i, diff) in diffs.iter().flatten().enumerate() {
-                if i > 0 {
-                    println!();
+            // This branch is only reachable with stdin or --check
+
+            if !self.raw {
+                for (i, diff) in diffs.iter().enumerate() {
+                    if i > 0 {
+                        println!();
+                    }
+                    print!("{diff}");
                 }
-                print!("{}", diff);
             }
 
-            std::process::exit(1);
+            if self.check {
+                std::process::exit(1);
+            }
         }
 
         Ok(())
+    }
+}
+
+struct Line(Option<usize>);
+
+enum Input {
+    Path(PathBuf),
+    Stdin(String),
+}
+
+impl fmt::Display for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Input::Path(path) => write!(f, "{}", path.display()),
+            Input::Stdin(_) => write!(f, "stdin"),
+        }
+    }
+}
+
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            None => write!(f, "    "),
+            Some(idx) => write!(f, "{:<4}", idx + 1),
+        }
     }
 }

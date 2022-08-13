@@ -16,6 +16,7 @@ body:
       options:
         - Forge
         - Cast
+        - Anvil
         - Foundryup
         - Other (please describe)
     validations:

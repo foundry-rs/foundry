@@ -1,10 +1,9 @@
 //! terminal utils
 
-use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
-    report::{BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
+    report::{self, BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
     CompilerInput, CompilerOutput, Solc,
 };
 use once_cell::sync::Lazy;
@@ -17,7 +16,9 @@ use std::{
         mpsc::{self, TryRecvError},
         Arc, Mutex,
     },
+    time::Duration,
 };
+use yansi::Paint;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -72,73 +73,29 @@ impl Spinner {
         if self.no_progress {
             return
         }
-        print!("{}", self.tick_bytes());
-        io::stdout().flush().unwrap();
-    }
 
-    fn tick_bytes(&mut self) -> String {
+        print!(
+            "\r\x33[2K\r{} {}",
+            Paint::new(format!("[{}]", Paint::green(self.indicator[self.idx]))).bold(),
+            self.message
+        );
+        io::stdout().flush().unwrap();
+
+        self.idx += 1;
         if self.idx >= self.indicator.len() {
             self.idx = 0;
         }
-
-        let s = format!(
-            "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}",
-            self.indicator[self.idx], self.message
-        );
-        self.idx += 1;
-
-        s
-    }
-
-    pub fn done(&self) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[32m+\x1b[0;1m]\x1b[0m {}", self.message);
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn finish(&mut self, msg: impl Into<String>) {
-        self.message(msg);
-        self.done();
     }
 
     pub fn message(&mut self, msg: impl Into<String>) {
         self.message = msg.into();
     }
-
-    pub fn clear_line(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x33[2K\r");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn clear(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x1b[2K");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn fail(&mut self, err: &str) {
-        self.error(err);
-        self.clear();
-    }
-
-    pub fn error(&mut self, line: &str) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {}", line);
-    }
 }
 
-/// A spinner used as [`ethers::solc::report::Reporter`]
+/// A spinner used as [`report::Reporter`]
 ///
 /// This reporter will prefix messages with a spinning cursor
+#[derive(Debug)]
 pub struct SpinnerReporter {
     /// the timeout in ms
     sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
@@ -149,7 +106,7 @@ pub struct SpinnerReporter {
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
     ///
-    /// The spinner's message will be updated via the `ethers::solc::Reporter` events
+    /// The spinner's message will be updated via the `reporter` events
     ///
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
@@ -225,35 +182,39 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
-        self.solc_io_report.log_compiler_input(input);
+        self.solc_io_report.log_compiler_input(input, version);
     }
 
-    fn on_solc_success(&self, _solc: &Solc, _version: &Version, output: &CompilerOutput) {
-        self.solc_io_report.log_compiler_output(output);
+    fn on_solc_success(
+        &self,
+        _solc: &Solc,
+        version: &Version,
+        output: &CompilerOutput,
+        duration: &Duration,
+    ) {
+        self.solc_io_report.log_compiler_output(output, version);
+        self.send_msg(format!(
+            "Solc {}.{}.{} finished in {:.2?}",
+            version.major, version.minor, version.patch, duration
+        ));
     }
 
     /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
-        self.send_msg(format!("installing solc version \"{}\"", version));
+        self.send_msg(format!("installing solc version \"{version}\""));
     }
 
     /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
-        self.send_msg(format!("Successfully installed solc {}", version));
+        self.send_msg(format!("Successfully installed solc {version}"));
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(
-            Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)).to_string(),
-        );
+        self.send_msg(Paint::red(format!("Failed to install solc {version}: {error}")).to_string());
     }
 
-    fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
-        self.send_msg(format!(
-            "Unable to resolve import: \"{}\" with remappings:\n    {}",
-            import.display(),
-            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n    ")
-        ));
+    fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
+        self.send_msg(report::format_unresolved_imports(imports, remappings));
     }
 }
 
@@ -263,12 +224,25 @@ impl Reporter for SpinnerReporter {
 /// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
 pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     let reporter = if TERM_SETTINGS.indicate_progress {
-        ethers::solc::report::Report::new(SpinnerReporter::spawn())
+        report::Report::new(SpinnerReporter::spawn())
     } else {
-        ethers::solc::report::Report::new(BasicStdoutReporter::default())
+        report::Report::new(BasicStdoutReporter::default())
     };
-    ethers::solc::report::with_scoped(&reporter, f)
+    report::with_scoped(&reporter, f)
 }
+
+macro_rules! cli_warn {
+    ($($arg:tt)*) => {
+        eprintln!(
+            "{}{} {}",
+            yansi::Paint::yellow("warning").bold(),
+            yansi::Paint::new(":").bold(),
+            format_args!($($arg)*)
+        )
+    }
+}
+
+pub(crate) use cli_warn;
 
 #[cfg(test)]
 mod tests {
@@ -283,7 +257,26 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
             s.tick();
         }
+    }
 
-        s.finish("Done".to_string());
+    #[test]
+    fn can_format_properly() {
+        let r = SpinnerReporter::spawn();
+        let remappings: Vec<Remapping> = vec![
+            "library/=library/src/".parse().unwrap(),
+            "weird-erc20/=lib/weird-erc20/src/".parse().unwrap(),
+            "ds-test/=lib/ds-test/src/".parse().unwrap(),
+            "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/".parse().unwrap(),
+        ];
+        let unresolved = vec![(Path::new("./src/Import.sol"), Path::new("src/File.col"))];
+        r.on_unresolved_imports(&unresolved, &remappings);
+        // formats:
+        // [⠒] Unable to resolve imports:
+        //       "./src/Import.sol" in "src/File.col"
+        // with remappings:
+        //       library/=library/src/
+        //       weird-erc20/=lib/weird-erc20/src/
+        //       ds-test/=lib/ds-test/src/
+        //       openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
     }
 }

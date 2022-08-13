@@ -1,11 +1,20 @@
 //! Cache related abstraction
 use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::AccountInfo;
+use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, fs, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::BufWriter,
+    path::PathBuf,
+    sync::Arc,
+};
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
+use url::Url;
+
+use crate::HashMap as Map;
 
 pub type StorageInfo = BTreeMap<U256, U256>;
 
@@ -37,7 +46,9 @@ impl BlockchainDb {
             .as_ref()
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
-                    if meta != *cache.meta().read() {
+                    let mut existing = cache.meta().write();
+                    existing.hosts.extend(meta.hosts.clone());
+                    if meta != *existing {
                         warn!(target:"cache", "non-matching block metadata");
                         false
                     } else {
@@ -74,14 +85,78 @@ impl BlockchainDb {
     pub fn cache(&self) -> &Arc<JsonBlockCacheDB> {
         &self.cache
     }
+
+    /// Returns the underlying storage
+    pub fn db(&self) -> &Arc<MemDb> {
+        &self.db
+    }
 }
 
 /// relevant identifying markers in the context of [BlockchainDb]
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Serialize)]
 pub struct BlockchainDbMeta {
     pub cfg_env: revm::CfgEnv,
     pub block_env: revm::BlockEnv,
-    pub host: String,
+    /// all the hosts used to connect to
+    pub hosts: BTreeSet<String>,
+}
+
+impl BlockchainDbMeta {
+    /// Creates a new instance
+    pub fn new(env: revm::Env, url: String) -> Self {
+        let host = Url::parse(&url)
+            .ok()
+            .and_then(|url| url.host().map(|host| host.to_string()))
+            .unwrap_or(url);
+
+        BlockchainDbMeta {
+            cfg_env: env.cfg.clone(),
+            block_env: env.block,
+            hosts: BTreeSet::from([host]),
+        }
+    }
+}
+
+// ignore hosts to not invalidate the cache when different endpoints are used, as it's commonly the
+// case for http vs ws endpoints
+impl PartialEq for BlockchainDbMeta {
+    fn eq(&self, other: &Self) -> bool {
+        self.cfg_env == other.cfg_env && self.block_env == other.block_env
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockchainDbMeta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // custom deserialize impl to not break existing cache files
+        #[derive(Deserialize)]
+        struct Meta {
+            cfg_env: revm::CfgEnv,
+            block_env: revm::BlockEnv,
+            /// all the hosts used to connect to
+            #[serde(alias = "host")]
+            hosts: Hosts,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Hosts {
+            Multi(BTreeSet<String>),
+            Single(String),
+        }
+
+        let Meta { cfg_env, block_env, hosts } = Meta::deserialize(deserializer)?;
+        Ok(Self {
+            cfg_env,
+            block_env,
+            hosts: match hosts {
+                Hosts::Multi(hosts) => hosts,
+                Hosts::Single(host) => BTreeSet::from([host]),
+            },
+        })
+    }
 }
 
 /// In Memory cache containing all fetched accounts and storage slots
@@ -94,6 +169,73 @@ pub struct MemDb {
     pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
     /// All retrieved block hashes
     pub block_hashes: RwLock<BTreeMap<u64, H256>>,
+}
+
+impl MemDb {
+    /// Clears all data stored in this db
+    pub fn clear(&self) {
+        self.accounts.write().clear();
+        self.storage.write().clear();
+        self.block_hashes.write().clear();
+    }
+
+    // Inserts the account, replacing it if it exists already
+    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
+        self.accounts.write().insert(address, account);
+    }
+
+    /// The implementation of [DatabaseCommit::commit()]
+    pub fn do_commit(&self, changes: Map<Address, Account>) {
+        let mut storage = self.storage.write();
+        let mut accounts = self.accounts.write();
+        for (add, mut acc) in changes {
+            if acc.is_empty() || matches!(acc.filth, Filth::Destroyed) {
+                accounts.remove(&add);
+                storage.remove(&add);
+            } else {
+                // insert account
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash())
+                {
+                    acc.info.code_hash = code_hash;
+                } else if acc.info.code_hash.is_zero() {
+                    acc.info.code_hash = KECCAK_EMPTY;
+                }
+                accounts.insert(add, acc.info);
+
+                let acc_storage = storage.entry(add).or_default();
+                if acc.filth.abandon_old_storage() {
+                    acc_storage.clear();
+                }
+                for (index, value) in acc.storage {
+                    if value.is_zero() {
+                        acc_storage.remove(&index);
+                    } else {
+                        acc_storage.insert(index, value);
+                    }
+                }
+                if acc_storage.is_empty() {
+                    storage.remove(&add);
+                }
+            }
+        }
+    }
+}
+
+impl Clone for MemDb {
+    fn clone(&self) -> Self {
+        Self {
+            accounts: RwLock::new(self.accounts.read().clone()),
+            storage: RwLock::new(self.storage.read().clone()),
+            block_hashes: RwLock::new(self.block_hashes.read().clone()),
+        }
+    }
+}
+
+impl DatabaseCommit for MemDb {
+    fn commit(&mut self, changes: Map<Address, Account>) {
+        self.do_commit(changes)
+    }
 }
 
 /// A [BlockCacheDB] that stores the cached content in a json file
@@ -224,5 +366,20 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
                 block_hashes: RwLock::new(block_hashes),
             }),
         })
+    }
+}
+
+/// A type that flushes a `JsonBlockCacheDB` on drop
+///
+/// This type intentionally does not implement `Clone` since it's intended that there's only once
+/// instance that will flush the cache.
+#[derive(Debug)]
+pub struct FlushJsonBlockCacheDB(pub Arc<JsonBlockCacheDB>);
+
+impl Drop for FlushJsonBlockCacheDB {
+    fn drop(&mut self) {
+        trace!(target: "fork::cache", "flushing cache");
+        self.0.flush();
+        trace!(target: "fork::cache", "flushed cache");
     }
 }

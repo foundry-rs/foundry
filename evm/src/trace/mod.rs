@@ -2,19 +2,26 @@
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-pub use identifier::TraceIdentifier;
 
 mod decoder;
-pub use decoder::CallTraceDecoder;
+pub mod node;
+mod utils;
 
-use crate::{abi::CHEATCODE_ADDRESS, CallKind};
-use ansi_term::Colour;
+use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use node::CallTraceNode;
+use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Write};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::{self, Write},
+};
+use yansi::{Color, Paint};
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +42,7 @@ impl CallTraceArena {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                let node = &mut self.arena[0];
-                node.trace.update(new_trace);
+                self.arena[0].trace = new_trace;
                 0
             }
             // We found the parent node, add the new trace as a child
@@ -45,8 +51,12 @@ impl CallTraceArena {
 
                 let trace_location = self.arena[entry].children.len();
                 self.arena[entry].ordering.push(LogCallOrder::Call(trace_location));
-                let node =
-                    CallTraceNode { parent: Some(entry), trace: new_trace, ..Default::default() };
+                let node = CallTraceNode {
+                    parent: Some(entry),
+                    trace: new_trace,
+                    idx: id,
+                    ..Default::default()
+                };
                 self.arena.push(node);
                 self.arena[entry].children.push(id);
 
@@ -60,20 +70,19 @@ impl CallTraceArena {
         }
     }
 
-    pub fn addresses_iter(&self) -> impl Iterator<Item = (&Address, Option<&Vec<u8>>)> {
-        self.arena.iter().map(|node| {
-            let code = if node.trace.created() {
-                if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                    Some(bytes)
-                } else {
-                    None
+    pub fn addresses(&self) -> HashSet<(&Address, Option<&Vec<u8>>)> {
+        self.arena
+            .iter()
+            .map(|node| {
+                if node.trace.created() {
+                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                        return (&node.trace.address, Some(bytes))
+                    }
                 }
-            } else {
-                None
-            };
 
-            (&node.trace.address, code)
-        })
+                (&node.trace.address, None)
+            })
+            .collect()
     }
 }
 
@@ -91,15 +100,20 @@ impl fmt::Display for CallTraceArena {
             idx: usize,
             left: &str,
             child: &str,
+            verbose: bool,
         ) -> fmt::Result {
             let node = &arena.arena[idx];
 
             // Display trace header
-            writeln!(writer, "{}{}", left, node.trace)?;
+            if !verbose {
+                writeln!(writer, "{}{}", left, node.trace)?;
+            } else {
+                writeln!(writer, "{}{:#}", left, node.trace)?;
+            }
 
             // Display logs and subcalls
-            let left_prefix = format!("{}{}", child, BRANCH);
-            let right_prefix = format!("{}{}", child, PIPE);
+            let left_prefix = format!("{child}{BRANCH}");
+            let right_prefix = format!("{child}{PIPE}");
             for child in &node.ordering {
                 match child {
                     LogCallOrder::Log(index) => {
@@ -117,7 +131,14 @@ impl fmt::Display for CallTraceArena {
                         })?;
                     }
                     LogCallOrder::Call(index) => {
-                        inner(arena, writer, node.children[*index], &left_prefix, &right_prefix)?;
+                        inner(
+                            arena,
+                            writer,
+                            node.children[*index],
+                            &left_prefix,
+                            &right_prefix,
+                            verbose,
+                        )?;
                     }
                 }
             }
@@ -139,12 +160,12 @@ impl fmt::Display for CallTraceArena {
             Ok(())
         }
 
-        inner(self, f, 0, "  ", "  ")
+        inner(self, f, 0, "  ", "  ", f.alternate())
     }
 }
 
 /// A raw or decoded log.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RawOrDecodedLog {
     /// A raw log
     Raw(RawLog),
@@ -163,25 +184,25 @@ impl fmt::Display for RawOrDecodedLog {
                     writeln!(
                         f,
                         "{:>13}: {}",
-                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {}", i) },
-                        Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
+                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
+                        Paint::cyan(format!("0x{}", hex::encode(&topic)))
                     )?;
                 }
 
                 write!(
                     f,
                     "          data: {}",
-                    Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
+                    Paint::cyan(format!("0x{}", hex::encode(&log.data)))
                 )
             }
             RawOrDecodedLog::Decoded(name, params) => {
                 let params = params
                     .iter()
-                    .map(|(name, value)| format!("{}: {}", name, value))
+                    .map(|(name, value)| format!("{name}: {value}"))
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                write!(f, "emit {}({})", Colour::Cyan.paint(name.clone()), params)
+                write!(f, "emit {}({})", Paint::cyan(name.clone()), params)
             }
         }
     }
@@ -191,41 +212,34 @@ impl fmt::Display for RawOrDecodedLog {
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-/// A node in the arena
-pub struct CallTraceNode {
-    /// Parent node index in the arena
-    pub parent: Option<usize>,
-    /// Children node indexes in the arena
-    pub children: Vec<usize>,
-    /// This node's index in the arena
-    pub idx: usize,
-    /// The call trace
-    pub trace: CallTrace,
-    /// Logs
-    #[serde(skip)]
-    pub logs: Vec<RawOrDecodedLog>,
-    /// Ordering of child calls and logs
-    pub ordering: Vec<LogCallOrder>,
-}
-
 // TODO: Maybe unify with output
 /// Raw or decoded calldata.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedCall {
     /// Raw calldata
     Raw(Vec<u8>),
     /// Decoded calldata.
     ///
-    /// The first element in the tuple is the function name, and the second element is a vector of
-    /// decoded parameters.
-    Decoded(String, Vec<String>),
+    /// The first element in the tuple is the function name, second is the function signature and
+    /// the third element is a vector of decoded parameters.
+    Decoded(String, String, Vec<String>),
+}
+
+impl RawOrDecodedCall {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedCall::Raw(raw) => raw.clone(),
+            RawOrDecodedCall::Decoded(_, _, _) => {
+                vec![]
+            }
+        }
+    }
 }
 
 impl Default for RawOrDecodedCall {
@@ -235,12 +249,21 @@ impl Default for RawOrDecodedCall {
 }
 
 /// Raw or decoded return data.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RawOrDecodedReturnData {
     /// Raw return data
     Raw(Vec<u8>),
     /// Decoded return data
     Decoded(String),
+}
+
+impl RawOrDecodedReturnData {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+        }
+    }
 }
 
 impl Default for RawOrDecodedReturnData {
@@ -265,7 +288,7 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
@@ -281,11 +304,13 @@ pub struct CallTrace {
     pub contract: Option<String>,
     /// The label for the destination address, if any
     pub label: Option<String>,
+    /// caller of this call
+    pub caller: Address,
     /// The destination address of the call
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
-    /// The value tranferred in the call
+    /// The value transferred in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
     pub data: RawOrDecodedCall,
@@ -294,38 +319,54 @@ pub struct CallTrace {
     pub output: RawOrDecodedReturnData,
     /// The gas cost of the call
     pub gas_cost: u64,
+    /// The status of the trace's call
+    pub status: Return,
+    /// call context of the runtime
+    pub call_context: Option<CallContext>,
 }
 
-impl CallTrace {
-    /// Updates a trace given another trace
-    fn update(&mut self, new_trace: Self) {
-        self.success = new_trace.success;
-        self.address = new_trace.address;
-        self.kind = new_trace.kind;
-        self.value = new_trace.value;
-        self.data = new_trace.data;
-        self.output = new_trace.output;
-        self.address = new_trace.address;
-        self.gas_cost = new_trace.gas_cost;
-    }
+// === impl CallTrace ===
 
+impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)
     }
 }
 
+impl Default for CallTrace {
+    fn default() -> Self {
+        Self {
+            depth: Default::default(),
+            success: Default::default(),
+            contract: Default::default(),
+            label: Default::default(),
+            caller: Default::default(),
+            address: Default::default(),
+            kind: Default::default(),
+            value: Default::default(),
+            data: Default::default(),
+            output: Default::default(),
+            gas_cost: Default::default(),
+            status: Return::Continue,
+            call_context: Default::default(),
+        }
+    }
+}
+
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let address =
+            if f.alternate() { format!("{:?}", self.address) } else { format!("{}", self.address) };
         if self.created() {
             write!(
                 f,
                 "[{}] {}{} {}@{:?}",
                 self.gas_cost,
-                Colour::Yellow.paint(CALL),
-                Colour::Yellow.paint("new"),
+                Paint::yellow(CALL),
+                Paint::yellow("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                self.address
+                address
             )?;
         } else {
             let (func, inputs) = match &self.data {
@@ -335,7 +376,7 @@ impl fmt::Display for CallTrace {
                     assert!(bytes.len() >= 4);
                     (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
                 }
-                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
             };
 
             let action = match self.kind {
@@ -352,7 +393,7 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(self.label.as_ref().unwrap_or(&address)),
                 color.paint(func),
                 if !self.value.is_zero() {
                     format!("{{value: {}}}", self.value)
@@ -360,7 +401,7 @@ impl fmt::Display for CallTrace {
                     "".to_string()
                 },
                 inputs,
-                Colour::Yellow.paint(action),
+                Paint::yellow(action),
             )?;
         }
 
@@ -377,12 +418,39 @@ pub enum TraceKind {
 }
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
-fn trace_color(trace: &CallTrace) -> Colour {
+fn trace_color(trace: &CallTrace) -> Color {
     if trace.address == CHEATCODE_ADDRESS {
-        Colour::Blue
+        Color::Blue
     } else if trace.success {
-        Colour::Green
+        Color::Green
     } else {
-        Colour::Red
+        Color::Red
+    }
+}
+
+/// Given a list of traces and artifacts, it returns a map connecting address to abi
+pub fn load_contracts(
+    traces: Vec<(TraceKind, CallTraceArena)>,
+    known_contracts: Option<&ContractsByArtifact>,
+) -> ContractsByAddress {
+    if let Some(contracts) = known_contracts {
+        let local_identifier = LocalTraceIdentifier::new(contracts);
+        let mut decoder = CallTraceDecoderBuilder::new().build();
+        for (_, trace) in &traces {
+            decoder.identify(trace, &local_identifier);
+        }
+
+        decoder
+            .contracts
+            .iter()
+            .filter_map(|(addr, name)| {
+                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
+                    return Some((*addr, (name.clone(), abi.clone())))
+                }
+                None
+            })
+            .collect()
+    } else {
+        BTreeMap::new()
     }
 }

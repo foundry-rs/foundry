@@ -87,9 +87,19 @@ cargo +nightly fmt -- --check
 cargo +nightly clippy --all --all-features -- -D warnings
 ```
 
+If you are working in VSCode, we recommend you install the [rust-analyzer](https://rust-analyzer.github.io/) extension, and use the following VSCode user settings:
+
+```json
+"editor.formatOnSave": true,
+"rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+"[rust]": {
+  "editor.defaultFormatter": "rust-lang.rust-analyzer"
+}
+```
+
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
 
-If you would like to test the binaries built from your change, see [foundryup](https://github.com/gakonst/foundry/tree/master/foundryup).
+If you would like to test the binaries built from your change, see [foundryup](https://github.com/foundry-rs/foundry/tree/master/foundryup).
 
 #### Adding tests
 
@@ -101,7 +111,9 @@ Types of tests include:
 
 - **Unit tests**: Functions which have very specific tasks should be unit tested.
 - **Integration tests**: For general purpose, far reaching functionality, integration tests should be added.
-  The best way to add a new integration test is to look at existing ones and follow the style.
+  The best way to add a new integration test is to look at existing ones and follow the style. 
+
+Tests that use forking must contain "fork" in their name. 
 
 #### Commits
 
@@ -177,7 +189,7 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 
 [rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
 [dev-tg]: https://t.me/foundry_rs
-[foundry-book]: https://github.com/onbjerg/foundry-book
+[foundry-book]: https://github.com/foundry-rs/foundry-book
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
 [hiding-a-comment]: https://help.github.com/articles/managing-disruptive-comments/#hiding-a-comment

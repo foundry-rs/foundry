@@ -1,17 +1,16 @@
 //! Snapshot command
-
 use crate::cmd::{
     forge::{
-        build::BuildArgs,
+        build::CoreBuildArgs,
         test,
         test::{custom_run, Test, TestOutcome},
     },
     Cmd,
 };
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
+use ethers::types::U256;
 use eyre::Context;
-use forge::TestKindGas;
+use forge::result::TestKindReport;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -24,6 +23,7 @@ use std::{
     str::FromStr,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
@@ -31,18 +31,28 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
 });
 
+/// Deterministic fuzzer seed used for gas snapshots.
+///
+/// The keccak256 hash of "foundry rulez"
+pub static SNAPSHOT_FUZZ_SEED: [u8; 32] = [
+    0x01, 0x00, 0xfa, 0x69, 0xa5, 0xf1, 0x71, 0x0a, 0x95, 0xcd, 0xef, 0x94, 0x88, 0x9b, 0x02, 0x84,
+    0x5d, 0x64, 0x0b, 0x19, 0xad, 0xf0, 0xe3, 0x57, 0xb8, 0xd4, 0xbe, 0x7d, 0x49, 0xee, 0x70, 0xe6,
+];
+
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[clap(flatten)]
-    test: test::TestArgs,
+    #[clap(flatten, next_help_heading = "TEST OPTIONS")]
+    pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
     #[clap(flatten)]
     config: SnapshotConfig,
 
+    /// Output a diff against a pre-existing snapshot.
+    ///
+    /// By default the comparison is done with .gas-snapshot.
     #[clap(
-        help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
         long,
         value_hint = ValueHint::FilePath,
@@ -50,8 +60,12 @@ pub struct SnapshotArgs {
     )]
     diff: Option<Option<PathBuf>>,
 
+    /// Compare against a pre-existing snapshot, exiting with code 1 if they do not match.
+    ///
+    /// Outputs a diff if the snapshots do not match.
+    ///
+    /// By default the comparison is done with .gas-snapshot.
     #[clap(
-        help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
         long,
         value_hint = ValueHint::FilePath,
@@ -59,7 +73,8 @@ pub struct SnapshotArgs {
     )]
     check: Option<Option<PathBuf>>,
 
-    #[clap(help = "How to format the output.", long)]
+    // Hidden because there is only one option
+    #[clap(help = "How to format the output.", long, hide(true))]
     format: Option<Format>,
 
     #[clap(
@@ -69,26 +84,22 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
-
-    /// Include the mean and median gas use of fuzz tests in the snapshot.
-    #[clap(long, env = "FORGE_INCLUDE_FUZZ_TESTS")]
-    pub include_fuzz_tests: bool,
 }
 
 impl SnapshotArgs {
     /// Returns whether `SnapshotArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
-        self.test.build_args().is_watch()
+        self.test.is_watch()
     }
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        self.test.build_args().watchexec_config()
+        self.test.watchexec_config()
     }
 
-    /// Returns the nested [`BuildArgs`]
-    pub fn build_args(&self) -> &BuildArgs {
+    /// Returns the nested [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
         self.test.build_args()
     }
 }
@@ -96,8 +107,11 @@ impl SnapshotArgs {
 impl Cmd for SnapshotArgs {
     type Output = ();
 
-    fn run(self) -> eyre::Result<()> {
-        let outcome = custom_run(self.test, self.include_fuzz_tests)?;
+    fn run(mut self) -> eyre::Result<()> {
+        // Set fuzz seed so gas snapshots are deterministic
+        self.test.fuzz_seed = Some(U256::from_big_endian(&SNAPSHOT_FUZZ_SEED));
+
+        let outcome = custom_run(self.test)?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
@@ -132,7 +146,7 @@ impl FromStr for Format {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "t" | "table" => Ok(Format::Table),
-            _ => Err(format!("Unrecognized format `{}`", s)),
+            _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
 }
@@ -140,13 +154,21 @@ impl FromStr for Format {
 /// Additional filters that can be applied on the test results
 #[derive(Debug, Clone, Parser, Default)]
 struct SnapshotConfig {
-    #[clap(help = "sort results by ascending gas used.", long)]
+    #[clap(help = "Sort results by gas used (ascending).", long)]
     asc: bool,
-    #[clap(help = "sort results by descending gas used.", conflicts_with = "asc", long)]
+    #[clap(help = "Sort results by gas used (descending).", conflicts_with = "asc", long)]
     desc: bool,
-    #[clap(help = "Only include tests that used more gas that the given amount.", long)]
+    #[clap(
+        help = "Only include tests that used more gas that the given amount.",
+        long,
+        value_name = "MIN_GAS"
+    )]
     min: Option<u64>,
-    #[clap(help = "Only include tests that used less gas that the given amount.", long)]
+    #[clap(
+        help = "Only include tests that used less gas that the given amount.",
+        long,
+        value_name = "MAX_GAS"
+    )]
     max: Option<u64>,
 }
 
@@ -188,7 +210,7 @@ impl SnapshotConfig {
 pub struct SnapshotEntry {
     pub contract_name: String,
     pub signature: String,
-    pub gas_used: TestKindGas,
+    pub gas_used: TestKindReport,
 }
 
 impl FromStr for SnapshotEntry {
@@ -204,7 +226,9 @@ impl FromStr for SnapshotEntry {
                             Some(SnapshotEntry {
                                 contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
+                                gas_used: TestKindReport::Standard {
+                                    gas: gas.as_str().parse().unwrap(),
+                                },
                             })
                         } else {
                             cap.name("runs")
@@ -215,17 +239,17 @@ impl FromStr for SnapshotEntry {
                                 .map(|(runs, avg, med)| SnapshotEntry {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
-                                    gas_used: TestKindGas::Fuzz {
+                                    gas_used: TestKindReport::Fuzz {
                                         runs: runs.as_str().parse().unwrap(),
-                                        median: med.as_str().parse().unwrap(),
-                                        mean: avg.as_str().parse().unwrap(),
+                                        median_gas: med.as_str().parse().unwrap(),
+                                        mean_gas: avg.as_str().parse().unwrap(),
                                     },
                                 })
                         }
                     })
                 })
             })
-            .ok_or_else(|| format!("Could not extract Snapshot Entry for {}", s))
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))
     }
 }
 
@@ -239,8 +263,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
     )
     .lines()
     {
-        entries
-            .push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{}", err))?);
+        entries.push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
     }
     Ok(entries)
 }
@@ -253,13 +276,7 @@ fn write_to_snapshot_file(
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        writeln!(
-            out,
-            "{}:{} {}",
-            test.contract_name(),
-            test.signature,
-            test.result.kind.gas_used()
-        )?;
+        writeln!(out, "{}:{} {}", test.contract_name(), test.signature, test.result.kind.report())?;
     }
     Ok(fs::write(path, out)?)
 }
@@ -268,15 +285,15 @@ fn write_to_snapshot_file(
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotDiff {
     pub signature: String,
-    pub source_gas_used: TestKindGas,
-    pub target_gas_used: TestKindGas,
+    pub source_gas_used: TestKindReport,
+    pub target_gas_used: TestKindReport,
 }
 
 impl SnapshotDiff {
     /// Returns the gas diff
     ///
     /// `> 0` if the source used more gas
-    /// `< 0` if the source used more gas
+    /// `< 0` if the target used more gas
     fn gas_change(&self) -> i128 {
         self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
@@ -300,7 +317,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
         if let Some(target_gas) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
-            let source_gas = test.result.kind.gas_used();
+            let source_gas = test.result.kind.report();
             if source_gas.gas() != target_gas.gas() {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
@@ -342,7 +359,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
             })?;
 
         diffs.push(SnapshotDiff {
-            source_gas_used: test.result.kind.gas_used(),
+            source_gas_used: test.result.kind.report(),
             signature: test.signature,
             target_gas_used,
         });
@@ -376,22 +393,23 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 }
 
 fn fmt_pct_change(change: f64) -> String {
+    let change_pct = change * 100.0;
     match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
-        Ordering::Less => Colour::Green.paint(format!("{:.3}%", change)).to_string(),
+        Ordering::Less => Paint::green(format!("{:.3}%", change_pct)).to_string(),
         Ordering::Equal => {
-            format!("{:.3}%", change)
+            format!("{:.3}%", change_pct)
         }
-        Ordering::Greater => Colour::Red.paint(format!("{:.3}%", change)).to_string(),
+        Ordering::Greater => Paint::red(format!("{:.3}%", change_pct)).to_string(),
     }
 }
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Colour::Green.paint(format!("{}", change)).to_string(),
+        Ordering::Less => Paint::green(format!("{change}")).to_string(),
         Ordering::Equal => {
-            format!("{}", change)
+            format!("{change}")
         }
-        Ordering::Greater => Colour::Red.paint(format!("{}", change)).to_string(),
+        Ordering::Greater => Paint::red(format!("{change}")).to_string(),
     }
 }
 
@@ -408,7 +426,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Standard(7222)
+                gas_used: TestKindReport::Standard { gas: 7222 }
             }
         );
     }
@@ -422,7 +440,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
+                gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
             }
         );
     }

@@ -1,10 +1,14 @@
 use ethers::{
     providers::{Middleware, Provider},
-    types::{Address, U256},
+    solc::utils::RuntimeOrHandle,
+    types::{Address, Chain, U256},
 };
-use foundry_utils::RuntimeOrHandle;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::executor::fork::CreateFork;
+use foundry_common;
+use foundry_config::Config;
 
 use super::fork::environment;
 
@@ -13,12 +17,15 @@ pub struct EvmOpts {
     #[serde(flatten)]
     pub env: Env,
 
-    /// fetch state over a remote instead of starting from empty state
+    /// Fetch state over a remote instead of starting from empty state
     #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<String>,
 
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+
+    /// initial retry backoff
+    pub fork_retry_backoff: Option<u64>,
 
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
@@ -32,50 +39,101 @@ pub struct EvmOpts {
     /// enables the FFI cheatcode
     pub ffi: bool,
 
-    /// Verbosity mode of EVM output as number of occurences
+    /// Verbosity mode of EVM output as number of occurrences
     pub verbosity: u8,
+
+    /// The memory limit of the EVM in bytes.
+    pub memory_limit: u64,
 }
 
 impl EvmOpts {
-    pub fn evm_env(&self) -> revm::Env {
+    /// Configures a new `revm::Env`
+    ///
+    /// If a `fork_url` is set, it gets configured with settings fetched from the endpoint (chain
+    /// id, )
+    pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            let rt = RuntimeOrHandle::new();
-            let provider =
-                Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
-            let fut =
-                environment(&provider, self.env.chain_id, self.fork_block_number, self.sender);
-            match rt {
-                RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
-                RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
-            }
-            .expect("could not instantiate forked environment")
+            self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
         } else {
-            revm::Env {
-                block: BlockEnv {
-                    number: self.env.block_number.into(),
-                    coinbase: self.env.block_coinbase,
-                    timestamp: self.env.block_timestamp.into(),
-                    difficulty: self.env.block_difficulty.into(),
-                    basefee: self.env.block_base_fee_per_gas.into(),
-                    gas_limit: self.gas_limit(),
-                },
-                cfg: CfgEnv {
-                    chain_id: self.env.chain_id.unwrap_or(99).into(),
-                    spec_id: SpecId::LONDON,
-                    perf_all_precompiles_have_balance: false,
-                    // 16 MiB
-                    memory_limit: 2u64.pow(24),
-                },
-                tx: TxEnv {
-                    gas_price: self.env.gas_price.into(),
-                    gas_limit: self.gas_limit().as_u64(),
-                    caller: self.sender,
-                    ..Default::default()
-                },
-            }
+            self.local_evm_env()
         }
     }
 
+    /// Convenience implementation to configure a `revm::Env` from non async code
+    ///
+    /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
+    pub fn evm_env_blocking(&self) -> revm::Env {
+        if let Some(ref fork_url) = self.fork_url {
+            RuntimeOrHandle::new().block_on(async {
+                self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
+            })
+        } else {
+            self.local_evm_env()
+        }
+    }
+
+    /// Returns the `revm::Env` configured with settings retrieved from the endpoints
+    pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
+        let provider = Provider::try_from(fork_url.as_ref())?;
+        environment(
+            &provider,
+            self.memory_limit,
+            self.env.gas_price,
+            self.env.chain_id,
+            self.fork_block_number,
+            self.sender,
+        )
+        .await
+    }
+
+    /// Returns the `revm::Env` configured with only local settings
+    pub fn local_evm_env(&self) -> revm::Env {
+        revm::Env {
+            block: BlockEnv {
+                number: self.env.block_number.into(),
+                coinbase: self.env.block_coinbase,
+                timestamp: self.env.block_timestamp.into(),
+                difficulty: self.env.block_difficulty.into(),
+                basefee: self.env.block_base_fee_per_gas.into(),
+                gas_limit: self.gas_limit(),
+            },
+            cfg: CfgEnv {
+                chain_id: self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID).into(),
+                spec_id: SpecId::LONDON,
+                perf_all_precompiles_have_balance: false,
+                limit_contract_code_size: usize::MAX,
+                memory_limit: self.memory_limit,
+                ..Default::default()
+            },
+            tx: TxEnv {
+                gas_price: self.env.gas_price.unwrap_or_default().into(),
+                gas_limit: self.gas_limit().as_u64(),
+                caller: self.sender,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Helper function that returns the [CreateFork] to use, if any.
+    ///
+    /// storage caching for the [CreateFork] will be enabled if
+    ///   - `fork_url` is present
+    ///   - `fork_block_number` is present
+    ///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+    ///   - storage is allowed (`no_storage_caching = false`)
+    ///
+    /// If all these criteria are met, then storage caching is enabled and storage info will be
+    /// written to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
+    ///
+    /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will
+    /// be at `~/.foundry/cache/mainnet/14435000/storage.json`
+    pub fn get_fork(&self, config: &Config, env: revm::Env) -> Option<CreateFork> {
+        let url = self.fork_url.clone()?;
+        let enable_caching = config.enable_caching(&url, env.cfg.chain_id.as_u64());
+        Some(CreateFork { url, enable_caching, env, evm_opts: self.clone() })
+    }
+
+    /// Returns the gas limit to use
     pub fn gas_limit(&self) -> U256 {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into()
     }
@@ -86,36 +144,46 @@ impl EvmOpts {
     ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
     ///   - mainnet otherwise
     pub fn get_chain_id(&self) -> u64 {
-        use ethers::types::Chain;
         if let Some(id) = self.env.chain_id {
             return id
         }
+        self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+    }
+
+    /// Returns the chain ID from the RPC, if any.
+    pub fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
-                tracing::trace!("auto detected mainnet chain from url {}", url);
-                return Chain::Mainnet as u64
+                tracing::trace!("auto detected mainnet chain from url {url}");
+                return Some(Chain::Mainnet)
             }
             let provider = Provider::try_from(url.as_str())
-                .unwrap_or_else(|_| panic!("Failed to establish provider to {}", url));
+                .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 
-            if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return id.as_u64()
+            if let Ok(id) = RuntimeOrHandle::new().block_on(provider.get_chainid()) {
+                return Chain::try_from(id.as_u64()).ok()
             }
         }
-        Chain::Mainnet as u64
+
+        None
     }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Env {
     /// the block gas limit
+    #[serde(deserialize_with = "string_or_number")]
     pub gas_limit: u64,
 
     /// the chainid opcode value
     pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution
-    pub gas_price: u64,
+    ///
+    /// This is an Option, so we can determine in fork mode whether to use the config's gas price
+    /// (if set by user) or the remote client's gas price.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_price: Option<u64>,
 
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,
@@ -136,5 +204,39 @@ pub struct Env {
     pub block_difficulty: u64,
 
     /// the block.gaslimit value during EVM execution
+    #[serde(deserialize_with = "string_or_number_opt")]
     pub block_gas_limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Gas {
+    Number(u64),
+    Text(String),
+}
+
+fn string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    match Gas::deserialize(deserializer)? {
+        Gas::Number(num) => Ok(num),
+        Gas::Text(s) => s.parse().map_err(D::Error::custom),
+    }
+}
+
+fn string_or_number_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    match Option::<Gas>::deserialize(deserializer)? {
+        Some(gas) => match gas {
+            Gas::Number(num) => Ok(Some(num)),
+            Gas::Text(s) => s.parse().map(Some).map_err(D::Error::custom),
+        },
+        _ => Ok(None),
+    }
 }

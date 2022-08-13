@@ -1,0 +1,5 @@
+{
+  "str": "hai",
+  "uintArray": [42, 43],
+  "strArray": ["hai", "there"]
+}

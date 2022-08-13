@@ -1,0 +1,752 @@
+use crate::abi::*;
+use anvil::{spawn, NodeConfig};
+use ethers::{
+    prelude::{
+        signer::SignerMiddlewareError, BlockId, Middleware, Signer, SignerMiddleware,
+        TransactionRequest,
+    },
+    types::{Address, BlockNumber, Transaction, TransactionReceipt, H256, U256},
+};
+
+use futures::{future::join_all, FutureExt, StreamExt};
+use std::{collections::HashSet, sync::Arc, time::Duration};
+use tokio::time::timeout;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_transfer_eth() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert!(nonce.is_zero());
+
+    let balance_before = provider.get_balance(to, None).await.unwrap();
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    // craft the tx
+    // specify the `from` field so that the client knows which account to use
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    // broadcast it via the eth_sendTransaction API
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    assert_eq!(tx.block_number, Some(1u64.into()));
+    assert_eq!(tx.transaction_index, 0u64.into());
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
+    assert_eq!(nonce, 1u64.into());
+
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_order_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // disable automine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // craft the tx with lower price
+    let tx = TransactionRequest::new().to(to).from(from).value(amount).gas_price(gas_price);
+    let tx_lower = provider.send_transaction(tx, None).await.unwrap();
+
+    // craft the tx with higher price
+    let tx = TransactionRequest::new().to(from).from(to).value(amount).gas_price(gas_price + 1);
+    let tx_higher = provider.send_transaction(tx, None).await.unwrap();
+
+    // manually mine the block with the transactions
+    api.mine_one().await;
+
+    // get the block, await receipts
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let lower_price = tx_lower.await.unwrap().unwrap().transaction_hash;
+    let higher_price = tx_higher.await.unwrap().unwrap().transaction_hash;
+    assert_eq!(block.transactions, vec![higher_price, lower_price])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_respect_nonces() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    // send the transaction with higher nonce than on chain
+    let higher_pending_tx =
+        provider.send_transaction(tx.clone().nonce(nonce + 1u64), None).await.unwrap();
+
+    // ensure the listener for ready transactions times out
+    let mut listener = api.new_ready_transactions();
+    let res = timeout(Duration::from_millis(1500), async move { listener.next().await }).await;
+    res.unwrap_err();
+
+    // send with the actual nonce which is mined immediately
+    let tx =
+        provider.send_transaction(tx.nonce(nonce), None).await.unwrap().await.unwrap().unwrap();
+
+    // this will unblock the currently pending tx
+    let higher_tx = higher_pending_tx.await.unwrap().unwrap();
+
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(2, block.transactions.len());
+    assert_eq!(vec![tx.transaction_hash, higher_tx.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_replace_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mining
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+
+    // send transaction with lower gas price
+    let lower_priced_pending_tx =
+        provider.send_transaction(tx.clone().gas_price(gas_price), None).await.unwrap();
+
+    // send the same transaction with higher gas price
+    let higher_priced_pending_tx =
+        provider.send_transaction(tx.gas_price(gas_price + 1u64), None).await.unwrap();
+
+    // mine exactly one block
+    api.mine_one().await;
+
+    // lower priced transaction was replaced
+    let lower_priced_receipt = lower_priced_pending_tx.await.unwrap();
+    assert!(lower_priced_receipt.is_none());
+
+    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+
+    // ensure that only the replacement tx was mined
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_too_high_gas_limits() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let gas_limit = api.gas_limit();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    // send transaction with the exact gas limit
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
+
+    pending.unwrap();
+
+    // send transaction with higher gas limit
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit + 1u64), None).await;
+
+    assert!(pending.is_err());
+    let err = pending.unwrap_err();
+    assert!(err.to_string().contains("gas too high"));
+
+    api.anvil_set_balance(from, U256::MAX).await.unwrap();
+
+    let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
+    pending.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_underpriced_replacement() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mining
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+
+    // send transaction with higher gas price
+    let higher_priced_pending_tx =
+        provider.send_transaction(tx.clone().gas_price(gas_price + 1u64), None).await.unwrap();
+
+    // send the same transaction with lower gas price
+    let lower_priced_pending_tx = provider.send_transaction(tx.gas_price(gas_price), None).await;
+
+    let replacement_err = lower_priced_pending_tx.unwrap_err();
+    assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
+
+    // mine exactly one block
+    api.mine_one().await;
+    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+
+    // ensure that only the higher priced tx was mined
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_http() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_and_mine_manually() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // can mine in auto-mine mode
+    api.evm_mine(None).await.unwrap();
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // can mine in manual mode
+    api.evm_mine(None).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap();
+
+    // mine block with tx manually
+    api.evm_mine(None).await.unwrap();
+
+    let receipt = tx.await.unwrap().unwrap();
+
+    let address = receipt.contract_address.unwrap();
+    let greeter_contract = Greeter::new(address, Arc::clone(&client));
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let set_greeting = greeter_contract.set_greeting("Another Message".to_string());
+    let tx = set_greeting.send().await.unwrap();
+
+    // mine block manually
+    api.evm_mine(None).await.unwrap();
+
+    let _tx = tx.await.unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_call_greeter_historic() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let block = client.get_block_number().await.unwrap();
+
+    greeter_contract
+        .set_greeting("Another Message".to_string())
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Another Message", greeting);
+
+    // returns previous state
+    let greeting =
+        greeter_contract.greet().block(BlockId::Number(block.into())).call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_ws() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_get_code() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let code = client.get_code(greeter_contract.address(), None).await.unwrap();
+    assert!(!code.as_ref().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_blocktimestamp_works() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract =
+        MulticallContract::deploy(Arc::clone(&client), ()).unwrap().send().await.unwrap();
+
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+
+    assert!(timestamp > U256::one());
+
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+    assert_eq!(timestamp, latest_block.timestamp.into());
+
+    // repeat call same result
+    let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
+    assert_eq!(timestamp, latest_block.timestamp.into());
+
+    // mock timestamp
+    api.evm_set_next_block_timestamp(1337).unwrap();
+
+    let timestamp =
+        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
+    assert_eq!(timestamp, 1337u64.into());
+
+    // repeat call same result
+    let timestamp =
+        contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
+    assert_eq!(timestamp, 1337u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_past_state() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let contract = SimpleStorage::deploy(Arc::clone(&client), "initial value".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let deployed_block = client.get_block_number().await.unwrap();
+
+    // assert initial state
+    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
+    assert_eq!(value, "initial value");
+
+    // make a call with `client`
+    let _tx_hash = contract
+        .method::<_, H256>("setValue", "hi".to_owned())
+        .unwrap()
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+
+    // assert new value
+    let value = contract.method::<_, String>("getValue", ()).unwrap().call().await.unwrap();
+    assert_eq!(value, "hi");
+
+    // assert previous value
+    let value = contract
+        .method::<_, String>("getValue", ())
+        .unwrap()
+        .block(BlockId::Number(deployed_block.into()))
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(value, "initial value");
+
+    let hash = client.get_block(1).await.unwrap().unwrap().hash.unwrap();
+    let value = contract
+        .method::<_, String>("getValue", ())
+        .unwrap()
+        .block(BlockId::Hash(hash))
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(value, "initial value");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_transfers_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let provider = handle.ws_provider().await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
+    // explicitly set the nonce
+    let tx = TransactionRequest::new().to(to).value(100u64).from(from).nonce(nonce).gas(21_000u64);
+    let mut tasks = Vec::new();
+    for _ in 0..10 {
+        let provider = provider.clone();
+        let tx = tx.clone();
+        let task =
+            tokio::task::spawn(async move { provider.send_transaction(tx, None).await?.await });
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+
+    assert_eq!(provider.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_deploys_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let nonce = client.get_transaction_count(from, None).await.unwrap();
+    // explicitly set the nonce
+    let mut tasks = Vec::new();
+    let mut tx =
+        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    tx.set_nonce(nonce);
+    tx.set_gas(300_000u64);
+
+    for _ in 0..10 {
+        let client = Arc::clone(&client);
+        let tx = tx.clone();
+        let task = tokio::task::spawn(async move {
+            Ok::<_, SignerMiddlewareError<_, _>>(
+                client.send_transaction(tx, None).await?.await.unwrap(),
+            )
+        });
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), 1u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_handle_multiple_concurrent_transactions_with_same_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
+
+    let nonce = client.get_transaction_count(from, None).await.unwrap();
+    // explicitly set the nonce
+    let mut tasks = Vec::new();
+    let mut deploy_tx =
+        Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    deploy_tx.set_nonce(nonce);
+    deploy_tx.set_gas(300_000u64);
+
+    let mut set_greeting_tx = greeter_contract.set_greeting("Hello".to_string()).tx;
+    set_greeting_tx.set_nonce(nonce);
+    set_greeting_tx.set_gas(300_000u64);
+
+    for idx in 0..10 {
+        let client = Arc::clone(&client);
+        let task = if idx % 2 == 0 {
+            let tx = deploy_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        } else {
+            let tx = set_greeting_tx.clone();
+            tokio::task::spawn(async move {
+                Ok::<_, SignerMiddlewareError<_, _>>(
+                    client.send_transaction(tx, None).await?.await.unwrap(),
+                )
+            })
+        };
+
+        tasks.push(task);
+    }
+
+    // only one succeeded
+    let successful_tx =
+        join_all(tasks).await.into_iter().filter(|res| res.as_ref().unwrap().is_ok()).count();
+    assert_eq!(successful_tx, 1);
+    assert_eq!(client.get_transaction_count(from, None).await.unwrap(), nonce + 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mining so we can check if we can return pending tx from the mempool
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+    let tx = provider.send_transaction(tx, None).await.unwrap();
+
+    let pending = provider.get_transaction(tx.tx_hash()).await.unwrap();
+    assert!(pending.is_some());
+
+    api.mine_one().await;
+    let mined = provider.get_transaction(tx.tx_hash()).await.unwrap().unwrap();
+
+    assert_eq!(mined.hash, pending.unwrap().hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn includes_pending_tx_for_transaction_count() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let tx_count = 10u64;
+
+    // send a bunch of tx to the mempool and check nonce is returned correctly
+    for idx in 1..=tx_count {
+        let tx = TransactionRequest::new().from(from).value(1337u64).to(Address::random());
+        let _tx = provider.send_transaction(tx, None).await.unwrap();
+        let nonce = provider
+            .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+            .await
+            .unwrap();
+        assert_eq!(nonce, idx.into());
+    }
+
+    api.mine_one().await;
+    let nonce = provider
+        .get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+    assert_eq!(nonce, tx_count.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_historic_info() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let nonce_pre = provider
+        .get_transaction_count(from, Some(BlockNumber::Number(0.into()).into()))
+        .await
+        .unwrap();
+
+    let nonce_post =
+        provider.get_transaction_count(from, Some(BlockNumber::Latest.into())).await.unwrap();
+
+    assert!(nonce_pre < nonce_post);
+
+    let balance_pre =
+        provider.get_balance(from, Some(BlockNumber::Number(0.into()).into())).await.unwrap();
+
+    let balance_post = provider.get_balance(from, Some(BlockNumber::Latest.into())).await.unwrap();
+
+    assert!(balance_post < balance_pre);
+
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance_pre.saturating_add(amount), to_balance);
+}
+
+// <https://github.com/eth-brownie/brownie/issues/1549>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tx_receipt() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(handle.http_provider(), wallet));
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64);
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert!(tx.to.is_some());
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+
+    let tx = client.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    // `to` field is none if it's a contract creation transaction: https://eth.wiki/json-rpc/API#eth_getTransactionReceipt
+    assert!(tx.to.is_none());
+    assert!(tx.contract_address.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_stream_pending_transactions() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
+    let num_txs = 5;
+    let provider = handle.http_provider();
+    let ws_provider = handle.ws_provider().await;
+
+    let accounts = provider.get_accounts().await.unwrap();
+    let tx = TransactionRequest::new().from(accounts[0]).to(accounts[0]).value(1e18 as u64);
+
+    let mut sending = futures::future::join_all(
+        std::iter::repeat(tx.clone())
+            .take(num_txs)
+            .enumerate()
+            .map(|(nonce, tx)| tx.nonce(nonce))
+            .map(|tx| async {
+                provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap()
+            }),
+    )
+    .fuse();
+
+    let mut watch_tx_stream =
+        provider.watch_pending_transactions().await.unwrap().transactions_unordered(num_txs).fuse();
+
+    let mut sub_tx_stream =
+        ws_provider.subscribe_pending_txs().await.unwrap().transactions_unordered(2).fuse();
+
+    let mut sent: Option<Vec<TransactionReceipt>> = None;
+    let mut watch_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+    let mut sub_received: Vec<Transaction> = Vec::with_capacity(num_txs);
+
+    loop {
+        futures::select! {
+            txs = sending => {
+                sent = Some(txs)
+            },
+            tx = watch_tx_stream.next() => {
+                watch_received.push(tx.unwrap().unwrap());
+            },
+            tx = sub_tx_stream.next() => {
+                sub_received.push(tx.unwrap().unwrap());
+            },
+        };
+        if watch_received.len() == num_txs && sub_received.len() == num_txs {
+            if let Some(ref sent) = sent {
+                assert_eq!(sent.len(), watch_received.len());
+                let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<HashSet<_>>();
+                assert_eq!(sent_txs, watch_received.iter().map(|tx| tx.hash).collect());
+                assert_eq!(sent_txs, sub_received.iter().map(|tx| tx.hash).collect());
+                break
+            }
+        }
+    }
+}

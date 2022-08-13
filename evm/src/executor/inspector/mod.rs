@@ -10,13 +10,21 @@ pub use tracer::Tracer;
 mod debugger;
 pub use debugger::Debugger;
 
+mod coverage;
+pub use coverage::CoverageCollector;
+
 mod stack;
 pub use stack::{InspectorData, InspectorStack};
 
-mod cheatcodes;
-pub use cheatcodes::Cheatcodes;
+pub mod cheatcodes;
+pub use cheatcodes::{Cheatcodes, CheatsConfig, DEFAULT_CREATE2_DEPLOYER};
+
+use ethers::types::U256;
 
 use revm::BlockEnv;
+
+mod fuzzer;
+pub use fuzzer::Fuzzer;
 
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
@@ -28,10 +36,19 @@ pub struct InspectorStackConfig {
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
     pub block: BlockEnv,
+    /// The gas price
+    ///
+    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
+    /// in the execution environment.
+    pub gas_price: U256,
     /// Whether or not tracing is enabled
     pub tracing: bool,
     /// Whether or not the debugger is enabled
     pub debugger: bool,
+    /// The fuzzer inspector and its state, if it exists.
+    pub fuzzer: Option<Fuzzer>,
+    /// Whether or not coverage info should be collected
+    pub coverage: bool,
 }
 
 impl InspectorStackConfig {
@@ -39,9 +56,10 @@ impl InspectorStackConfig {
         let mut stack =
             InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
 
-        stack.cheatcodes = self.cheatcodes.clone();
+        stack.cheatcodes = self.create_cheatcodes();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {
             cheatcodes.block = Some(self.block.clone());
+            cheatcodes.gas_price = Some(self.gas_price);
         }
 
         if self.tracing {
@@ -50,6 +68,17 @@ impl InspectorStackConfig {
         if self.debugger {
             stack.debugger = Some(Debugger::default());
         }
+        stack.fuzzer = self.fuzzer.clone();
+
+        if self.coverage {
+            stack.coverage = Some(CoverageCollector::default());
+        }
         stack
+    }
+
+    fn create_cheatcodes(&self) -> Option<Cheatcodes> {
+        let cheatcodes = self.cheatcodes.clone();
+
+        cheatcodes.map(|cheatcodes| Cheatcodes { context: Default::default(), ..cheatcodes })
     }
 }
