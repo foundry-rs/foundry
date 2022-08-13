@@ -190,13 +190,10 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
-    let root = state
-        .config
-        .root
-        .clone()
-        .into_os_string()
-        .into_string()
-        .map_err(|_| util::encode_error(format!("invalid characters in project root path")))?;
+    let root =
+        state.config.root.clone().into_os_string().into_string().map_err(|_| {
+            util::encode_error("invalid characters in project root path".to_string())
+        })?;
 
     Ok(abi::encode(&[Token::String(root)]).into())
 }
