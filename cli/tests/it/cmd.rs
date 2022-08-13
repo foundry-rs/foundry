@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use crate::constants::*;
 use ethers::{
     prelude::remappings::Remapping,
     solc::{
@@ -345,7 +346,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
@@ -358,7 +359,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -366,7 +367,8 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
@@ -375,7 +377,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -394,13 +396,15 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
         .root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    let iropt = prj.paths().artifacts.join(format!("{}.iropt", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(iropt).unwrap();
 
-    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    let sourcemap =
+        prj.paths().artifacts.join(format!("{}.sourcemap", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(sourcemap).unwrap();
 });
 
