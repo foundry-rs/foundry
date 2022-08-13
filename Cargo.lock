@@ -1961,6 +1961,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "anvil",
+ "async-trait",
  "atty",
  "bytes",
  "cast",
@@ -1992,6 +1993,7 @@ dependencies = [
  "proptest",
  "rayon",
  "regex",
+ "reqwest",
  "rpassword",
  "rustc-hex",
  "semver",

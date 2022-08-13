@@ -11,6 +11,9 @@ use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
 use foundry_common::fs;
 use foundry_config::Config;
+
+use crate::cmd::forge::verify::VerificationProviderType;
+
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -198,14 +201,14 @@ impl ScriptSequence {
                                 constructor_args: Some(hex::encode(&constructor_args)),
                                 num_of_optimizations: verify.num_of_optimizations,
                                 chain: chain.into(),
-                                etherscan_key: etherscan_key.clone(),
-                                project_paths: verify.project_paths.clone(),
+                                etherscan_key: Some(etherscan_key.clone()),
                                 flatten: false,
                                 force: false,
                                 watch: true,
                                 retry: verify.retry.clone(),
                                 libraries: self.libraries.clone(),
                                 root: None,
+                                verifier: VerificationProviderType::Etherscan,
                             };
 
                             future_verifications.push(verify.run());

@@ -79,6 +79,13 @@ pub struct CreateArgs {
         requires = "from"
     )]
     unlocked: bool,
+
+    #[clap(
+        long = "verification-provider",
+        help = "Contract verification provider to use `sourcify` or `etherscan`",
+        default_value = "etherscan"
+    )]
+    verification_provider: verify::VerificationProviderType,
 }
 
 impl CreateArgs {
@@ -284,17 +291,14 @@ impl CreateArgs {
             constructor_args,
             num_of_optimizations,
             chain: chain.into(),
-            etherscan_key: self
-                .eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            project_paths: self.opts.project_paths,
+            etherscan_key: self.eth.etherscan_api_key,
             flatten: false,
             force: false,
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
             root: None,
+            verifier: self.verification_provider,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await

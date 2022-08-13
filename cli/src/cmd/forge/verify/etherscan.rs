@@ -1,13 +1,6 @@
-//! Verify contract source on etherscan
-
-use crate::cmd::{
-    forge::build::{CoreBuildArgs, ProjectPathsArgs},
-    LoadConfig, RetryArgs,
-};
+use async_trait::async_trait;
 use cast::SimpleCast;
-use clap::{Parser, ValueHint};
 use ethers::{
-    abi::Address,
     etherscan::{
         contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
@@ -17,12 +10,11 @@ use ethers::{
     solc::{
         artifacts::{BytecodeHash, Source},
         cache::CacheEntry,
-        info::ContractInfo,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{impl_figment_convert_basic, Chain, Config, SolcReq};
+use foundry_config::{Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -34,108 +26,27 @@ use std::{
 };
 use tracing::{trace, warn};
 
+use crate::cmd::LoadConfig;
+
+use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs, RETRY_CHECK_ON_VERIFY};
+
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());
 
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 };
+pub struct EtherscanVerificationProvider;
 
-/// Verification arguments
-#[derive(Debug, Clone, Parser)]
-pub struct VerifyArgs {
-    #[clap(help = "The address of the contract to verify.", value_name = "ADDRESS")]
-    pub address: Address,
-
-    #[clap(
-        help = "The contract identifier in the form `<path>:<contractname>`.",
-        value_name = "CONTRACT"
-    )]
-    pub contract: ContractInfo,
-
-    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
-    pub constructor_args: Option<String>,
-
-    #[clap(
-        long,
-        help = "The compiler version used to build the smart contract.",
-        value_name = "VERSION"
-    )]
-    pub compiler_version: Option<String>,
-
-    #[clap(
-        visible_alias = "optimizer-runs",
-        long,
-        help = "The number of optimization runs used to build the smart contract.",
-        value_name = "NUM"
-    )]
-    pub num_of_optimizations: Option<usize>,
-
-    #[clap(
-        long,
-        visible_alias = "chain-id",
-        env = "CHAIN",
-        help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet",
-        value_name = "CHAIN"
-    )]
-    pub chain: Chain,
-
-    #[clap(
-        help = "Your Etherscan API key.",
-        env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY"
-    )]
-    pub etherscan_key: String,
-
-    #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
-    pub flatten: bool,
-
-    #[clap(
-        short,
-        long,
-        help = "Do not compile the flattened smart contract before verifying (if --flatten is passed)."
-    )]
-    pub force: bool,
-
-    #[clap(long, help = "Wait for verification result after submission")]
-    pub watch: bool,
-
-    #[clap(flatten, help = "Allows to use retry arguments for contract verification")]
-    pub retry: RetryArgs,
-
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
-    pub project_paths: ProjectPathsArgs,
-
-    #[clap(
-        help_heading = "LINKER OPTIONS",
-        help = "Set pre-linked libraries.",
-        long,
-        env = "DAPP_LIBRARIES",
-        value_name = "LIBRARIES"
-    )]
-    pub libraries: Vec<String>,
-
-    #[clap(
-        help = "The project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long,
-        value_hint = ValueHint::DirPath,
-        value_name = "PATH"
-    )]
-    pub root: Option<PathBuf>,
-}
-
-impl_figment_convert_basic!(VerifyArgs);
-
-impl VerifyArgs {
-    /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(mut self) -> eyre::Result<()> {
-        let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
+#[async_trait]
+impl VerificationProvider for EtherscanVerificationProvider {
+    async fn verify(&self, mut args: VerifyArgs) -> eyre::Result<()> {
+        let etherscan_key = args.etherscan_key.take().expect("ETHERSCAN_API_KEY must be set");
+        let etherscan = Client::new(args.chain.try_into()?, &etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
-        let verify_args = self.create_verify_request().await?;
+        let verify_args = self.create_verify_request(&args).await?;
 
         trace!("submitting verification request {:?}", verify_args);
 
-        let retry: Retry = self.retry.into();
+        let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
                 println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
@@ -164,25 +75,28 @@ impl VerifyArgs {
 
                 Ok(Some(resp))
             }
-            .boxed()
+                .boxed()
         }).await?;
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL:
+        {}",
                 resp.message,
                 resp.result,
-                etherscan.address_url(self.address)
+                etherscan.address_url(args.address)
             );
 
-            if self.watch {
+            if args.watch {
                 let check_args = VerifyCheckArgs {
-                    guid: resp.result,
-                    chain: self.chain,
+                    id: resp.result,
+                    chain: args.chain,
                     retry: RETRY_CHECK_ON_VERIFY,
-                    etherscan_key: self.etherscan_key,
+                    etherscan_key: Some(etherscan_key),
+                    verifier: args.verifier,
                 };
-                return check_args.run().await
+                // return check_args.run().await
+                return self.check(check_args).await
             }
         } else {
             println!("Contract source code already verified");
@@ -191,47 +105,76 @@ impl VerifyArgs {
         Ok(())
     }
 
+    /// Executes the command to check verification status on Etherscan
+    async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
+        let etherscan = Client::new(
+            args.chain.try_into()?,
+            &args.etherscan_key.expect("ETHERSCAN_API_KEY must be set"),
+        )
+        .wrap_err("Failed to create etherscan client")?;
+
+        println!("Waiting for verification result...");
+        let retry: Retry = args.retry.into();
+        retry
+            .run_async(|| {
+                async {
+                    let resp = etherscan
+                        .check_contract_verification_status(args.id.clone())
+                        .await
+                        .wrap_err("Failed to request verification status")?;
+
+                    if resp.status == "0" {
+                        if resp.result == "Already Verified" {
+                            println!("Contract source code already verified");
+                            return Ok(())
+                        }
+
+                        if resp.result == "Pending in queue" {
+                            return Err(eyre!("Verification is still pending...",))
+                        }
+
+                        eprintln!(
+                            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
+                            resp.message, resp.result
+                        );
+                        std::process::exit(1);
+                    }
+
+                    println!("Contract successfully verified");
+                    Ok(())
+                }
+                .boxed()
+            })
+            .await
+            .wrap_err("Checking verification result failed:")
+    }
+}
+
+impl EtherscanVerificationProvider {
     /// Creates the `VerifyContract` etherescan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
-    async fn create_verify_request(&mut self) -> eyre::Result<VerifyContract> {
-        let build_args = CoreBuildArgs {
-            project_paths: self.project_paths.clone(),
-            out_path: Default::default(),
-            compiler: Default::default(),
-            ignored_error_codes: vec![],
-            no_auto_detect: false,
-            use_solc: None,
-            offline: false,
-            force: false,
-            libraries: self.libraries.clone(),
-            via_ir: false,
-            revert_strings: None,
-            silent: false,
-            build_info: false,
-            build_info_path: None,
-        };
+    async fn create_verify_request(&self, args: &VerifyArgs) -> eyre::Result<VerifyContract> {
+        let config = args.load_config_emit_warnings();
+        let project = config.project()?;
 
-        let project = build_args.project()?;
-        let config = self.load_config_emit_warnings();
-
-        if self.contract.path.is_none() && !config.cache {
+        if args.contract.path.is_none() && !config.cache {
             eyre::bail!(
                 "If cache is disabled, contract info must be provided in the format <path>:<name>"
             );
         }
 
-        let should_read_cache = self.contract.path.is_none() ||
-            (self.compiler_version.is_none() && config.solc.is_none());
+        let should_read_cache = args.contract.path.is_none() ||
+            (args.compiler_version.is_none() && config.solc.is_none());
         let cached_entry = if config.cache && should_read_cache {
             let cache = project.read_cache_file()?;
-            Some(crate::cmd::get_cached_entry_by_name(&cache, &self.contract.name)?)
+            Some(crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?)
         } else {
             None
         };
 
-        let contract_path = if let Some(ref path) = self.contract.path {
+        let contract_path = if let Some(ref path) = args.contract.path {
             project.root().join(path)
         } else {
             cached_entry.as_ref().unwrap().0.to_owned()
@@ -242,23 +185,29 @@ impl VerifyArgs {
             eyre::bail!("Contract {:?} does not exist.", contract_path);
         }
 
-        let compiler_version = self.compiler_version(&config, &cached_entry)?;
+        let compiler_version = self.compiler_version(args, &config, &cached_entry)?;
 
-        let (source, contract_name, code_format) = if self.flatten {
-            self.flattened_source(&project, &contract_path, &compiler_version, &contract_path)?
+        let (source, contract_name, code_format) = if args.flatten {
+            self.flattened_source(
+                args,
+                &project,
+                &contract_path,
+                &compiler_version,
+                &contract_path,
+            )?
         } else {
-            self.standard_json_source(&project, &contract_path, &compiler_version)?
+            self.standard_json_source(args, &project, &contract_path, &compiler_version)?
         };
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
         let compiler_version = format!("v{}", compiler_version);
         let mut verify_args =
-            VerifyContract::new(self.address, contract_name, source, compiler_version)
-                .constructor_arguments(self.constructor_args.clone())
+            VerifyContract::new(args.address, contract_name, source, compiler_version)
+                .constructor_arguments(args.constructor_args.clone())
                 .code_format(code_format);
 
         if code_format == CodeFormat::SingleFile {
-            verify_args = if let Some(optimizations) = self.num_of_optimizations {
+            verify_args = if let Some(optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(optimizations as u32)
             } else if config.optimizer {
                 verify_args.optimized().runs(config.optimizer_runs.try_into()?)
@@ -276,12 +225,11 @@ impl VerifyArgs {
     ///     2. `solc` defined in foundry.toml
     fn compiler_version(
         &self,
+        args: &VerifyArgs,
         config: &Config,
-        // cache: &SolFilesCache,
-        // contract_path: &Path,
         entry: &Option<(PathBuf, CacheEntry)>,
     ) -> eyre::Result<Version> {
-        if let Some(ref version) = self.compiler_version {
+        if let Some(ref version) = args.compiler_version {
             return Ok(version.trim_start_matches('v').parse()?)
         }
 
@@ -373,6 +321,7 @@ To skip this solc dry, pass `--force`.
 
     fn flattened_source(
         &self,
+        args: &VerifyArgs,
         project: &Project,
         target: &Path,
         version: &Version,
@@ -394,7 +343,7 @@ To skip this solc dry, pass `--force`.
 
         let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
 
-        if !self.force {
+        if !args.force {
             // solc dry run of flattened code
             self.check_flattened(source.clone(), version, contract_path).map_err(|err| {
                 eyre::eyre!(
@@ -405,12 +354,13 @@ To skip this solc dry, pass `--force`.
             })?;
         }
 
-        let name = self.contract.name.clone();
+        let name = args.contract.name.clone();
         Ok((source, name, CodeFormat::SingleFile))
     }
 
     fn standard_json_source(
         &self,
+        args: &VerifyArgs,
         project: &Project,
         target: &Path,
         version: &Version,
@@ -433,7 +383,7 @@ To skip this solc dry, pass `--force`.
         let name = format!(
             "{}:{}",
             target.strip_prefix(project.root()).unwrap_or(target).display(),
-            self.contract.name.clone()
+            args.contract.name.clone()
         );
         Ok((source, name, CodeFormat::StandardJsonInput))
     }
@@ -465,75 +415,5 @@ async fn ensure_solc_build_metadata(version: Version) -> eyre::Result<Version> {
         Ok(version)
     } else {
         Ok(lookup_compiler_version(&version).await?)
-    }
-}
-
-/// Check verification status arguments
-#[derive(Debug, Clone, Parser)]
-pub struct VerifyCheckArgs {
-    #[clap(help = "The verification GUID.", value_name = "GUID")]
-    guid: String,
-
-    #[clap(
-        long,
-        visible_alias = "chain-id",
-        env = "CHAIN",
-        help = "The chain ID the contract is deployed to.",
-        default_value = "mainnet",
-        value_name = "CHAIN"
-    )]
-    chain: Chain,
-
-    #[clap(flatten)]
-    retry: RetryArgs,
-
-    #[clap(
-        help = "Your Etherscan API key.",
-        env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY"
-    )]
-    etherscan_key: String,
-}
-
-impl VerifyCheckArgs {
-    /// Executes the command to check verification status on Etherscan
-    pub async fn run(self) -> eyre::Result<()> {
-        let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
-            .wrap_err("Failed to create etherscan client")?;
-
-        println!("Waiting for verification result...");
-        let retry: Retry = self.retry.into();
-        retry
-            .run_async(|| {
-                async {
-                    let resp = etherscan
-                        .check_contract_verification_status(self.guid.clone())
-                        .await
-                        .wrap_err("Failed to request verification status")?;
-
-                    if resp.status == "0" {
-                        if resp.result == "Already Verified" {
-                            println!("Contract source code already verified");
-                            return Ok(())
-                        }
-
-                        if resp.result == "Pending in queue" {
-                            return Err(eyre!("Verification is still pending...",))
-                        }
-
-                        eprintln!(
-                            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-                            resp.message, resp.result
-                        );
-                        std::process::exit(1);
-                    }
-
-                    println!("Contract successfully verified.");
-                    Ok(())
-                }
-                .boxed()
-            })
-            .await
-            .wrap_err("Checking verification result failed:")
     }
 }
