@@ -54,7 +54,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let cache = project.read_cache_file()?;
         let (path, entry) = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
 
-        let path = args.contract.path.map_or(path, |p| PathBuf::from(p));
+        let path = args.contract.path.map_or(path, PathBuf::from);
 
         let mut files = HashMap::new();
 
