@@ -189,6 +189,12 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
     value_to_abi(val, r#type, is_array)
 }
 
+fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
+    let root = state.config.root.display().to_string();
+
+    Ok(abi::encode(&[Token::String(root)]).into())
+}
+
 fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
     state.config.root.join(path)
 }
@@ -355,6 +361,7 @@ pub fn apply(
         }
         HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
         HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
         HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
