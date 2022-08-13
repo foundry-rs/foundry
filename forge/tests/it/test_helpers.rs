@@ -20,6 +20,8 @@ use std::{path::PathBuf, str::FromStr};
 pub static PROJECT: Lazy<Project> = Lazy::new(|| {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata");
     let paths = ProjectPathsConfig::builder().root(root.clone()).sources(root).build().unwrap();
+    eprintln!("CARGO_MANIFEST_DIR: {:?}", env!("CARGO_MANIFEST_DIR"));
+    eprintln!("{:?}", paths);
     Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
 });
 
