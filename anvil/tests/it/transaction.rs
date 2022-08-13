@@ -392,11 +392,11 @@ async fn get_blocktimestamp_works() {
     let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
 
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.timestamp.into());
+    assert_eq!(timestamp, latest_block.timestamp);
 
     // repeat call same result
     let timestamp = contract.get_current_block_timestamp().call().await.unwrap();
-    assert_eq!(timestamp, latest_block.timestamp.into());
+    assert_eq!(timestamp, latest_block.timestamp);
 
     // mock timestamp
     api.evm_set_next_block_timestamp(1337).unwrap();

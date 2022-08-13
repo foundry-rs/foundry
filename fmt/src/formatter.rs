@@ -3521,7 +3521,7 @@ mod tests {
     }
 
     fn assert_eof(content: &str) {
-        assert!(content.ends_with("\n") && !content.ends_with("\n\n"));
+        assert!(content.ends_with('\n') && !content.ends_with("\n\n"));
     }
 
     fn test_formatter(
