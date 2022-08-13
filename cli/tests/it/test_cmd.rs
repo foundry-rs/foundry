@@ -303,6 +303,7 @@ forgetest_init!(can_test_forge_std, |prj: TestProject, mut cmd: TestCommand| {
 
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe_contracts();
     prj.inner()
         .add_source(
             "Contract.sol",

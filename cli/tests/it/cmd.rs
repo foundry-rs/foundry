@@ -1,7 +1,11 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::{
-    artifacts::{BytecodeHash, Metadata},
-    ConfigurableContractArtifact,
+use crate::constants::*;
+use ethers::{
+    prelude::remappings::Remapping,
+    solc::{
+        artifacts::{BytecodeHash, Metadata},
+        ConfigurableContractArtifact,
+    },
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
@@ -9,7 +13,7 @@ use foundry_cli_test_utils::{
     util::{read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, str::FromStr};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -342,7 +346,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
@@ -355,7 +359,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -363,7 +367,8 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
@@ -372,7 +377,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -391,13 +396,15 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
         .root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    let iropt = prj.paths().artifacts.join(format!("{}.iropt", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(iropt).unwrap();
 
-    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    let sourcemap =
+        prj.paths().artifacts.join(format!("{}.sourcemap", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(sourcemap).unwrap();
 });
 
@@ -1251,4 +1258,54 @@ contract ContractThreeTest is DSTest {
     cmd.forge_fuse();
     let third_out = cmd.arg("test").arg("--gas-report").stdout();
     assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+});
+
+forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestCommand| {
+    let remapping = prj.paths().libraries[0].join("myDepdendency");
+    let config = Config {
+        remappings: vec![Remapping::from_str(&format!("myDepdendency/={}", remapping.display()))
+            .unwrap()
+            .into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/interfaces/IConfig.sol",
+            r#"
+    pragma solidity ^0.8.10;
+
+    interface IConfig {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/Config.sol",
+            r#"
+    pragma solidity ^0.8.10;
+    import "src/interfaces/IConfig.sol";
+
+    contract Config {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "Greeter",
+            r#"
+    pragma solidity ^0.8.10;
+    import "myDepdendency/src/Config.sol";
+
+    contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiler run successful"));
 });

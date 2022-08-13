@@ -4,45 +4,31 @@ use ethers::{
     etherscan,
     prelude::{contract::ContractMetadata, errors::EtherscanError},
     solc::utils::RuntimeOrHandle,
-    types::Chain,
 };
+use foundry_config::{Chain, Config};
 use futures::{
     future::Future,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, path::PathBuf, pin::Pin};
+use std::{borrow::Cow, pin::Pin};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
+#[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
     client: Option<etherscan::Client>,
 }
 
 impl EtherscanIdentifier {
-    /// Creates a new Etherscan identifier.
-    ///
-    /// The identifier is a noop if either `chain` or `etherscan_api_key` are `None`.
-    pub fn new(
-        chain: Option<impl Into<Chain>>,
-        etherscan_api_key: Option<String>,
-        cache_path: Option<PathBuf>,
-        ttl: Duration,
-    ) -> Self {
-        if let Some(cache_path) = &cache_path {
-            if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
-                warn!(target: "etherscanidentifier", "could not create etherscan cache dir: {:?}", err);
-            }
-        }
-
-        Self {
-            client: chain.and_then(|chain| {
-                etherscan_api_key.and_then(|key| {
-                    etherscan::Client::new_cached(chain.into(), key, cache_path, ttl).ok()
-                })
-            }),
+    /// Creates a new Etherscan identifier with the given client
+    pub fn new(config: &Config, chain: Option<impl Into<Chain>>) -> eyre::Result<Self> {
+        if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
+            Ok(Self { client: Some(config.into_client()?) })
+        } else {
+            Ok(Default::default())
         }
     }
 }

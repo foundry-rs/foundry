@@ -1,4 +1,4 @@
-use crate::{cmd::Cmd, utils::consume_config_rpc_url};
+use crate::{cmd::Cmd, init_progress, update_progress, utils::consume_config_rpc_url};
 use cast::trace::{identifier::SignaturesIdentifier, CallTraceDecoder};
 use clap::Parser;
 use ethers::{abi::Address, prelude::Middleware, solc::utils::RuntimeOrHandle, types::H256};
@@ -12,10 +12,10 @@ use forge::{
 };
 use foundry_common::get_http_provider;
 use foundry_config::{find_project_root_path, Config};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
-    time::Duration,
 };
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
@@ -84,22 +84,33 @@ impl RunArgs {
                 println!("Executing previous transactions from the block.");
 
                 let block_txes = provider.get_block_with_txs(tx_block_number).await?;
+                if let Some(block_txes) = block_txes {
+                    let pb = init_progress!(block_txes.transactions, "tx");
+                    update_progress!(pb, -1);
 
-                for past_tx in block_txes.unwrap().transactions.into_iter() {
-                    if past_tx.hash().eq(&tx_hash) {
-                        break
-                    }
+                    for (index, past_tx) in block_txes.transactions.into_iter().enumerate() {
+                        if past_tx.hash().eq(&tx_hash) {
+                            break
+                        }
 
-                    executor.set_gas_limit(past_tx.gas);
+                        executor.set_gas_limit(past_tx.gas);
 
-                    if let Some(to) = past_tx.to {
-                        executor
-                            .call_raw_committing(past_tx.from, to, past_tx.input.0, past_tx.value)
-                            .unwrap();
-                    } else {
-                        executor
-                            .deploy(past_tx.from, past_tx.input.0, past_tx.value, None)
-                            .unwrap();
+                        if let Some(to) = past_tx.to {
+                            executor
+                                .call_raw_committing(
+                                    past_tx.from,
+                                    to,
+                                    past_tx.input.0,
+                                    past_tx.value,
+                                )
+                                .unwrap();
+                        } else {
+                            executor
+                                .deploy(past_tx.from, past_tx.input.0, past_tx.value, None)
+                                .unwrap();
+                        }
+
+                        update_progress!(pb, index);
                     }
                 }
             }
@@ -131,12 +142,8 @@ impl RunArgs {
                 }
             };
 
-            let etherscan_identifier = EtherscanIdentifier::new(
-                evm_opts.get_remote_chain_id(),
-                config.etherscan_api_key,
-                Config::foundry_etherscan_chain_cache_dir(evm_opts.get_chain_id()),
-                Duration::from_secs(24 * 60 * 60),
-            );
+            let etherscan_identifier =
+                EtherscanIdentifier::new(&config, evm_opts.get_remote_chain_id())?;
 
             let labeled_addresses: BTreeMap<Address, String> = self
                 .label
