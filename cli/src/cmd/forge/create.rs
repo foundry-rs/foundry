@@ -82,7 +82,7 @@ pub struct CreateArgs {
 
     #[clap(
         long = "verification-provider",
-        help = "Contract verification provider to use `sourcify` or `etherscan` [Default: etherscan]",
+        help = "Contract verification provider to use `sourcify` or `etherscan`",
         default_value = "etherscan"
     )]
     verification_provider: verify::VerificationProviderType,

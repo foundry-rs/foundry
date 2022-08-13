@@ -181,7 +181,7 @@ impl EtherscanVerificationProvider {
             eyre::bail!("Contract {:?} does not exist.", contract_path);
         }
 
-        let compiler_version = self.compiler_version(&args, &config, &cached_entry)?;
+        let compiler_version = self.compiler_version(args, &config, &cached_entry)?;
 
         let (source, contract_name, code_format) = if args.flatten {
             self.flattened_source(
@@ -192,7 +192,7 @@ impl EtherscanVerificationProvider {
                 &contract_path,
             )?
         } else {
-            self.standard_json_source(&args, &project, &contract_path, &compiler_version)?
+            self.standard_json_source(args, &project, &contract_path, &compiler_version)?
         };
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;

@@ -60,6 +60,7 @@ pub struct VerifyArgs {
     pub chain: Chain,
 
     #[clap(
+        long,
         help = "Your Etherscan API key.",
         env = "ETHERSCAN_API_KEY",
         value_name = "ETHERSCAN_KEY",
