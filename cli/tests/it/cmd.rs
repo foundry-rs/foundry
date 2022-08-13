@@ -346,7 +346,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
