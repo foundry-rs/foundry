@@ -35,7 +35,7 @@ pub struct SourcifyResponseElement {
     storage_timestamp: Option<String>,
 }
 
-pub struct SourcifyVerificationProvider {}
+pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
