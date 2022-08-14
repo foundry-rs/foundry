@@ -101,7 +101,7 @@ pub struct MultiWallet {
     #[clap(
         long = "private-keys",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the provided private key.",
+        help = "Use the provided private keys.",
         value_name = "RAW_PRIVATE_KEYS"
     )]
     pub private_keys: Option<Vec<String>>,
@@ -118,7 +118,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path.",
+        help = "Use the mnemonic files at the specified paths.",
         value_name = "PATHS"
     )]
     pub mnemonic_paths: Option<Vec<String>>,
@@ -126,7 +126,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-indexes",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
+        help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
         value_name = "INDEXES"
     )]
