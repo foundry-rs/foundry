@@ -1,21 +1,15 @@
-pub mod cmd;
-pub mod compile;
-mod handler;
-mod opts;
-mod suggestions;
-mod term;
-mod utils;
-
-use crate::{
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
+use foundry_cli::{
     cmd::{
         forge::{cache::CacheSubcommands, watch},
         Cmd,
     },
+    handler,
+    opts::forge::{Opts, Subcommands},
+    utils,
     utils::CommandUtils,
 };
-use clap::{IntoApp, Parser};
-use clap_complete::generate;
-use opts::forge::{Opts, Subcommands};
 use std::process::Command;
 
 fn main() -> eyre::Result<()> {
@@ -45,7 +39,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::forge::watch::watch_build(cmd))?;
+                utils::block_on(watch::watch_build(cmd))?;
             } else {
                 cmd.run()?;
             }
@@ -104,7 +98,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Snapshot(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+                utils::block_on(watch::watch_snapshot(cmd))?;
             } else {
                 cmd.run()?;
             }

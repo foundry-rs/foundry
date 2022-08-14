@@ -1,3 +1,4 @@
+use crate::cmd::LoadConfig;
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
@@ -25,8 +26,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::{trace, warn};
-
-use crate::cmd::LoadConfig;
 
 use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs, RETRY_CHECK_ON_VERIFY};
 
@@ -405,7 +404,9 @@ fn strip_build_meta(version: Version) -> Version {
 /// Given any solc [Version] return a [Version] with build metadata
 ///
 /// # Example
-/// ```
+///
+/// ```ignore
+/// use semver::{BuildMetadata, Version};
 /// let version = Version::new(1, 2, 3);
 /// let version = ensure_solc_build_metadata(version).await?;
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
