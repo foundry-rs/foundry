@@ -1912,6 +1912,7 @@ dependencies = [
  "eyre",
  "forge-fmt",
  "foundry-common",
+ "rayon",
  "solang-parser",
  "thiserror",
 ]
