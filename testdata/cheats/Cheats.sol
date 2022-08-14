@@ -20,9 +20,9 @@ interface Cheats {
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
-    // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path m/44'/60'/0'/0/{index}
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
     function deriveKey(string calldata, uint32) external returns (uint256);
-    // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path {path}{index}
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path {path}{index}
     function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
