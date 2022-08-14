@@ -94,6 +94,7 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
 /// # Example
 ///
 /// ```
+/// use foundry_cli::utils;
 /// assert_eq!(
 ///     "SafeTransferLibTest",
 ///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
@@ -108,6 +109,7 @@ pub fn get_contract_name(id: &str) -> &str {
 /// # Example
 ///
 /// ```
+/// use foundry_cli::utils;
 /// assert_eq!(
 ///     "SafeTransferLibTest.json",
 ///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
@@ -174,7 +176,7 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
 ///
-/// ```rust
+/// ```ignore
 /// let quiet = true;
 /// p_println!(!quiet => "message");
 /// ```

@@ -126,6 +126,7 @@ impl ProjectCompiler {
     /// # Example
     ///
     /// ```no_run
+    /// use foundry_cli::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// ProjectCompiler::default()
     ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?));
