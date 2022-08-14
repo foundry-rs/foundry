@@ -206,3 +206,18 @@ casttest!(calldata_array, |_: TestProject, mut cmd: TestCommand| {
     assert_eq!(out.trim(),"0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000"
     );
 });
+
+// <https://github.com/foundry-rs/foundry/issues/2705>
+casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
+    let rpc = next_http_rpc_endpoint();
+    cmd.args([
+        "run",
+        "-v",
+        "0x2d951c5c95d374263ca99ad9c20c9797fc714330a8037429a3aa4c83d456f845",
+        "--rpc-url",
+        rpc.as_str(),
+    ]);
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Transaction successfully executed"));
+    assert!(!output.contains("Revert"));
+});
