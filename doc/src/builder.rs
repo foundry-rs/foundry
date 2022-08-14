@@ -1,26 +1,33 @@
 use eyre;
 use forge_fmt::Visitable;
 use rayon::prelude::*;
+use solang_parser::pt::{ContractTy, Identifier};
 use std::{
     fmt::Write,
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::{doc_format::DocFormat, SolidityDoc, SolidityDocPartElement};
+use crate::{doc_format::DocFormat, macros::*, SolidityDoc, SolidityDocPartElement};
 
 pub struct DocBuilder {
     root: PathBuf,
+    out_dir: PathBuf,
     paths: Vec<PathBuf>,
 }
 
 impl DocBuilder {
     pub fn new(root: &Path) -> Self {
-        DocBuilder { root: root.to_owned(), paths: vec![] }
+        DocBuilder { root: root.to_owned(), out_dir: PathBuf::from("docs"), paths: vec![] }
     }
 
     pub fn with_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.paths = paths;
+        self
+    }
+
+    pub fn with_out_dir(mut self, out_dir: &Path) -> Self {
+        self.out_dir = out_dir.to_owned();
         self
     }
 
@@ -46,22 +53,17 @@ impl DocBuilder {
             })
             .collect::<eyre::Result<Vec<_>>>()?;
 
-        let out_dir = self.root.join("docs");
+        let out_dir = self.root.join("docs"); // TODO: config
         let out_dir_src = out_dir.join("src");
         fs::create_dir_all(&out_dir_src)?;
 
         let mut filenames = vec![];
         for (path, doc) in docs.iter() {
-            println!("processing {}", path.display());
             for part in doc.iter() {
                 if let SolidityDocPartElement::Contract(ref contract) = part.element {
-                    println!("\twriting {}", contract.name);
-                    let mut out = vec![
-                        format!("# {}", contract.name),
-                        "".to_owned(),
-                        part.comments.doc(),
-                        "".to_owned(),
-                    ];
+                    let mut doc_file = String::new();
+                    writeln!(doc_file, "# {}", contract.name)?;
+                    writeln_doc!(doc_file, part.comments)?;
 
                     let mut attributes = vec![];
                     let mut funcs = vec![];
@@ -79,42 +81,68 @@ impl DocBuilder {
                     }
 
                     if !attributes.is_empty() {
-                        out.push("## Attributes".to_owned());
-                        out.extend(attributes.iter().flat_map(|(var, comments)| {
-                            vec![var.doc(), comments.doc(), "".to_owned()]
-                        }));
+                        writeln!(doc_file, "## Attributes")?;
+                        for (var, comments) in attributes {
+                            writeln_doc!(doc_file, "{}{}\n", var, comments)?;
+                        }
                     }
 
                     if !funcs.is_empty() {
-                        out.push("## Functions".to_owned());
-                        out.extend(funcs.iter().flat_map(|(func, comments)| {
-                            vec![func.doc(), comments.doc(), "".to_owned()]
-                        }));
+                        writeln!(doc_file, "## Functions")?;
+                        for (func, comments) in funcs {
+                            writeln_doc!(doc_file, "{}{}\n", func, comments)?;
+                        }
                     }
 
-                    let filename = format!("contract.{}.md", contract.name);
                     let mut new_path = path.strip_prefix(&self.root)?.to_owned();
                     new_path.pop();
                     fs::create_dir_all(out_dir_src.join(&new_path))?;
-                    let new_path = new_path.join(&filename);
-                    fs::write(out_dir_src.join(&new_path), out.join("\n"))?;
-                    filenames.push((contract.name.clone(), new_path));
+                    let new_path = new_path.join(&format!("contract.{}.md", contract.name));
+
+                    fs::write(out_dir_src.join(&new_path), doc_file)?;
+                    filenames.push((contract.name.clone(), contract.ty.clone(), new_path));
                 }
             }
         }
+
         let mut summary = String::new();
-        write!(
-            summary,
-            "# Summary\n{}",
-            &filenames
-                .iter()
-                .map(|(src, filename)| format!("- [{}]({})", src, filename.display()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )?;
+        writeln!(summary, "# Summary")?;
+
+        // TODO:
+        let mut interfaces = vec![];
+        let mut contracts = vec![];
+        let mut abstract_contracts = vec![];
+        let mut libraries = vec![];
+        for entry in filenames.into_iter() {
+            match entry.1 {
+                ContractTy::Abstract(_) => abstract_contracts.push(entry),
+                ContractTy::Contract(_) => contracts.push(entry),
+                ContractTy::Interface(_) => interfaces.push(entry),
+                ContractTy::Library(_) => libraries.push(entry),
+            }
+        }
+
+        let mut write_section = |title: &str,
+                                 entries: &[(Identifier, ContractTy, PathBuf)]|
+         -> Result<(), std::fmt::Error> {
+            if !entries.is_empty() {
+                writeln!(summary, "# {title}")?;
+                for (src, _, filename) in entries {
+                    writeln!(summary, "- [{}]({})", src, filename.display())?;
+                }
+                writeln!(summary)?;
+            }
+            Ok(())
+        };
+
+        write_section("Contracts", &contracts)?;
+        write_section("Libraries", &libraries)?;
+        write_section("Interfaces", &interfaces)?;
+        write_section("Abstract Contracts", &abstract_contracts)?;
+
         fs::write(out_dir_src.join("SUMMARY.md"), summary)?;
         // TODO: take values from config
-        fs::write(out_dir.join("book.toml"), "[book]\ntitle = \"OZ\"\nsrc = \"src\"")?;
+        fs::write(out_dir.join("book.toml"), "[book]\ntitle = \"Title\"\nsrc = \"src\"")?;
         Ok(())
     }
 }

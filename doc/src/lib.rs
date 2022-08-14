@@ -10,29 +10,30 @@ use thiserror::Error;
 
 pub mod builder;
 mod doc_format;
+mod macros;
 
 #[derive(Error, Debug)]
-pub enum DocError {} // TODO:
+enum DocError {} // TODO:
 
 type Result<T, E = DocError> = std::result::Result<T, E>;
 
 #[derive(Debug)]
-pub struct SolidityDoc {
-    pub parts: Vec<SolidityDocPart>,
+struct SolidityDoc {
+    parts: Vec<SolidityDocPart>,
     comments: Vec<Comment>,
     start_at: usize,
     curr_parent: Option<SolidityDocPart>,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct SolidityDocPart {
-    pub comments: Vec<DocComment>,
-    pub element: SolidityDocPartElement,
-    pub children: Vec<SolidityDocPart>,
+struct SolidityDocPart {
+    comments: Vec<DocComment>,
+    element: SolidityDocPartElement,
+    children: Vec<SolidityDocPart>,
 }
 
 impl SolidityDoc {
-    pub fn new(comments: Vec<Comment>) -> Self {
+    fn new(comments: Vec<Comment>) -> Self {
         SolidityDoc { parts: vec![], comments, start_at: 0, curr_parent: None }
     }
 
@@ -66,7 +67,7 @@ impl SolidityDoc {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum SolidityDocPartElement {
+enum SolidityDocPartElement {
     Contract(Box<ContractDefinition>),
     Function(FunctionDefinition),
     Variable(VariableDefinition),
