@@ -9,8 +9,9 @@ use solang_parser::{
 use thiserror::Error;
 
 pub mod builder;
-mod doc_format;
+mod format;
 mod macros;
+mod output;
 
 #[derive(Error, Debug)]
 enum DocError {} // TODO:

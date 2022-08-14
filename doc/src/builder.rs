@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{doc_format::DocFormat, macros::*, SolidityDoc, SolidityDocPartElement};
+use crate::{format::DocFormat, macros::*, output::DocOutput, SolidityDoc, SolidityDocPartElement};
 
 pub struct DocBuilder {
     root: PathBuf,
@@ -62,7 +62,16 @@ impl DocBuilder {
             for part in doc.iter() {
                 if let SolidityDocPartElement::Contract(ref contract) = part.element {
                     let mut doc_file = String::new();
-                    writeln!(doc_file, "# {}", contract.name)?;
+                    writeln_doc!(doc_file, DocOutput::H1(&contract.name.name))?;
+                    if !contract.base.is_empty() {
+                        writeln_doc!(
+                            doc_file,
+                            "{} {}\n",
+                            DocOutput::Bold("Inherits:"),
+                            contract.base
+                        )?;
+                    }
+
                     writeln_doc!(doc_file, part.comments)?;
 
                     let mut attributes = vec![];
@@ -81,14 +90,14 @@ impl DocBuilder {
                     }
 
                     if !attributes.is_empty() {
-                        writeln!(doc_file, "## Attributes")?;
+                        writeln_doc!(doc_file, DocOutput::H2("Attributes"))?;
                         for (var, comments) in attributes {
                             writeln_doc!(doc_file, "{}{}\n", var, comments)?;
                         }
                     }
 
                     if !funcs.is_empty() {
-                        writeln!(doc_file, "## Functions")?;
+                        writeln_doc!(doc_file, DocOutput::H2("Functions"))?;
                         for (func, comments) in funcs {
                             writeln_doc!(doc_file, "{}{}\n", func, comments)?;
                         }
@@ -106,7 +115,7 @@ impl DocBuilder {
         }
 
         let mut summary = String::new();
-        writeln!(summary, "# Summary")?;
+        writeln_doc!(summary, DocOutput::H1("Summary"))?;
 
         // TODO:
         let mut interfaces = vec![];
@@ -126,9 +135,13 @@ impl DocBuilder {
                                  entries: &[(Identifier, ContractTy, PathBuf)]|
          -> Result<(), std::fmt::Error> {
             if !entries.is_empty() {
-                writeln!(summary, "# {title}")?;
+                writeln_doc!(summary, DocOutput::H1(title))?;
                 for (src, _, filename) in entries {
-                    writeln!(summary, "- [{}]({})", src, filename.display())?;
+                    writeln_doc!(
+                        summary,
+                        "- {}",
+                        DocOutput::Link(&src.name, &filename.display().to_string())
+                    )?;
                 }
                 writeln!(summary)?;
             }
