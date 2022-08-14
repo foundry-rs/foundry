@@ -7,7 +7,7 @@ use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::executor::fork::CreateFork;
-use foundry_common;
+use foundry_common::{self, try_get_http_provider};
 use foundry_config::Config;
 
 use super::fork::environment;
@@ -74,7 +74,7 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
     pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
-        let provider = Provider::try_from(fork_url.as_ref())?;
+        let provider = try_get_http_provider(fork_url.as_ref())?;
         environment(
             &provider,
             self.memory_limit,
