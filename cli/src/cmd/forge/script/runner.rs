@@ -75,7 +75,7 @@ impl ScriptRunner {
         } = self
             .executor
             .deploy(CALLER, code.0, 0u32.into(), None)
-            .map_err(|err| eyre::eyre!("Constructor failed:\n{}", err))?;
+            .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
