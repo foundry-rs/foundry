@@ -60,8 +60,6 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
 
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_be(info.balance).into());
-        state.insert(utils::u256_to_h256_be(U256::from(info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
@@ -98,8 +96,6 @@ pub fn collect_state_from_call(
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_be(account.info.balance).into());
-        state.insert(utils::u256_to_h256_be(U256::from(account.info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
