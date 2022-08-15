@@ -44,7 +44,7 @@ console = "0.15.0"
 watchexec = "2.0.0"
 atty = "0.2.14"
 comfy-table = "5.0.0"
-reqwest = "0.11.8"
+reqwest ={ version = "0.11.8", default-features = false, features = ["json", "rustls"] }
 dotenv = "0.15.0"
 dialoguer = { version = "0.8.0", default-features = false }
 
