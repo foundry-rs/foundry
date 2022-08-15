@@ -1,7 +1,10 @@
-use crate::eth::{
-    backend::{db::Db, validate::TransactionValidator},
-    error::InvalidTransactionError,
-    pool::transactions::PoolTransaction,
+use crate::{
+    eth::{
+        backend::{db::Db, validate::TransactionValidator},
+        error::InvalidTransactionError,
+        pool::transactions::PoolTransaction,
+    },
+    mem::inspector::Inspector,
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
@@ -15,7 +18,6 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
-    executor::inspector::Tracer,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
     trace::node::CallTraceNode,
@@ -232,11 +234,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         evm.database(&mut self.db);
 
         // records all call traces
-        let mut tracer = Tracer::default();
+        let mut inspector = Inspector::default().with_tracing();
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
+        let (exit, out, gas, logs) = evm.inspect_commit(&mut inspector);
+        inspector.print_logs();
 
         if exit == Return::OutOfGas {
             // this currently useful for debugging estimations
@@ -255,7 +258,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             out,
             gas,
             logs: logs.into_iter().map(Into::into).collect(),
-            traces: tracer.traces.arena,
+            traces: inspector.tracer.unwrap_or_default().traces.arena,
         };
 
         Some(TransactionExecutionOutcome::Executed(tx))

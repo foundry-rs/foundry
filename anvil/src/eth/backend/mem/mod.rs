@@ -19,6 +19,7 @@ use crate::{
     },
     mem::{
         in_memory_db::MemDb,
+        inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
     revm::{db::DatabaseRef, AccountInfo},
@@ -67,6 +68,7 @@ use trie_db::{Recorder, Trie};
 
 pub mod fork_db;
 pub mod in_memory_db;
+pub mod inspector;
 pub mod state;
 pub mod storage;
 
@@ -508,11 +510,14 @@ impl Backend {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
         let db = self.db.read().await;
+        let mut inspector = Inspector::default();
 
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
-        evm.transact_ref()
+        let out = evm.inspect_ref(&mut inspector);
+        inspector.print_logs();
+        out
     }
 
     /// Creates the pending block
@@ -756,10 +761,12 @@ impl Backend {
             access_list: to_access_list(access_list.unwrap_or_default()),
         };
 
+        let mut inspector = Inspector::default();
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(state);
-        let (exit, out, gas, state, _) = evm.transact_ref();
+        let (exit, out, gas, state, _) = evm.inspect_ref(&mut inspector);
+        inspector.print_logs();
         Ok((exit, out, gas, state))
     }
 
