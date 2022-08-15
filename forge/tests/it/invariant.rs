@@ -1,6 +1,8 @@
 //! Tests for invariants
 
 use crate::{config::*, test_helpers::filter::Filter};
+use ethers::types::U256;
+use forge::fuzz::CounterExample;
 use std::collections::BTreeMap;
 
 #[test]
@@ -83,4 +85,34 @@ fn test_invariant_override() {
             vec![("invariantNotStolen", false, Some("stolen.".into()), None, None)],
         )]),
     );
+}
+
+#[test]
+fn test_invariant_shrink() {
+    let mut runner = runner();
+
+    let mut opts = TEST_OPTS;
+    opts.fuzz_seed = Some(U256::from(100u32));
+    runner.test_options = opts;
+
+    let results = runner
+        .test(&Filter::new(".*", ".*", ".*fuzz/invariant/InvariantInnerContract.t.sol"), None, opts)
+        .unwrap();
+
+    let results =
+        results.values().last().expect("`InvariantInnerContract.t.sol` should be testable.");
+
+    let result =
+        results.test_results.values().last().expect("`InvariantInnerContract` should be testable.");
+
+    let counter = result
+        .counterexample
+        .as_ref()
+        .expect("`InvariantInnerContract` should have failed with a counterexample.");
+
+    match counter {
+        CounterExample::Single(_) => assert!(false, "CounterExample should be a sequence."),
+        // `fuzz_seed` at 100 makes this sequence shrinkable from 4 to 2.
+        CounterExample::Sequence(sequence) => assert!(sequence.len() == 2),
+    };
 }
