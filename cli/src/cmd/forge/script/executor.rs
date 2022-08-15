@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     cmd::{
+        ensure_clean_constructor,
         forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
         needs_setup,
     },
@@ -32,6 +33,8 @@ impl ScriptArgs {
 
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
+
+        ensure_clean_constructor(&abi)?;
 
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
