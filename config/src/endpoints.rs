@@ -1,15 +1,10 @@
 //! Support for multiple RPC-endpoints
 
-use once_cell::sync::Lazy;
-use regex::Regex;
+use crate::resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, env, env::VarError, fmt, ops::Deref};
+use std::{collections::BTreeMap, fmt, ops::Deref};
 
-/// A regex that matches `${val}` placeholders
-pub static RE_PLACEHOLDER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)(?P<outer>\$\{\s*(?P<inner>.*?)\s*})").unwrap());
-
-/// Container type for rpc endpoints
+/// Container type for API endpoints, like various RPC endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RpcEndpoints {
@@ -19,12 +14,12 @@ pub struct RpcEndpoints {
 // === impl RpcEndpoints ===
 
 impl RpcEndpoints {
-    /// Creates anew list of endpoints
+    /// Creates a new list of endpoints
     pub fn new(endpoints: impl IntoIterator<Item = (impl Into<String>, RpcEndpoint)>) -> Self {
         Self { endpoints: endpoints.into_iter().map(|(name, url)| (name.into(), url)).collect() }
     }
 
-    /// Returns `true` if this type holds no endpoints
+    /// Returns `true` if this type doesn't contain any endpoints
     pub fn is_empty(&self) -> bool {
         self.endpoints.is_empty()
     }
@@ -48,7 +43,7 @@ impl Deref for RpcEndpoints {
 /// Represents a single endpoint
 ///
 /// This type preserves the value as it's stored in the config. If the value is a reference to an
-/// env var, then the `RpcEndpoint::Env` var will hold the reference (`${MAIN_NET}`) and _not_ the
+/// env var, then the `Endpoint::Env` var will hold the reference (`${MAIN_NET}`) and _not_ the
 /// value of the env var itself.
 /// In other words, this type does not resolve env vars when it's being deserialized
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +67,7 @@ impl RpcEndpoint {
         }
     }
 
-    /// Returns the url variant
+    /// Returns the env variant
     pub fn as_env(&self) -> Option<&str> {
         match self {
             RpcEndpoint::Env(val) => Some(val),
@@ -88,26 +83,8 @@ impl RpcEndpoint {
     pub fn resolve(self) -> Result<String, UnresolvedEnvVarError> {
         match self {
             RpcEndpoint::Url(url) => Ok(url),
-            RpcEndpoint::Env(val) => Self::interpolate(&val),
+            RpcEndpoint::Env(val) => interpolate(&val),
         }
-    }
-
-    /// Replaces all Env var placeholders in the input string with the values they hold
-    pub fn interpolate(input: &str) -> Result<String, UnresolvedEnvVarError> {
-        let mut res = input.to_string();
-
-        // loop over all placeholders in the input and replace them one by one
-        for caps in RE_PLACEHOLDER.captures_iter(input) {
-            let var = &caps["inner"];
-            let value = env::var(var).map_err(|source| UnresolvedEnvVarError {
-                unresolved: input.to_string(),
-                var: var.to_string(),
-                source,
-            })?;
-
-            res = res.replacen(&caps["outer"], &value, 1);
-        }
-        Ok(res)
     }
 }
 
@@ -153,7 +130,7 @@ impl<'de> Deserialize<'de> for RpcEndpoint {
     }
 }
 
-/// Container type for _resolved_ RPC endpoints, see [RpcEndpoints::resolve_all()]
+/// Container type for _resolved_ endpoints, see [RpcEndpoints::resolve_all()]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolvedRpcEndpoints {
     /// contains all named endpoints and their URL or an error if we failed to resolve the env var
@@ -161,7 +138,7 @@ pub struct ResolvedRpcEndpoints {
     endpoints: BTreeMap<String, Result<String, UnresolvedEnvVarError>>,
 }
 
-// === impl ResolvedRpcEndpoints ===
+// === impl ResolvedEndpoints ===
 
 impl ResolvedRpcEndpoints {
     /// Returns true if there's an endpoint that couldn't be resolved
@@ -175,62 +152,5 @@ impl Deref for ResolvedRpcEndpoints {
 
     fn deref(&self) -> &Self::Target {
         &self.endpoints
-    }
-}
-
-/// Error when we failed to resolve an env var
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnresolvedEnvVarError {
-    /// The unresolved input string
-    pub unresolved: String,
-    /// Var that couldn't be resolved
-    pub var: String,
-    /// the `env::var` error
-    pub source: VarError,
-}
-
-// === impl UnresolvedEnvVarError ===
-
-impl UnresolvedEnvVarError {
-    /// Tries to resolve the RPC endpoint again
-    pub fn try_resolve_endpoint(&self) -> Result<String, UnresolvedEnvVarError> {
-        RpcEndpoint::interpolate(&self.unresolved)
-    }
-}
-
-impl fmt::Display for UnresolvedEnvVarError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Failed to resolve env var `{}` in `{}`: {}",
-            self.unresolved, self.var, self.source
-        )
-    }
-}
-
-impl std::error::Error for UnresolvedEnvVarError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_find_placeholder() {
-        let val = "https://eth-mainnet.alchemyapi.io/v2/346273846238426342";
-        assert!(!RE_PLACEHOLDER.is_match(val));
-
-        let val = "${RPC_ENV}";
-        assert!(RE_PLACEHOLDER.is_match(val));
-
-        let val = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}";
-        assert!(RE_PLACEHOLDER.is_match(val));
-
-        let cap = RE_PLACEHOLDER.captures(val).unwrap();
-        assert_eq!(cap.name("outer").unwrap().as_str(), "${API_KEY}");
-        assert_eq!(cap.name("inner").unwrap().as_str(), "API_KEY");
     }
 }

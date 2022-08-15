@@ -26,6 +26,7 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
     config.rpc_endpoints = rpc_endpoints();
+    config.allow_paths.push(env!("CARGO_MANIFEST_DIR").into());
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))

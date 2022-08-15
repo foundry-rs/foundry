@@ -1,16 +1,4 @@
-pub mod cmd;
-pub mod compile;
-
-mod handler;
-mod suggestions;
-mod term;
-mod utils;
-
-use cast::{Cast, SimpleCast, TxBuilder};
-use foundry_config::Config;
-mod opts;
-use crate::{cmd::Cmd, utils::consume_config_rpc_url};
-use cast::InterfacePath;
+use cast::{Cast, InterfacePath, SimpleCast, TxBuilder};
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
@@ -20,18 +8,24 @@ use ethers::{
     types::{Address, NameOrAddress, U256},
 };
 use eyre::WrapErr;
+use foundry_cli::{
+    cmd::Cmd,
+    handler,
+    opts::{
+        cast::{Opts, Subcommands},
+        WalletType,
+    },
+    utils,
+    utils::consume_config_rpc_url,
+};
 use foundry_common::{fs, get_http_provider};
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use foundry_utils::{
     format_tokens,
     selectors::{
         decode_calldata, decode_event_topic, decode_function_selector, import_selectors,
         parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
     },
-};
-use opts::{
-    cast::{Opts, Subcommands},
-    WalletType,
 };
 use rustc_hex::ToHex;
 use std::{
@@ -680,6 +674,12 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
+        Subcommands::GenerateFigSpec => clap_complete::generate(
+            clap_complete_fig::Fig,
+            &mut Opts::command(),
+            "cast",
+            &mut std::io::stdout(),
+        ),
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::Rpc(cmd) => cmd.run()?.await?,
         Subcommands::FormatBytes32String { string } => {

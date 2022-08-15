@@ -80,7 +80,7 @@ impl CheatsConfig {
             Some(Ok(url)) => Ok(url.clone()),
             Some(Err(err)) => {
                 // try resolve again, by checking if env vars are now set
-                if let Ok(url) = err.try_resolve_endpoint() {
+                if let Ok(url) = err.try_resolve() {
                     return Ok(url)
                 }
                 Err(util::encode_error(err))

@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge commands related to verifying contracts on etherscan
+//! and sourcify
 
 use crate::utils::{self, EnvExternalities};
 use foundry_cli_test_utils::{
@@ -6,6 +7,8 @@ use foundry_cli_test_utils::{
     util::{TestCommand, TestProject},
 };
 use foundry_utils::Retry;
+
+const VERIFICATION_PROVIDERS: &'static [&'static str] = &["etherscan", "sourcify"];
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -147,14 +150,20 @@ fn verify_flag_on_create_on_chain(
 ) {
     // only execute if keys present
     if let Some(info) = info {
-        add_unique(&prj);
-        add_verify_target(&prj);
+        for verifier in VERIFICATION_PROVIDERS {
+            add_unique(&prj);
+            add_verify_target(&prj);
 
-        println!("root {:?}", prj.root());
+            println!("root {:?}", prj.root());
 
-        let contract_path = "src/Verify.sol:Verify";
-        cmd.arg("create").args(info.create_args()).arg("--verify").arg(contract_path);
-        parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+            let contract_path = "src/Verify.sol:Verify";
+            cmd.arg("create")
+                .args(info.create_args())
+                .arg("--verify")
+                .arg(contract_path)
+                .arg(format!("--verification-provider {}", verifier));
+            parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+        }
     }
 }
 
@@ -212,20 +221,23 @@ forgetest!(
                 )
                 .unwrap();
 
-            let contract_path = "src/Verify.sol:Verify";
-            cmd.arg("create")
-                .args(info.create_args())
-                .args([
-                    "--constructor-args",
-                    "0x82A0F5F531F9ce0df1DF5619f74a0d3fA31FF561",
-                    "0xE592427A0AEce92De3Edee1F18E0157C05861564",
-                    "0x1717A0D5C8705EE89A8aD6E808268D6A826C97A4",
-                    "0xc778417E063141139Fce010982780140Aa0cD5Ab",
-                ])
-                .arg("--verify")
-                .arg(contract_path);
+            for verifier in VERIFICATION_PROVIDERS {
+                let contract_path = "src/Verify.sol:Verify";
+                cmd.arg("create")
+                    .args(info.create_args())
+                    .args([
+                        "--constructor-args",
+                        "0x82A0F5F531F9ce0df1DF5619f74a0d3fA31FF561",
+                        "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+                        "0x1717A0D5C8705EE89A8aD6E808268D6A826C97A4",
+                        "0xc778417E063141139Fce010982780140Aa0cD5Ab",
+                    ])
+                    .arg("--verify")
+                    .arg(contract_path)
+                    .arg(format!("--verification-provider {}", verifier));
 
-            parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+                parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
+            }
         }
     }
 );

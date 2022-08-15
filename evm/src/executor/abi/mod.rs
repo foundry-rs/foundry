@@ -74,6 +74,7 @@ ethers::contract::abigen!(
             startBroadcast()
             startBroadcast(address)
             stopBroadcast()
+            projectRoot()(string)
             readFile(string)(string)
             writeFile(string,string)
             openFile(string)
@@ -106,6 +107,8 @@ ethers::contract::abigen!(
             rollFork(uint256,uint256)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
+            parseJson(string, string)(bytes)
+            parseJson(string)(bytes)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

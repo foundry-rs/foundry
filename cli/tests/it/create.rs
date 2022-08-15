@@ -1,6 +1,9 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::utils::{self, EnvExternalities};
+use crate::{
+    constants::*,
+    utils::{self, EnvExternalities},
+};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     solc::{artifacts::BytecodeHash, remappings::Remapping},
@@ -155,7 +158,7 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            "./src/Contract.sol:Contract",
+            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",
@@ -193,7 +196,7 @@ forgetest_async!(
 
         cmd.forge_fuse().args([
             "create",
-            "./src/Contract.sol:Contract",
+            format!("./src/{}.sol:{}", TEMPLATE_CONTRACT, TEMPLATE_CONTRACT).as_str(),
             "--use",
             "solc:0.8.15",
             "--rpc-url",

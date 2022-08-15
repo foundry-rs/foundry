@@ -21,6 +21,7 @@ use ethers::{
         U256,
     },
 };
+use eyre::ContextCompat;
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -37,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
-    time::Duration,
 };
 use yansi::Paint;
 
@@ -164,11 +164,9 @@ impl ScriptArgs {
         known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let etherscan_identifier = EtherscanIdentifier::new(
+            &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
-            script_config.config.etherscan_api_key.clone(),
-            Config::foundry_etherscan_chain_cache_dir(script_config.evm_opts.get_chain_id()),
-            Duration::from_secs(24 * 60 * 60),
-        );
+        )?;
 
         let local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
@@ -411,7 +409,10 @@ impl ScriptArgs {
                 (
                     abi.functions()
                         .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .expect("Function signature not found in the ABI"),
+                        .wrap_err(format!(
+                            "Function `{}` is not implemented in your script.",
+                            self.sig
+                        ))?,
                     encode_args(&func, &self.args)?.into(),
                 )
             }

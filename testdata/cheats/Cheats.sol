@@ -20,9 +20,9 @@ interface Cheats {
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
-    // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path m/44'/60'/0'/0/{index}
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
     function deriveKey(string calldata, uint32) external returns (uint256);
-    // Derive a private key from a provided mnenomic string (or mnenomic file path) at the derivation path {path}{index}
+    // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path {path}{index}
     function deriveKey(string calldata, string calldata, uint32) external returns (uint256);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
@@ -115,6 +115,8 @@ interface Cheats {
     function stopBroadcast() external;
     // Reads the entire content of file to string. Path is relative to the project root. (path) => (data)
     function readFile(string calldata) external returns (string memory);
+    // Get the path of the current project root
+    function projectRoot() external returns (string memory);
     // Reads next line of file to string, (path) => (line)
     function readLine(string calldata) external returns (string memory);
     // Writes data to file, creating a file if it does not exist, and entirely replacing its contents if it does.
@@ -180,4 +182,6 @@ interface Cheats {
     function rpcUrl(string calldata) external returns(string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
     function rpcUrls() external returns(string[2][] memory);
+    function parseJson(string calldata, string calldata) external returns(bytes memory);
+    function parseJson(string calldata) external returns(bytes memory);
 }

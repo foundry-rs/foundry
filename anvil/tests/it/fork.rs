@@ -480,7 +480,8 @@ async fn test_fork_can_send_opensea_tx() {
         .to(to)
         .value(20000000000000000u64)
         .data(input)
-        .gas_price(22180711707u64);
+        .gas_price(22180711707u64)
+        .gas(150_000u64);
 
     let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
     assert_eq!(tx.status, Some(1u64.into()));

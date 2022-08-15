@@ -82,6 +82,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         memory_limit: 2u64.pow(25),
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
+        etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
         libraries: vec![
@@ -98,6 +99,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         allow_paths: vec![],
+        include_paths: vec![],
         rpc_endpoints: Default::default(),
         build_info: false,
         build_info_path: None,
@@ -477,8 +479,7 @@ forgetest_init!(
             vec![
                 "dep1/=lib/dep1/src/".parse().unwrap(),
                 "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
-                "forge-std/=lib/forge-std/src/".parse().unwrap(),
-                "src/=src/".parse().unwrap()
+                "forge-std/=lib/forge-std/src/".parse().unwrap()
             ]
         );
     }

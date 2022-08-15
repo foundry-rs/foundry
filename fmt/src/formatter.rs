@@ -2521,7 +2521,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(fmt.buf(), " {{")?;
             fmt.surrounded(
-                structure.fields.first().unwrap().loc.start(),
+                structure.name.loc.end(),
                 "",
                 "}",
                 Some(structure.loc.end()),
@@ -3472,7 +3472,13 @@ mod tests {
                     .map(|filename| filename.strip_suffix('.'))
                     .is_some()
                 {
-                    let mut config = toml::Value::try_from(&FormatterConfig::default()).unwrap();
+                    // The majority of the tests were written with the assumption
+                    // that the default value for max line length is `80`.
+                    // Preserve that to avoid rewriting test logic.
+                    let mut default_config = FormatterConfig::default();
+                    default_config.line_length = 80;
+
+                    let mut config = toml::Value::try_from(&default_config).unwrap();
                     let config_table = config.as_table_mut().unwrap();
                     let mut lines = source.split('\n').peekable();
                     let mut line_num = 1;
@@ -3515,7 +3521,7 @@ mod tests {
     }
 
     fn assert_eof(content: &str) {
-        assert!(content.ends_with("\n") && !content.ends_with("\n\n"));
+        assert!(content.ends_with('\n') && !content.ends_with("\n\n"));
     }
 
     fn test_formatter(

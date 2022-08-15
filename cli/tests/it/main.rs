@@ -23,4 +23,6 @@ pub(crate) mod forge_utils;
 #[cfg(feature = "external-integration-tests")]
 mod integration;
 
+pub mod constants;
+
 fn main() {}
