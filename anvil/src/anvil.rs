@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut std::io::stdout(),
             ),
         }
-        return Ok(());
+        return Ok(())
     }
 
     let _ = fdlimit::raise_fd_limit();
