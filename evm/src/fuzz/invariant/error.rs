@@ -137,25 +137,44 @@ impl InvariantFuzzError {
             .then_some(CounterExample::Sequence(counterexample_sequence))
     }
 
-    /// Tests that the sequence of calls successfully reverts on the error function.
-    fn fails_successfully(&self, mut executor: Executor, calls: &[&BasicTxDetails]) -> bool {
-        for (sender, (addr, bytes)) in calls {
+    /// Tests that the modified sequence of calls successfully reverts on the error function.
+    fn fails_successfully<'a>(
+        &self,
+        mut executor: Executor,
+        calls: &'a [BasicTxDetails],
+        anchor: usize,
+        removed_calls: &[usize],
+    ) -> Result<Vec<&'a BasicTxDetails>, ()> {
+        let calls = calls.iter().enumerate().filter_map(|(index, element)| {
+            if anchor > index || removed_calls.contains(&index) {
+                return None
+            }
+            Some(element)
+        });
+
+        let mut new_sequence = vec![];
+        for details in calls {
+            new_sequence.push(details);
+
+            let (sender, (addr, bytes)) = details;
+
             executor
                 .call_raw_committing(*sender, *addr, bytes.0.clone(), 0.into())
                 .expect("bad call to evm");
 
-            // Checks the invariant.
+            // Checks the invariant. If we exit before the last call, all the better.
             if let Some(func) = &self.func {
                 let error_call_result = executor
                     .call_raw(CALLER, self.addr, func.0.clone(), 0.into())
                     .expect("bad call to evm");
 
                 if error_call_result.reverted {
-                    return true
+                    return Ok(new_sequence)
                 }
             }
         }
-        false
+
+        Err(())
     }
 
     /// Tries to shrink the failure case to its smallest sequence of calls.
@@ -179,26 +198,17 @@ impl InvariantFuzzError {
         let mut shrinked = calls.iter().collect::<Vec<_>>();
 
         while anchor != calls.len() {
-            let new_sequence = calls
-                .iter()
-                .enumerate()
-                .filter_map(|(index, element)| {
-                    if anchor > index || removed_calls.contains(&index) {
-                        return None
-                    }
-                    Some(element)
-                })
-                .collect::<Vec<_>>();
-
             // Get the latest removed element, so we know which one to remove next.
-            let removed = if self.fails_successfully(executor.clone(), &new_sequence) {
-                if shrinked.len() > new_sequence.len() {
-                    shrinked = new_sequence.clone();
-                }
-                removed_calls.last().cloned()
-            } else {
-                removed_calls.pop()
-            };
+            let removed =
+                match self.fails_successfully(executor.clone(), calls, anchor, &removed_calls) {
+                    Ok(new_sequence) => {
+                        if shrinked.len() > new_sequence.len() {
+                            shrinked = new_sequence;
+                        }
+                        removed_calls.last().cloned()
+                    }
+                    Err(_) => removed_calls.pop(),
+                };
 
             if let Some(last_removed) = removed {
                 // If we haven't reached the end of the sequence, then remove the next element.
