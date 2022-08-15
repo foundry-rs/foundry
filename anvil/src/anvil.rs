@@ -20,6 +20,8 @@ pub enum Commands {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
+    #[clap(visible_alias = "fig", about = "Generate Figma autocompletion spec.")]
+    GenerateFigSpec,
 }
 
 #[tokio::main]
@@ -36,6 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &mut std::io::stdout(),
                 );
             }
+            Commands::GenerateFigSpec => clap_complete::generate(
+                clap_complete_fig::Fig,
+                &mut App::command(),
+                "anvil",
+                &mut std::io::stdout(),
+            ),
         }
         return Ok(())
     }

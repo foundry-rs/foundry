@@ -123,7 +123,8 @@ pub enum Subcommands {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
-
+    #[clap(visible_alias = "fig", about = "Generate Figma autocompletion spec.")]
+    GenerateFigSpec,
     #[clap(visible_alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(

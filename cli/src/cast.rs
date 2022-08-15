@@ -674,6 +674,12 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
+        Subcommands::GenerateFigSpec => clap_complete::generate(
+            clap_complete_fig::Fig,
+            &mut Opts::command(),
+            "cast",
+            &mut std::io::stdout(),
+        ),
         Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::Rpc(cmd) => cmd.run()?.await?,
         Subcommands::FormatBytes32String { string } => {
