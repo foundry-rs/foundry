@@ -92,13 +92,6 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
             state.insert(utils::u256_to_h256_be(*slot).into());
             state.insert(utils::u256_to_h256_be(*value).into());
         }
-
-        // Insert push bytes
-        if let Some(code) = &account.info.code {
-            for push_byte in collect_push_bytes(code.bytes().clone()) {
-                state.insert(push_byte);
-            }
-        }
     }
 
     // need at least some state data if db is empty otherwise we can't select random data for state

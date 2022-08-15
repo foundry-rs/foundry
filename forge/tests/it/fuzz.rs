@@ -48,7 +48,10 @@ fn test_fuzz() {
     }
 }
 
+/// Test that showcases PUSH collection on normal fuzzing. Ignored until we collect them in a
+/// smarter way.
 #[test]
+#[ignore]
 fn test_fuzz_collection() {
     let mut runner = runner();
 
