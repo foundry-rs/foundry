@@ -41,7 +41,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
         self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(Arc::clone(&client), Duration::from_secs(1), 5);
+            let mut fetcher = EtherscanFetcher::new(Arc::clone(client), Duration::from_secs(1), 5);
 
             for (addr, _) in addresses {
                 fetcher.push(*addr);
