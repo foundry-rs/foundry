@@ -102,6 +102,7 @@ impl<'a> FuzzedExecutor<'a> {
                     calldata,
                     gas: call.gas,
                     stipend: call.stipend,
+                    traces: call.traces,
                 });
                 Ok(())
             } else {
@@ -131,7 +132,6 @@ impl<'a> FuzzedExecutor<'a> {
             reason: None,
             counterexample: None,
             logs: call.logs,
-            traces: call.traces,
             labeled_addresses: call.labels,
         };
 
@@ -152,6 +152,7 @@ impl<'a> FuzzedExecutor<'a> {
                     addr: None,
                     signature: None,
                     contract_name: None,
+                    traces: call.traces,
                     calldata,
                     args,
                 }));
@@ -183,6 +184,8 @@ pub struct BaseCounterExample {
     pub signature: Option<String>,
     /// Contract name if it exists
     pub contract_name: Option<String>,
+    /// Traces
+    pub traces: Option<CallTraceArena>,
     // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
@@ -194,6 +197,7 @@ impl BaseCounterExample {
         addr: Address,
         bytes: &Bytes,
         contracts: &ContractsByAddress,
+        traces: Option<CallTraceArena>,
     ) -> Self {
         let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
 
@@ -211,6 +215,7 @@ impl BaseCounterExample {
             calldata: bytes.clone(),
             signature: Some(func.signature()),
             contract_name: Some(name.clone()),
+            traces,
             args,
         }
     }
@@ -264,9 +269,6 @@ pub struct FuzzTestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// Traces
-    pub traces: Option<CallTraceArena>,
-
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 }
@@ -290,6 +292,11 @@ impl FuzzedCases {
 
     pub fn into_cases(self) -> Vec<FuzzCase> {
         self.cases
+    }
+
+    /// Get the last [FuzzCase]
+    pub fn last(&self) -> Option<&FuzzCase> {
+        self.cases.last()
     }
 
     /// Returns the median gas of all test cases
@@ -342,4 +349,6 @@ pub struct FuzzCase {
     pub gas: u64,
     /// The initial gas stipend for the transaction
     pub stipend: u64,
+    /// Traces
+    pub traces: Option<CallTraceArena>,
 }
