@@ -3,130 +3,6 @@
 Solidity formatter that respects (some parts of) the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
 is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity/prettier-plugin-solidity) cases.
 
-## Features
-
-### Directives & Definitions
-
-- [x] Pragma directive
-- [x] Import directive
-- [x] Contract definition
-- [x] Enum definition
-- [x] Struct definition
-- [x] Event definition
-- [x] Error definition
-- [x] Function / Modifier / Constructor definitions
-- [x] Variable definition
-- [x] Type definition
-- [x] Using
-
-### Statements
-
-See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L613-L649) enum in Solang
-
-- [x] Block
-- [ ] Assembly
-- [x] Args
-- [x] If
-- [x] While
-- [x] Expression
-- [x] VariableDefinition
-- [x] For
-- [x] DoWhile
-- [x] Continue
-- [x] Break
-- [x] Return
-- [x] Revert
-- [x] Emit
-- [x] Try
-- [x] DocComment
-
-### Expressions
-
-See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L365-L431) enum in Solang
-
-- [x] PostIncrement, PostDecrement, PreIncrement, PreDecrement, UnaryPlus, UnaryMinus, Not, Complement
-- [x] Power, Multiply, Divide, Modulo, Add, Subtract
-- [x] ShiftLeft, ShiftRight, BitwiseAnd, BitwiseXor, BitwiseOr
-- [x] Assign, AssignOr, AssignAnd, AssignXor, AssignShiftLeft, AssignShiftRight, AssignAdd, AssignSubtract, AssignMultiply, AssignDivide, AssignModulo
-- [x] Less, More, LessEqual, MoreEqual, Equal, NotEqual, And, Or
-- [x] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral, AddressLiteral
-- [x] ArraySubscript, ArraySlice
-- [x] MemberAccess
-- [x] FunctionCall
-- [x] FunctionCallBlock
-- [x] NamedFunctionCall
-- [x] New
-- [x] Delete
-- [x] Ternary
-- [x] Type
-    - [x] Address
-    - [x] Address Payable
-    - [x] Payable
-    - [x] Bool
-    - [x] String
-    - [x] Int
-    - [x] Uint
-    - [x] Bytes
-    - [x] Rational
-    - [x] Dynamic Bytes
-    - [x] Mapping
-    - [x] Function
-- [x] Variable
-- [x] List
-- [x] ArrayLiteral
-- [x] Unit
-- [x] This
-
-### Yul Statements
-
-See [YulStatement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L658-L670) enum in Solang
-
-- [x] Assign
-- [x] VariableDeclaration
-- [x] If
-- [x] For
-- [x] Switch
-- [x] Leave
-- [x] Break
-- [x] Continue
-- [x] Block
-- [x] FunctionDefinition
-- [x] FunctionCall
-
-### Yul Expressions
-
-See [YulExpression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L695-L704) enum in Solang
-
-- [x] BoolLiteral
-- [x] NumberLiteral
-- [x] HexNumberLiteral
-- [X] HexStringLiteral
-- [x] StringLiteral
-- [x] Variable
-- [x] FunctionCall
-- [x] SuffixAccess
-
-### Other
-
-- [x] Comments
-
-## Configuration
-
-### Options
-
-- [x] Line Length
-- [x] Tab Width
-- [x] Bracket Spacing
-- [x] Explicit Int Types
-- [ ] Quote style
-- [x] Function Modifiers with Parameter multiline
-- [ ] Import Order
-
-### Other
-
-- [ ] Disable Formatter Range
-- [ ] Disable Formatter Next Line
-
 ## Architecture
 
 The formatter works in two steps:
@@ -215,3 +91,62 @@ contract HelloWorld {
 
 event Greet(string indexed name);
 ```
+
+
+### Testing
+
+Tests reside under `fmt/testdata` folder and specify the malformated & expected Solidity code. The source code file is named `original.sol` and expected file(s) are named in a format `({prefix}.)?fmt.sol`. Multiple expected files are needed for tests covering available configuration options.
+
+The default configuration values can be overriden from within the expected file by adding a comment in the format `// config: {config_entry} = {config_value}`. For example:
+```solidity
+// config: line_length = 160
+```
+
+The `test_directory` macro is used to specify a new folder with source files for the test suite. Each test suite has the following process:
+1. Preparse comments with config values
+2. Parse and compare the AST for source & expected files.
+    - The `AstEq` trait defines the comparison rules for the AST nodes
+3. Format the source file and assert the equality of the output with expected file.
+4. Format the expected files and assert the idempotancy of the formatting operation.
+
+## Contributing
+
+Check out the [foundry contribution guide](https://github.com/foundry-rs/foundry/blob/master/CONTRIBUTING.md).
+
+Guidelines for contributing to `forge fmt`:
+
+### Opening an issue
+
+1. Create a short concise title describing an issue.
+
+Bad Title Examples
+```
+Forge fmt does not work
+Forge fmt breaks
+Forge fmt unexpected behavior
+```
+
+Good Title Examples
+```
+Forge fmt postfix comment misplaced
+Forge fmt does not inline short yul blocks
+```
+2. Fill in the issue template fields that include foundry version, platform & component info.
+3. Provide the code snippets showing the current & expected behaviors.
+4. If it's a feature request, specify why this feature is needed.
+5. Besides the default label (`T-Bug` for bugs or `T-feature` for features), add `C-forge` and `Cmd-forge-fmt` labels.
+
+### Fixing A Bug
+
+1. Specify an issue that is being addressed in the PR description.
+2. Add a note on the solution in the PR description.
+3. Make sure the PR includes the acceptance test(s).
+
+### Developing A Feature
+
+1. Specify an issue that is being addressed in the PR description.
+2. Add a note on the solution in the PR description.
+3. Provide the test coverage for the new feature. These should include:
+    - Adding malformatted & expected solidity code under `fmt/testdata/$dir/`
+    - Testing the behavior of pre and postfix comments
+    - If it's a new config value, tests covering **all** available options
