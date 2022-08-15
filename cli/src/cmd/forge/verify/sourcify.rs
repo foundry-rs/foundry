@@ -111,7 +111,6 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     }
 
                     let text = response.text().await?;
-                    println!("response >> {}", text);
                     Ok(Some(serde_json::from_str::<SourcifyVerificationResponse>(&text)?))
                 }
                 .boxed()
