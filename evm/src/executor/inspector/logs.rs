@@ -12,7 +12,7 @@ use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LogCollector {
     pub logs: Vec<Log>,
 }

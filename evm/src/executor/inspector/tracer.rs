@@ -16,7 +16,7 @@ use revm::{
 };
 
 /// An inspector that collects call traces.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Tracer {
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
