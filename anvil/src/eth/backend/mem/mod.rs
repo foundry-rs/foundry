@@ -46,8 +46,9 @@ use ethers::{
     },
     utils::{keccak256, rlp},
 };
-use forge::revm::BlockEnv;
+use forge::revm::{return_ok, return_revert, BlockEnv};
 use foundry_evm::{
+    decode::decode_revert,
     revm,
     revm::{
         db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
@@ -639,6 +640,24 @@ impl Backend {
                         node_info!("    Contract created: {:?}", contract);
                     }
                     node_info!("    Gas used: {}", receipt.gas_used());
+                    match info.exit {
+                        return_ok!() => (),
+                        return_revert!() => {
+                            if let Some(ref r) = info.out {
+                                if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
+                                    node_info!("    Error: reverted with '{}'", reason);
+                                } else {
+                                    node_info!("    Error: reverted without a reason string");
+                                }
+                            } else {
+                                node_info!("    Error: reverted without a reason string");
+                            }
+                        }
+                        reason => {
+                            node_info!("    Error: failed due to {:?}", reason);
+                        }
+                    }
+                    node_info!("");
                 }
 
                 let mined_tx = MinedTransaction {

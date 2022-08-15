@@ -131,7 +131,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let ExecutedTransaction { transaction, logs, out, traces, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -149,6 +149,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces,
+                exit,
+                out: match out {
+                    TransactOut::Call(b) => Some(b.into()),
+                    TransactOut::Create(b, _) => Some(b.into()),
+                    _ => None,
+                },
             };
 
             transaction_infos.push(info);
