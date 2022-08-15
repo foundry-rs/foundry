@@ -72,6 +72,7 @@ chrono = "0.4.19"
 auto_impl = "0.5.0"
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.2.1", optional = true }
+clap_complete_fig = "3.2.4"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
