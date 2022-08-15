@@ -21,6 +21,7 @@ use ethers::{
         U256,
     },
 };
+use eyre::ContextCompat;
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -408,7 +409,10 @@ impl ScriptArgs {
                 (
                     abi.functions()
                         .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .expect("Function signature not found in the ABI"),
+                        .wrap_err(format!(
+                            "Function `{}` is not implemented in your script.",
+                            self.sig
+                        ))?,
                     encode_args(&func, &self.args)?.into(),
                 )
             }
