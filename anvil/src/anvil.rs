@@ -20,7 +20,7 @@ pub enum Commands {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(visible_alias = "fig", about = "Generate Figma autocompletion spec.")]
+    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
     GenerateFigSpec,
 }
 

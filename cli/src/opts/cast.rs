@@ -823,7 +823,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(visible_alias = "fig", about = "Generate Figma autocompletion spec.")]
+    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
     GenerateFigSpec,
     #[clap(
         name = "run",
