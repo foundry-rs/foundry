@@ -56,8 +56,6 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
     let mut state: BTreeSet<[u8; 32]> = BTreeSet::new();
     for (address, account) in db.accounts.iter() {
-        let info = db.basic(*address);
-
         // Insert basic account information
         state.insert(H256::from(*address).into());
 
