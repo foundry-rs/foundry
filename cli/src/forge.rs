@@ -92,6 +92,12 @@ fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
+        Subcommands::GenerateFigSpec => clap_complete::generate(
+            clap_complete_fig::Fig,
+            &mut Opts::command(),
+            "forge",
+            &mut std::io::stdout(),
+        ),
         Subcommands::Clean { root } => {
             let config = utils::load_config_with_root(root);
             config.project()?.cleanup()?;

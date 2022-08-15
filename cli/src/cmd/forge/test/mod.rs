@@ -283,7 +283,7 @@ fn short_test_result(name: &str, result: &TestResult) {
             .reason
             .as_ref()
             .map(|reason| format!("Reason: {reason}"))
-            .unwrap_or_else(|| "Reason: Undefined.".to_string());
+            .unwrap_or_else(|| "Reason: Assertion failed.".to_string());
 
         let counterexample = result
             .counterexample

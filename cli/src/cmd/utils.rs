@@ -151,6 +151,16 @@ impl From<RetryArgs> for Retry {
     }
 }
 
+/// Returns error if constructor has arguments.
+pub fn ensure_clean_constructor(abi: &Abi) -> eyre::Result<()> {
+    if let Some(constructor) = &abi.constructor {
+        if !constructor.inputs.is_empty() {
+            eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
+        }
+    }
+    Ok(())
+}
+
 pub fn needs_setup(abi: &Abi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
