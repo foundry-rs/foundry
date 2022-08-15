@@ -16,7 +16,7 @@ use std::{
         Arc,
     },
 };
-use tokio::runtime::Handle;
+
 use tracing::log::trace;
 
 #[derive(Clone, Debug, Parser)]
@@ -167,7 +167,7 @@ impl NodeArgs {
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let (api, handle) = crate::spawn(self.into_node_config()).await;
+        let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork().cloned();
@@ -175,20 +175,29 @@ impl NodeArgs {
 
         // handle for the currently running rt, this must be obtained before setting the crtlc
         // handler, See [Handle::current]
-        let rt_handle = Handle::current();
+        let mut signal = handle.shutdown_signal_mut().take();
+
+        let task_manager = handle.task_manager();
+        let on_shutdown = task_manager.on_shutdown();
+
+        task_manager.spawn(async move {
+            on_shutdown.await;
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            if let Some(fork) = fork.take() {
+                trace!("flushing cache on shutdown");
+                fork.database.read().await.flush_cache();
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+                std::process::exit(0);
+            }
+        });
 
         ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
             if prev == 0 {
-                // cleaning up and shutting down
-                // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
-                if let Some(fork) = fork.take() {
-                    rt_handle.block_on(async move {
-                        fork.database.read().await.flush_cache();
-                    });
-                }
-                std::process::exit(0);
+                let _ = signal.take();
             }
         })
         .expect("Error setting Ctrl-C handler");

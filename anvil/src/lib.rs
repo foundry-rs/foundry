@@ -10,6 +10,8 @@ use crate::{
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
+    shutdown::Signal,
+    task_manager::TaskManager,
 };
 use eth::backend::fork::ClientFork;
 use ethers::{
@@ -30,12 +32,12 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::task::JoinError;
-
+use tokio::{runtime::Handle, task::JoinError};
 /// contains the background service that drives the node
 mod service;
 
 mod config;
+
 pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 /// ethereum related implementations
@@ -48,6 +50,10 @@ pub mod logging;
 pub mod pubsub;
 /// axum RPC server implementations
 pub mod server;
+/// Futures for shutdown signal
+mod shutdown;
+/// additional task management
+mod task_manager;
 
 /// contains cli command
 #[cfg(feature = "cmd")]
@@ -145,6 +151,10 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     // select over both tasks
     let inner = futures::future::select(node_service, serve);
 
+    let tokio_handle = Handle::current();
+    let (signal, on_shutdown) = shutdown::signal();
+    let task_manager = TaskManager::new(tokio_handle, on_shutdown);
+
     let handle = NodeHandle {
         config,
         inner: Box::pin(async move {
@@ -152,6 +162,8 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
             inner.await.into_inner().0
         }),
         address: addr,
+        _signal: Some(signal),
+        task_manager,
     };
 
     handle.print(fork.as_ref());
@@ -161,13 +173,19 @@ pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
 
 type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>>>;
 
-/// A handle to the spawned node and server
+/// A handle to the spawned node and server tasks
+///
+/// This future will resolve if either the node or server task resolve/fail.
 pub struct NodeHandle {
     config: NodeConfig,
     /// the address of the running rpc server
     address: SocketAddr,
     /// the future that drives the rpc service and the node service
     inner: NodeFuture,
+    /// A signal that fires the shutdown, fired on drop.
+    _signal: Option<Signal>,
+    /// A task manager that can be used to spawn additional tasks
+    task_manager: TaskManager,
 }
 
 impl NodeHandle {
@@ -239,6 +257,37 @@ impl NodeHandle {
     /// Default gas price for all txs
     pub fn gas_price(&self) -> U256 {
         self.config.get_gas_price()
+    }
+
+    /// Returns the shutdown signal
+    pub fn shutdown_signal(&self) -> &Option<Signal> {
+        &self._signal
+    }
+
+    /// Returns mutable access to the shutdown signal
+    ///
+    /// This can be used to extract the Signal
+    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+        &mut self._signal
+    }
+
+    /// Returns the task manager that can be used to spawn new tasks
+    ///
+    /// ```
+    /// use anvil::NodeHandle;
+    /// # fn t(handle: NodeHandle) {
+    /// let task_manager = handle.task_manager();
+    /// let on_shutdown = task_manager.on_shutdown();
+    ///
+    /// task_manager.spawn(async move {
+    ///     on_shutdown.await;
+    ///     // do something
+    /// });
+    ///
+    /// # }
+    /// ```
+    pub fn task_manager(&self) -> &TaskManager {
+        &self.task_manager
     }
 }
 
