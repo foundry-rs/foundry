@@ -74,6 +74,7 @@ ethers::contract::abigen!(
             startBroadcast()
             startBroadcast(address)
             stopBroadcast()
+            projectRoot()(string)
             readFile(string)(string)
             writeFile(string,string)
             openFile(string)

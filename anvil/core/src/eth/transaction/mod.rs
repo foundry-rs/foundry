@@ -19,7 +19,7 @@ use ethers_core::{
 };
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::{
-    revm::{CreateScheme, TransactTo, TxEnv},
+    revm::{CreateScheme, Return, TransactTo, TxEnv},
     trace::node::CallTraceNode,
 };
 use serde::{Deserialize, Serialize};
@@ -1034,7 +1034,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,
@@ -1044,6 +1044,8 @@ pub struct TransactionInfo {
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
     pub traces: Vec<CallTraceNode>,
+    pub exit: Return,
+    pub out: Option<Bytes>,
 }
 
 // === impl TransactionInfo ===

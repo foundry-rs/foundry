@@ -31,14 +31,14 @@ impl RevertDiagnostic {
                 let contract_label = get_label(contract);
 
                 format!(
-                    r#"Contract {} does not exists on active fork with id `{}`
+                    r#"Contract {} does not exist on active fork with id `{}`
         But exists on non active forks: `{:?}`"#,
                     contract_label, active, available_on
                 )
             }
             RevertDiagnostic::ContractDoesNotExist { contract, .. } => {
                 let contract_label = get_label(contract);
-                format!("Contract {} does not exists", contract_label)
+                format!("Contract {} does not exist", contract_label)
             }
         }
     }

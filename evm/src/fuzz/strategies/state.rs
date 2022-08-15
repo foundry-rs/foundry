@@ -10,18 +10,45 @@ use ethers::{
     types::{Address, Log, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashSet;
 use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
     opcode, spec_opcode_gas, Filth, SpecId,
 };
-use std::{collections::BTreeSet, io::Write, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    io::Write,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
 /// Wrapped in a shareable container.
-pub type EvmFuzzState = Arc<RwLock<BTreeSet<[u8; 32]>>>;
+pub type EvmFuzzState = Arc<RwLock<FuzzDictionary>>;
+
+#[derive(Debug, Default)]
+pub struct FuzzDictionary {
+    inner: BTreeSet<[u8; 32]>,
+    /// Addresses that already had their PUSH bytes collected.
+    cache: HashSet<Address>,
+}
+
+impl Deref for FuzzDictionary {
+    type Target = BTreeSet<[u8; 32]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for FuzzDictionary {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
@@ -54,7 +81,8 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
-    let mut state: BTreeSet<[u8; 32]> = BTreeSet::new();
+    let mut state = FuzzDictionary::default();
+
     for (address, account) in db.accounts.iter() {
         let info = db.basic(*address);
 
@@ -102,8 +130,12 @@ pub fn collect_state_from_call(
 
         // Insert push bytes
         if let Some(code) = &account.info.code {
-            for push_byte in collect_push_bytes(code.bytes().clone()) {
-                state.insert(push_byte);
+            if !state.cache.contains(address) {
+                state.cache.insert(*address);
+
+                for push_byte in collect_push_bytes(code.bytes().clone()) {
+                    state.insert(push_byte);
+                }
             }
         }
 

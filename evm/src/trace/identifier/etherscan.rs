@@ -4,45 +4,32 @@ use ethers::{
     etherscan,
     prelude::{contract::ContractMetadata, errors::EtherscanError},
     solc::utils::RuntimeOrHandle,
-    types::Chain,
 };
+use foundry_config::{Chain, Config};
 use futures::{
     future::Future,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, path::PathBuf, pin::Pin};
+use std::{borrow::Cow, pin::Pin, sync::Arc};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
 /// A trace identifier that tries to identify addresses using Etherscan.
+#[derive(Default)]
 pub struct EtherscanIdentifier {
     /// The Etherscan client
-    client: Option<etherscan::Client>,
+    client: Option<Arc<etherscan::Client>>,
 }
 
 impl EtherscanIdentifier {
-    /// Creates a new Etherscan identifier.
-    ///
-    /// The identifier is a noop if either `chain` or `etherscan_api_key` are `None`.
-    pub fn new(
-        chain: Option<impl Into<Chain>>,
-        etherscan_api_key: Option<String>,
-        cache_path: Option<PathBuf>,
-        ttl: Duration,
-    ) -> Self {
-        if let Some(cache_path) = &cache_path {
-            if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
-                warn!(target: "etherscanidentifier", "could not create etherscan cache dir: {:?}", err);
-            }
-        }
-
-        Self {
-            client: chain.and_then(|chain| {
-                etherscan_api_key.and_then(|key| {
-                    etherscan::Client::new_cached(chain.into(), key, cache_path, ttl).ok()
-                })
-            }),
+    /// Creates a new Etherscan identifier with the given client
+    pub fn new(config: &Config, chain: Option<impl Into<Chain>>) -> eyre::Result<Self> {
+        if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
+            trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
+            Ok(Self { client: Some(Arc::new(config.into_client()?)) })
+        } else {
+            Ok(Default::default())
         }
     }
 }
@@ -52,8 +39,9 @@ impl TraceIdentifier for EtherscanIdentifier {
         &self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
+        trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
         self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(client.clone(), Duration::from_secs(1), 5);
+            let mut fetcher = EtherscanFetcher::new(Arc::clone(client), Duration::from_secs(1), 5);
 
             for (addr, _) in addresses {
                 fetcher.push(*addr);
@@ -82,7 +70,7 @@ type EtherscanFuture =
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
 pub struct EtherscanFetcher {
     /// The Etherscan client
-    client: etherscan::Client,
+    client: Arc<etherscan::Client>,
     /// The time we wait if we hit the rate limit
     timeout: Duration,
     /// The interval we are currently waiting for before making a new request
@@ -96,7 +84,7 @@ pub struct EtherscanFetcher {
 }
 
 impl EtherscanFetcher {
-    pub fn new(client: etherscan::Client, timeout: Duration, concurrency: usize) -> Self {
+    pub fn new(client: Arc<etherscan::Client>, timeout: Duration, concurrency: usize) -> Self {
         Self {
             client,
             timeout,
@@ -114,7 +102,7 @@ impl EtherscanFetcher {
     fn queue_next_reqs(&mut self) {
         while self.in_progress.len() < self.concurrency {
             if let Some(addr) = self.queue.pop() {
-                let client = self.client.clone();
+                let client = Arc::clone(&self.client);
                 trace!(target: "etherscanidentifier", "fetching info for {:?}", addr);
                 self.in_progress.push(Box::pin(async move {
                     let res = client.contract_source_code(addr).await;
@@ -157,7 +145,7 @@ impl Stream for EtherscanFetcher {
                                 }
                             }
                         }
-                        Err(etherscan::errors::EtherscanError::RateLimitExceeded) => {
+                        Err(EtherscanError::RateLimitExceeded) => {
                             warn!(target: "etherscanidentifier", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);

@@ -12,4 +12,8 @@ pub const SELECTOR_LEN: usize = 4;
 pub const CONTRACT_MAX_SIZE: usize = 24576;
 
 /// Default request timeout for http requests
-pub const REQUEST_TIMEOUT: Duration = Duration::from_millis(30_000);
+///
+/// Note: this is only used so that connections, that are discarded on the server side won't stay
+/// open forever. We assume some nodes may have some backoff baked into them and will delay some
+/// responses. This timeout should be a reasonable amount of time to wait for a request.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);

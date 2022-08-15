@@ -13,6 +13,7 @@ readme = "README.md"
 # eth
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc"] }
+ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 # formats
 Inflector = "0.11.4"
@@ -37,6 +38,7 @@ regex = "1.5.5"
 semver = { version = "1.0.5", features = ["serde"] }
 tracing = "0.1"
 once_cell = "1.13"
+thiserror = "1.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2.0"
