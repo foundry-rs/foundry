@@ -92,6 +92,19 @@ contract HelloWorld {
 event Greet(string indexed name);
 ```
 
+### Configuration
+
+Formatter supports multiple configuration options defined in `FormatterConfig`.
+
+| Option                            | Default  | Description          
+| --------------------------------- | -------  | ---------------------
+| line_length                       | 120      | Maximum line length where formatter will try to wrap the line
+| tab_width                         | 4        | Number of spaces per indentation level
+| bracket_spacing                   | false    | Print spaces between brackets
+| int_types                         | long     | Style of uint/int256 types. Available options: `long`, `short`, `preserve`
+| func_attrs_with_params_multiline  | true     | If function parameters are multiline then always put the function attributes on separate lines
+| quote_style                       | double   | Style of quotation marks. Available options: `double`, `single`, `preserve`
+| number_underscore                 | preserve | Style of underscores in number literals. Available options: `remove`, `thousands`, `preserve`
 
 ### Testing
 
@@ -118,19 +131,17 @@ Guidelines for contributing to `forge fmt`:
 ### Opening an issue
 
 1. Create a short concise title describing an issue.
-
-Bad Title Examples
-```
-Forge fmt does not work
-Forge fmt breaks
-Forge fmt unexpected behavior
-```
-
-Good Title Examples
-```
-Forge fmt postfix comment misplaced
-Forge fmt does not inline short yul blocks
-```
+    - Bad Title Examples
+        ```text
+        Forge fmt does not work
+        Forge fmt breaks
+        Forge fmt unexpected behavior
+        ```
+    - Good Title Examples
+        ```text
+        Forge fmt postfix comment misplaced
+        Forge fmt does not inline short yul blocks
+        ```
 2. Fill in the issue template fields that include foundry version, platform & component info.
 3. Provide the code snippets showing the current & expected behaviors.
 4. If it's a feature request, specify why this feature is needed.
