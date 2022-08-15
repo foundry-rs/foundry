@@ -9,6 +9,7 @@ use crate::{
 use ethers::{abi::Function, types::Address};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use proptest::test_runner::TestError;
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct InvariantFuzzError {
@@ -197,6 +198,7 @@ impl InvariantFuzzError {
         let mut anchor = 0;
         let mut removed_calls = vec![];
         let mut shrinked = calls.iter().collect::<Vec<_>>();
+        trace!(target: "forge::test", "Shrinking.");
 
         while anchor != calls.len() {
             // Get the latest removed element, so we know which one to remove next.

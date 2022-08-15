@@ -84,17 +84,13 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
-        let info = db.basic(*address);
-
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.insert(utils::u256_to_h256_be(*value).into());
         }
     }
 
@@ -119,13 +115,11 @@ pub fn collect_state_from_call(
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(account.info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(account.info.nonce)).into());
 
         // Insert storage
         for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+            state.insert(utils::u256_to_h256_be(*slot).into());
+            state.insert(utils::u256_to_h256_be(*value).into());
         }
 
         // Insert push bytes
@@ -183,11 +177,8 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
                 return bytes
             }
 
-            let mut buffer: [u8; 32] = [0; 32];
-            let _ = (&mut buffer[..])
-                .write(&code[push_start..push_end])
-                .expect("push was larger than 32 bytes");
-            bytes.push(buffer);
+            bytes.push(U256::from_big_endian(&code[push_start..push_end]).into());
+
             i += push_size;
         }
         i += 1;

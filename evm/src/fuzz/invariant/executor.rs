@@ -23,6 +23,7 @@ use ethers::{
 };
 use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashMap;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -142,14 +143,10 @@ impl<'a> InvariantExecutor<'a> {
                         .expect("could not make raw evm call");
 
                     // Collect data for fuzzing from the state changeset.
-                    let state_changeset =
+                    let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("to have a state changeset.");
 
-                    collect_state_from_call(
-                        &call_result.logs,
-                        &state_changeset,
-                        fuzz_state.clone(),
-                    );
+                    collect_data(&mut state_changeset, sender, &call_result, fuzz_state.clone());
 
                     if let Err(error) = collect_created_contracts(
                         &state_changeset,
@@ -206,6 +203,8 @@ impl<'a> InvariantExecutor<'a> {
                 Ok(())
             });
         }
+
+        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(hex::encode).collect::<Vec<_>>());
 
         let (reverts, invariants) = failures.into_inner().into_inner();
 
@@ -477,6 +476,36 @@ impl<'a> InvariantExecutor<'a> {
         };
 
         Vec::new()
+    }
+}
+
+/// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
+/// before inserting it into the dictionary. Otherwise, we flood the dictionary with
+/// randomly generated addresses.
+fn collect_data(
+    state_changeset: &mut HashMap<Address, revm::Account>,
+    sender: &Address,
+    call_result: &RawCallResult,
+    fuzz_state: EvmFuzzState,
+) {
+    // Verify it has no code.
+    let mut has_code = false;
+    if let Some(Some(code)) = state_changeset.get(sender).map(|account| account.info.code.as_ref())
+    {
+        has_code = !code.is_empty();
+    }
+
+    // We keep the nonce changes to apply later.
+    let mut sender_changeset = None;
+    if !has_code {
+        sender_changeset = state_changeset.remove(sender);
+    }
+
+    collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state);
+
+    // Re-add changes
+    if let Some(changed) = sender_changeset {
+        state_changeset.insert(*sender, changed);
     }
 }
 

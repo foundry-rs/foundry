@@ -99,7 +99,11 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
         },
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value
-            .prop_map(move |value| Token::String(String::from_utf8_lossy(&value[..]).to_string()))
+            .prop_map(move |value| {
+                Token::String(
+                    String::from_utf8_lossy(&value[..]).trim().trim_end_matches('\0').to_string(),
+                )
+            })
             .boxed(),
         ParamType::Array(param) => proptest::collection::vec(
             fuzz_param_from_state(param, arc_state.clone()),
@@ -128,7 +132,10 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
 
 #[cfg(test)]
 mod tests {
-    use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
+    use crate::{
+        fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
+        CALLER,
+    };
     use ethers::abi::HumanReadableParser;
     use revm::db::{CacheDB, EmptyDB};
 
