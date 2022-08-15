@@ -108,7 +108,7 @@ impl InvariantFuzzError {
 
             // Identify newly generated contracts, if they exist.
             ided_contracts.extend(load_contracts(
-                vec![(TraceKind::Execution, call_result.traces.unwrap())],
+                vec![(TraceKind::Execution, call_result.traces.clone().unwrap())],
                 known_contracts,
             ));
 
@@ -117,6 +117,7 @@ impl InvariantFuzzError {
                 *addr,
                 bytes,
                 &ided_contracts,
+                call_result.traces,
             ));
 
             // Checks the invariant.

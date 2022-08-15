@@ -169,6 +169,7 @@ impl<'a> InvariantExecutor<'a> {
                         calldata: calldata.clone(),
                         gas: call_result.gas,
                         stipend: call_result.stipend,
+                        traces: call_result.traces.clone(),
                     });
 
                     if !can_continue(
