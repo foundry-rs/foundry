@@ -12,8 +12,9 @@ fn test_fuzz() {
 
     let suite_result = runner
         .test(
-            &Filter::new(".*", ".*", ".*fuzz/[^invariant]")
-                .exclude_tests(r#"invariantCounter|testIncrement\(address\)|testNeedle(uint256)"#),
+            &Filter::new(".*", ".*", ".*fuzz/[^invariant]").exclude_tests(
+                r#"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)"#,
+            ),
             None,
             TEST_OPTS,
         )
