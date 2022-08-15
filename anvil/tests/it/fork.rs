@@ -613,3 +613,41 @@ async fn test_fork_snapshot_block_timestamp() {
 
     assert_eq!(initial_block.timestamp.as_u64(), latest_block.timestamp.as_u64());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_uncles_fetch() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Block on ETH mainnet with 2 uncles
+    let block_with_uncles = 190u64;
+
+    let block =
+        api.block_by_number(BlockNumber::Number(block_with_uncles.into())).await.unwrap().unwrap();
+
+    assert_eq!(block.uncles.len(), 2);
+
+    let count = provider.get_uncle_count(block_with_uncles).await.unwrap();
+    assert_eq!(count.as_usize(), block.uncles.len());
+
+    let count = provider.get_uncle_count(block.hash.unwrap()).await.unwrap();
+    assert_eq!(count.as_usize(), block.uncles.len());
+
+    for (uncle_idx, uncle_hash) in block.uncles.iter().enumerate() {
+        // Try with block number
+        let uncle = provider
+            .get_uncle(block_with_uncles, (uncle_idx as u64).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*uncle_hash, uncle.hash.unwrap());
+
+        // Try with block hash
+        let uncle = provider
+            .get_uncle(block.hash.unwrap(), (uncle_idx as u64).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*uncle_hash, uncle.hash.unwrap());
+    }
+}
