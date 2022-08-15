@@ -214,6 +214,7 @@ casttest!(cast_run_succeeds, |_: TestProject, mut cmd: TestCommand| {
         "run",
         "-v",
         "0x2d951c5c95d374263ca99ad9c20c9797fc714330a8037429a3aa4c83d456f845",
+        "--quick",
         "--rpc-url",
         rpc.as_str(),
     ]);
