@@ -17,6 +17,12 @@ Every callback function should write formatted output for the current node
 and call `Visitable::visit` function for child nodes delegating the output writing. 
 1. Implement `Visitable` trait and its `visit` function for each PT node type. Every `visit` function should call corresponding `Formatter`'s callback function.
 
+### Output
+
+The formatted output is written into the output buffer in _chunks_. The `Chunk` struct holds the content to be written & metadata for it. This includes the comments surrounding the content as well as the `needs_space` flag specifying whether this _chunk_ needs a space. The flag overrides the default behavior of `Formatter::next_char_needs_space` method.
+
+The content gets written into the `FormatBuffer` which contains the information about the current indentation level, indentation length, current state as well as the other data determining the rules for writing the content. `FormatBuffer` implements the `std::fmt::Write` trait where it evaluates the current information and decides how the content should be written to the destination.
+
 ### Comments
 
 The solang parser does not output comments as a type of parse tree node, but rather
