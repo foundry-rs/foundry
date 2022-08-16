@@ -89,8 +89,13 @@ async fn test_fork_eth_get_code() {
     }
 
     for address in utils::contract_addresses(Chain::Mainnet) {
+        let prev_code = api
+            .get_code(address, Some(BlockNumber::Number((BLOCK_NUMBER - 10).into()).into()))
+            .await
+            .unwrap();
         let code = api.get_code(address, None).await.unwrap();
         let provider_code = provider.get_code(address, None).await.unwrap();
+        assert_eq!(code, prev_code);
         assert_eq!(code, provider_code);
         assert!(!code.as_ref().is_empty());
     }

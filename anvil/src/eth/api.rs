@@ -590,6 +590,14 @@ impl EthApi {
     pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_getCode");
         let block_request = self.block_request(block_number).await?;
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number.as_u64()) {
+                    return Ok(fork.get_code(address, number.as_u64()).await?)
+                }
+            }
+        }
         self.backend.get_code(address, Some(block_request)).await
     }
 
