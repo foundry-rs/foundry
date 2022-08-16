@@ -170,10 +170,10 @@ impl EthApi {
                 self.transaction_count(addr, block).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCountByHash(hash) => {
-                self.block_transaction_count_by_hash(hash).to_rpc_result()
+                self.block_transaction_count_by_hash(hash).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCountByNumber(num) => {
-                self.block_transaction_count_by_number(num).to_rpc_result()
+                self.block_transaction_count_by_number(num).await.to_rpc_result()
             }
             EthRequest::EthGetUnclesCountByHash(hash) => {
                 self.block_uncles_count_by_hash(hash).await.to_rpc_result()
@@ -548,17 +548,27 @@ impl EthApi {
     /// Returns the number of transactions in a block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByHash`
-    pub fn block_transaction_count_by_hash(&self, _: H256) -> Result<Option<U256>> {
+    pub async fn block_transaction_count_by_hash(&self, hash: H256) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByHash");
-        Err(BlockchainError::RpcUnimplemented)
+        let block = self.backend.block_by_hash(hash).await?;
+        Ok(block.map(|b| b.transactions.len().into()))
     }
 
     /// Returns the number of transactions in a block with given block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByNumber`
-    pub fn block_transaction_count_by_number(&self, _: BlockNumber) -> Result<Option<U256>> {
+    pub async fn block_transaction_count_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        Err(BlockchainError::RpcUnimplemented)
+        let block_request = self.block_request(Some(block_number.into())).await?;
+        if let BlockRequest::Pending(txs) = block_request {
+            let block = self.backend.pending_block(txs).await;
+            return Ok(Some(block.transactions.len().into()))
+        }
+        let block = self.backend.block_by_number(block_number).await?;
+        Ok(block.map(|b| b.transactions.len().into()))
     }
 
     /// Returns the number of uncles in a block with given hash.
