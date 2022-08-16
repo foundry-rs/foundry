@@ -9,13 +9,9 @@ use futures::{
 };
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
-    collections::HashSet,
     fmt,
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
-    },
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -58,8 +54,9 @@ impl Miner {
 
     /// Sets the mining mode to operate in
     pub fn set_mining_mode(&self, mode: MiningMode) {
+        let new_mode = format!("{:?}", mode);
         let mode = std::mem::replace(&mut *self.mode_write(), mode);
-        trace!(target: "miner", "updated mining mode {:?}", mode);
+        trace!(target: "miner", "updated mining mode from {:?} to {}", mode, new_mode);
         self.inner.wake();
     }
 
@@ -81,7 +78,6 @@ impl Miner {
 #[derive(Debug)]
 pub struct MinerInner {
     waker: AtomicWaker,
-    set: AtomicBool,
 }
 
 // === impl MinerInner ===
@@ -89,24 +85,17 @@ pub struct MinerInner {
 impl MinerInner {
     /// Call the waker again
     fn wake(&self) {
-        self.set.store(true, Relaxed);
         self.waker.wake();
     }
 
     fn register(&self, cx: &mut Context<'_>) {
-        // avoid waker reregistration.
-        if self.set.load(Relaxed) {
-            return
-        }
-
         self.waker.register(cx.waker());
-        self.set.load(Relaxed);
     }
 }
 
 impl Default for MinerInner {
     fn default() -> Self {
-        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
+        Self { waker: AtomicWaker::new() }
     }
 }
 
@@ -130,7 +119,7 @@ impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
         MiningMode::Auto(ReadyTransactionMiner {
             max_transactions,
-            ready: Default::default(),
+            has_pending_txs: None,
             rx: listener.fuse(),
         })
     }
@@ -191,10 +180,8 @@ impl Default for FixedBlockTimeMiner {
 pub struct ReadyTransactionMiner {
     /// how many transactions to mine per block
     max_transactions: usize,
-    /// transactions that are ready to be included in a block
-    ///
-    /// This is used as a trigger to take transactions from the pool
-    ready: HashSet<TxHash>,
+    /// stores whether there are pending transacions (if known)
+    has_pending_txs: Option<bool>,
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
 }
@@ -204,20 +191,22 @@ pub struct ReadyTransactionMiner {
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
         // drain the notification stream
-        while let Poll::Ready(Some(hash)) = Pin::new(&mut self.rx).poll_next(cx) {
-            self.ready.insert(hash);
+        while let Poll::Ready(Some(_hash)) = Pin::new(&mut self.rx).poll_next(cx) {
+            self.has_pending_txs = Some(true);
         }
 
-        if self.ready.is_empty() {
+        if self.has_pending_txs == Some(false) {
             return Poll::Pending
         }
 
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
 
-        if transactions.len() < self.max_transactions {
-            // save to clear the buffer since we completely emptied the pool
-            self.ready.clear();
+        // there are pending transactions if we didn't drain the pool
+        self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
+
+        if transactions.is_empty() {
+            return Poll::Pending
         }
 
         Poll::Ready(transactions)

@@ -296,6 +296,27 @@ async fn can_deploy_and_mine_manually() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_mine_automatically() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string()).unwrap().deployer.tx;
+    let sent_tx = client.send_transaction(tx, None).await.unwrap();
+
+    // re-enable auto mine
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let receipt = sent_tx.await.unwrap().unwrap();
+    assert_eq!(receipt.status.unwrap().as_u64(), 1u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_call_greeter_historic() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
