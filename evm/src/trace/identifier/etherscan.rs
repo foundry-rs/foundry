@@ -11,7 +11,14 @@ use futures::{
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
-use std::{borrow::Cow, pin::Pin, sync::Arc};
+use std::{
+    borrow::Cow,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::time::{Duration, Interval};
 use tracing::{trace, warn};
 
@@ -20,6 +27,11 @@ use tracing::{trace, warn};
 pub struct EtherscanIdentifier {
     /// The Etherscan client
     client: Option<Arc<etherscan::Client>>,
+    /// Tracks whether the API key provides was marked as invalid
+    ///
+    /// After the first [EtherscanError::InvalidApiKey] this will get set to true, so we can
+    /// prevent any further attempts
+    invalid_api_key: Arc<AtomicBool>,
 }
 
 impl EtherscanIdentifier {
@@ -27,7 +39,10 @@ impl EtherscanIdentifier {
     pub fn new(config: &Config, chain: Option<impl Into<Chain>>) -> eyre::Result<Self> {
         if let Some(config) = config.get_etherscan_config_with_chain(chain)? {
             trace!(target: "etherscanidentifier", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            Ok(Self { client: Some(Arc::new(config.into_client()?)) })
+            Ok(Self {
+                client: Some(Arc::new(config.into_client()?)),
+                invalid_api_key: Arc::new(Default::default()),
+            })
         } else {
             Ok(Default::default())
         }
@@ -40,8 +55,19 @@ impl TraceIdentifier for EtherscanIdentifier {
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
     ) -> Vec<AddressIdentity> {
         trace!(target: "etherscanidentifier", "identify {} addresses", addresses.len());
+
+        if self.invalid_api_key.load(Ordering::Relaxed) {
+            // api key was marked as invalid
+            return Vec::new()
+        }
+
         self.client.as_ref().map_or(Default::default(), |client| {
-            let mut fetcher = EtherscanFetcher::new(Arc::clone(client), Duration::from_secs(1), 5);
+            let mut fetcher = EtherscanFetcher::new(
+                Arc::clone(client),
+                Duration::from_secs(1),
+                5,
+                Arc::clone(&self.invalid_api_key),
+            );
 
             for (addr, _) in addresses {
                 fetcher.push(*addr);
@@ -81,10 +107,17 @@ pub struct EtherscanFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<EtherscanFuture>,
+    /// tracks whether the API key provides was marked as invalid
+    invalid_api_key: Arc<AtomicBool>,
 }
 
 impl EtherscanFetcher {
-    pub fn new(client: Arc<etherscan::Client>, timeout: Duration, concurrency: usize) -> Self {
+    pub fn new(
+        client: Arc<etherscan::Client>,
+        timeout: Duration,
+        concurrency: usize,
+        invalid_api_key: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             client,
             timeout,
@@ -92,6 +125,7 @@ impl EtherscanFetcher {
             concurrency,
             queue: Vec::new(),
             in_progress: FuturesUnordered::new(),
+            invalid_api_key,
         }
     }
 
@@ -149,6 +183,12 @@ impl Stream for EtherscanFetcher {
                             warn!(target: "etherscanidentifier", "rate limit exceeded on attempt");
                             pin.backoff = Some(tokio::time::interval(pin.timeout));
                             pin.queue.push(addr);
+                        }
+                        Err(EtherscanError::InvalidApiKey) => {
+                            warn!(target: "etherscanidentifier", "invalid api key");
+                            // mark key as invalid
+                            pin.invalid_api_key.store(false, Ordering::Relaxed);
+                            return Poll::Ready(None)
                         }
                         Err(err) => {
                             warn!(target: "etherscanidentifier", "could not get etherscan info: {:?}", err);
