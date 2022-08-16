@@ -302,7 +302,7 @@ impl<'a> ContractRunner<'a> {
                 .collect();
 
             let results = self.run_invariant_test(
-                test_options.fuzzer(),
+                test_options.invariant_fuzzer(),
                 setup,
                 test_options,
                 functions.clone(),
@@ -518,7 +518,14 @@ impl<'a> ContractRunner<'a> {
         // Record logs, labels and traces
         logs.append(&mut result.logs);
         labeled_addresses.append(&mut result.labeled_addresses);
-        traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
+        traces.extend(
+            result
+                .cases
+                .last()
+                .and_then(|case| case.traces.clone())
+                .map(|traces| (TraceKind::Execution, traces))
+                .into_iter(),
+        );
 
         // Record test execution time
         tracing::debug!(

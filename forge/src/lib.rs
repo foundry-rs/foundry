@@ -51,11 +51,19 @@ pub struct TestOptions {
 }
 
 impl TestOptions {
+    pub fn invariant_fuzzer(&self) -> TestRunner {
+        self.fuzzer_with_cases(self.invariant_runs)
+    }
+
     pub fn fuzzer(&self) -> TestRunner {
+        self.fuzzer_with_cases(self.fuzz_runs)
+    }
+
+    pub fn fuzzer_with_cases(&self, cases: u32) -> TestRunner {
         // TODO: Add Options to modify the persistence
         let cfg = proptest::test_runner::Config {
             failure_persistence: None,
-            cases: self.fuzz_runs,
+            cases,
             max_local_rejects: self.fuzz_max_local_rejects,
             max_global_rejects: self.fuzz_max_global_rejects,
             ..Default::default()

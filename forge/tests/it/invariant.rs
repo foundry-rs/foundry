@@ -9,22 +9,27 @@ use std::collections::BTreeMap;
 fn test_invariant() {
     let mut runner = runner();
 
-    let results =
-        runner.test(&Filter::new(".*", ".*", ".*fuzz/invariant/"), None, TEST_OPTS).unwrap();
+    let results = runner
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/(target|targetAbi|common)"),
+            None,
+            TEST_OPTS,
+        )
+        .unwrap();
 
     assert_multiple(
         &results,
         BTreeMap::from([
             (
-                "fuzz/invariant/InvariantInnerContract.t.sol:InvariantInnerContract",
+                "fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
                 vec![("invariantHideJesus", false, Some("jesus betrayed.".into()), None, None)],
             ),
             (
-                "fuzz/invariant/InvariantReentrancy.t.sol:InvariantReentrancy",
+                "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
                 vec![("invariantNotStolen", true, None, None, None)],
             ),
             (
-                "fuzz/invariant/InvariantTest1.t.sol:InvariantTest",
+                "fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
                 vec![("invariant_neverFalse", false, Some("false.".into()), None, None)],
             ),
             (
@@ -75,14 +80,49 @@ fn test_invariant_override() {
     runner.test_options = opts;
 
     let results = runner
-        .test(&Filter::new(".*", ".*", ".*fuzz/invariant/InvariantReentrancy.t.sol"), None, opts)
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantReentrancy.t.sol"),
+            None,
+            opts,
+        )
         .unwrap();
 
     assert_multiple(
         &results,
         BTreeMap::from([(
-            "fuzz/invariant/InvariantReentrancy.t.sol:InvariantReentrancy",
+            "fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
             vec![("invariantNotStolen", false, Some("stolen.".into()), None, None)],
+        )]),
+    );
+}
+
+#[test]
+fn test_invariant_storage() {
+    let mut runner = runner();
+
+    let mut opts = TEST_OPTS;
+    opts.invariant_depth = 100;
+    opts.fuzz_seed = Some(U256::from(6u32));
+    runner.test_options = opts;
+
+    let results = runner
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/storage/InvariantStorageTest.t.sol"),
+            None,
+            opts,
+        )
+        .unwrap();
+
+    assert_multiple(
+        &results,
+        BTreeMap::from([(
+            "fuzz/invariant/storage/InvariantStorageTest.t.sol:InvariantStorageTest",
+            vec![
+                ("invariantChangeAddress", false, Some("changedAddr".into()), None, None),
+                ("invariantChangeString", false, Some("changedStr".into()), None, None),
+                ("invariantChangeUint", false, Some("changedUint".into()), None, None),
+                ("invariantPush", false, Some("pushUint".into()), None, None),
+            ],
         )]),
     );
 }
@@ -92,11 +132,15 @@ fn test_invariant_shrink() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.fuzz_seed = Some(U256::from(100u32));
+    opts.fuzz_seed = Some(U256::from(102u32));
     runner.test_options = opts;
 
     let results = runner
-        .test(&Filter::new(".*", ".*", ".*fuzz/invariant/InvariantInnerContract.t.sol"), None, opts)
+        .test(
+            &Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol"),
+            None,
+            opts,
+        )
         .unwrap();
 
     let results =

@@ -10,7 +10,7 @@ use ethers::{
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
-use eyre::Result;
+use eyre::{Context, Result};
 
 use foundry_common::RetryProvider;
 use foundry_config::Config;
@@ -299,7 +299,16 @@ impl MultiWallet {
 
     pub async fn ledgers(&self, chain_id: u64) -> Result<Option<Vec<Ledger>>> {
         if self.ledger {
-            create_hw_wallets!(self, chain_id, get_from_ledger, wallets);
+            let mut args = self.clone();
+
+            if let Some(paths) = &args.hd_paths {
+                if paths.len() > 1 {
+                    eyre::bail!("Ledger only supports one signer.");
+                }
+                args.mnemonic_indexes = None;
+            }
+
+            create_hw_wallets!(args, chain_id, get_from_ledger, wallets);
             return Ok(Some(wallets))
         }
         Ok(None)
@@ -338,6 +347,6 @@ impl MultiWallet {
             None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
         };
 
-        Ok(Some(Ledger::new(derivation, chain_id).await?))
+        Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
     }
 }
