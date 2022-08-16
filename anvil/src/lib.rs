@@ -37,7 +37,6 @@ use tokio::{runtime::Handle, task::JoinError};
 mod service;
 
 mod config;
-
 pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 /// ethereum related implementations
