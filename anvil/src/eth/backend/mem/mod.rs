@@ -275,6 +275,17 @@ impl Backend {
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if let Some(fork) = self.get_fork() {
+            // we can cache all dev accounts here, so we don't need to fetch
+            let genesis_accounts = {
+                let db = self.db.read().await;
+                self.genesis
+                    .accounts
+                    .iter()
+                    .copied()
+                    .map(|acc| (acc, db.basic(acc)))
+                    .collect::<Vec<_>>()
+            };
+
             // reset the fork entirely and reapply the genesis config
             fork.reset(forking.json_rpc_url.clone(), forking.block_number).await?;
             // update all settings related to the forked block
@@ -293,7 +304,12 @@ impl Backend {
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
             self.states.write().clear();
 
-            // self.apply_genesis().await;
+            let mut db = self.db.write().await;
+            for (acc, mut info) in genesis_accounts {
+                info.balance = self.genesis.balance;
+                db.insert_account(acc, info);
+            }
+
             Ok(())
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())

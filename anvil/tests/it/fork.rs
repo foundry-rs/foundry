@@ -535,16 +535,19 @@ async fn test_reset_fork_on_new_blocks() {
 
     let anvil_provider = handle.http_provider();
 
-    let provider = Arc::new(Provider::try_from(next_http_rpc_endpoint()).unwrap());
+    let endpoint = next_http_rpc_endpoint();
+    let provider =
+        Arc::new(Provider::try_from(&endpoint).unwrap().interval(Duration::from_secs(2)));
 
     let current_block = anvil_provider.get_block_number().await.unwrap();
 
-    handle.task_manager().spawn_reset_on_new_polled_blocks(Arc::clone(&provider), api);
+    handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
+
+    let provider = Provider::try_from(endpoint).unwrap();
 
     let mut stream = provider.watch_blocks().await.unwrap();
     stream.next().await.unwrap();
-
-    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    stream.next().await.unwrap();
 
     let next_block = anvil_provider.get_block_number().await.unwrap();
 
