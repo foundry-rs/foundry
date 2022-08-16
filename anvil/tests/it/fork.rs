@@ -586,3 +586,29 @@ async fn test_fork_call() {
 
     assert_eq!(res0, res1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert!(initial_block.timestamp.as_u64() < latest_block.timestamp.as_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_snapshot_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_set_next_block_timestamp(initial_block.timestamp.as_u64()).unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert_eq!(initial_block.timestamp.as_u64(), latest_block.timestamp.as_u64());
+}
