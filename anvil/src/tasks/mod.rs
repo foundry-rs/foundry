@@ -106,13 +106,12 @@ impl TaskManager {
     /// block
     ///
     /// ```
-    /// use ethers::prelude::Ws;
     /// use ethers::providers::Provider;
     /// use anvil::{NodeConfig, spawn};
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
     ///
-    /// let provider = Ws::connect("ws://...").await.unwrap();
+    /// let provider = Provider::connect("ws://...").await.unwrap();
     ///
     /// handle.task_manager().spawn_reset_on_subscribed_blocks(provider, api);
     ///
