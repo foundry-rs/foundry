@@ -293,7 +293,7 @@ impl Backend {
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
             self.states.write().clear();
 
-            self.apply_genesis().await;
+            // self.apply_genesis().await;
             Ok(())
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())

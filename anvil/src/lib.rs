@@ -11,7 +11,7 @@ use crate::{
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
     shutdown::Signal,
-    task_manager::TaskManager,
+    tasks::TaskManager,
 };
 use eth::backend::fork::ClientFork;
 use ethers::{
@@ -53,7 +53,7 @@ pub mod server;
 /// Futures for shutdown signal
 mod shutdown;
 /// additional task management
-mod task_manager;
+mod tasks;
 
 /// contains cli command
 #[cfg(feature = "cmd")]

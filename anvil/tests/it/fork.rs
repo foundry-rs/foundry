@@ -5,14 +5,15 @@ use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use anvil_core::types::Forking;
 use ethers::{
     core::rand,
-    prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
+    prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware, StreamExt},
+    providers::Provider,
     signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
         U256,
     },
 };
-use foundry_utils::rpc;
+use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
@@ -523,4 +524,29 @@ async fn test_fork_init_base_fee() {
 
     let next_base_fee = block.base_fee_per_gas.unwrap();
     assert!(next_base_fee < init_base_fee);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_fork_on_new_blocks() {
+    let (api, handle) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint())).silent(),
+    )
+    .await;
+
+    let anvil_provider = handle.http_provider();
+
+    let provider = Arc::new(Provider::try_from(next_http_rpc_endpoint()).unwrap());
+
+    let current_block = anvil_provider.get_block_number().await.unwrap();
+
+    handle.task_manager().spawn_reset_on_new_polled_blocks(Arc::clone(&provider), api);
+
+    let mut stream = provider.watch_blocks().await.unwrap();
+    stream.next().await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+
+    let next_block = anvil_provider.get_block_number().await.unwrap();
+
+    assert!(next_block > current_block)
 }
