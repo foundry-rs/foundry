@@ -825,6 +825,10 @@ impl Config {
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
         let mut extra_output_files = self.extra_output_files.clone();
+        // Sourcify verification requires solc metadata output. Since, it doesn't
+        // affect the UX & performance of the compile, output the metadata files
+        // by default.
+        // For more info see: https://github.com/foundry-rs/foundry/issues/2795
         if !extra_output_files.contains(&ContractOutputSelection::Metadata) {
             extra_output_files.push(ContractOutputSelection::Metadata);
         }
