@@ -824,7 +824,15 @@ impl Config {
     /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
-        ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
+        let mut extra_output_files = self.extra_output_files.clone();
+        // Sourcify verification requires solc metadata output. Since, it doesn't
+        // affect the UX & performance of the compiler, output the metadata files
+        // by default.
+        // For more info see: https://github.com/foundry-rs/foundry/issues/2795
+        if !extra_output_files.contains(&ContractOutputSelection::Metadata) {
+            extra_output_files.push(ContractOutputSelection::Metadata);
+        }
+        ConfigurableArtifacts::new(self.extra_output.clone(), extra_output_files)
     }
 
     /// Parses all libraries in the form of
