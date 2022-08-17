@@ -49,24 +49,27 @@ impl ScriptArgs {
         let (func, calldata) = self.get_method_and_calldata(&abi)?;
         script_config.called_function = Some(func);
 
-        let script_result = runner.script(address, calldata)?;
+        // Only call the method if `setUp()` succeeded.
+        if result.success {
+            let script_result = runner.script(address, calldata)?;
 
-        result.success &= script_result.success;
-        result.gas = script_result.gas;
-        result.logs.extend(script_result.logs);
-        result.traces.extend(script_result.traces);
-        result.debug = script_result.debug;
-        result.labeled_addresses.extend(script_result.labeled_addresses);
-        result.returned = script_result.returned;
+            result.success &= script_result.success;
+            result.gas = script_result.gas;
+            result.logs.extend(script_result.logs);
+            result.traces.extend(script_result.traces);
+            result.debug = script_result.debug;
+            result.labeled_addresses.extend(script_result.labeled_addresses);
+            result.returned = script_result.returned;
 
-        match (&mut result.transactions, script_result.transactions) {
-            (Some(txs), Some(new_txs)) => {
-                txs.extend(new_txs);
+            match (&mut result.transactions, script_result.transactions) {
+                (Some(txs), Some(new_txs)) => {
+                    txs.extend(new_txs);
+                }
+                (None, Some(new_txs)) => {
+                    result.transactions = Some(new_txs);
+                }
+                _ => {}
             }
-            (None, Some(new_txs)) => {
-                result.transactions = Some(new_txs);
-            }
-            _ => {}
         }
 
         Ok(result)

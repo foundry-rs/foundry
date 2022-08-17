@@ -7,7 +7,7 @@ use crate::{
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
@@ -226,40 +226,36 @@ impl ScriptArgs {
         let verbosity = script_config.evm_opts.verbosity;
         let func = script_config.called_function.as_ref().expect("There should be a function.");
 
-        if verbosity >= 3 {
+        if !result.success || verbosity > 3 {
             if result.traces.is_empty() {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             }
 
-            if !result.success && verbosity == 3 || verbosity > 3 {
-                println!("Traces:");
-                for (kind, trace) in &mut result.traces {
-                    let should_include = match kind {
-                        TraceKind::Setup => (verbosity >= 5) || (verbosity == 4 && !result.success),
-                        TraceKind::Execution => verbosity > 3 || !result.success,
-                        _ => false,
-                    };
+            println!("Traces:");
+            for (kind, trace) in &mut result.traces {
+                let should_include = match kind {
+                    TraceKind::Setup => verbosity >= 5,
+                    TraceKind::Execution => verbosity > 3,
+                    _ => false,
+                } || !result.success;
 
-                    if should_include {
-                        decoder.decode(trace).await;
-                        println!("{trace}");
-                    }
+                if should_include {
+                    decoder.decode(trace).await;
+                    println!("{trace}");
                 }
-                println!();
             }
+            println!();
         }
 
         if result.success {
             println!("{}", Paint::green("Script ran successfully."));
-        } else {
-            println!("{}", Paint::red("Script failed."));
         }
 
         if script_config.evm_opts.fork_url.is_none() {
             println!("Gas used: {}", result.gas);
         }
 
-        if !result.returned.is_empty() {
+        if result.success && !result.returned.is_empty() {
             println!("\n== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
@@ -289,7 +285,11 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            eyre::bail!("{}", Paint::red("Script failed."));
+            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
+                .map(|err| format!("{}\n", err))
+                .unwrap_or_else(|_| "Script failed.\n".to_string());
+
+            eyre::bail!("{}", Paint::red(revert_msg));
         }
 
         Ok(())
