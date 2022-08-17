@@ -230,13 +230,15 @@ impl<'a> ContractRunner<'a> {
         let has_invariants =
             self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
 
+        // Invariant testing requires tracing to figure out what contracts were created.
+        let original_tracing = self.executor.inspector_config().tracing;
         if has_invariants && needs_setup {
-            // invariant testing requires tracing to figure
-            //   out what contracts were created
             self.executor.set_tracing(true);
         }
 
         let setup = self.setup(needs_setup)?;
+        self.executor.set_tracing(original_tracing);
+
         if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok(SuiteResult::new(
