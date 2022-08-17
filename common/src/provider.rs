@@ -52,12 +52,16 @@ pub struct ProviderBuilder {
 impl ProviderBuilder {
     /// Creates a new builder instance
     pub fn new(url: impl IntoUrl) -> Self {
+        let timeout = std::env::var("REQ_TIMEOUT")
+            .map(|val| Duration::from_millis(val.parse().unwrap()))
+            .unwrap_or(REQUEST_TIMEOUT);
+        println!("using {:?} request timeout", timeout);
         Self {
             url: url.into_url(),
             chain: Chain::Mainnet,
             max_retry: 100,
             initial_backoff: 100,
-            timeout: REQUEST_TIMEOUT,
+            timeout,
         }
     }
 
