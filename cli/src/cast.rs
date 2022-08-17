@@ -1,4 +1,4 @@
-use cast::{Cast, InterfacePath, SimpleCast, TxBuilder};
+use cast::{Cast, SimpleCast, TxBuilder};
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 use ethers::{
@@ -7,7 +7,7 @@ use ethers::{
     providers::Middleware,
     types::{Address, NameOrAddress, U256},
 };
-use eyre::WrapErr;
+
 use foundry_cli::{
     cmd::Cmd,
     handler,
@@ -30,7 +30,6 @@ use foundry_utils::{
 use rustc_hex::ToHex;
 use std::{
     io::{self, Read, Write},
-    path::Path,
     str::FromStr,
     sync::Arc,
 };
@@ -522,59 +521,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::keccak(&data)?);
         }
 
-        Subcommands::Interface {
-            path_or_address,
-            name,
-            pragma,
-            chain,
-            output_location,
-            etherscan_api_key,
-        } => {
-            let interfaces = if Path::new(&path_or_address).exists() {
-                SimpleCast::generate_interface(InterfacePath::Local { path: path_or_address, name })
-                    .await?
-            } else {
-                let api_key = match etherscan_api_key {
-                    Some(inner) => inner,
-                    _ => {
-                        if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
-                            etherscan_api_key
-                        } else {
-                            eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
-                        }
-                    }
-                };
-                SimpleCast::generate_interface(InterfacePath::Etherscan {
-                    chain: chain.inner,
-                    api_key,
-                    address: path_or_address
-                        .parse::<Address>()
-                        .wrap_err("Invalid address provided. Did you make a typo?")?,
-                })
-                .await?
-            };
-
-            // put it all together
-            let pragma = format!("pragma solidity {pragma};");
-            let interfaces = interfaces
-                .iter()
-                .map(|iface| iface.source.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let res = format!("{pragma}\n\n{interfaces}");
-
-            // print or write to file
-            match output_location {
-                Some(loc) => {
-                    fs::create_dir_all(&loc.parent().unwrap())?;
-                    fs::write(&loc, res)?;
-                    println!("Saved interface at {}", loc.display());
-                }
-                None => {
-                    println!("{res}");
-                }
-            }
-        }
+        Subcommands::Interface(cmd) => cmd.run()?.await?,
         Subcommands::ResolveName { who, rpc_url, verify } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = get_http_provider(rpc_url);
