@@ -128,7 +128,7 @@ impl<'a> InvariantExecutor<'a> {
                 let mut executor = blank_executor.borrow().clone();
 
                 // Used for stat reports (eg. gas usage).
-                let mut fuzz_runs = vec![];
+                let mut fuzz_runs = Vec::with_capacity(test_options.depth as usize);
 
                 // Created contracts during a run.
                 let mut created_contracts = vec![];
@@ -166,7 +166,6 @@ impl<'a> InvariantExecutor<'a> {
                         calldata: calldata.clone(),
                         gas: call_result.gas,
                         stipend: call_result.stipend,
-                        traces: call_result.traces.clone(),
                     });
 
                     if !can_continue(
