@@ -255,7 +255,7 @@ impl ScriptArgs {
             println!("Gas used: {}", result.gas);
         }
 
-        if !result.returned.is_empty() {
+        if result.success && !result.returned.is_empty() {
             println!("\n== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
