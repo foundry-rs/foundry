@@ -112,5 +112,5 @@ path = "src/forge.rs"
 doc = false
 
 [[bench]]
-name = "forge_build"
+name = "forge_test"
 harness = false
