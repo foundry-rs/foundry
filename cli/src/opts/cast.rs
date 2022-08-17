@@ -1,8 +1,8 @@
 use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
     cmd::cast::{
-        estimate::EstimateArgs, find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs,
-        wallet::WalletSubcommands,
+        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
+        run::RunArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -762,48 +762,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Generate a Solidity interface from a given ABI.",
         long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
     )]
-    Interface {
-        #[clap(
-            help = "The contract address, or the path to an ABI file.",
-            long_help = r#"The contract address, or the path to an ABI file.
-
-If an address is specified, then the ABI is fetched from Etherscan."#,
-            value_name = "PATH_OR_ADDRESS"
-        )]
-        path_or_address: String,
-        #[clap(
-            long,
-            short,
-            help = "The name to use for the generated interface",
-            value_name = "NAME"
-        )]
-        name: Option<String>,
-        #[clap(
-            long,
-            short,
-            default_value = "^0.8.10",
-            help = "Solidity pragma version.",
-            value_name = "VERSION"
-        )]
-        pragma: String,
-        #[clap(
-            short,
-            help = "The path to the output file.",
-            long_help = "The path to the output file. If not specified, the interface will be output to stdout.",
-            value_name = "PATH"
-        )]
-        output_location: Option<PathBuf>,
-        #[clap(
-            long,
-            short,
-            env = "ETHERSCAN_API_KEY",
-            help = "etherscan API key",
-            value_name = "KEY"
-        )]
-        etherscan_api_key: Option<String>,
-        #[clap(flatten)]
-        chain: ClapChain,
-    },
+    Interface(InterfaceArgs),
     #[clap(name = "sig", visible_alias = "si", about = "Get the selector for a function.")]
     Sig {
         #[clap(
