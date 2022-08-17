@@ -275,6 +275,8 @@ impl<'a> InvariantExecutor<'a> {
     /// format). They will be used to filter contracts after the `setUp`, and more importantly,
     /// during the runs.
     ///
+    /// Also excludes any contract without any mutable functions.
+    ///
     /// Priority:
     ///
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
@@ -312,6 +314,24 @@ impl<'a> InvariantExecutor<'a> {
 
             if !self.artifact_filters.excluded.contains(&identifier) {
                 self.artifact_filters.excluded.push(identifier);
+            }
+        }
+
+        // Exclude any artifact without mutable functions.
+        for (artifact, (abi, _)) in self.project_contracts.iter() {
+            if abi
+                .functions()
+                .filter(|func| {
+                    !matches!(
+                        func.state_mutability,
+                        ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
+                    )
+                })
+                .count() ==
+                0 &&
+                !self.artifact_filters.excluded.contains(&artifact.identifier())
+            {
+                self.artifact_filters.excluded.push(artifact.identifier());
             }
         }
 

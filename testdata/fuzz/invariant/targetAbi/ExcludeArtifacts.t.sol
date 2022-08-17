@@ -3,6 +3,12 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 
+// Will get automatically excluded. Otherwise it would throw error.
+contract NoMutFunctions {
+    function no_change() public pure {
+    }
+}
+
 contract Excluded {
     bool public world = true;
 
@@ -25,6 +31,7 @@ contract ExcludeArtifacts is DSTest {
     function setUp() public {
         excluded = new Excluded();
         new Hello();
+        new NoMutFunctions();
     }
 
     function excludeArtifacts() public returns (string[] memory) {
