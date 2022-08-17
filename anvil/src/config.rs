@@ -631,7 +631,15 @@ impl NodeConfig {
                     panic!("Failed to get block for block number: {}", fork_block_number)
                 };
 
-                env.block.number = fork_block_number.into();
+                env.block = BlockEnv {
+                    number: fork_block_number.into(),
+                    timestamp: block.timestamp,
+                    difficulty: block.difficulty,
+                    gas_limit: block.gas_limit,
+                    // Keep previous `coinbase` and `basefee` value
+                    coinbase: env.block.coinbase,
+                    basefee: env.block.basefee,
+                };
                 fork_timestamp = Some(block.timestamp);
 
                 // if not set explicitly we use the base fee of the latest block

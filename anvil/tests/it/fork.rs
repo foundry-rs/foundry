@@ -2,10 +2,11 @@
 
 use crate::{abi::*, utils};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
-use anvil_core::types::Forking;
+use anvil_core::{eth::transaction::EthTransactionRequest, types::Forking};
 use ethers::{
     core::rand,
     prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
+    providers::{Http, Provider},
     signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
@@ -523,4 +524,26 @@ async fn test_fork_init_base_fee() {
 
     let next_base_fee = block.base_fee_per_gas.unwrap();
     assert!(next_base_fee < init_base_fee);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_call() {
+    let input: Bytes = "0x77c7b8fc".parse().unwrap();
+    let to: Address = "0x99d1Fa417f94dcD62BfE781a1213c092a47041Bc".parse().unwrap();
+    let block_number = 14746300u64;
+
+    let provider = Provider::<Http>::try_from(rpc::next_http_archive_rpc_endpoint()).unwrap();
+    let mut tx = TypedTransaction::default();
+    tx.set_to(to).set_data(input.clone());
+    let res0 =
+        provider.call(&tx, Some(BlockNumber::Number(block_number.into()).into())).await.unwrap();
+
+    let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
+
+    let res1 = api
+        .call(EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() }, None)
+        .await
+        .unwrap();
+
+    assert_eq!(res0, res1);
 }
