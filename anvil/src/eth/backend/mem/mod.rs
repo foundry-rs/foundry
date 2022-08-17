@@ -213,8 +213,16 @@ impl Backend {
             // in fork mode we only set the balance, this way the accountinfo is fetched from the
             // remote client, preserving code and nonce. The reason for that is private keys for dev
             // accounts are commonly known and are used on testnets
+            let mut fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
+            fork_genesis_infos.clear();
+
             for address in self.genesis.accounts.iter().copied() {
-                db.set_balance(address, self.genesis.balance)
+                let mut info = db.basic(address);
+                info.balance = self.genesis.balance;
+                db.insert_account(address, info.clone());
+
+                // store the fetched AccountInfo, so we can cheaply reset in [Self::reset_fork()]
+                fork_genesis_infos.push(info);
             }
         } else {
             for (account, info) in self.genesis.account_infos() {
@@ -306,7 +314,16 @@ impl Backend {
                 BlockchainStorage::forked(fork.block_number(), fork.block_hash());
             self.states.write().clear();
 
-            self.apply_genesis().await;
+            // insert back all genesis accounts, by reusing cached `AccountInfo`s we don't need to
+            // fetch the data via RPC again
+            let mut db = self.db.write().await;
+            let fork_genesis_infos = self.genesis.fork_genesis_account_infos.lock();
+            for (address, info) in
+                self.genesis.accounts.iter().copied().zip(fork_genesis_infos.iter().cloned())
+            {
+                db.insert_account(address, info);
+            }
+
             Ok(())
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
