@@ -122,6 +122,8 @@ which implements the following methods:
 
 - `function warp(uint x) public` Sets the block timestamp to `x`.
 
+- `function difficulty(uint x) public` Sets the block difficulty to `x`.
+
 - `function roll(uint x) public` Sets the block number to `x`.
 
 - `function coinbase(address c) public` Sets the block coinbase to `c`.

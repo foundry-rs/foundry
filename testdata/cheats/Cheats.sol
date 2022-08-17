@@ -6,6 +6,8 @@ interface Cheats {
     struct Log {bytes32[] topics; bytes data;}
     // Set block.timestamp (newTimestamp)
     function warp(uint256) external;
+    // Set block.difficulty (newDifficulty)
+    function difficulty(uint256) external;
     // Set block.height (newHeight)
     function roll(uint256) external;
     // Set block.basefee (newBasefee)
