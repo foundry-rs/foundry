@@ -4,6 +4,7 @@ use ethers_solc::{
     project_util::{copy_dir, TempProject},
     ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, Solc,
 };
+use eyre::WrapErr;
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -146,13 +147,14 @@ pub fn try_setup_forge_remote(
     config: impl Into<RemoteProject>,
 ) -> eyre::Result<(TestProject, TestCommand)> {
     let config = config.into();
-    let mut tmp = TempProject::checkout(&config.id)?;
+    let mut tmp = TempProject::checkout(&config.id).wrap_err("failed to checkout project")?;
     tmp.project_mut().paths = config.path_style.paths(&tmp.root())?;
-    let prj = TestProject { root: tmp.root().to_path_buf(), inner: Arc::new(tmp) };
+
+    let prj = TestProject::with_project(tmp);
     if config.run_build {
         let mut cmd = prj.forge_command();
         cmd.arg("build");
-        cmd.ensure_execute_success()?;
+        cmd.ensure_execute_success().wrap_err("`forge build` unsuccessful")?;
     }
     for addon in config.run_commands {
         debug_assert!(!addon.is_empty());
@@ -160,8 +162,12 @@ pub fn try_setup_forge_remote(
         if addon.len() > 1 {
             cmd.args(&addon[1..]);
         }
-        let status =
-            cmd.current_dir(prj.root()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+        let status = cmd
+            .current_dir(prj.root())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .wrap_err_with(|| format!("Failed to execute {:?}", addon))?;
         eyre::ensure!(status.success(), "Failed to execute command {:?}", addon);
     }
 
@@ -584,12 +590,8 @@ impl TestCommand {
     }
 
     pub fn try_execute(&mut self) -> std::io::Result<process::Output> {
-        let mut child = self
-            .cmd
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::piped())
-            .stdin(process::Stdio::piped())
-            .spawn()?;
+        let mut child =
+            self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
             fun(child.stdin.take().unwrap())
         }
@@ -597,6 +599,7 @@ impl TestCommand {
     }
 
     /// Executes command and expects an successful result
+    #[track_caller]
     pub fn ensure_execute_success(&mut self) -> eyre::Result<process::Output> {
         let out = self.try_execute()?;
         self.ensure_success(out)
