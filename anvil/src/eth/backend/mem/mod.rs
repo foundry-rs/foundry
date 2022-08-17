@@ -277,15 +277,28 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             // reset the fork entirely and reapply the genesis config
             fork.reset(forking.json_rpc_url.clone(), forking.block_number).await?;
+            let fork_block_number = fork.block_number();
+            let fork_block = fork
+                .block_by_number(fork_block_number)
+                .await?
+                .ok_or(BlockchainError::BlockNotFound)?;
             // update all settings related to the forked block
             {
                 let mut env = self.env.write();
                 env.cfg.chain_id = fork.chain_id().into();
-                env.block.number = fork.block_number().into();
-                self.time.set_start_timestamp(fork.timestamp());
-                let base_fee = fork.base_fee().unwrap_or_default();
-                self.fees.set_base_fee(base_fee);
-                env.block.basefee = base_fee;
+
+                env.block = BlockEnv {
+                    number: fork_block_number.into(),
+                    timestamp: fork_block.timestamp,
+                    gas_limit: fork_block.gas_limit,
+                    difficulty: fork_block.difficulty,
+                    // Keep previous `coinbase` and `basefee` value
+                    coinbase: env.block.coinbase,
+                    basefee: env.block.basefee,
+                };
+
+                self.time.set_start_timestamp(env.block.timestamp.as_u64());
+                self.fees.set_base_fee(env.block.basefee);
             }
 
             // reset storage
