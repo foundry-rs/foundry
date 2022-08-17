@@ -134,7 +134,6 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
 mod tests {
     use crate::{
         fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state},
-        CALLER,
     };
     use ethers::abi::HumanReadableParser;
     use revm::db::{CacheDB, EmptyDB};
