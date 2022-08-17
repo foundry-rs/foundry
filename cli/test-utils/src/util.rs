@@ -98,6 +98,15 @@ pub struct RemoteProject {
 }
 
 impl RemoteProject {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            run_build: true,
+            run_commands: vec![],
+            path_style: PathStyle::Dapptools,
+        }
+    }
+
     /// Whether to run `forge build`
     pub fn set_build(mut self, run_build: bool) -> Self {
         self.run_build = run_build;
@@ -119,12 +128,7 @@ impl RemoteProject {
 
 impl<T: Into<String>> From<T> for RemoteProject {
     fn from(id: T) -> Self {
-        Self {
-            id: id.into(),
-            run_build: true,
-            run_commands: vec![],
-            path_style: PathStyle::Dapptools,
-        }
+        Self::new(id)
     }
 }
 
