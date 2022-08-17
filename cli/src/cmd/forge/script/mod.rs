@@ -7,7 +7,7 @@ use crate::{
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
@@ -289,7 +289,11 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            eyre::bail!("{}", Paint::red("Script failed."));
+            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
+                .map(|err| format!("{}\n", err))
+                .unwrap_or_else(|_| "Script failed.\n".to_string());
+
+            eyre::bail!("{}", Paint::red(revert_msg));
         }
 
         Ok(())
