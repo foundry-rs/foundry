@@ -327,7 +327,10 @@ impl<'a> InvariantExecutor<'a> {
                         ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
                     )
                 })
-                .count() == 0 && !self.artifact_filters.excluded.contains(&artifact.identifier()) {
+                .count() ==
+                0 &&
+                !self.artifact_filters.excluded.contains(&artifact.identifier())
+            {
                 self.artifact_filters.excluded.push(artifact.identifier());
             }
         }
