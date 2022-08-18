@@ -30,7 +30,15 @@ pub struct InspectArgs {
     )]
     pub contract: ContractInfo,
 
-    #[clap(help = "The contract artifact field to inspect.", value_name = "FIELD")]
+    #[clap(
+        value_name = "FIELD",
+        help = r#"The contract artifact field to inspect.
+
+possible_values = ["abi", "b/bytes/bytecode", "deployedBytecode/deployed_bytecode/deployed-bytecode/deployedbytecode/deployed", "assembly/asm", "asmOptimized/assemblyOptimized/assemblyoptimized/assembly_optimized/asmopt/assembly-optimized/asmo/asm-optimized/asmoptimized/asm_optimized",
+"methods/methodidentifiers/methodIdentifiers/method_identifiers/method-identifiers/mi", "gasEstimates/gas/gas_estimates/gas-estimates/gasestimates",
+"storageLayout/storage_layout/storage-layout/storagelayout/storage", "devdoc/dev-doc/devDoc",
+"ir", "ir-optimized/irOptimized/iroptimized/iro/iropt", "metadata/meta", "userdoc/userDoc/user-doc", "ewasm/e-wasm"]"#
+    )]
     pub field: ContractArtifactFields,
 
     #[clap(long, help = "Pretty print the selected field, if supported.")]
