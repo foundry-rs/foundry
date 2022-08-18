@@ -14,6 +14,7 @@ ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-featu
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"], optional = true }
 
+forge-fmt = { path = "../fmt" }
 
 eyre = { version = "0.6.5", default-features = false }
 hex = "0.4.3"
