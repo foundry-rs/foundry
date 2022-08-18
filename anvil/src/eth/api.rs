@@ -596,6 +596,17 @@ impl EthApi {
     ) -> Result<AccountProof> {
         node_info!("eth_getProof");
         let block_request = self.block_request(block_number)?;
+
+        if let BlockRequest::Number(number) = &block_request {
+            if let Some(fork) = self.get_fork() {
+                // if we're in forking mode, or still on the forked block (no blocks mined yet) then
+                // we can delegate the call
+                if fork.predates_fork_inclusive(number.as_u64()) {
+                    return Ok(fork.get_proof(address, keys, Some((*number).into())).await?)
+                }
+            }
+        }
+
         let proof = self.backend.prove_account_at(address, keys, Some(block_request)).await?;
         Ok(proof)
     }
@@ -974,7 +985,7 @@ impl EthApi {
         if let Some(fork) = self.get_fork() {
             // if we're still at the forked block we don't have any history and can't compute it
             // efficiently, instead we fetch it from the fork
-            if number <= fork.block_number() {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork
                     .fee_history(
                         block_count,

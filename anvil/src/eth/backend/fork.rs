@@ -1,7 +1,7 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
-use anvil_core::eth::transaction::EthTransactionRequest;
+use anvil_core::eth::{proof::AccountProof, transaction::EthTransactionRequest};
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
@@ -96,6 +96,11 @@ impl ClientFork {
         block < self.block_number()
     }
 
+    /// Returns true whether the block predates the fork _or_ is the same block as the fork
+    pub fn predates_fork_inclusive(&self, block: u64) -> bool {
+        block <= self.block_number()
+    }
+
     pub fn timestamp(&self) -> u64 {
         self.config.read().timestamp
     }
@@ -140,6 +145,20 @@ impl ClientFork {
         reward_percentiles: &[f64],
     ) -> Result<FeeHistory, ProviderError> {
         self.provider().fee_history(block_count, newest_block, reward_percentiles).await
+    }
+
+    /// Sends `eth_getProof`
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<U256>,
+        block_number: Option<BlockId>,
+    ) -> Result<AccountProof, ProviderError> {
+        let address = ethers::utils::serialize(&address);
+        let keys = ethers::utils::serialize(&keys);
+        let block_number =
+            ethers::utils::serialize(&block_number.unwrap_or_else(|| BlockNumber::Latest.into()));
+        self.provider().request("eth_getProof", [address, keys, block_number]).await
     }
 
     /// Sends `eth_call`
@@ -461,5 +480,32 @@ impl ForkedStorage {
     pub fn clear(&mut self) {
         // simply replace with a completely new, empty instance
         *self = Self::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anvil_core::eth::EthRequest;
+
+    #[test]
+    fn serialize_get_proof_payload() {
+        let s = r#"{"method":"eth_getProof","params":["0x7f0d15c7faae65896648c8273b6d7e43f58fa842",["0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let req = serde_json::from_value::<EthRequest>(value.clone()).unwrap();
+        match req {
+            EthRequest::EthGetProof(address, keys, block_number) => {
+                let address = ethers::utils::serialize(&address);
+                let keys = ethers::utils::serialize(&keys);
+                let block_number = ethers::utils::serialize(
+                    &block_number.unwrap_or_else(|| BlockNumber::Latest.into()),
+                );
+                let params = ethers::utils::serialize(&[address, keys, block_number]);
+                let mut payload = value.clone();
+                payload["params"] = params;
+                assert_eq!(payload, value);
+            }
+            _ => panic!("unexpected variant"),
+        }
     }
 }
