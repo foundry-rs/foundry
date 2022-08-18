@@ -70,7 +70,7 @@ impl FmtArgs {
             }
         }
 
-        let mut out = vec![];
+        let mut out = Vec::with_capacity(self.paths.len());
         for path in self.paths.iter() {
             if path.is_dir() {
                 out.extend(ethers::solc::utils::source_files(path).into_iter().map(Input::Path));
