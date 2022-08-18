@@ -201,6 +201,14 @@ jobs:
           args: --all --all-features -- -D warnings
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Foundry
+        uses: onbjerg/foundry-toolchain@v1
+        with:
+          version: nightly
+      
+      - name: forge fmt
+        run: forge fmt --check testdata/
+
   cross-platform:
     name: Cross-platform tests
     if: github.event_name != 'pull_request'
