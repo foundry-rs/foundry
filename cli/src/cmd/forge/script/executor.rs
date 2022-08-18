@@ -14,6 +14,7 @@ use ethers::{
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
+    CallKind,
 };
 use std::collections::VecDeque;
 use tracing::trace;
@@ -122,6 +123,23 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
+                    // Identify all contracts created during the call.
+                    if result.traces.is_empty() {
+                        eyre::bail!(
+                            "Forge script requires tracing enabled to collect created contracts."
+                        )
+                    }
+
+                    let mut created_contracts = vec![];
+                    for (_, trace) in &mut result.traces {
+                        trace.arena.iter().for_each(|node| {
+                            if node.kind() == CallKind::Create {
+                                created_contracts
+                                    .push((node.trace.address, node.trace.data.to_raw()));
+                            }
+                        });
+                    }
+
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
                         runner.executor.env_mut().block.number += U256::one();
@@ -146,6 +164,7 @@ impl ScriptArgs {
                         &result,
                         &address_to_abi,
                         decoder,
+                        created_contracts,
                     )?);
                 }
                 _ => unreachable!(),
