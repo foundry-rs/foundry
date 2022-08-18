@@ -151,7 +151,7 @@ impl ScriptSequence {
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
-        if let Some(etherscan_key) = &verify.etherscan_key {
+        if verify.etherscan_key.is_some() {
             let mut future_verifications = vec![];
             let mut unverifiable_contracts = vec![];
 
@@ -176,7 +176,6 @@ impl ScriptSequence {
                         &data.0,
                         &verify,
                         chain,
-                        etherscan_key,
                         &self.libraries,
                     ) {
                         future_verifications.push(verify.run());
@@ -187,15 +186,9 @@ impl ScriptSequence {
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code } in &tx.additional_contracts {
-                    if let Some(verify) = try_verify_contract(
-                        *address,
-                        0,
-                        init_code,
-                        &verify,
-                        chain,
-                        etherscan_key,
-                        &self.libraries,
-                    ) {
+                    if let Some(verify) =
+                        try_verify_contract(*address, 0, init_code, &verify, chain, &self.libraries)
+                    {
                         future_verifications.push(verify.run());
                     } else {
                         unverifiable_contracts.push(*address);
@@ -238,7 +231,6 @@ fn try_verify_contract(
     data: &[u8],
     verify: &VerifyBundle,
     chain: u64,
-    etherscan_key: &str,
     libraries: &[String],
 ) -> Option<VerifyArgs> {
     for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
@@ -270,7 +262,12 @@ fn try_verify_contract(
                 constructor_args: Some(hex::encode(&constructor_args)),
                 num_of_optimizations: verify.num_of_optimizations,
                 chain: chain.into(),
-                etherscan_key: Some(etherscan_key.to_owned()),
+                etherscan_key: Some(
+                    verify
+                        .etherscan_key
+                        .clone()
+                        .expect("Should have already verified key existence."),
+                ),
                 flatten: false,
                 force: false,
                 watch: true,
