@@ -130,15 +130,18 @@ impl ScriptArgs {
                         )
                     }
 
-                    let mut created_contracts = vec![];
-                    for (_, trace) in &mut result.traces {
-                        trace.arena.iter().for_each(|node| {
-                            if node.kind() == CallKind::Create {
-                                created_contracts
-                                    .push((node.trace.address, node.trace.data.to_raw()));
-                            }
-                        });
-                    }
+                    let created_contracts = result
+                        .traces
+                        .iter()
+                        .flat_map(|(_, traces)| {
+                            traces.arena.iter().filter_map(|node| {
+                                if node.kind() == CallKind::Create {
+                                    return Some((node.trace.address, node.trace.data.to_raw()))
+                                }
+                                None
+                            })
+                        })
+                        .collect();
 
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
