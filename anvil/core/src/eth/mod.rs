@@ -92,7 +92,7 @@ pub enum EthRequest {
     /// Returns the account and storage values of the specified account including the Merkle-proof.
     /// This call can be used to verify that the data you are pulling from is not tampered with.
     #[serde(rename = "eth_getProof")]
-    EthGetProof(Address, Vec<U256>, Option<BlockId>),
+    EthGetProof(Address, Vec<H256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]

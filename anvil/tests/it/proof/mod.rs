@@ -26,7 +26,7 @@ async fn can_get_proof() {
 
     api.anvil_set_storage_at(acc, key, H256::from_uint(&value)).await.unwrap();
 
-    let proof: AccountProof = api.get_proof(acc, vec![key], None).await.unwrap();
+    let proof: AccountProof = api.get_proof(acc, vec![H256::from_uint(&key)], None).await.unwrap();
 
     let account = BasicAccount {
         nonce: 0.into(),
@@ -52,11 +52,10 @@ async fn can_get_proof() {
     let expected_value = rlp::encode(&value);
     let proof = proof.storage_proof[0].clone();
     let storage_proof: Vec<Vec<u8>> = proof.proof.into_iter().map(|b| b.to_vec()).collect();
-    let key = H256::from_uint(&proof.key);
     verify_proof::<ExtensionLayout>(
         &account.storage_root.0,
         &storage_proof,
-        key.as_bytes(),
+        proof.key.as_bytes(),
         Some(expected_value.as_ref()),
     )
     .unwrap();

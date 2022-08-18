@@ -1544,15 +1544,15 @@ impl Backend {
     /// Returns a merkle proof of the account's trie node, `account_key` == keccak(address)
     pub async fn prove_account_at(
         &self,
-        addr: Address,
-        values: Vec<U256>,
+        address: Address,
+        values: Vec<H256>,
         block_request: Option<BlockRequest>,
     ) -> Result<AccountProof, BlockchainError> {
-        let account_key = H256::from(keccak256(addr.as_bytes()));
+        let account_key = H256::from(keccak256(address.as_bytes()));
         let block_number = block_request.as_ref().map(|r| r.block_number());
 
         self.with_database_at(block_request, |block_db, _| {
-            trace!(target: "backend", "get proof for {:?} at {:?}", addr, block_number);
+            trace!(target: "backend", "get proof for {:?} at {:?}", address, block_number);
             let (db, root) = block_db.maybe_as_hash_db().ok_or(BlockchainError::DataUnavailable)?;
 
             let data: &dyn HashDB<_, _> = db.deref();
@@ -1563,7 +1563,7 @@ impl Backend {
             let maybe_account: Option<BasicAccount> = {
                 let acc_decoder = |bytes: &[u8]| {
                     rlp::decode(bytes).unwrap_or_else(|_| {
-                        panic!("prove_account_at, could not query trie for account={:?}", &addr)
+                        panic!("prove_account_at, could not query trie for account={:?}", &address)
                     })
                 };
                 let query = (&mut recorder, acc_decoder);
@@ -1576,22 +1576,22 @@ impl Backend {
                 recorder.drain().into_iter().map(|r| r.data).map(Into::into).collect::<Vec<_>>();
 
             let account_db =
-                block_db.maybe_account_db(addr).ok_or(BlockchainError::DataUnavailable)?;
+                block_db.maybe_account_db(address).ok_or(BlockchainError::DataUnavailable)?;
 
             let account_proof = AccountProof {
+                address,
                 balance: account.balance,
-                nonce: account.nonce,
+                nonce: account.nonce.as_u64().into(),
                 code_hash: account.code_hash,
                 storage_hash: account.storage_root,
                 account_proof: proof,
                 storage_proof: values
                     .into_iter()
-                    .map(|storage_index| {
-                        let storage_key: H256 = BigEndianHash::from_uint(&storage_index);
+                    .map(|storage_key| {
                         let key = H256::from(keccak256(storage_key));
                         prove_storage(&account, &account_db.0, key).map(
                             |(storage_proof, storage_value)| StorageProof {
-                                key: key.into_uint(),
+                                key,
                                 value: storage_value.into_uint(),
                                 proof: storage_proof.into_iter().map(Into::into).collect(),
                             },
