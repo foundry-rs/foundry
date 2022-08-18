@@ -52,7 +52,7 @@ pub use self::paths::ProjectPathsArgs;
 //
 // Some arguments are marked as `#[serde(skip)]` and require manual processing in
 // `figment::Provider` implementation
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Parser, Serialize, Default)]
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
