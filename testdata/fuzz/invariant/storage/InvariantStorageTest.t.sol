@@ -9,31 +9,29 @@ contract Contract {
     uint256 public pushNum;
 
     function changeAddress(address _addr) public {
-        if(_addr == addr) {
+        if (_addr == addr) {
             addr = address(0);
-        } 
+        }
     }
 
     function changeString(string memory _str) public {
-        if(keccak256(bytes(_str)) == keccak256(bytes(str))) {
+        if (keccak256(bytes(_str)) == keccak256(bytes(str))) {
             str = "";
-        } 
+        }
     }
 
     function changeUint(uint256 _num) public {
-        if(_num == num) {
+        if (_num == num) {
             num = 0;
-        } 
+        }
     }
 
     function push(uint256 _num) public {
-        if(_num == 68) {
+        if (_num == 68) {
             pushNum = 69;
-        } 
+        }
     }
-
 }
-
 
 contract InvariantStorageTest is DSTest {
     Contract c;
@@ -42,7 +40,7 @@ contract InvariantStorageTest is DSTest {
         c = new Contract();
     }
 
-   function invariantChangeAddress() public {
+    function invariantChangeAddress() public {
         require(c.addr() == address(0xbeef), "changedAddr");
     }
 
@@ -57,5 +55,4 @@ contract InvariantStorageTest is DSTest {
     function invariantPush() public {
         require(c.pushNum() == 0, "pushUint");
     }
-
 }

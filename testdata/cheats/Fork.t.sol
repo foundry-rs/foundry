@@ -6,7 +6,7 @@ import "./Cheats.sol";
 
 interface IWETH {
     function deposit() external payable;
-    function balanceOf(address) external view returns (uint);
+    function balanceOf(address) external view returns (uint256);
 }
 
 contract ForkTest is DSTest {
@@ -16,7 +16,6 @@ contract ForkTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     IWETH WETH = IWETH(WETH_TOKEN_ADDR);
 
-
     uint256 forkA;
     uint256 forkB;
 
@@ -25,7 +24,8 @@ contract ForkTest is DSTest {
     // this will create two _different_ forks during setup
     function setUp() public {
         forkA = cheats.createFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf", mainblock);
-        forkB = cheats.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
+        forkB =
+            cheats.createFork("https://eth-mainnet.alchemyapi.io/v2/9VWGraLx0tMiSWx05WH-ywgSVmMxs66W", mainblock - 1);
         testValue = 999;
     }
 
@@ -36,8 +36,8 @@ contract ForkTest is DSTest {
 
     // ensures we can create and select in one step
     function testCreateSelect() public {
-       uint256 fork = cheats.createSelectFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
-       assertEq(fork, cheats.activeFork());
+        uint256 fork = cheats.createSelectFork("https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf");
+        assertEq(fork, cheats.activeFork());
     }
 
     // ensures forks use different ids
@@ -51,34 +51,36 @@ contract ForkTest is DSTest {
     function testForksHaveSeparatedStorage() public {
         cheats.selectFork(forkA);
         // read state from forkA
-        assert(
-            WETH.balanceOf(0x0000000000000000000000000000000000000000) != 1
-        );
+        assert(WETH.balanceOf(0x0000000000000000000000000000000000000000) != 1);
 
         cheats.selectFork(forkB);
         // read state from forkB
-        uint256 forkBbalance =  WETH.balanceOf(0x0000000000000000000000000000000000000000);
-        assert(
-            forkBbalance != 1
-        );
+        uint256 forkBbalance = WETH.balanceOf(0x0000000000000000000000000000000000000000);
+        assert(forkBbalance != 1);
 
         cheats.selectFork(forkA);
 
         // modify state
-        bytes32 value = bytes32(uint(1));
+        bytes32 value = bytes32(uint256(1));
         // "0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff" is the slot storing the balance of zero address for the weth contract
         // `cast index address uint 0x0000000000000000000000000000000000000000 3`
         bytes32 zero_address_balance_slot = 0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff;
         cheats.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
-        assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
+        assertEq(
+            WETH.balanceOf(0x0000000000000000000000000000000000000000),
+            1,
+            "Cheatcode did not change value at the storage slot."
+        );
 
         // switch forks and ensure the balance on forkB remains untouched
         cheats.selectFork(forkB);
-        assert(
-            forkBbalance != 1
-        );
+        assert(forkBbalance != 1);
         // balance of forkB is untouched
-        assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), forkBbalance, "Cheatcode did not change value at the storage slot.");
+        assertEq(
+            WETH.balanceOf(0x0000000000000000000000000000000000000000),
+            forkBbalance,
+            "Cheatcode did not change value at the storage slot."
+        );
     }
 
     function testCanShareDataAcrossSwaps() public {

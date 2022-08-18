@@ -22,9 +22,7 @@ contract MyContract {
     }
 
     function ensureBlockHash() public view {
-        require(
-            blockhash(block.number - 1) == blockHash, "Block Hash does not match"
-        );
+        require(blockhash(block.number - 1) == blockHash, "Block Hash does not match");
     }
 }
 
@@ -37,9 +35,7 @@ contract ForkTest is DSTest {
     // this will create two _different_ forks during setup
     function setUp() public {
         mainnetFork = cheats.createFork("rpcAlias");
-        optimismFork = cheats.createFork(
-            "https://opt-mainnet.g.alchemy.com/v2/UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE"
-        );
+        optimismFork = cheats.createFork("https://opt-mainnet.g.alchemy.com/v2/UVatYU2Ax0rX6bDiqddeTRDdcCxzdpoE");
     }
 
     // ensures forks use different ids

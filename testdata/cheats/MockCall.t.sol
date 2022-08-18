@@ -52,11 +52,7 @@ contract MockCallTest is DSTest {
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 2);
 
-        cheats.mockCall(
-            address(target),
-            abi.encodeWithSelector(target.numberB.selector),
-            abi.encode(10)
-        );
+        cheats.mockCall(address(target), abi.encodeWithSelector(target.numberB.selector), abi.encode(10));
 
         // post-mock
         assertEq(target.numberA(), 1);
@@ -70,11 +66,7 @@ contract MockCallTest is DSTest {
         // pre-mock
         assertEq(target.sum(), 3);
 
-        cheats.mockCall(
-            address(inner),
-            abi.encodeWithSelector(inner.numberB.selector),
-            abi.encode(9)
-        );
+        cheats.mockCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), abi.encode(9));
 
         // post-mock
         assertEq(target.sum(), 10);
@@ -84,11 +76,7 @@ contract MockCallTest is DSTest {
         Mock target = new Mock();
         assertEq(target.add(5, 5), 10);
 
-        cheats.mockCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector),
-            abi.encode(11)
-        );
+        cheats.mockCall(address(target), abi.encodeWithSelector(target.add.selector), abi.encode(11));
 
         assertEq(target.add(5, 5), 11);
     }
@@ -98,11 +86,7 @@ contract MockCallTest is DSTest {
         assertEq(target.add(5, 5), 10);
         assertEq(target.add(6, 4), 10);
 
-        cheats.mockCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector, 5, 5),
-            abi.encode(11)
-        );
+        cheats.mockCall(address(target), abi.encodeWithSelector(target.add.selector, 5, 5), abi.encode(11));
 
         assertEq(target.add(5, 5), 11);
         assertEq(target.add(6, 4), 10);
@@ -111,11 +95,7 @@ contract MockCallTest is DSTest {
     function testClearMockedCalls() public {
         Mock target = new Mock();
 
-        cheats.mockCall(
-            address(target),
-            abi.encodeWithSelector(target.numberB.selector),
-            abi.encode(10)
-        );
+        cheats.mockCall(address(target), abi.encodeWithSelector(target.numberB.selector), abi.encode(10));
 
         assertEq(target.numberA(), 1);
         assertEq(target.numberB(), 10);
@@ -129,21 +109,9 @@ contract MockCallTest is DSTest {
     function testMockCallMultiplePartialMatch() public {
         Mock mock = new Mock();
 
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.add.selector),
-            abi.encode(10)
-        );
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.add.selector, 2),
-            abi.encode(20)
-        );
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.add.selector, 2, 3),
-            abi.encode(30)
-        );
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector, 2), abi.encode(20));
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector, 2, 3), abi.encode(30));
 
         assertEq(mock.add(1, 2), 10);
         assertEq(mock.add(2, 2), 20);
@@ -153,23 +121,13 @@ contract MockCallTest is DSTest {
     function testMockCallWithValue() public {
         Mock mock = new Mock();
 
-        cheats.mockCall(
-            address(mock),
-            10,
-            abi.encodeWithSelector(mock.pay.selector),
-            abi.encode(10)
-        );
+        cheats.mockCall(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
 
         assertEq(mock.pay{value: 10}(1), 10);
         assertEq(mock.pay(1), 1);
 
-        for (uint i = 0; i < 100; i++) {
-            cheats.mockCall(
-                address(mock),
-                i,
-                abi.encodeWithSelector(mock.pay.selector),
-                abi.encode(i * 2)
-            );
+        for (uint256 i = 0; i < 100; i++) {
+            cheats.mockCall(address(mock), i, abi.encodeWithSelector(mock.pay.selector), abi.encode(i * 2));
         }
 
         assertEq(mock.pay(1), 0);
@@ -180,17 +138,8 @@ contract MockCallTest is DSTest {
     function testMockCallWithValueCalldataPrecedence() public {
         Mock mock = new Mock();
 
-        cheats.mockCall(
-            address(mock),
-            10,
-            abi.encodeWithSelector(mock.pay.selector),
-            abi.encode(10)
-        );
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.pay.selector, 2),
-            abi.encode(2)
-        );
+        cheats.mockCall(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.pay.selector, 2), abi.encode(2));
 
         assertEq(mock.pay{value: 10}(1), 10);
         assertEq(mock.pay{value: 10}(2), 2);
@@ -200,16 +149,8 @@ contract MockCallTest is DSTest {
     function testMockCallEmptyAccount() public {
         Mock mock = Mock(address(100));
 
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.add.selector),
-            abi.encode(10)
-        );
-        cheats.mockCall(
-            address(mock),
-            abi.encodeWithSelector(mock.noReturnValue.selector),
-            abi.encode()
-        );
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.add.selector), abi.encode(10));
+        cheats.mockCall(address(mock), abi.encodeWithSelector(mock.noReturnValue.selector), abi.encode());
 
         assertEq(mock.add(1, 2), 10);
         mock.noReturnValue();
