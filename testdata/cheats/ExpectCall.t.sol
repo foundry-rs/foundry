@@ -18,7 +18,7 @@ contract Contract {
     }
 
     function pay(uint256 a) public payable returns (uint256) {
-      return a;
+        return a;
     }
 }
 
@@ -43,19 +43,13 @@ contract ExpectCallTest is DSTest {
 
     function testExpectCallWithData() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector, 1, 2)
-        );
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         target.add(1, 2);
     }
 
     function testFailExpectCallWithData() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector, 1, 2)
-        );
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         target.add(3, 3);
     }
 
@@ -63,10 +57,7 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        cheats.expectCall(
-            address(inner),
-            abi.encodeWithSelector(inner.numberB.selector)
-        );
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
         target.sum();
     }
 
@@ -74,10 +65,7 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        cheats.expectCall(
-            address(inner),
-            abi.encodeWithSelector(inner.numberB.selector)
-        );
+        cheats.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
 
         // this function does not call inner
         target.hello();
@@ -85,56 +73,35 @@ contract ExpectCallTest is DSTest {
 
     function testExpectSelectorCall() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector)
-        );
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         target.add(5, 5);
     }
 
     function testFailExpectSelectorCall() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector)
-        );
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
     }
 
     function testFailExpectCallWithMoreParameters() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            abi.encodeWithSelector(target.add.selector, 3, 3, 3)
-        );
+        cheats.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 3, 3, 3));
         target.add(3, 3);
     }
 
     function testExpectCallWithValue() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            1,
-            abi.encodeWithSelector(target.pay.selector, 2)
-        );
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
         target.pay{value: 1}(2);
     }
 
     function testFailExpectCallValue() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            1,
-            abi.encodeWithSelector(target.pay.selector, 2)
-        );
+        cheats.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
     }
 
     function testExpectCallWithValueWithoutParameters() public {
         Contract target = new Contract();
-        cheats.expectCall(
-            address(target),
-            3,
-            abi.encodeWithSelector(target.pay.selector)
-        );
+        cheats.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector));
         target.pay{value: 3}(100);
     }
 }

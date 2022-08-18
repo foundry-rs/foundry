@@ -13,6 +13,6 @@ pub use foundry_config::fmt::*;
 
 pub use comments::Comments;
 pub use formatter::{Formatter, FormatterError};
-pub use helpers::{format, parse, Parsed};
+pub use helpers::{fmt, format, parse, Parsed};
 pub use inline_config::InlineConfig;
 pub use visit::{Visitable, Visitor};

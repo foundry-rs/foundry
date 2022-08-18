@@ -13,7 +13,7 @@ contract ChainIdTest is DSTest {
     }
 
     function testChainIdFuzzed(uint128 jump) public {
-        uint pre = block.chainid;
+        uint256 pre = block.chainid;
         cheats.chainId(block.chainid + jump);
         assertEq(block.chainid, pre + jump, "chainId switch failed");
     }

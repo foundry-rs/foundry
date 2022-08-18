@@ -5,8 +5,7 @@ import "ds-test/test.sol";
 
 // Will get automatically excluded. Otherwise it would throw error.
 contract NoMutFunctions {
-    function no_change() public pure {
-    }
+    function no_change() public pure {}
 }
 
 contract Excluded {

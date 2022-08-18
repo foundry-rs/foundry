@@ -3,8 +3,12 @@ pragma solidity >=0.8.0;
 
 interface Cheats {
     // This allows us to getRecordedLogs()
-    struct Log {bytes32[] topics; bytes data;}
+    struct Log {
+        bytes32[] topics;
+        bytes data;
+    }
     // Set block.timestamp (newTimestamp)
+
     function warp(uint256) external;
     // Set block.difficulty (newDifficulty)
     function difficulty(uint256) external;
@@ -15,11 +19,11 @@ interface Cheats {
     // Set block.coinbase (who)
     function coinbase(address) external;
     // Loads a storage slot from an address (who, slot)
-    function load(address,bytes32) external returns (bytes32);
+    function load(address, bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
-    function store(address,bytes32,bytes32) external;
+    function store(address, bytes32, bytes32) external;
     // Signs data, (privateKey, digest) => (v, r, s)
-    function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
+    function sign(uint256, bytes32) external returns (uint8, bytes32, bytes32);
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
     // Derive a private key from a provided mnemonic string (or mnemonic file path) at the derivation path m/44'/60'/0'/0/{index}
@@ -51,9 +55,9 @@ interface Cheats {
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
     function startPrank(address) external;
     // Sets the *next* call's msg.sender to be the input address, and the tx.origin to be the second input
-    function prank(address,address) external;
+    function prank(address, address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called, and the tx.origin to be the second input
-    function startPrank(address,address) external;
+    function startPrank(address, address) external;
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
@@ -76,23 +80,23 @@ interface Cheats {
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
     // logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
     // Second form also checks supplied address against emitting contract.
-    function expectEmit(bool,bool,bool,bool) external;
-    function expectEmit(bool,bool,bool,bool,address) external;
+    function expectEmit(bool, bool, bool, bool) external;
+    function expectEmit(bool, bool, bool, bool, address) external;
     // Mocks a call to an address, returning specified data.
     // Calldata can either be strict or a partial match, e.g. if you only
     // pass a Solidity selector to the expected calldata, then the entire Solidity
     // function will be mocked.
-    function mockCall(address,bytes calldata,bytes calldata) external;
+    function mockCall(address, bytes calldata, bytes calldata) external;
     // Mocks a call to an address with a specific msg.value, returning specified data.
     // Calldata match takes precedence over msg.value in case of ambiguity.
-    function mockCall(address,uint256,bytes calldata,bytes calldata) external;
+    function mockCall(address, uint256, bytes calldata, bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
-    function expectCall(address,bytes calldata) external;
+    function expectCall(address, bytes calldata) external;
     // Expect a call to an address with the specified msg.value and calldata
-    function expectCall(address,uint256,bytes calldata) external;
+    function expectCall(address, uint256, bytes calldata) external;
     // Gets the code from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);
     // Labels an address in call traces
@@ -100,9 +104,9 @@ interface Cheats {
     // If the condition is false, discard this run's fuzz inputs and generate new ones
     function assume(bool) external;
     // Set nonce for an account
-    function setNonce(address,uint64) external;
+    function setNonce(address, uint64) external;
     // Get nonce for an account
-    function getNonce(address) external returns(uint64);
+    function getNonce(address) external returns (uint64);
     // Set block.chainid (newChainId)
     function chainId(uint256) external;
     // Using the address that calls the test contract, has the next call (at this call depth only) create a transaction that can later be signed and sent onchain
@@ -137,33 +141,33 @@ interface Cheats {
     // Path is relative to the project root. (path) => ()
     function removeFile(string calldata) external;
 
-    function toString(address)        external returns(string memory);
-    function toString(bytes calldata) external returns(string memory);
-    function toString(bytes32)        external returns(string memory);
-    function toString(bool)           external returns(string memory);
-    function toString(uint256)        external returns(string memory);
-    function toString(int256)         external returns(string memory);
+    function toString(address) external returns (string memory);
+    function toString(bytes calldata) external returns (string memory);
+    function toString(bytes32) external returns (string memory);
+    function toString(bool) external returns (string memory);
+    function toString(uint256) external returns (string memory);
+    function toString(int256) external returns (string memory);
     // Snapshot the current state of the evm.
     // Returns the id of the snapshot that was created.
     // To revert a snapshot use `revertTo`
-    function snapshot() external returns(uint256);
+    function snapshot() external returns (uint256);
     // Revert the state of the evm to a previous snapshot
     // Takes the snapshot id to revert to.
     // This deletes the snapshot and all snapshots taken after the given snapshot id.
-    function revertTo(uint256) external returns(bool);
+    function revertTo(uint256) external returns (bool);
     // Creates a new fork with the given endpoint and block and returns the identifier of the fork
-    function createFork(string calldata,uint256) external returns(uint256);
+    function createFork(string calldata, uint256) external returns (uint256);
     // Creates a new fork with the given endpoint and the _latest_ block and returns the identifier of the fork
-    function createFork(string calldata) external returns(uint256);
+    function createFork(string calldata) external returns (uint256);
     // Creates _and_ also selects a new fork with the given endpoint and block and returns the identifier of the fork
-    function createSelectFork(string calldata,uint256) external returns(uint256);
+    function createSelectFork(string calldata, uint256) external returns (uint256);
     // Creates _and_ also selects a new fork with the given endpoint and the latest block and returns the identifier of the fork
-    function createSelectFork(string calldata) external returns(uint256);
+    function createSelectFork(string calldata) external returns (uint256);
     // Takes a fork identifier created by `createFork` and sets the corresponding forked state as active.
     function selectFork(uint256) external;
     // Returns the currently active fork
     // Reverts if no fork is currently active
-    function activeFork() external returns(uint256);
+    function activeFork() external returns (uint256);
     // Marks that the account(s) should use persistent storage across fork swaps.
     // Meaning, changes made to the state of this account will be kept when switching forks
     function makePersistent(address) external;
@@ -181,9 +185,9 @@ interface Cheats {
     // Updates the given fork to given block number
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     /// Returns the RPC url for the given alias
-    function rpcUrl(string calldata) external returns(string memory);
+    function rpcUrl(string calldata) external returns (string memory);
     /// Returns all rpc urls and their aliases `[alias, url][]`
-    function rpcUrls() external returns(string[2][] memory);
-    function parseJson(string calldata, string calldata) external returns(bytes memory);
-    function parseJson(string calldata) external returns(bytes memory);
+    function rpcUrls() external returns (string[2][] memory);
+    function parseJson(string calldata, string calldata) external returns (bytes memory);
+    function parseJson(string calldata) external returns (bytes memory);
 }

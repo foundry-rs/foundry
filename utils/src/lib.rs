@@ -686,7 +686,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .collect::<Vec<_>>()
         .join("\n    ");
 
-    Ok(if structs.is_empty() {
+    let sol = if structs.is_empty() {
         match events.is_empty() {
             true => format!(
                 r#"interface {} {{
@@ -729,7 +729,9 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
                 contract_name, events, structs, functions
             ),
         }
-    })
+    };
+
+    forge_fmt::fmt(&sol).map_err(|err| eyre::eyre!(err.to_string()))
 }
 
 /// A type that keeps track of attempts

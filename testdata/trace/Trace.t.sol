@@ -63,10 +63,7 @@ contract TraceTest is DSTest {
 
     function create() public returns (RecursiveCall) {
         RecursiveCall node = new RecursiveCall(address(this));
-        cheats.label(
-            address(node),
-            string(abi.encodePacked("Node ", uintToString(nodeId++)))
-        );
+        cheats.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
 
         return node;
     }
