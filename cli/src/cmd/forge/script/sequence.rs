@@ -159,40 +159,31 @@ impl ScriptSequence {
             self.sort_receipts();
 
             for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
-                let mut create2_offset = 0;
+                // create2 hash offset
+                let mut offset = 0;
 
                 if tx.is_create2() {
                     receipt.contract_address = tx.contract_address;
-                    create2_offset = 32;
+                    offset = 32;
                 }
 
                 // Verify contract created directly from the transaction
-                if let (Some(contract_address), Some(data)) =
+                if let (Some(address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    if let Some(verify) = get_verify_args(
-                        contract_address,
-                        create2_offset,
-                        &data.0,
-                        &verify,
-                        chain,
-                        &self.libraries,
-                    ) {
-                        future_verifications.push(verify.run());
-                    } else {
-                        unverifiable_contracts.push(contract_address);
-                    }
+                    match get_verify_args(address, offset, &data.0, &verify, chain, &self.libraries)
+                    {
+                        Some(verify) => future_verifications.push(verify.run()),
+                        None => unverifiable_contracts.push(address),
+                    };
                 }
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code } in &tx.additional_contracts {
-                    if let Some(verify) =
-                        get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries)
-                    {
-                        future_verifications.push(verify.run());
-                    } else {
-                        unverifiable_contracts.push(*address);
-                    }
+                    match get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries) {
+                        Some(verify) => future_verifications.push(verify.run()),
+                        None => unverifiable_contracts.push(*address),
+                    };
                 }
             }
 
