@@ -329,7 +329,7 @@ impl TransactionWithMetadata {
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
-        additional_contracts: Vec<(Address, Vec<u8>)>,
+        additional_contracts: Vec<AdditionalContract>,
     ) -> eyre::Result<Self> {
         let mut metadata = Self { transaction, ..Default::default() };
 
@@ -348,13 +348,14 @@ impl TransactionWithMetadata {
             );
         }
 
-        // Add the additional contracts created in this transaction, so we can verify them later
+        // Add the additional contracts created in this transaction, so we can verify them later.
         if let Some(tx_address) = metadata.contract_address {
             metadata.additional_contracts = additional_contracts
                 .into_iter()
-                .filter_map(|(address, init_code)| {
-                    if address != tx_address {
-                        Some(AdditionalContract { address, init_code })
+                .filter_map(|contract| {
+                    // Filter out the transaction contract repeated init_code.
+                    if contract.address != tx_address {
+                        Some(contract)
                     } else {
                         None
                     }

@@ -1,4 +1,4 @@
-use super::*;
+use super::{sequence::AdditionalContract, *};
 use crate::{
     cmd::{
         ensure_clean_constructor,
@@ -136,7 +136,10 @@ impl ScriptArgs {
                         .flat_map(|(_, traces)| {
                             traces.arena.iter().filter_map(|node| {
                                 if node.kind() == CallKind::Create {
-                                    return Some((node.trace.address, node.trace.data.to_raw()))
+                                    return Some(AdditionalContract {
+                                        address: node.trace.address,
+                                        init_code: node.trace.data.to_raw(),
+                                    })
                                 }
                                 None
                             })
