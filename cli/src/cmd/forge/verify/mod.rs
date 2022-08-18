@@ -1,6 +1,6 @@
 //! Verify contract source
 
-use crate::cmd::RetryArgs;
+use crate::cmd::retry::RetryArgs;
 use async_trait::async_trait;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
@@ -16,8 +16,6 @@ use sourcify::SourcifyVerificationProvider;
 
 mod etherscan;
 mod sourcify;
-
-pub const RETRY_CHECK_ON_VERIFY: RetryArgs = RetryArgs { retries: 6, delay: 10 };
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]

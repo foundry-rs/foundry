@@ -1,7 +1,4 @@
-use crate::suggestions;
-
-use crate::term::cli_warn;
-use clap::Parser;
+use crate::{suggestions, term::cli_warn};
 use ethers::{
     abi::Abi,
     core::types::Chain,
@@ -16,7 +13,6 @@ use ethers::{
 use forge::executor::opts::EvmOpts;
 use foundry_common::{ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
-use foundry_utils::Retry;
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
@@ -112,29 +108,7 @@ pub fn get_cached_entry_by_name(
     eyre::bail!(err)
 }
 
-/// A type that keeps track of attempts
-#[derive(Debug, Clone, Parser)]
-pub struct RetryArgs {
-    #[clap(
-        long,
-        help = "Number of attempts for retrying verification",
-        default_value = "5",
-        validator = u32_validator(1, 10),
-        value_name = "RETRIES"
-    )]
-    pub retries: u32,
-
-    #[clap(
-        long,
-        help = "Optional delay to apply inbetween verification attempts in seconds.",
-        default_value = "5",
-        validator = u32_validator(0, 30),
-        value_name = "DELAY"
-    )]
-    pub delay: u32,
-}
-
-fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
+pub fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
     move |v: &str| -> eyre::Result<()> {
         let v = v.parse::<u32>()?;
         if v >= min && v <= max {
@@ -142,12 +116,6 @@ fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
         } else {
             Err(eyre::eyre!("Expected between {} and {} inclusive.", min, max))
         }
-    }
-}
-
-impl From<RetryArgs> for Retry {
-    fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, Some(r.delay))
     }
 }
 

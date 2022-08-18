@@ -1,9 +1,6 @@
 //! script command
 use crate::{
-    cmd::{
-        forge::build::{BuildArgs, ProjectPathsArgs},
-        RetryArgs,
-    },
+    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
@@ -54,12 +51,13 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+use crate::cmd::retry::RetryArgs;
 pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
     /// The contract you want to run. Either the file path or contract name.
     ///

@@ -16,6 +16,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+use tracing::log::warn;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -23,9 +24,10 @@ pub struct FmtArgs {
         help = "path to the file, directory or '-' to read from stdin",
         conflicts_with = "root",
         value_hint = ValueHint::FilePath,
-        value_name = "PATH"
+        value_name = "PATH",
+        multiple = true
     )]
-    path: Option<PathBuf>,
+    paths: Vec<PathBuf>,
     #[clap(
         help = "The project's root path.",
         long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
@@ -54,21 +56,31 @@ impl_figment_convert_basic!(FmtArgs);
 impl FmtArgs {
     /// Returns all inputs to format
     fn inputs(&self, config: &Config) -> Vec<Input> {
-        if let Some(ref path) = self.path {
-            if path.is_dir() {
-                ethers::solc::utils::source_files(path).into_iter().map(Input::Path).collect()
-            } else if path.is_sol() {
-                vec![Input::Path(path.to_path_buf())]
-            } else if path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
+        if self.paths.is_empty() {
+            return config.project_paths().input_files().into_iter().map(Input::Path).collect()
+        }
+
+        let mut paths = self.paths.iter().peekable();
+
+        if let Some(path) = paths.peek() {
+            if *path == Path::new("-") || !atty::is(atty::Stream::Stdin) {
                 let mut buf = String::new();
                 io::stdin().read_to_string(&mut buf).expect("Failed to read from stdin");
-                vec![Input::Stdin(buf)]
-            } else {
-                vec![]
+                return vec![Input::Stdin(buf)]
             }
-        } else {
-            config.project_paths().input_files().into_iter().map(Input::Path).collect()
         }
+
+        let mut out = Vec::with_capacity(self.paths.len());
+        for path in self.paths.iter() {
+            if path.is_dir() {
+                out.extend(ethers::solc::utils::source_files(path).into_iter().map(Input::Path));
+            } else if path.is_sol() {
+                out.push(Input::Path(path.to_path_buf()));
+            } else {
+                warn!("Cannot process path {}", path.display());
+            }
+        }
+        out
     }
 }
 
@@ -78,6 +90,11 @@ impl Cmd for FmtArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let config = self.load_config_emit_warnings();
         let inputs = self.inputs(&config);
+
+        if inputs.is_empty() {
+            cli_warn!("Nothing to format.\nHINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`");
+            return Ok(())
+        }
 
         let diffs = inputs
             .par_iter()
