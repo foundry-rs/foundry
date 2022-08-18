@@ -15,7 +15,6 @@ use ethers_solc::{
     ArtifactId,
 };
 use eyre::{Result, WrapErr};
-use forge_fmt::{format, parse, FormatterConfig};
 use futures::future::BoxFuture;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -732,19 +731,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         }
     };
 
-    // Format generated solidity
-    let parsed = parse(&sol).map_err(|diags| {
-        eyre::eyre!(
-            "Failed to parse Solidity code for generated code. Leaving source unchanged.\nDebug info: {:?}",
-            diags
-        )
-    })?;
-
-    let mut output = String::new();
-    format(&mut output, parsed, FormatterConfig::default())
-        .map_err(|err| eyre::eyre!(err.to_string()))?;
-
-    Ok(output)
+    forge_fmt::fmt(&sol).map_err(|err| eyre::eyre!(err.to_string()))
 }
 
 /// A type that keeps track of attempts
