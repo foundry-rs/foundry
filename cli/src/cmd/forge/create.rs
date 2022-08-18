@@ -1,7 +1,7 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, utils, LoadConfig, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE, utils, LoadConfig},
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
@@ -23,8 +23,6 @@ use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
-
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 3 };
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
