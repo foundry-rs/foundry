@@ -170,7 +170,7 @@ impl ScriptSequence {
                 if let (Some(contract_address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    if let Some(verify) = try_verify_contract(
+                    if let Some(verify) = get_verify_args(
                         contract_address,
                         create2_offset,
                         &data.0,
@@ -187,7 +187,7 @@ impl ScriptSequence {
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code } in &tx.additional_contracts {
                     if let Some(verify) =
-                        try_verify_contract(*address, 0, init_code, &verify, chain, &self.libraries)
+                        get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries)
                     {
                         future_verifications.push(verify.run());
                     } else {
@@ -225,7 +225,7 @@ impl ScriptSequence {
 
 /// Given a verify bundle and contract details, it tries to generate a valid `VerifyArgs` to use
 /// against the `contract_address`.
-fn try_verify_contract(
+fn get_verify_args(
     contract_address: Address,
     create2_offset: usize,
     data: &[u8],
