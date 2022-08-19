@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol";
-import "../logs/console.sol";
+import "forge-std/Test.sol";
 import "./Cheats.sol";
 
-contract ParseTest is DSTest {
+contract ParseTest is Test {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function testParseBytes() public {
         string memory stringBytes = "7109709ECfa91a80626fF3989D68f67F5b1DD12D";
         bytes memory testBytes = hex"7109709ECfa91a80626fF3989D68f67F5b1DD12D";
-        assertEq0(testBytes, cheats.parseBytes(stringBytes));
+        assertEq(testBytes, cheats.parseBytes(stringBytes));
     }
 
     function testParseAddress() public {
@@ -41,6 +40,6 @@ contract ParseTest is DSTest {
     function testParseBool() public {
         string memory stringBool = "true";
         bool testBool = true;
-        assertEq(testBool ? 1 : 0, cheats.parseBool(stringBool) ? 1 : 0);
+        assertEq(testBool, cheats.parseBool(stringBool));
     }
 }
