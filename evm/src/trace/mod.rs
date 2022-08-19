@@ -306,7 +306,7 @@ pub struct CallTrace {
     pub label: Option<String>,
     /// caller of this call
     pub caller: Address,
-    /// The destination address of the call
+    /// The destination address of the call or the address from the created contract
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
