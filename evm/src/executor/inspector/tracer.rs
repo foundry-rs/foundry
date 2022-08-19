@@ -137,7 +137,7 @@ where
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
-            CallKind::Create,
+            call.scheme.into(),
             call.caller,
         );
 

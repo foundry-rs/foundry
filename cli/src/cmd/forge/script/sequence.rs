@@ -1,6 +1,6 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
 use crate::cmd::forge::verify::{self, VerifyArgs};
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
@@ -179,7 +179,7 @@ impl ScriptSequence {
                 }
 
                 // Verify potential contracts created during the transaction execution
-                for AdditionalContract { address, init_code } in &tx.additional_contracts {
+                for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
                     match get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(*address),
@@ -284,6 +284,8 @@ impl Drop for ScriptSequence {
 #[derive(Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AdditionalContract {
+    #[serde(rename = "transactionType")]
+    pub opcode: CallKind,
     pub address: Address,
     #[serde(with = "hex")]
     pub init_code: Vec<u8>,
@@ -294,7 +296,7 @@ pub struct AdditionalContract {
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
     #[serde(rename = "transactionType")]
-    pub opcode: String,
+    pub opcode: CallKind,
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
     #[serde(default = "default_address")]
@@ -373,9 +375,9 @@ impl TransactionWithMetadata {
         contracts: &BTreeMap<Address, (String, &Abi)>,
     ) {
         if is_create2 {
-            self.opcode = "CREATE2".to_string();
+            self.opcode = CallKind::Create2;
         } else {
-            self.opcode = "CREATE".to_string();
+            self.opcode = CallKind::Create;
         }
 
         self.contract_name = contracts.get(&address).map(|(name, _)| name.clone());
@@ -388,7 +390,7 @@ impl TransactionWithMetadata {
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
     ) -> eyre::Result<()> {
-        self.opcode = "CALL".to_string();
+        self.opcode = CallKind::Create;
 
         if let Some(data) = self.transaction.data() {
             if data.0.len() >= 4 {
@@ -448,6 +450,6 @@ impl TransactionWithMetadata {
     }
 
     pub fn is_create2(&self) -> bool {
-        self.opcode == "CREATE2"
+        self.opcode == CallKind::Create2
     }
 }

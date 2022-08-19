@@ -135,8 +135,9 @@ impl ScriptArgs {
                         .iter()
                         .flat_map(|(_, traces)| {
                             traces.arena.iter().filter_map(|node| {
-                                if node.kind() == CallKind::Create {
+                                if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
                                     return Some(AdditionalContract {
+                                        opcode: node.kind(),
                                         address: node.trace.address,
                                         init_code: node.trace.data.to_raw(),
                                     })

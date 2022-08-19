@@ -330,7 +330,7 @@ pub struct CallTrace {
 impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
-        matches!(self.kind, CallKind::Create)
+        matches!(self.kind, CallKind::Create | CallKind::Create2)
     }
 }
 
