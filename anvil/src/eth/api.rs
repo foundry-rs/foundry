@@ -594,7 +594,7 @@ impl EthApi {
     pub async fn get_proof(
         &self,
         address: Address,
-        keys: Vec<U256>,
+        keys: Vec<H256>,
         block_number: Option<BlockId>,
     ) -> Result<AccountProof> {
         node_info!("eth_getProof");
