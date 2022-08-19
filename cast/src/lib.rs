@@ -679,16 +679,11 @@ where
 
             // If we get the event ABI from the cache or Etherscan, compare to Topic 0 to find the winning event.
             if let Some(abi) = abi {
-                let matches = abi
+                event = abi
                     .iter()
                     .filter(|event| &event.signature() == &log.topics[0])
-                    .map(|event| event.clone()) 
-                    .collect::<Vec<Event>>();
-                
-                event = match matches.len() {
-                    0 => None,
-                    _ => Some(matches[0].clone())
-                }
+                    .map(|event| event.clone())
+                    .next();
             }
 
             // If you have a winning event, parse logs with event and create return string.
