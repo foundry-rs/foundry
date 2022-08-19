@@ -47,7 +47,14 @@ impl LogsSubscription {
                 let b = self.storage.block(block.hash);
                 let receipts = self.storage.receipts(block.hash);
                 if let (Some(receipts), Some(block)) = (receipts, b) {
-                    self.queued.extend(filter_logs(block, receipts, &self.filter))
+                    let logs = filter_logs(block, receipts, &self.filter);
+                    if logs.is_empty() {
+                        // this ensures we poll the receiver until it is pending, in which case the
+                        // underlying `UnboundedReceiver` will register the new waker, see
+                        // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
+                        continue
+                    }
+                    self.queued.extend(logs)
                 }
             } else {
                 return Poll::Ready(None)
@@ -98,18 +105,21 @@ impl EthSubscription {
         match self {
             EthSubscription::Logs(listener) => listener.poll(cx),
             EthSubscription::Header(blocks, storage, id) => {
-                if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
-                    if let Some(block) = storage.eth_block(block.hash) {
-                        let params = EthSubscriptionParams {
-                            subscription: id.clone(),
-                            result: to_rpc_result(block),
-                        };
-                        Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                // this loop ensures we poll the receiver until it is pending, in which case the
+                // underlying `UnboundedReceiver` will register the new waker, see
+                // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
+                loop {
+                    if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
+                        if let Some(block) = storage.eth_block(block.hash) {
+                            let params = EthSubscriptionParams {
+                                subscription: id.clone(),
+                                result: to_rpc_result(block),
+                            };
+                            return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
+                        }
                     } else {
-                        Poll::Pending
+                        return Poll::Ready(None)
                     }
-                } else {
-                    Poll::Ready(None)
                 }
             }
             EthSubscription::PendingTransactions(tx, id) => {
