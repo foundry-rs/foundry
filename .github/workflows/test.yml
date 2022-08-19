@@ -201,6 +201,9 @@ jobs:
           args: --all --all-features -- -D warnings
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: forge fmt
+        run: cargo run --bin forge -- fmt --check testdata/
+
   cross-platform:
     name: Cross-platform tests
     if: github.event_name != 'pull_request'

@@ -37,7 +37,6 @@ contract FuzzNumbersTest is DSTest {
         assertTrue(val != type(int256).min);
     }
 
-
     function testNegativeMin1(int256 val) public {
         assertTrue(val != type(int256).min + 2);
     }
@@ -49,7 +48,9 @@ contract FuzzNumbersTest is DSTest {
             xy = x * y;
         }
 
-        if ((x != 0 && xy / x != y)) return;
+        if ((x != 0 && xy / x != y)) {
+            return;
+        }
 
         assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
     }

@@ -2215,6 +2215,7 @@ dependencies = [
  "ethers-providers",
  "ethers-solc",
  "eyre",
+ "forge-fmt",
  "foundry-common",
  "futures",
  "hex",

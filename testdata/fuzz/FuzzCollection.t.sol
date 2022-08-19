@@ -19,7 +19,7 @@ contract SampleContract {
     function compare(uint256 val) public {
         if (val == 0x4446) {
             found_needle = true;
-        } 
+        }
     }
 
     function incrementBy(uint256 numToIncrement) public onlyOwner {
@@ -29,8 +29,10 @@ contract SampleContract {
         emit Incremented(counter);
     }
 
-    function breakTheInvariant(uint256 x) public  {
-        if (x == 0x5556 ) counterX2 = 0;
+    function breakTheInvariant(uint256 x) public {
+        if (x == 0x5556) {
+            counterX2 = 0;
+        }
     }
 }
 

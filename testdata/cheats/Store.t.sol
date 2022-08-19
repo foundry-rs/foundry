@@ -5,8 +5,8 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Storage {
-    uint public slot0 = 10;
-    uint public slot1 = 20;
+    uint256 public slot0 = 10;
+    uint256 public slot1 = 20;
 }
 
 contract StoreTest is DSTest {
@@ -21,7 +21,7 @@ contract StoreTest is DSTest {
         assertEq(store.slot0(), 10, "initial value for slot 0 is incorrect");
         assertEq(store.slot1(), 20, "initial value for slot 1 is incorrect");
 
-        cheats.store(address(store), bytes32(0), bytes32(uint(1)));
+        cheats.store(address(store), bytes32(0), bytes32(uint256(1)));
         assertEq(store.slot0(), 1, "store failed");
         assertEq(store.slot1(), 20, "store failed");
     }
@@ -31,8 +31,8 @@ contract StoreTest is DSTest {
         assertEq(store.slot1(), 20, "initial value for slot 1 is incorrect");
 
         cheats.store(address(store), bytes32(0), bytes32(slot0));
-        cheats.store(address(store), bytes32(uint(1)), bytes32(slot1));
+        cheats.store(address(store), bytes32(uint256(1)), bytes32(slot1));
         assertEq(store.slot0(), slot0, "store failed");
-        assertEq(store.slot1(), slot1, "store failed"); 
+        assertEq(store.slot1(), slot1, "store failed");
     }
 }

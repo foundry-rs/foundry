@@ -46,34 +46,22 @@ contract TargetArtifactSelectors2 is DSTest {
         parent = new Parent();
     }
 
-    function targetArtifactSelectors()
-        public
-        returns (FuzzAbiSelector[] memory)
-    {
+    function targetArtifactSelectors() public returns (FuzzAbiSelector[] memory) {
         FuzzAbiSelector[] memory targets = new FuzzAbiSelector[](2);
         bytes4[] memory selectors_child = new bytes4[](1);
 
         selectors_child[0] = Child.change_parent.selector;
-        targets[0] = FuzzAbiSelector(
-            "fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child",
-            selectors_child
-        );
+        targets[0] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Child", selectors_child);
 
         bytes4[] memory selectors_parent = new bytes4[](1);
         selectors_parent[0] = Parent.create.selector;
-        targets[1] = FuzzAbiSelector(
-            "fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent",
-            selectors_parent
-        );
+        targets[1] = FuzzAbiSelector("fuzz/invariant/targetAbi/TargetArtifactSelectors2.t.sol:Parent", selectors_parent);
         return targets;
     }
 
     function invariantShouldFail() public {
         if (!parent.should_be_true()) {
-            require(
-                !Child(address(parent.child())).changed(),
-                "should have not happened"
-            );
+            require(!Child(address(parent.child())).changed(), "should have not happened");
         }
         require(parent.should_be_true() == true, "its false.");
     }

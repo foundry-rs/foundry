@@ -19,11 +19,7 @@ contract ContractEnvironmentTest is DSTest {
     function testEnvironment() public {
         assertEq(chainId(), 31337, "chainid is incorrect");
         assertEq(block.number, 1, "block number is incorrect");
-        assertEq(
-            blockhash(block.number),
-                0x0,
-            "blockhash is incorrect"
-        );
+        assertEq(blockhash(block.number), 0x0, "blockhash is incorrect");
         assertEq(block.coinbase, 0x0000000000000000000000000000000000000000, "coinbase is incorrect");
         assertEq(block.timestamp, 1, "timestamp is incorrect");
         assertEq(block.difficulty, 0, "difficulty is incorrect");

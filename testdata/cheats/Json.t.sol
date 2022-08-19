@@ -93,4 +93,3 @@ contract ParseJson is DSTest {
         assertEq(whole.strArray[1], "there");
     }
 }
-
