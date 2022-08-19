@@ -49,7 +49,7 @@ impl LogsSubscription {
                 if let (Some(receipts), Some(block)) = (receipts, b) {
                     let logs = filter_logs(block, receipts, &self.filter);
                     if logs.is_empty() {
-                        // this ensures we poll the until it is pending, in which case the
+                        // this ensures we poll the receiver until it is pending, in which case the
                         // underlying `UnboundedReceiver` will register the new waker, see
                         // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
                         continue
@@ -105,8 +105,8 @@ impl EthSubscription {
         match self {
             EthSubscription::Logs(listener) => listener.poll(cx),
             EthSubscription::Header(blocks, storage, id) => {
-                // this loop ensures we poll the until it is pending, in which case the underlying
-                // `UnboundedReceiver` will register the new waker, see
+                // this loop ensures we poll the receiver until it is pending, in which case the
+                // underlying `UnboundedReceiver` will register the new waker, see
                 // [`futures::channel::mpsc::UnboundedReceiver::poll_next()`]
                 loop {
                     if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
