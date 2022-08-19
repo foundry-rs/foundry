@@ -292,7 +292,10 @@ impl EthApi {
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
-                self.evm_set_next_block_timestamp(time).to_rpc_result()
+                match u64::try_from(time).map_err(BlockchainError::UintConversion) {
+                    Ok(time) => self.evm_set_next_block_timestamp(time).to_rpc_result(),
+                    err @ Err(_) => err.to_rpc_result(),
+                }
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
                 self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
