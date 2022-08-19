@@ -195,7 +195,7 @@ impl ScriptSequence {
 
             self.check_unverified(unverifiable_contracts, verify);
 
-            println!("##\nStart Contract Verification");
+            println!("##\nStart verification for ({}) contracts", future_verifications.len());
             for verification in future_verifications {
                 verification.await?;
             }
