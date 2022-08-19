@@ -58,9 +58,9 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork)'
+            filter: '!test(~fork) & !test(~live)'
           - name: forking
-            filter: 'test(~fork)'
+            filter: 'test(~fork) & !test(~live)'
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -85,9 +85,9 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork)'
+            filter: '!test(~fork) & !test(~live)'
           - name: forking
-            filter: 'test(~fork)'
+            filter: 'test(~fork) & !test(~live)'
         partition: [1, 2]
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
@@ -124,9 +124,9 @@ jobs:
       matrix:
         job:
           - name: non-forking
-            filter: '!test(~fork_integration)'
+            filter: '!test(~fork_integration) & !test(~live)'
           - name: forking
-            filter: 'test(~fork_integration)'
+            filter: 'test(~fork_integration) & !test(~live)'
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
