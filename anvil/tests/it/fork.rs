@@ -2,11 +2,11 @@
 
 use crate::{abi::*, utils};
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
-use anvil_core::types::Forking;
+use anvil_core::{eth::transaction::EthTransactionRequest, types::Forking};
 use ethers::{
     core::rand,
-    prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware, StreamExt},
-    providers::Provider,
+    prelude::{Bytes, LocalWallet, Middleware, SignerMiddleware},
+    providers::{Http, Provider},
     signers::Signer,
     types::{
         transaction::eip2718::TypedTransaction, Address, BlockNumber, Chain, TransactionRequest,
@@ -14,6 +14,7 @@ use ethers::{
     },
 };
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
+use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 
 const BLOCK_NUMBER: u64 = 14_608_400u64;
@@ -552,4 +553,26 @@ async fn test_reset_fork_on_new_blocks() {
     let next_block = anvil_provider.get_block_number().await.unwrap();
 
     assert!(next_block > current_block)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_call() {
+    let input: Bytes = "0x77c7b8fc".parse().unwrap();
+    let to: Address = "0x99d1Fa417f94dcD62BfE781a1213c092a47041Bc".parse().unwrap();
+    let block_number = 14746300u64;
+
+    let provider = Provider::<Http>::try_from(rpc::next_http_archive_rpc_endpoint()).unwrap();
+    let mut tx = TypedTransaction::default();
+    tx.set_to(to).set_data(input.clone());
+    let res0 =
+        provider.call(&tx, Some(BlockNumber::Number(block_number.into()).into())).await.unwrap();
+
+    let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
+
+    let res1 = api
+        .call(EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() }, None)
+        .await
+        .unwrap();
+
+    assert_eq!(res0, res1);
 }

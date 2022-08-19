@@ -144,6 +144,10 @@ pub fn apply<DB: Database>(
             data.env.block.timestamp = inner.0;
             Ok(Bytes::new())
         }
+        HEVMCalls::Difficulty(inner) => {
+            data.env.block.difficulty = inner.0;
+            Ok(Bytes::new())
+        }
         HEVMCalls::Roll(inner) => {
             data.env.block.number = inner.0;
             Ok(Bytes::new())

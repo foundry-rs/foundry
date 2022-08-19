@@ -90,6 +90,7 @@ foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
 serial_test = "0.8.0"
+criterion = "0.3"
 
 [features]
 default = ["rustls"]
@@ -109,3 +110,7 @@ doc = false
 name = "forge"
 path = "src/forge.rs"
 doc = false
+
+[[bench]]
+name = "forge_test"
+harness = false

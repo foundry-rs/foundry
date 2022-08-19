@@ -18,6 +18,7 @@ ethers::contract::abigen!(
             struct Log {bytes32[] topics; bytes data;}
             roll(uint256)
             warp(uint256)
+            difficulty(uint256)
             fee(uint256)
             coinbase(address)
             store(address,bytes32,bytes32)

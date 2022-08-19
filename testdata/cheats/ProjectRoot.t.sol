@@ -12,7 +12,7 @@ contract ProjectRootTest is DSTest {
 
         // replace "forge" suffix with "testdata" suffix to get expected project root from manifest dir
         bytes memory expectedRootSuffix = bytes("testd");
-        for(uint i = 1; i < 6; i++) {
+        for (uint256 i = 1; i < 6; i++) {
             manifestDirBytes[manifestDirBytes.length - i] = expectedRootSuffix[expectedRootSuffix.length - i];
         }
         bytes memory expectedRootDir = abi.encodePacked(manifestDirBytes, "ata");

@@ -11,6 +11,7 @@ use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
 use foundry_common::fs;
 use foundry_config::Config;
+use yansi::Paint;
 
 use crate::cmd::forge::verify::VerificationProviderType;
 
@@ -152,11 +153,12 @@ impl ScriptSequence {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
         if let Some(etherscan_key) = &verify.etherscan_key {
             let mut future_verifications = vec![];
+            let mut unverifiable_contracts = vec![];
 
             // Make sure the receipts have the right order first.
             self.sort_receipts();
 
-            for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
+            'receipts: for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
                 let mut create2_offset = 0;
 
                 if tx.is_create2() {
@@ -212,9 +214,23 @@ impl ScriptSequence {
                             };
 
                             future_verifications.push(verify.run());
+                            continue 'receipts
                         }
                     }
+                    unverifiable_contracts.push(contract_address);
                 }
+            }
+
+            if !unverifiable_contracts.is_empty() {
+                println!(
+                    "\n{}",
+                    Paint::yellow(format!(
+                        "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
+                        unverifiable_contracts,
+                        "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
+                    ))
+                    .bold(),
+                );
             }
 
             println!("##\nStart Contract Verification");

@@ -631,7 +631,15 @@ impl NodeConfig {
                     panic!("Failed to get block for block number: {}", fork_block_number)
                 };
 
-                env.block.number = fork_block_number.into();
+                env.block = BlockEnv {
+                    number: fork_block_number.into(),
+                    timestamp: block.timestamp,
+                    difficulty: block.difficulty,
+                    gas_limit: block.gas_limit,
+                    // Keep previous `coinbase` and `basefee` value
+                    coinbase: env.block.coinbase,
+                    basefee: env.block.basefee,
+                };
                 fork_timestamp = Some(block.timestamp);
 
                 // if not set explicitly we use the base fee of the latest block
@@ -712,6 +720,7 @@ impl NodeConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
+            fork_genesis_account_infos: Arc::new(Default::default()),
         };
         // only memory based backend for now
 

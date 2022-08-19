@@ -2,6 +2,6 @@ interface test {
     event Bar(address indexed x);
     event Foo(address x);
 
-    function guess(uint8 n, address x) payable external;
-    function isComplete() view external returns (bool example, string memory);
+    function guess(uint8 n, address x) external payable;
+    function isComplete() external view returns (bool example, string memory);
 }

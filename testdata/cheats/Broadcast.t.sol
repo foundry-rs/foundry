@@ -20,10 +20,7 @@ contract Test is DSTest {
         changed += 1;
     }
 
-    function multiple_arguments(uint256 a, address b, uint256[] memory c)
-        public
-        returns (uint256)
-    {}
+    function multiple_arguments(uint256 a, address b, uint256[] memory c) public returns (uint256) {}
 
     function echoSender() public view returns (address) {
         return msg.sender;
@@ -300,9 +297,7 @@ contract TestInitialBalance is DSTest {
 
     function runCustomSender() public {
         // Make sure we're testing a different caller than the default one.
-        assert(
-            msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
-        );
+        assert(msg.sender != address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
 
         // NodeConfig::test() sets the balance of the address used in this test to 100 ether.
         assert(msg.sender.balance == 100 ether);
@@ -313,9 +308,7 @@ contract TestInitialBalance is DSTest {
 
     function runDefaultSender() public {
         // Make sure we're testing with the default caller.
-        assert(
-            msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72)
-        );
+        assert(msg.sender == address(0x00a329c0648769A73afAc7F9381E08FB43dBEA72));
 
         assert(msg.sender.balance == type(uint256).max);
 

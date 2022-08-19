@@ -1,4 +1,4 @@
-use crate::cmd::LoadConfig;
+use crate::cmd::{retry::RETRY_CHECK_ON_VERIFY, LoadConfig};
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
@@ -27,7 +27,7 @@ use std::{
 };
 use tracing::{trace, warn};
 
-use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs, RETRY_CHECK_ON_VERIFY};
+use super::{VerificationProvider, VerifyArgs, VerifyCheckArgs};
 
 pub static RE_BUILD_COMMIT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?P<commit>commit\.[0-9,a-f]{8})"#).unwrap());

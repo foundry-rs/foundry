@@ -55,10 +55,13 @@ impl<'a> FuzzedExecutor<'a> {
         errors: Option<&Abi>,
     ) -> FuzzTestResult {
         // Stores the consumed gas and calldata of every successful fuzz call
-        let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
+        let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
         // Stores the result and calldata of the last failed call, if any.
-        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
+        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
+
+        // stores the last successful call trace
+        let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
@@ -102,8 +105,10 @@ impl<'a> FuzzedExecutor<'a> {
                     calldata,
                     gas: call.gas,
                     stipend: call.stipend,
-                    traces: call.traces,
                 });
+
+                traces.replace(call.traces);
+
                 Ok(())
             } else {
                 let status = call.status;
@@ -135,6 +140,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             logs: call.logs,
             labeled_addresses: call.labels,
+            traces: traces.into_inner(),
         };
 
         match run_result {
@@ -273,6 +279,12 @@ pub struct FuzzTestResult {
 
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// Exemplary traces for a fuzz run of the test function
+    ///
+    /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
+    /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
+    pub traces: Option<CallTraceArena>,
 }
 
 /// Container type for all successful test cases
@@ -351,6 +363,4 @@ pub struct FuzzCase {
     pub gas: u64,
     /// The initial gas stipend for the transaction
     pub stipend: u64,
-    /// Traces
-    pub traces: Option<CallTraceArena>,
 }
