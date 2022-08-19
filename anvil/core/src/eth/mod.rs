@@ -354,9 +354,9 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_setNextBlockTimestamp",
         alias = "evm_setNextBlockTimestamp",
-        with = "sequence"
+        deserialize_with = "deserialize_number_seq"
     )]
-    EvmSetNextBlockTimeStamp(u64),
+    EvmSetNextBlockTimeStamp(U256),
 
     /// Set the exact gas limit that you want in the next block
     #[serde(
@@ -820,6 +820,9 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s = r#"{"method": "evm_setNextBlockTimestamp", "params": [100]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "evm_setNextBlockTimestamp", "params": ["0x64e0f308"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
