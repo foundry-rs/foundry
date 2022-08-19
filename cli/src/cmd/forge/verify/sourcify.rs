@@ -47,10 +47,6 @@ impl VerificationProvider for SourcifyVerificationProvider {
             eyre::bail!("Cache is required for sourcify verification.")
         }
 
-        if !config.extra_output_files.contains(&ContractOutputSelection::Metadata) {
-            eyre::bail!("Metadata is required for sourcify verification. Try adding `extra_output_files = [\"metadata\"]` to `foundry.toml`")
-        }
-
         let cache = project.read_cache_file()?;
         let (path, entry) = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
 
