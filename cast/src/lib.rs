@@ -634,15 +634,16 @@ where
             H256::from_str(&hash)?
         ).await?.unwrap();
 
+        // Address -> Vector of Events in the contract at that address
         let mut cached_abis: HashMap<H160, Option<Vec<Event>>> = HashMap::new();
         let mut return_string: String = String::new();
 
-        // For each event in the logs...
         for log in receipt.logs {
-            let mut event: Option<Event> = None;
-            
+            // First, try to grab the ABI from the cache.
             let abi: Option<Vec<Event>> = if let Some(cached_abi) = cached_abis.get(&log.address) {
                 cached_abi.clone()
+            
+            // If it's not there, go to Etherscan to look up the contract, and parse the interface into an Event ABI.
             } else {
                 let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
                     chain: chain,
@@ -653,7 +654,7 @@ where
                 }).await;
 
                 if let Ok(interfaces) = interfaces {
-                    Some(interfaces
+                    let interface: Vec<Event> = interfaces
                         .iter()
                         .map(|iface| iface.source.to_string())
                         .collect::<Vec<_>>()
@@ -662,16 +663,21 @@ where
                         .map(|line| line.trim().to_string())
                         .filter(|line| line.starts_with("event"))
                         .map(|line| translate_event_string_to_event_type(&line).unwrap())
-                        .collect())
+                        .collect();
+
+                        // Save to cache in case a future event in the loop is from the same address.
+                        cached_abis.insert(log.address, Some(interface.clone()));
+                    
+                        Some(interface)
+                // If the contract isn't in the cache or Etherscan, let ABI = None so that raw data is returned below.
                 } else {
                     None
                 }
             };
 
-            // Save to cache in case a future event in the loop is from the same address.
-            cached_abis.insert(log.address, abi.clone());
+            let mut event: Option<Event> = None;
 
-            // If we get the event ABI from the cache or Etherscan...
+            // If we get the event ABI from the cache or Etherscan, compare to Topic 0 to find the winning event.
             if let Some(abi) = abi {
                 let matches = abi
                     .iter()
@@ -685,17 +691,7 @@ where
                 }
             }
 
-            // If the contract wasn't Etherscan verified, try 4byte (temporarily disabled because no "indexed" doesn't play nice)...
-            // if event.is_none() {
-            //     let topic0 = &format!("{:#x}", &topics[0]);
-            //     let sigs = foundry_utils::selectors::decode_event_topic(topic0).await?;
-            //     let sig = sigs.get(0);
-
-            //     if let Some(sig) = sig {
-            //         event = Some(translate_event_string_to_event_type(sig).unwrap());
-            //     }
-            // }
-
+            // If you have a winning event, parse logs with event and create return string.
             if let Some(event) = event {
                 let data: Vec<u8> = log.data.to_vec();
                 let raw_log = RawLog::from((log.topics.clone(), data));
@@ -715,6 +711,7 @@ where
                         event_return_string
                     )
                 );
+            // Otherwise, create return string from the log without event context.
             } else {
                 let event_return_string = log.topics
                     .iter()
