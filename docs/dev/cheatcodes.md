@@ -38,7 +38,7 @@ The concept of cheat codes and cheat code inspector is very simple.
 
 In solidity cheat codes are calls to a specific address, the cheat code handler address:
 
-`keccak(`address(bytes20(uint160(uint256(keccak256('hevm cheat code')))))`)`: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
+`keccak(address(bytes20(uint160(uint256(keccak256('hevm cheat code'))))))`: 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D
 
 which can be initialized like `Cheats constant cheats = Cheats(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);`, when
 inheriting from `forge-std/Test.sol` it can be accessed via `vm.<cheatcode>` directly.
@@ -83,7 +83,7 @@ essentially a large `match` over the decoded `HEVMCalls` which serves as the imp
 
 ## Adding a new cheat code
 
-This process consists of 3 steps:
+This process consists of 4 steps:
 
 1. add the function signature to the `abigen!` macro so a new `HEVMCalls` variant is generated
 2. implement the cheat code handler
