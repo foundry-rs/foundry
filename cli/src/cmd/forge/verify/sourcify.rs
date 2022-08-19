@@ -2,7 +2,6 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 use async_trait::async_trait;
 use cast::SimpleCast;
-use ethers::solc::artifacts::output_selection::ContractOutputSelection;
 use foundry_utils::Retry;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -45,10 +44,6 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
         if !config.cache {
             eyre::bail!("Cache is required for sourcify verification.")
-        }
-
-        if !config.extra_output_files.contains(&ContractOutputSelection::Metadata) {
-            eyre::bail!("Metadata is required for sourcify verification. Try adding `extra_output_files = [\"metadata\"]` to `foundry.toml`")
         }
 
         let cache = project.read_cache_file()?;
