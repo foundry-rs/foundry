@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  doc:
+  live:
     name: goerli live tests
     runs-on: ubuntu-latest
     env:
