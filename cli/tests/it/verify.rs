@@ -306,7 +306,7 @@ forgetest!(
     }
 );
 
-// tests `script --verify` by deploying on goerli and verifying live goerli etherscan
+// tests `script --verify` by deploying on goerli and verifying it on etherscan
 // Uses predeployed libs and contract creations inside constructors and calls
 forgetest_async!(
     test_live_can_deploy_and_verify,
