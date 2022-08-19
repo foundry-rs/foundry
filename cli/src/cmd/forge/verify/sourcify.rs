@@ -2,7 +2,6 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 use async_trait::async_trait;
 use cast::SimpleCast;
-use ethers::solc::artifacts::output_selection::ContractOutputSelection;
 use foundry_utils::Retry;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
