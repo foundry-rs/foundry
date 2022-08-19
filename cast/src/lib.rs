@@ -630,117 +630,108 @@ where
     }
 
     pub async fn events(&self, hash: String, chain: Chain, api_key: String) -> eyre::Result<String> {
-        let receipt = self.provider.get_transaction_receipt(H256::from_str(&hash)?).await?;
-        let receipt = match receipt {
-            Some(receipt) => serde_json::to_value(&receipt)?,
-            None => eyre::bail!("no receipt found for tx {}", hash),
-        };
+        let receipt = self.provider.get_transaction_receipt(
+            H256::from_str(&hash)?
+        ).await?.unwrap();
 
-        let mut cached_abis: HashMap<String, Option<Vec<Event>>> = HashMap::new();
+        let mut cached_abis: HashMap<H160, Option<Vec<Event>>> = HashMap::new();
         let mut return_string: String = String::new();
 
         // For each event in the logs...
-        if let serde_json::Value::Array(logs) = &receipt["logs"] {
-            for log in logs {
-                let address: &str = &log["address"].as_str().ok_or( eyre::eyre!("Could not parse event address from receipt"))?;
-                let topics = &log["topics"]
-                    .as_array()
-                    .ok_or( eyre::eyre!("Could not parse topic log from receipt"))?
-                    .iter()
-                    .map(|t| serde_json::from_value(t.clone()).unwrap())
-                    .collect::<Vec<H256>>();
-                let mut event: Option<Event> = None;
-                
-                let abi: Option<Vec<Event>> = if let Some(cached_abi) = cached_abis.get(address) {
-                    cached_abi.clone()
-                } else {
-                    let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
-                        chain: chain,
-                        api_key: api_key.clone(),
-                        address: address
-                            .parse::<Address>()
-                            .wrap_err("Invalid address provided. Did you make a typo?")?,
-                    }).await;
-    
-                    if let Ok(interfaces) = interfaces {
-                        Some(interfaces
-                            .iter()
-                            .map(|iface| iface.source.to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                            .split("\n")
-                            .map(|line| line.trim().to_string())
-                            .filter(|line| line.starts_with("event"))
-                            .map(|line| translate_event_string_to_event_type(&line).unwrap())
-                            .collect())
-                    } else {
-                        None
-                    }
-                };
+        for log in receipt.logs {
+            let mut event: Option<Event> = None;
+            
+            let abi: Option<Vec<Event>> = if let Some(cached_abi) = cached_abis.get(&log.address) {
+                cached_abi.clone()
+            } else {
+                let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
+                    chain: chain,
+                    api_key: api_key.clone(),
+                    address: format!("{:#x}", log.address)
+                        .parse::<Address>()
+                        .wrap_err("Invalid address provided. Did you make a typo?")?,
+                }).await;
 
-                // Save to cache in case a future event in the loop is from the same address.
-                cached_abis.insert(address.to_string(), abi.clone());
-
-                // If we get the event ABI from the cache or Etherscan...
-                if let Some(abi) = abi {
-                    let matches = abi
+                if let Ok(interfaces) = interfaces {
+                    Some(interfaces
                         .iter()
-                        .filter(|event| &event.signature() == &topics[0])
-                        .map(|event| event.clone()) 
-                        .collect::<Vec<Event>>();
-                    
-                    event = match matches.len() {
-                        0 => None,
-                        _ => Some(matches[0].clone())
-                    }
+                        .map(|iface| iface.source.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .split("\n")
+                        .map(|line| line.trim().to_string())
+                        .filter(|line| line.starts_with("event"))
+                        .map(|line| translate_event_string_to_event_type(&line).unwrap())
+                        .collect())
+                } else {
+                    None
                 }
+            };
 
-                // If the contract wasn't Etherscan verified, try 4byte (temporarily disabled because no "indexed" doesn't play nice)...
-                // if event.is_none() {
-                //     let topic0 = &format!("{:#x}", &topics[0]);
-                //     let sigs = foundry_utils::selectors::decode_event_topic(topic0).await?;
-                //     let sig = sigs.get(0);
+            // Save to cache in case a future event in the loop is from the same address.
+            cached_abis.insert(log.address, abi.clone());
 
-                //     if let Some(sig) = sig {
-                //         event = Some(translate_event_string_to_event_type(sig).unwrap());
-                //     }
-                // }
-
-                if let Some(event) = event {
-                    let data: Vec<u8> = log["data"].as_str().ok_or( eyre::eyre!("Could not parse data from receipt"))?.as_bytes().to_vec();
-                    let raw_log = RawLog::from((topics.clone(), data));
- 
-                    let event_return_string = event.parse_log(raw_log)
-                            .unwrap()
-                            .params
-                            .iter()
-                            .map(|param| format!("{}: {}\n", param.name, param.value))
-                            .collect::<Vec<String>>()
-                            .join("");
-                    
-                    return_string.push_str(&format!("\n{}({}) -> Emitting Contract: {}\n{}",
-                            event.name,
-                            event.inputs.iter().map(|input| input.kind.to_string()).collect::<Vec<_>>().join(","),
-                            &address,
-                            event_return_string
-                        )
-                    );
-                } else {
-                    let event_return_string = topics
-                        .iter()
-                        .map(|topic| format!("{:#x}", topic))
-                        .enumerate()
-                        .map(|(idx, topic)| format!("({}) {}", idx, topic))
-                        .collect::<Vec<String>>()
-                        .join("\n");
-                    
-                    return_string.push_str(&format!("\nUnknown Event Type -> Emitting Contract: {}\n{}\nData: {}\n", &address, event_return_string, &log["data"]));
+            // If we get the event ABI from the cache or Etherscan...
+            if let Some(abi) = abi {
+                let matches = abi
+                    .iter()
+                    .filter(|event| &event.signature() == &log.topics[0])
+                    .map(|event| event.clone()) 
+                    .collect::<Vec<Event>>();
+                
+                event = match matches.len() {
+                    0 => None,
+                    _ => Some(matches[0].clone())
                 }
             }
-            Ok(return_string)
-        } else {
-            Err(eyre::eyre!("There's an issue with the tx logs (they don't seem to be an array)"))
+
+            // If the contract wasn't Etherscan verified, try 4byte (temporarily disabled because no "indexed" doesn't play nice)...
+            // if event.is_none() {
+            //     let topic0 = &format!("{:#x}", &topics[0]);
+            //     let sigs = foundry_utils::selectors::decode_event_topic(topic0).await?;
+            //     let sig = sigs.get(0);
+
+            //     if let Some(sig) = sig {
+            //         event = Some(translate_event_string_to_event_type(sig).unwrap());
+            //     }
+            // }
+
+            if let Some(event) = event {
+                let data: Vec<u8> = log.data.to_vec();
+                let raw_log = RawLog::from((log.topics.clone(), data));
+
+                let event_return_string = event.parse_log(raw_log)
+                        .unwrap()
+                        .params
+                        .iter()
+                        .map(|param| format!("{}: {}\n", param.name, param.value))
+                        .collect::<Vec<String>>()
+                        .join("");
+                
+                return_string.push_str(&format!("\n{}({}) -> Emitting Contract: {:#x}\n{}",
+                        event.name,
+                        event.inputs.iter().map(|input| input.kind.to_string()).collect::<Vec<_>>().join(","),
+                        &log.address,
+                        event_return_string
+                    )
+                );
+            } else {
+                let event_return_string = log.topics
+                    .iter()
+                    .map(|topic| format!("{:#x}", topic))
+                    .enumerate()
+                    .map(|(idx, topic)| format!("({}) {}", idx, topic))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                
+                return_string.push_str(&format!("\nUnknown Event Type -> Emitting Contract: {:#x}\n{}\nData: {}\n", 
+                    &log.address, 
+                    event_return_string, 
+                    &log.data
+                ));
+            }
         }
+        Ok(return_string)
     }
 
     /// Perform a raw JSON-RPC request
