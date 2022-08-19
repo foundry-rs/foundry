@@ -5103,8 +5103,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d3173bcc4e5c210a147bd6d61becd3cc053517bf38253bd93c376ae7d818172"
+source = "git+https://github.com/onbjerg/svm-rs?branch=onbjerg/linux-aarch-bump#69ce21dacbf00f5c529e3b49b306608c5e4a43f9"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -5134,8 +5133,7 @@ dependencies = [
 [[package]]
 name = "svm-rs-builds"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9667365ef795e87d08cb456815d028ce96bfdcfd7b9aaa2bb461766e2e4a738b"
+source = "git+https://github.com/onbjerg/svm-rs?branch=onbjerg/linux-aarch-bump#69ce21dacbf00f5c529e3b49b306608c5e4a43f9"
 dependencies = [
  "build_const",
  "hex",
