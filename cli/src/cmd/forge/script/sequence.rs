@@ -277,12 +277,7 @@ fn get_verify_args(
                 constructor_args: Some(hex::encode(&constructor_args)),
                 num_of_optimizations: verify.num_of_optimizations,
                 chain: chain.into(),
-                etherscan_key: Some(
-                    verify
-                        .etherscan_key
-                        .clone()
-                        .expect("Should have already verified key existence."),
-                ),
+                etherscan_key: verify.etherscan_key.clone(),
                 flatten: false,
                 force: false,
                 watch: true,
