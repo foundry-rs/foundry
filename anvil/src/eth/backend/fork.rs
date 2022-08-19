@@ -48,8 +48,9 @@ impl ClientFork {
     pub async fn reset(
         &self,
         url: Option<String>,
-        block_number: Option<u64>,
+        block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
+        let block_number = block_number.into();
         {
             self.database
                 .write()
@@ -69,19 +70,20 @@ impl ClientFork {
             self.config.write().chain_id = chain_id.as_u64();
         }
 
-        let block = if let Some(block_number) = block_number {
-            let provider = self.provider();
-            let block =
-                provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-            let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
-            let timestamp = block.timestamp.as_u64();
-            let base_fee = block.base_fee_per_gas;
-            Some((block_number, block_hash, timestamp, base_fee))
-        } else {
-            None
-        };
+        let provider = self.provider();
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+        let timestamp = block.timestamp.as_u64();
+        let base_fee = block.base_fee_per_gas;
 
-        self.config.write().update_block(block);
+        self.config.write().update_block(
+            block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
+            block_hash,
+            timestamp,
+            base_fee,
+        );
+
         self.clear_cached_storage();
         Ok(())
     }
@@ -446,14 +448,18 @@ impl ClientForkConfig {
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
-    pub fn update_block(&mut self, block: Option<(u64, H256, u64, Option<U256>)>) {
-        if let Some((block_number, block_hash, timestamp, base_fee)) = block {
-            self.block_number = block_number;
-            self.block_hash = block_hash;
-            self.timestamp = timestamp;
-            self.base_fee = base_fee;
-            trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
-        }
+    pub fn update_block(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+        timestamp: u64,
+        base_fee: Option<U256>,
+    ) {
+        self.block_number = block_number;
+        self.block_hash = block_hash;
+        self.timestamp = timestamp;
+        self.base_fee = base_fee;
+        trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
 

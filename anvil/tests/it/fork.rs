@@ -163,6 +163,12 @@ async fn test_fork_reset() {
     assert_eq!(balance, handle.genesis_balance());
     let balance = provider.get_balance(to, None).await.unwrap();
     assert_eq!(balance, handle.genesis_balance());
+
+    // reset to latest
+    api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+    let new_block_num = provider.get_block_number().await.unwrap();
+    assert!(new_block_num > block_number);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -7,7 +7,10 @@ use crate::{
     },
     revm::db::CacheDB,
 };
-use ethers::prelude::{Address, H256, U256};
+use ethers::{
+    prelude::{Address, H256, U256},
+    types::BlockId,
+};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
 use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
@@ -64,10 +67,12 @@ impl ForkedDatabase {
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(&mut self, _url: Option<String>, block_number: Option<u64>) -> Result<(), String> {
-        if let Some(block_number) = block_number {
-            self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        }
+    pub fn reset(
+        &mut self,
+        _url: Option<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), String> {
+        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
 
         // TODO need to find a way to update generic provider via url
 
