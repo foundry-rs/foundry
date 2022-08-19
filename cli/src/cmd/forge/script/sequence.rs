@@ -1,5 +1,8 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::cmd::forge::verify::{self, VerifyArgs};
+use crate::cmd::forge::{
+    init::get_commit_hash,
+    verify::{self, VerifyArgs},
+};
 use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
@@ -36,6 +39,7 @@ pub struct ScriptSequence {
     pub path: PathBuf,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
+    pub commit: Option<String>,
 }
 
 impl ScriptSequence {
@@ -48,6 +52,7 @@ impl ScriptSequence {
         chain_id: u64,
     ) -> eyre::Result<Self> {
         let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
             transactions,
@@ -60,6 +65,7 @@ impl ScriptSequence {
                 .expect("Wrong system time.")
                 .as_secs(),
             libraries: vec![],
+            commit,
         })
     }
 
@@ -187,17 +193,7 @@ impl ScriptSequence {
                 }
             }
 
-            if !unverifiable_contracts.is_empty() {
-                println!(
-                    "\n{}",
-                    Paint::yellow(format!(
-                        "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
-                        unverifiable_contracts,
-                        "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-                    ))
-                    .bold(),
-                );
-            }
+            self.check_unverified(unverifiable_contracts, verify);
 
             println!("##\nStart Contract Verification");
             for verification in future_verifications {
@@ -206,6 +202,34 @@ impl ScriptSequence {
         }
 
         Ok(())
+    }
+
+    /// Let the user know if there are any contracts which can not be verified. Also, present some
+    /// hints on potential causes.
+    fn check_unverified(&self, unverifiable_contracts: Vec<Address>, verify: VerifyBundle) {
+        if !unverifiable_contracts.is_empty() {
+            println!(
+                "\n{}",
+                Paint::yellow(format!(
+                    "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
+                    unverifiable_contracts,
+                    "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
+                ))
+                .bold(),
+            );
+
+            if let Some(commit) = &self.commit {
+                let current_commit = verify
+                    .project_paths
+                    .root
+                    .map(|root| get_commit_hash(&root).unwrap_or_default())
+                    .unwrap_or_default();
+
+                if &current_commit != commit {
+                    println!("\tScript was broadcasted on commit `{commit}`, but we are at `{current_commit}`.");
+                }
+            }
+        }
     }
 
     /// Returns the list of the transactions without the metadata.
