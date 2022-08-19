@@ -1,6 +1,9 @@
 use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::cmd::forge::verify;
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use crate::cmd::forge::{
+    init::get_commit_hash,
+    verify::{self, VerifyArgs},
+};
+use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
@@ -36,6 +39,7 @@ pub struct ScriptSequence {
     pub path: PathBuf,
     pub returns: HashMap<String, NestedValue>,
     pub timestamp: u64,
+    pub commit: Option<String>,
 }
 
 impl ScriptSequence {
@@ -48,6 +52,7 @@ impl ScriptSequence {
         chain_id: u64,
     ) -> eyre::Result<Self> {
         let path = ScriptSequence::get_path(&config.broadcast, sig, target, chain_id)?;
+        let commit = get_commit_hash(&config.__root.0);
 
         Ok(ScriptSequence {
             transactions,
@@ -60,6 +65,7 @@ impl ScriptSequence {
                 .expect("Wrong system time.")
                 .as_secs(),
             libraries: vec![],
+            commit,
         })
     }
 
@@ -151,101 +157,143 @@ impl ScriptSequence {
     /// created contract on etherscan.
     pub async fn verify_contracts(&mut self, verify: VerifyBundle, chain: u64) -> eyre::Result<()> {
         trace!(?chain, "verifying {} contracts", verify.known_contracts.len());
-        if let Some(etherscan_key) = &verify.etherscan_key {
+        if verify.etherscan_key.is_some() {
             let mut future_verifications = vec![];
             let mut unverifiable_contracts = vec![];
 
             // Make sure the receipts have the right order first.
             self.sort_receipts();
 
-            'receipts: for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
-                let mut create2_offset = 0;
+            for (receipt, tx) in self.receipts.iter_mut().zip(self.transactions.iter()) {
+                // create2 hash offset
+                let mut offset = 0;
 
                 if tx.is_create2() {
                     receipt.contract_address = tx.contract_address;
-                    create2_offset = 32;
+                    offset = 32;
                 }
 
-                if let (Some(contract_address), Some(data)) =
+                // Verify contract created directly from the transaction
+                if let (Some(address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
-                        // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
-                        // of the transaction
-                        if data.0.split_at(create2_offset).1.starts_with(bytecode) {
-                            let constructor_args =
-                                data.0.split_at(create2_offset + bytecode.len()).1.to_vec();
+                    match get_verify_args(address, offset, &data.0, &verify, chain, &self.libraries)
+                    {
+                        Some(verify) => future_verifications.push(verify.run()),
+                        None => unverifiable_contracts.push(address),
+                    };
+                }
 
-                            let contract = ContractInfo {
-                                path: Some(
-                                    artifact
-                                        .source
-                                        .to_str()
-                                        .expect("There should be an artifact.")
-                                        .to_string(),
-                                ),
-                                name: artifact.name.clone(),
-                            };
-
-                            // We strip the build metadadata information, since it can lead to
-                            // etherscan not identifying it correctly. eg:
-                            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
-                            let version = Version::new(
-                                artifact.version.major,
-                                artifact.version.minor,
-                                artifact.version.patch,
-                            );
-
-                            let verify = verify::VerifyArgs {
-                                address: contract_address,
-                                contract,
-                                compiler_version: Some(version.to_string()),
-                                constructor_args: Some(hex::encode(&constructor_args)),
-                                num_of_optimizations: verify.num_of_optimizations,
-                                chain: chain.into(),
-                                etherscan_key: Some(etherscan_key.clone()),
-                                flatten: false,
-                                force: false,
-                                watch: true,
-                                retry: verify.retry.clone(),
-                                libraries: self.libraries.clone(),
-                                root: None,
-                                verifier: VerificationProviderType::Etherscan,
-                            };
-
-                            future_verifications.push(verify.run());
-                            continue 'receipts
-                        }
-                    }
-                    unverifiable_contracts.push(contract_address);
+                // Verify potential contracts created during the transaction execution
+                for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
+                    match get_verify_args(*address, 0, init_code, &verify, chain, &self.libraries) {
+                        Some(verify) => future_verifications.push(verify.run()),
+                        None => unverifiable_contracts.push(*address),
+                    };
                 }
             }
 
-            if !unverifiable_contracts.is_empty() {
-                println!(
-                    "\n{}",
-                    Paint::yellow(format!(
-                        "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
-                        unverifiable_contracts,
-                        "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
-                    ))
-                    .bold(),
-                );
-            }
+            self.check_unverified(unverifiable_contracts, verify);
 
-            println!("##\nStart Contract Verification");
+            let num_verifications = future_verifications.len();
+            println!("##\nStart verification for ({num_verifications}) contracts",);
             for verification in future_verifications {
                 verification.await?;
             }
+
+            println!("All ({num_verifications}) contracts were verified!");
         }
 
         Ok(())
+    }
+
+    /// Let the user know if there are any contracts which can not be verified. Also, present some
+    /// hints on potential causes.
+    fn check_unverified(&self, unverifiable_contracts: Vec<Address>, verify: VerifyBundle) {
+        if !unverifiable_contracts.is_empty() {
+            println!(
+                "\n{}",
+                Paint::yellow(format!(
+                    "We haven't found any matching bytecode for the following contracts: {:?}.\n\n{}",
+                    unverifiable_contracts,
+                    "This may occur when resuming a verification, but the underlying source code or compiler version has changed."
+                ))
+                .bold(),
+            );
+
+            if let Some(commit) = &self.commit {
+                let current_commit = verify
+                    .project_paths
+                    .root
+                    .map(|root| get_commit_hash(&root).unwrap_or_default())
+                    .unwrap_or_default();
+
+                if &current_commit != commit {
+                    println!("\tScript was broadcasted on commit `{commit}`, but we are at `{current_commit}`.");
+                }
+            }
+        }
     }
 
     /// Returns the list of the transactions without the metadata.
     pub fn typed_transactions(&self) -> Vec<&TypedTransaction> {
         self.transactions.iter().map(|tx| tx.typed_tx()).collect()
     }
+}
+
+/// Given a verify bundle and contract details, it tries to generate a valid `VerifyArgs` to use
+/// against the `contract_address`.
+fn get_verify_args(
+    contract_address: Address,
+    create2_offset: usize,
+    data: &[u8],
+    verify: &VerifyBundle,
+    chain: u64,
+    libraries: &[String],
+) -> Option<VerifyArgs> {
+    for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
+        // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
+        // of the transaction
+        if data.split_at(create2_offset).1.starts_with(bytecode) {
+            let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
+
+            let contract = ContractInfo {
+                path: Some(
+                    artifact.source.to_str().expect("There should be an artifact.").to_string(),
+                ),
+                name: artifact.name.clone(),
+            };
+
+            // We strip the build metadadata information, since it can lead to
+            // etherscan not identifying it correctly. eg:
+            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
+            let version = Version::new(
+                artifact.version.major,
+                artifact.version.minor,
+                artifact.version.patch,
+            );
+
+            let verify = verify::VerifyArgs {
+                address: contract_address,
+                contract,
+                compiler_version: Some(version.to_string()),
+                constructor_args: Some(hex::encode(&constructor_args)),
+                num_of_optimizations: verify.num_of_optimizations,
+                chain: chain.into(),
+                etherscan_key: verify.etherscan_key.clone(),
+                flatten: false,
+                force: false,
+                watch: true,
+                retry: verify.retry.clone(),
+                libraries: libraries.to_vec(),
+                root: None,
+                verifier: VerificationProviderType::Etherscan,
+            };
+
+            return Some(verify)
+        }
+    }
+    None
 }
 
 impl Drop for ScriptSequence {
@@ -257,10 +305,20 @@ impl Drop for ScriptSequence {
 
 #[derive(Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct AdditionalContract {
+    #[serde(rename = "transactionType")]
+    pub opcode: CallKind,
+    pub address: Address,
+    #[serde(with = "hex")]
+    pub init_code: Vec<u8>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionWithMetadata {
     pub hash: Option<TxHash>,
     #[serde(rename = "transactionType")]
-    pub opcode: String,
+    pub opcode: CallKind,
     #[serde(default = "default_string")]
     pub contract_name: Option<String>,
     #[serde(default = "default_address")]
@@ -270,6 +328,7 @@ pub struct TransactionWithMetadata {
     #[serde(default = "default_vec_of_strings")]
     pub arguments: Option<Vec<String>>,
     pub transaction: TypedTransaction,
+    pub additional_contracts: Vec<AdditionalContract>,
 }
 
 fn default_string() -> Option<String> {
@@ -294,9 +353,11 @@ impl TransactionWithMetadata {
         result: &ScriptResult,
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
+        additional_contracts: Vec<AdditionalContract>,
     ) -> eyre::Result<Self> {
         let mut metadata = Self { transaction, ..Default::default() };
 
+        // Specify if any contract was directly created with this transaction
         if let Some(NameOrAddress::Address(to)) = metadata.transaction.to().cloned() {
             if to == DEFAULT_CREATE2_DEPLOYER {
                 metadata.set_create(true, Address::from_slice(&result.returned), local_contracts)
@@ -310,6 +371,22 @@ impl TransactionWithMetadata {
                 local_contracts,
             );
         }
+
+        // Add the additional contracts created in this transaction, so we can verify them later.
+        if let Some(tx_address) = metadata.contract_address {
+            metadata.additional_contracts = additional_contracts
+                .into_iter()
+                .filter_map(|contract| {
+                    // Filter out the transaction contract repeated init_code.
+                    if contract.address != tx_address {
+                        Some(contract)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
         Ok(metadata)
     }
 
@@ -320,9 +397,9 @@ impl TransactionWithMetadata {
         contracts: &BTreeMap<Address, (String, &Abi)>,
     ) {
         if is_create2 {
-            self.opcode = "CREATE2".to_string();
+            self.opcode = CallKind::Create2;
         } else {
-            self.opcode = "CREATE".to_string();
+            self.opcode = CallKind::Create;
         }
 
         self.contract_name = contracts.get(&address).map(|(name, _)| name.clone());
@@ -335,7 +412,7 @@ impl TransactionWithMetadata {
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
     ) -> eyre::Result<()> {
-        self.opcode = "CALL".to_string();
+        self.opcode = CallKind::Create;
 
         if let Some(data) = self.transaction.data() {
             if data.0.len() >= 4 {
@@ -395,6 +472,6 @@ impl TransactionWithMetadata {
     }
 
     pub fn is_create2(&self) -> bool {
-        self.opcode == "CREATE2"
+        self.opcode == CallKind::Create2
     }
 }
