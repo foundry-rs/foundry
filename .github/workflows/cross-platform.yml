@@ -1,20 +1,36 @@
 on:
-  workflow_dispatch:
-  workflow_call:
+  push:
+    branches:
+      - master
+  pull_request:
+#on:
+#  workflow_dispatch:
+#  workflow_call:
 
 name: cross-platform
 
 env:
   CARGO_TERM_COLOR: always
+  NEXTEST_EXPERIMENTAL_FILTER_EXPR: 1
 
 jobs:
-  build:
+  build-tests:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
+        archive:
+          - name: unit-tests
+            file: nextest-unit.tar.zst
+            flags: --workspace --all-features --lib --bins
+          - name: integration-tests
+            file: nextest-integration.tar.zst
+            flags: --workspace
+          - name: external-integration-tests
+            file: nextest-external-integration.tar.zst
+            flags: -p foundry-cli --features external-integration-tests
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -44,6 +60,8 @@ jobs:
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       # Required for forge commands that use git
       - name: Setup git
@@ -71,24 +89,33 @@ jobs:
           wsl --install --distribution Ubuntu
         shell: pwsh
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: build
-          args: --verbose --locked --bins --tests
-
-      - name: Run forge
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: run
-          args: --locked --bin forge -- --help
-
-      - name: Run tests
-        uses: actions-rs/cargo@v1
-        if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: test
-          args: --locked --workspace -- --skip fork
+      - name: show
+        run: echo  ${{ matrix.job.target }}  ${{ matrix.archive.name }}
+#      - name: Build archive (unit tests)
+#        run: cargo nextest archive --locked ${{ matrix.job.flags }} --archive-file ${{ matrix.archive.file }}
+#      - name: Upload archive
+#        uses: actions/upload-artifact@v3
+#        with:
+#          name: ${{ matrix.archive.name }}
+#          path: ${{ matrix.archive.file }}
+#      - name: Build
+#        uses: actions-rs/cargo@v1
+#        with:
+#          use-cross: ${{ matrix.job.use-cross }}
+#          command: build
+#          args: --verbose --locked --bins --tests
+#
+#      - name: Run forge
+#        uses: actions-rs/cargo@v1
+#        with:
+#          use-cross: ${{ matrix.job.use-cross }}
+#          command: run
+#          args: --locked --bin forge -- --help
+#
+#      - name: Run tests
+#        uses: actions-rs/cargo@v1
+#        if: ${{ matrix.job.target != 'aarch64-apple-darwin' }}
+#        with:
+#          use-cross: ${{ matrix.job.use-cross }}
+#          command: test
+#          args: --locked --workspace -- --skip fork
