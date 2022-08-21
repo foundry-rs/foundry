@@ -210,7 +210,9 @@ impl ScriptSequence {
                                 retry: verify.retry.clone(),
                                 libraries: self.libraries.clone(),
                                 root: None,
-                                verifier: VerificationProviderType::Etherscan,
+                                verifier: verify::VerifierArg {
+                                    verifier: VerificationProviderType::Etherscan,
+                                },
                             };
 
                             future_verifications.push(verify.run());

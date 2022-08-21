@@ -78,12 +78,8 @@ pub struct CreateArgs {
     )]
     unlocked: bool,
 
-    #[clap(
-        long = "verification-provider",
-        help = "Contract verification provider to use `sourcify` or `etherscan`",
-        default_value = "etherscan"
-    )]
-    verification_provider: verify::VerificationProviderType,
+    #[clap(flatten)]
+    pub verifier: verify::VerifierArg,
 }
 
 impl CreateArgs {
@@ -296,7 +292,7 @@ impl CreateArgs {
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
             root: None,
-            verifier: self.verification_provider,
+            verifier: self.verifier,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await
