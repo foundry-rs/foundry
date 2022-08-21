@@ -64,6 +64,8 @@ pub enum BlockchainError {
     DataUnavailable,
     #[error("Trie error: {0}")]
     TrieError(String),
+    #[error("{0}")]
+    UintConversion(&'static str),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -247,6 +249,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::TrieError(_) => {
                     RpcError::internal_error_with(err.to_string())
                 }
+                BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
             }
             .into(),
         }

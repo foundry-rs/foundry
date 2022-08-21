@@ -370,7 +370,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(match call_kind {
-                CallKind::Create => "Contract creation",
+                CallKind::Create | CallKind::Create2 => "Contract creation",
                 CallKind::Call => "Contract call",
                 CallKind::StaticCall => "Contract staticcall",
                 CallKind::CallCode => "Contract callcode",
@@ -384,17 +384,19 @@ impl Tui {
             if let Some(known) = known_contracts.get(contract_name) {
                 let pc_ic_map = pc_ic_maps.get(contract_name);
                 // grab either the creation source map or runtime sourcemap
-                if let Some((sourcemap, ic)) = if matches!(call_kind, CallKind::Create) {
-                    known.bytecode.source_map().zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
-                } else {
-                    known
-                        .deployed_bytecode
-                        .bytecode
-                        .as_ref()
-                        .expect("no bytecode")
-                        .source_map()
-                        .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
-                } {
+                if let Some((sourcemap, ic)) =
+                    if matches!(call_kind, CallKind::Create | CallKind::Create2) {
+                        known.bytecode.source_map().zip(pc_ic_map.and_then(|(c, _)| c.get(&pc)))
+                    } else {
+                        known
+                            .deployed_bytecode
+                            .bytecode
+                            .as_ref()
+                            .expect("no bytecode")
+                            .source_map()
+                            .zip(pc_ic_map.and_then(|(_, r)| r.get(&pc)))
+                    }
+                {
                     match sourcemap {
                         Ok(sourcemap) => {
                             // we are handed a vector of SourceElements that give

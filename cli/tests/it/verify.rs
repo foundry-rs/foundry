@@ -2,11 +2,14 @@
 //! and sourcify
 
 use crate::utils::{self, EnvExternalities};
+use ethers::solc::artifacts::BytecodeHash;
 use foundry_cli_test_utils::{
-    forgetest,
+    forgetest, forgetest_async,
     util::{TestCommand, TestProject},
 };
+use foundry_config::Config;
 use foundry_utils::Retry;
+use std::{fs, path::PathBuf};
 
 const VERIFICATION_PROVIDERS: &'static [&'static str] = &["etherscan", "sourcify"];
 
@@ -300,5 +303,66 @@ forgetest!(
 
             parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
         }
+    }
+);
+
+// tests `script --verify` by deploying on goerli and verifying it on etherscan
+// Uses predeployed libs and contract creations inside constructors and calls
+forgetest_async!(
+    test_live_can_deploy_and_verify,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        let info = EnvExternalities::goerli().expect("Goerli secrets not set.");
+
+        add_unique(&prj);
+
+        prj.inner()
+            .add_source(
+                "ScriptVerify.sol",
+                fs::read_to_string(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("tests/fixtures/ScriptVerify.sol"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // explicitly byte code hash for consistent checks
+        let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
+        prj.write_config(config);
+
+        let contract_path = "src/ScriptVerify.sol:ScriptVerify";
+        cmd.args(vec![
+            "script",
+            "--rpc-url",
+            &info.rpc,
+            "--private-key",
+            &info.pk,
+            "--broadcast",
+            "-vvvv",
+            "--optimize",
+            "--verify",
+            "--optimizer-runs",
+            "200",
+            "--use",
+            "0.8.16",
+            "--retries",
+            "10",
+            "--delay",
+            "20",
+            contract_path,
+        ]);
+
+        let output = cmd.unchecked_output();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            stdout.contains("All (7) contracts were verified!"),
+            "{}",
+            format!(
+                "Failed to get verification, stdout: {}, stderr: {}",
+                stdout,
+                String::from_utf8_lossy(&output.stderr)
+            )
+        );
     }
 );

@@ -1,4 +1,4 @@
-use super::*;
+use super::{sequence::AdditionalContract, *};
 use crate::{
     cmd::{
         ensure_clean_constructor,
@@ -14,6 +14,7 @@ use ethers::{
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
+    CallKind,
 };
 use std::collections::VecDeque;
 use tracing::trace;
@@ -122,6 +123,30 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
+                    // Identify all contracts created during the call.
+                    if result.traces.is_empty() {
+                        eyre::bail!(
+                            "Forge script requires tracing enabled to collect created contracts."
+                        )
+                    }
+
+                    let created_contracts = result
+                        .traces
+                        .iter()
+                        .flat_map(|(_, traces)| {
+                            traces.arena.iter().filter_map(|node| {
+                                if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                    return Some(AdditionalContract {
+                                        opcode: node.kind(),
+                                        address: node.trace.address,
+                                        init_code: node.trace.data.to_raw(),
+                                    })
+                                }
+                                None
+                            })
+                        })
+                        .collect();
+
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
                         runner.executor.env_mut().block.number += U256::one();
@@ -146,6 +171,7 @@ impl ScriptArgs {
                         &result,
                         &address_to_abi,
                         decoder,
+                        created_contracts,
                     )?);
                 }
                 _ => unreachable!(),

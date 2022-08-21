@@ -189,8 +189,8 @@ impl NodeArgs {
                 fork.database.read().await.flush_cache();
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
-                std::process::exit(0);
             }
+            std::process::exit(0);
         });
 
         ctrlc::set_handler(move || {
