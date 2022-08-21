@@ -176,7 +176,7 @@ impl VerificationProviderType {
     fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
         match self {
             VerificationProviderType::Etherscan => {
-                if key.as_ref().map_or(true, |key| key == "") {
+                if key.as_ref().map_or(true, |key| key.is_empty()) {
                     eyre::bail!("ETHERSCAN_API_KEY must be set")
                 }
                 Ok(Box::new(EtherscanVerificationProvider))
