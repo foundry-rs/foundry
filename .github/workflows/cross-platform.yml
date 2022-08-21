@@ -15,7 +15,7 @@ env:
 
 jobs:
   build-tests:
-    name: ${{ matrix.job.target }} (${{ matrix.job.os }})
+    name: ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }}
     runs-on: ${{ matrix.job.os }}
     timeout-minutes: 60
     strategy:
