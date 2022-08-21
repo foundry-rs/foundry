@@ -102,7 +102,8 @@ pub struct MultiWallet {
         long = "private-keys",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private keys.",
-        value_name = "RAW_PRIVATE_KEYS"
+        value_name = "RAW_PRIVATE_KEYS",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_keys: Option<Vec<String>>,
 
@@ -111,7 +112,8 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private key.",
         conflicts_with = "private-keys",
-        value_name = "RAW_PRIVATE_KEY"
+        value_name = "RAW_PRIVATE_KEY",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_key: Option<String>,
 
