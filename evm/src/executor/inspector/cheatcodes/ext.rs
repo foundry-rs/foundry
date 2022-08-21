@@ -292,8 +292,8 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
         } else if val.starts_with("0x") {
             println!("val {val}");
             // If incorrect length, pad 0 at the beginning
-            if val.len() % 2 != 0 {
-                let arr = format!("0{}", val.strip_prefix("0x").unwrap());
+            if val.len() % 2 == 0 {
+                let arr = val.strip_prefix("0x").unwrap();
                 // if length == 32 bytes, then encode as Bytes32, else Bytes
                 Ok(if arr.len() == 64 {
                     Token::FixedBytes(Vec::from_hex(arr).unwrap())
@@ -301,7 +301,8 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
                     Token::Bytes(Vec::from_hex(arr).unwrap())
                 })
             } else {
-                Ok(Token::Bytes(Vec::from_hex(val.strip_prefix("0x").unwrap()).unwrap()))
+                let arr = format!("0{}", val.strip_prefix("0x").unwrap());
+                Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
         } else {
             Ok(Token::String(val.to_owned()))
