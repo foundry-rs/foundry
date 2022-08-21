@@ -41,10 +41,10 @@ pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSA
 
 /// ethereum related implementations
 pub mod eth;
-/// support for handling `genesis.json` files
-pub mod genesis;
 /// support for polling filters
 pub mod filter;
+/// support for handling `genesis.json` files
+pub mod genesis;
 /// commandline output
 pub mod logging;
 /// types for subscriptions

@@ -229,6 +229,9 @@ impl Backend {
                 db.insert_account(account, info);
             }
         }
+
+        // apply the genesis.json alloc
+        self.genesis.apply_genesis_json_alloc(db);
     }
 
     /// Sets the account to impersonate
@@ -325,6 +328,9 @@ impl Backend {
             {
                 db.insert_account(address, info);
             }
+
+            // reset the genesis.json alloc
+            self.genesis.apply_genesis_json_alloc(db);
 
             Ok(())
         } else {
