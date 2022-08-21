@@ -281,51 +281,41 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 fn value_to_token(value: &Value) -> Result<Token, Token> {
-    println!("value to token: {:?}", value);
-    if value.is_boolean() {
-        Ok(Token::Bool(value.as_bool().unwrap()))
-    } else if value.is_string() {
-        let val = value.as_str().unwrap();
+    if let Some(boolean) = value.as_bool() {
+        Ok(Token::Bool(boolean))
+    } else if let Some(string) = value.as_str() {
         // If it can decoded as an address, it's an address
-        if let Ok(addr) = H160::from_str(val) {
+        if let Ok(addr) = H160::from_str(string) {
             Ok(Token::Address(addr))
-        } else if val.starts_with("0x") {
-            println!("val {val}");
-            // If incorrect length, pad 0 at the beginning
-            if val.len() % 2 == 0 {
-                let arr = val.strip_prefix("0x").unwrap();
+        } else if let Some(val) = string.strip_prefix("0x") {
+            // If incornrect length, pad 0 at the beginning
+            if hex::decode(val).is_ok() {
                 // if length == 32 bytes, then encode as Bytes32, else Bytes
-                Ok(if arr.len() == 64 {
-                    Token::FixedBytes(Vec::from_hex(arr).unwrap())
+                Ok(if val.len() == 64 {
+                    Token::FixedBytes(Vec::from_hex(val).unwrap())
                 } else {
-                    Token::Bytes(Vec::from_hex(arr).unwrap())
+                    Token::Bytes(Vec::from_hex(val).unwrap())
                 })
             } else {
-                let arr = format!("0{}", val.strip_prefix("0x").unwrap());
+                let arr = format!("0{}", val);
                 Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
         } else {
-            Ok(Token::String(val.to_owned()))
+            Ok(Token::String(string.to_owned()))
         }
-    } else if value.is_u64() {
-        Ok(Token::Uint(value.as_u64().unwrap().into()))
-    } else if value.is_i64() {
-        Ok(Token::Int(value.as_i64().unwrap().into()))
-    } else if value.is_array() {
-        println!("Array");
-        let arr = value.as_array().unwrap();
-        println!("{:?}", arr);
-        Ok(Token::Array(arr.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>()))
-    } else if value.is_object() {
-        let values = value
-            .as_object()
-            .unwrap()
-            .values()
-            .map(|val| value_to_token(val).unwrap())
-            .collect::<Vec<Token>>();
+    } else if let Some(number) = value.as_u64() {
+        Ok(Token::Uint(number.into()))
+    } else if let Some(number) = value.as_i64() {
+        Ok(Token::Int(number.into()))
+    } else if let Some(array) = value.as_array() {
+        Ok(Token::Array(
+            array.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>(),
+        ))
+    } else if let Some(object) = value.as_object() {
+        let values =
+            object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
         Ok(Token::Tuple(values))
     } else if value.is_null() {
-        println!("null");
         Ok(Token::FixedBytes(Vec::with_capacity(32)))
     } else {
         Err(Token::String("Could not decode field".to_string()))
@@ -336,12 +326,10 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
 /// deserialized in the same order. That means that the solidity `struct` should order it's fields
 /// alphabetically and not by efficient packing or some other taxonomy.
 fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
-    println!("key: {key}");
     let values: Value = JsonPathFinder::from_str(json, key)?.find();
     // values is an array of items. Depending on the JsonPath key, they
     // can be many or a single item. An item can be a single value or
     // an entire JSON object.
-    println!("values: {:?}", values);
     let res = values
         .as_array()
         .ok_or_else(|| util::encode_error("JsonPath did not return an array"))?
@@ -349,9 +337,7 @@ fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, B
         .map(|inner| value_to_token(inner).map_err(util::encode_error))
         .collect::<Result<Vec<Token>, Bytes>>();
     // encode the bytes as the 'bytes' solidity type
-    println!("res: {:?}", res);
     let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
-    println!("abi: {:?}", abi_encoded);
     Ok(abi_encoded.into())
 }
 
