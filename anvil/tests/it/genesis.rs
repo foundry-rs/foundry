@@ -1,8 +1,7 @@
 //! genesis.json tests
 
 use anvil::{genesis::Genesis, spawn, NodeConfig};
-use ethers::{abi::Address, prelude::Middleware};
-use ethers::types::U256;
+use ethers::{abi::Address, prelude::Middleware, types::U256};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_apply_genesis() {
@@ -43,6 +42,6 @@ async fn can_apply_genesis() {
     let addr: Address = "71562b71999873db5b286df957af199ec94617f7".parse().unwrap();
     let balance = provider.get_balance(addr, None).await.unwrap();
 
-    let expected :U256 = "ffffffffffffffffffffffffff".parse().unwrap();
+    let expected: U256 = "ffffffffffffffffffffffffff".parse().unwrap();
     assert_eq!(balance, expected);
 }
