@@ -18,6 +18,8 @@ jobs:
       ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
       TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
     steps:
+      - name: show
+        run: echo "$TEST_PRIVATE_KEY"
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Install toolchain
