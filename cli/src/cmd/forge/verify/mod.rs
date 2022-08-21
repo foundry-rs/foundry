@@ -17,6 +17,19 @@ use sourcify::SourcifyVerificationProvider;
 mod etherscan;
 mod sourcify;
 
+/// Verification provider arguments
+#[derive(Debug, Clone, Parser)]
+pub struct VerifierArg {
+    #[clap(
+        arg_enum,
+        long = "verifier",
+        help_heading = "Verification Provider",
+        help = "Contract verification provider to use `etherscan`, `sourcify` or `blockscout`",
+        default_value = "etherscan"
+    )]
+    pub verifier: VerificationProviderType,
+}
+
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
@@ -60,8 +73,7 @@ pub struct VerifyArgs {
     #[clap(
         help = "Your Etherscan API key.",
         env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY",
-        required_if_eq("verifier", "etherscan")
+        value_name = "ETHERSCAN_KEY"
     )]
     pub etherscan_key: Option<String>,
 
@@ -99,14 +111,8 @@ pub struct VerifyArgs {
     )]
     pub root: Option<PathBuf>,
 
-    #[clap(
-        arg_enum,
-        long = "verifier",
-        help_heading = "Verification Provider",
-        help = "Contract verification provider to use `sourcify` or `etherscan`",
-        default_value = "etherscan"
-    )]
-    pub verifier: VerificationProviderType,
+    #[clap(flatten)]
+    pub verifier: VerifierArg,
 }
 
 impl_figment_convert_basic!(VerifyArgs);
@@ -114,7 +120,7 @@ impl_figment_convert_basic!(VerifyArgs);
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
-        self.verifier.client().verify(self).await
+        self.verifier.verifier.client(&self.etherscan_key)?.verify(self).await
     }
 }
 
@@ -144,24 +150,18 @@ pub struct VerifyCheckArgs {
         long,
         help = "Your Etherscan API key.",
         env = "ETHERSCAN_API_KEY",
-        value_name = "ETHERSCAN_KEY",
-        required_if_eq("verifier", "etherscan")
+        value_name = "ETHERSCAN_KEY"
     )]
     etherscan_key: Option<String>,
 
-    #[clap(
-        long = "verifier",
-        help_heading = "Verification Provider",
-        help = "Contract verification provider to use `sourcify` or `etherscan`",
-        default_value = "etherscan"
-    )]
-    pub verifier: VerificationProviderType,
+    #[clap(flatten)]
+    pub verifier: VerifierArg,
 }
 
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> eyre::Result<()> {
-        self.verifier.client().check(self).await
+        self.verifier.verifier.client(&self.etherscan_key)?.check(self).await
     }
 }
 
@@ -169,13 +169,20 @@ impl VerifyCheckArgs {
 pub enum VerificationProviderType {
     Etherscan,
     Sourcify,
+    Blockscout,
 }
 
 impl VerificationProviderType {
-    fn client(&self) -> Box<dyn VerificationProvider> {
+    fn client(&self, key: &Option<String>) -> eyre::Result<Box<dyn VerificationProvider>> {
         match self {
-            VerificationProviderType::Etherscan => Box::new(EtherscanVerificationProvider),
-            VerificationProviderType::Sourcify => Box::new(SourcifyVerificationProvider),
+            VerificationProviderType::Etherscan => {
+                if key.as_ref().map_or(true, |key| key.is_empty()) {
+                    eyre::bail!("ETHERSCAN_API_KEY must be set")
+                }
+                Ok(Box::new(EtherscanVerificationProvider))
+            }
+            VerificationProviderType::Sourcify => Ok(Box::new(SourcifyVerificationProvider)),
+            VerificationProviderType::Blockscout => Ok(Box::new(EtherscanVerificationProvider)),
         }
     }
 }
@@ -193,6 +200,7 @@ impl FromStr for VerificationProviderType {
         match s {
             "e" | "etherscan" => Ok(VerificationProviderType::Etherscan),
             "s" | "sourcify" => Ok(VerificationProviderType::Sourcify),
+            "b" | "blockscout" => Ok(VerificationProviderType::Blockscout),
             _ => Err(format!("Unknown field: {s}")),
         }
     }
@@ -206,6 +214,9 @@ impl Display for VerificationProviderType {
             }
             VerificationProviderType::Sourcify => {
                 write!(f, "sourcify")?;
+            }
+            VerificationProviderType::Blockscout => {
+                write!(f, "blockscout")?;
             }
         };
         Ok(())

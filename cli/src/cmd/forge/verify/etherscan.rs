@@ -15,7 +15,7 @@ use ethers::{
     },
 };
 use eyre::{eyre, Context};
-use foundry_config::{Config, SolcReq};
+use foundry_config::{Chain, Config, SolcReq};
 use foundry_utils::Retry;
 use futures::FutureExt;
 use once_cell::sync::Lazy;
@@ -36,11 +36,8 @@ pub struct EtherscanVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
-    async fn verify(&self, mut args: VerifyArgs) -> eyre::Result<()> {
-        let etherscan_key = args.etherscan_key.take().expect("ETHERSCAN_API_KEY must be set");
-        let etherscan = Client::new(args.chain.try_into()?, &etherscan_key)
-            .wrap_err("Failed to create etherscan client")?;
-
+    async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
+        let etherscan = self.client(&args.chain, &args.etherscan_key)?;
         let verify_args = self.create_verify_request(&args).await?;
 
         trace!("submitting verification request {:?}", verify_args);
@@ -91,7 +88,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     id: resp.result,
                     chain: args.chain,
                     retry: RETRY_CHECK_ON_VERIFY,
-                    etherscan_key: Some(etherscan_key),
+                    etherscan_key: args.etherscan_key,
                     verifier: args.verifier,
                 };
                 // return check_args.run().await
@@ -106,12 +103,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
-        let etherscan = Client::new(
-            args.chain.try_into()?,
-            &args.etherscan_key.expect("ETHERSCAN_API_KEY must be set"),
-        )
-        .wrap_err("Failed to create etherscan client")?;
-
+        let etherscan = self.client(&args.chain, &args.etherscan_key)?;
         println!("Waiting for verification result...");
         let retry: Retry = args.retry.into();
         retry
@@ -150,6 +142,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
 }
 
 impl EtherscanVerificationProvider {
+    /// Create an etherscan client
+    fn client(&self, chain: &Chain, etherscan_key: &Option<String>) -> eyre::Result<Client> {
+        Client::builder()
+            .chain(chain.to_owned().try_into()?)?
+            .with_api_key(etherscan_key.clone().unwrap_or_default())
+            .build()
+            .wrap_err("Failed to create etherscan client")
+    }
+
     /// Creates the `VerifyContract` etherescan request in order to verify the contract
     ///
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]

@@ -287,7 +287,7 @@ fn get_verify_args(
                 retry: verify.retry.clone(),
                 libraries: libraries.to_vec(),
                 root: None,
-                verifier: VerificationProviderType::Etherscan,
+                verifier: verify::VerifierArg { verifier: VerificationProviderType::Etherscan },
             };
 
             return Some(verify)
