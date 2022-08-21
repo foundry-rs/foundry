@@ -1,10 +1,16 @@
 use super::{ClapChain, EthereumOpts, TransactionOpts};
 use crate::{
-    cmd::cast::{find_block::FindBlockArgs, rpc::RpcArgs, run::RunArgs, wallet::WalletSubcommands},
-    utils::{parse_ether_value, parse_u256},
+    cmd::cast::{
+        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
+        run::RunArgs, wallet::WalletSubcommands,
+    },
+    utils::parse_u256,
 };
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
+use ethers::{
+    abi::ethabi::ethereum_types::BigEndianHash,
+    types::{serde_helpers::Numeric, Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Parser)]
@@ -19,6 +25,7 @@ pub struct Opts {
     about = "Perform Ethereum RPC calls from the comfort of your command line.",
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
 )]
+
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(visible_aliases = &["max-int", "maxi"])]
@@ -451,27 +458,7 @@ Examples:
     #[clap(name = "estimate")]
     #[clap(visible_alias = "e")]
     #[clap(about = "Estimate the gas cost of a transaction.")]
-    Estimate {
-        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address), value_name = "TO")]
-        to: NameOrAddress,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: String,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long,
-            help = "Ether to send in the transaction.",
-            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
-
-Examples: 1ether, 10gwei, 0.01ether"#,
-            parse(try_from_str = parse_ether_value),
-            value_name = "VALUE"
-        )]
-        value: Option<U256>,
-        #[clap(flatten)]
-        // TODO: We only need RPC URL and Etherscan API key here.
-        eth: EthereumOpts,
-    },
+    Estimate(EstimateArgs),
     #[clap(name = "--calldata-decode")]
     #[clap(visible_alias = "cdd")]
     #[clap(about = "Decode ABI-encoded input data.")]
@@ -775,48 +762,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
         about = "Generate a Solidity interface from a given ABI.",
         long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
     )]
-    Interface {
-        #[clap(
-            help = "The contract address, or the path to an ABI file.",
-            long_help = r#"The contract address, or the path to an ABI file.
-
-If an address is specified, then the ABI is fetched from Etherscan."#,
-            value_name = "PATH_OR_ADDRESS"
-        )]
-        path_or_address: String,
-        #[clap(
-            long,
-            short,
-            help = "The name to use for the generated interface",
-            value_name = "NAME"
-        )]
-        name: Option<String>,
-        #[clap(
-            long,
-            short,
-            default_value = "^0.8.10",
-            help = "Solidity pragma version.",
-            value_name = "VERSION"
-        )]
-        pragma: String,
-        #[clap(
-            short,
-            help = "The path to the output file.",
-            long_help = "The path to the output file. If not specified, the interface will be output to stdout.",
-            value_name = "PATH"
-        )]
-        output_location: Option<PathBuf>,
-        #[clap(
-            long,
-            short,
-            env = "ETHERSCAN_API_KEY",
-            help = "etherscan API key",
-            value_name = "KEY"
-        )]
-        etherscan_api_key: Option<String>,
-        #[clap(flatten)]
-        chain: ClapChain,
-    },
+    Interface(InterfaceArgs),
     #[clap(name = "sig", visible_alias = "si", about = "Get the selector for a function.")]
     Sig {
         #[clap(
@@ -836,6 +782,8 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
+    #[clap(visible_alias = "fig", about = "Generate Fig autocompletion spec.")]
+    GenerateFigSpec,
     #[clap(
         name = "run",
         visible_alias = "r",
@@ -846,6 +794,18 @@ If an address is specified, then the ABI is fetched from Etherscan."#,
     #[clap(visible_alias = "rp")]
     #[clap(about = "Perform a raw JSON-RPC request")]
     Rpc(RpcArgs),
+    #[clap(name = "--format-bytes32-string")]
+    #[clap(about = "Formats a string into bytes32 encoding.")]
+    FormatBytes32String {
+        #[clap(value_name = "STRING")]
+        string: Option<String>,
+    },
+    #[clap(name = "--parse-bytes32-string")]
+    #[clap(about = "Parses a string from bytes32 encoding.")]
+    ParseBytes32String {
+        #[clap(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
 }
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -867,12 +827,9 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
 }
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
-    Ok(if s.starts_with("0x") {
-        let padded = format!("{:0>64}", s.strip_prefix("0x").unwrap());
-        H256::from_str(&padded)?
-    } else {
-        H256::from_low_u64_be(u64::from_str(s)?)
-    })
+    Ok(H256::from_uint(&U256::from(
+        Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?,
+    )))
 }
 
 fn parse_base(s: &str) -> eyre::Result<String> {

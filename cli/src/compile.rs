@@ -6,6 +6,7 @@ use ethers::{
     prelude::Graph,
     solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput},
 };
+use foundry_common::TestFunctionExt;
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -125,6 +126,7 @@ impl ProjectCompiler {
     /// # Example
     ///
     /// ```no_run
+    /// use foundry_cli::compile::ProjectCompiler;
     /// let config = foundry_config::Config::load();
     /// ProjectCompiler::default()
     ///     .compile_with(&config.project().unwrap(), |prj| Ok(prj.compile()?));
@@ -188,7 +190,7 @@ impl ProjectCompiler {
                         let dev_functions =
                             contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
                                 |func| {
-                                    func.name.starts_with("test") ||
+                                    func.name.is_test() ||
                                         func.name.eq("IS_TEST") ||
                                         func.name.eq("IS_SCRIPT")
                                 },

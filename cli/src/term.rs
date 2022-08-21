@@ -73,67 +73,22 @@ impl Spinner {
         if self.no_progress {
             return
         }
-        print!("{}", self.tick_bytes());
-        io::stdout().flush().unwrap();
-    }
 
-    fn tick_bytes(&mut self) -> String {
+        print!(
+            "\r\x33[2K\r{} {}",
+            Paint::new(format!("[{}]", Paint::green(self.indicator[self.idx]))).bold(),
+            self.message
+        );
+        io::stdout().flush().unwrap();
+
+        self.idx += 1;
         if self.idx >= self.indicator.len() {
             self.idx = 0;
         }
-
-        let s = format!(
-            "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}",
-            self.indicator[self.idx], self.message
-        );
-        self.idx += 1;
-
-        s
-    }
-
-    pub fn done(&self) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[32m+\x1b[0;1m]\x1b[0m {}", self.message);
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn finish(&mut self, msg: impl Into<String>) {
-        self.message(msg);
-        self.done();
     }
 
     pub fn message(&mut self, msg: impl Into<String>) {
         self.message = msg.into();
-    }
-
-    pub fn clear_line(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x33[2K\r");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn clear(&self) {
-        if self.no_progress {
-            return
-        }
-        print!("\r\x1b[2K");
-        io::stdout().flush().unwrap();
-    }
-
-    pub fn fail(&mut self, err: &str) {
-        self.error(err);
-        self.clear();
-    }
-
-    pub fn error(&mut self, line: &str) {
-        if self.no_progress {
-            return
-        }
-        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {line}");
     }
 }
 
@@ -276,6 +231,19 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     report::with_scoped(&reporter, f)
 }
 
+macro_rules! cli_warn {
+    ($($arg:tt)*) => {
+        eprintln!(
+            "{}{} {}",
+            yansi::Paint::yellow("warning").bold(),
+            yansi::Paint::new(":").bold(),
+            format_args!($($arg)*)
+        )
+    }
+}
+
+pub(crate) use cli_warn;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,8 +257,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
             s.tick();
         }
-
-        s.finish("Done".to_string());
     }
 
     #[test]

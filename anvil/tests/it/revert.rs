@@ -147,7 +147,7 @@ async fn test_solc_revert_example() {
 
     for fun in ["buyRevert", "buyRequire"] {
         let resp = contract.method::<_, ()>(fun, U256::zero()).unwrap().call().await;
-        assert!(resp.is_ok());
+        resp.unwrap();
 
         let ten = WEI_IN_ETHER.saturating_mul(10u64.into());
         let call = contract.method::<_, ()>(fun, ten).unwrap().value(ten);

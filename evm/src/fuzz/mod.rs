@@ -7,17 +7,17 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes, Log},
 };
+use foundry_common::{calc, contracts::ContractsByAddress};
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
-
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
 use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
-
-mod strategies;
+pub mod invariant;
+pub mod strategies;
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = b"FOUNDRY::ASSUME";
@@ -55,10 +55,13 @@ impl<'a> FuzzedExecutor<'a> {
         errors: Option<&Abi>,
     ) -> FuzzTestResult {
         // Stores the consumed gas and calldata of every successful fuzz call
-        let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
+        let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
         // Stores the result and calldata of the last failed call, if any.
-        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
+        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
+
+        // stores the last successful call trace
+        let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
@@ -78,9 +81,9 @@ impl<'a> FuzzedExecutor<'a> {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
-                .expect("could not make raw evm call");
+                .expect("Could not call contract with fuzzed input.");
             let state_changeset =
-                call.state_changeset.as_ref().expect("we should have a state changeset");
+                call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
             collect_state_from_call(&call.logs, state_changeset, state.clone());
@@ -103,6 +106,9 @@ impl<'a> FuzzedExecutor<'a> {
                     gas: call.gas,
                     stipend: call.stipend,
                 });
+
+                traces.replace(call.traces);
+
                 Ok(())
             } else {
                 let status = call.status;
@@ -124,6 +130,8 @@ impl<'a> FuzzedExecutor<'a> {
             }
         });
 
+        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(hex::encode).collect::<Vec<_>>());
+
         let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {
             cases: FuzzedCases::new(cases.into_inner()),
@@ -131,8 +139,8 @@ impl<'a> FuzzedExecutor<'a> {
             reason: None,
             counterexample: None,
             logs: call.logs,
-            traces: call.traces,
             labeled_addresses: call.labels,
+            traces: traces.into_inner(),
         };
 
         match run_result {
@@ -146,7 +154,16 @@ impl<'a> FuzzedExecutor<'a> {
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
                     .expect("could not decode fuzzer inputs");
-                result.counterexample = Some(CounterExample { calldata, args });
+
+                result.counterexample = Some(CounterExample::Single(BaseCounterExample {
+                    sender: None,
+                    addr: None,
+                    signature: None,
+                    contract_name: None,
+                    traces: call.traces,
+                    calldata,
+                    args,
+                }));
             }
             _ => (),
         }
@@ -156,17 +173,85 @@ impl<'a> FuzzedExecutor<'a> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CounterExample {
-    pub calldata: Bytes,
+pub enum CounterExample {
+    /// Call used as a counter example for fuzz tests.
+    Single(BaseCounterExample),
+    /// Sequence of calls used as a counter example for invariant tests.
+    Sequence(Vec<BaseCounterExample>),
+}
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BaseCounterExample {
+    /// Address which makes the call
+    pub sender: Option<Address>,
+    /// Address to which to call to
+    pub addr: Option<Address>,
+    /// The data to provide
+    pub calldata: Bytes,
+    /// Function signature if it exists
+    pub signature: Option<String>,
+    /// Contract name if it exists
+    pub contract_name: Option<String>,
+    /// Traces
+    pub traces: Option<CallTraceArena>,
+    // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
 }
 
-impl fmt::Display for CounterExample {
+impl BaseCounterExample {
+    pub fn create(
+        sender: Address,
+        addr: Address,
+        bytes: &Bytes,
+        contracts: &ContractsByAddress,
+        traces: Option<CallTraceArena>,
+    ) -> Self {
+        let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
+
+        let func = abi
+            .functions()
+            .find(|f| f.short_signature() == bytes.0.as_ref()[0..4])
+            .expect("Couldnt find function");
+
+        // skip the function selector when decoding
+        let args = func.decode_input(&bytes.0.as_ref()[4..]).expect("Unable to decode input");
+
+        BaseCounterExample {
+            sender: Some(sender),
+            addr: Some(addr),
+            calldata: bytes.clone(),
+            signature: Some(func.signature()),
+            contract_name: Some(name.clone()),
+            traces,
+            args,
+        }
+    }
+}
+
+impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
+
+        if let Some(sender) = self.sender {
+            write!(f, "sender={:?} addr=", sender)?
+        }
+
+        if let Some(name) = &self.contract_name {
+            write!(f, "[{}]", name)?
+        }
+
+        if let Some(addr) = &self.addr {
+            write!(f, "{:?} ", addr)?
+        }
+
+        if let Some(sig) = &self.signature {
+            write!(f, "calldata={}", &sig)?
+        } else {
+            write!(f, "calldata=0x{}", hex::encode(&self.calldata))?
+        }
+
+        write!(f, ", args=[{}]", args)
     }
 }
 
@@ -192,11 +277,14 @@ pub struct FuzzTestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// Traces
-    pub traces: Option<CallTraceArena>,
-
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// Exemplary traces for a fuzz run of the test function
+    ///
+    /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
+    /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
+    pub traces: Option<CallTraceArena>,
 }
 
 /// Container type for all successful test cases
@@ -220,27 +308,27 @@ impl FuzzedCases {
         self.cases
     }
 
+    /// Get the last [FuzzCase]
+    pub fn last(&self) -> Option<&FuzzCase> {
+        self.cases.last()
+    }
+
     /// Returns the median gas of all test cases
     pub fn median_gas(&self, with_stipend: bool) -> u64 {
-        let mid = self.cases.len() / 2;
-        self.cases
-            .get(mid)
-            .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
-            .unwrap_or_default()
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::median_sorted(&values)
     }
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self, with_stipend: bool) -> u64 {
-        if self.cases.is_empty() {
-            return 0
-        }
+        let mut values = self.gas_values(with_stipend);
+        values.sort_unstable();
+        calc::mean(&values).as_u64()
+    }
 
-        (self
-            .cases
-            .iter()
-            .map(|c| if with_stipend { c.gas as u128 } else { (c.gas - c.stipend) as u128 })
-            .sum::<u128>() /
-            self.cases.len() as u128) as u64
+    fn gas_values(&self, with_stipend: bool) -> Vec<u64> {
+        self.cases.iter().map(|c| if with_stipend { c.gas } else { c.gas - c.stipend }).collect()
     }
 
     /// Returns the case with the highest gas usage

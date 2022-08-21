@@ -8,7 +8,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
-    Config,
+    Chain, Config,
 };
 use serde::Serialize;
 
@@ -33,7 +33,7 @@ use serde::Serialize;
 /// let opts = figment.extract::<EvmOpts>().unwrap();
 /// # }
 /// ```
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
@@ -143,9 +143,9 @@ pub struct EnvArgs {
     pub gas_limit: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, value_name = "CHAIN_ID")]
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub chain_id: Option<u64>,
+    pub chain_id: Option<Chain>,
 
     /// The gas price.
     #[clap(long, value_name = "GAS_PRICE")]
@@ -186,4 +186,25 @@ pub struct EnvArgs {
     #[clap(long, value_name = "GAS_LIMIT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_chain_id() {
+        let args = EvmArgs {
+            env: EnvArgs {
+                chain_id: Some(ethers_core::types::Chain::Mainnet.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Config::from_provider(Config::figment().merge(args));
+        assert_eq!(config.chain_id, Some(ethers_core::types::Chain::Mainnet.into()));
+
+        let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
+        assert_eq!(env.chain_id, Some(ethers_core::types::Chain::Goerli.into()));
+    }
 }

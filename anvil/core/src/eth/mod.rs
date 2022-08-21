@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_helpers::Params;
 
 pub mod block;
+pub mod proof;
 pub mod receipt;
 pub mod serde_helpers;
 pub mod subscription;
@@ -87,6 +88,11 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockId>),
+
+    /// Returns the account and storage values of the specified account including the Merkle-proof.
+    /// This call can be used to verify that the data you are pulling from is not tampered with.
+    #[serde(rename = "eth_getProof")]
+    EthGetProof(Address, Vec<H256>, Option<BlockId>),
 
     /// The sign method calculates an Ethereum specific signature with:
     #[serde(rename = "eth_sign")]
@@ -282,7 +288,7 @@ pub enum EthRequest {
         /// slot
         U256,
         /// value
-        U256,
+        H256,
     ),
 
     /// Sets the coinbase address
@@ -348,9 +354,17 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_setNextBlockTimestamp",
         alias = "evm_setNextBlockTimestamp",
-        with = "sequence"
+        deserialize_with = "deserialize_number_seq"
     )]
-    EvmSetNextBlockTimeStamp(u64),
+    EvmSetNextBlockTimeStamp(U256),
+
+    /// Set the exact gas limit that you want in the next block
+    #[serde(
+        rename = "anvil_setBlockGasLimit",
+        alias = "evm_setBlockGasLimit",
+        deserialize_with = "deserialize_number_seq"
+    )]
+    EvmSetBlockGasLimit(U256),
 
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
@@ -443,6 +457,13 @@ mod tests {
     #[test]
     fn test_eth_network_id() {
         let s = r#"{"method": "eth_networkId", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_proof() {
+        let s = r#"{"method":"eth_getProof","params":["0x7F0d15C7FAae65896648C8273B6d7E43f58Fa842",["0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -697,7 +718,11 @@ mod tests {
 
     #[test]
     fn test_serde_custom_set_storage_at() {
-        let s = r#"{"method": "anvil_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x00"]}"#;
+        let s = r#"{"method": "anvil_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "hardhat_setStorageAt", "params": ["0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56", "0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49", "0x0000000000000000000000000000000000000000000000000000000000003039"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -795,6 +820,9 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s = r#"{"method": "evm_setNextBlockTimestamp", "params": [100]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "evm_setNextBlockTimestamp", "params": ["0x64e0f308"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

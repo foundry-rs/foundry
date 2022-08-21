@@ -36,7 +36,9 @@ contract FuzzNumbersTest is DSTest {
             xy = x * y;
         }
 
-        if ((x != 0 && xy / x != y)) return;
+        if ((x != 0 && xy / x != y)) {
+            return;
+        }
 
         assertEq(((xy - 1) / 1e18) + 1, (xy - 1) / (1e18 + 1));
     }

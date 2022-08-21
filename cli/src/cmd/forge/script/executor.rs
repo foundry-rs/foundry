@@ -1,6 +1,7 @@
-use super::*;
+use super::{sequence::AdditionalContract, *};
 use crate::{
     cmd::{
+        ensure_clean_constructor,
         forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
         needs_setup,
     },
@@ -13,6 +14,7 @@ use ethers::{
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
+    CallKind,
 };
 use std::collections::VecDeque;
 use tracing::trace;
@@ -33,6 +35,8 @@ impl ScriptArgs {
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
 
+        ensure_clean_constructor(&abi)?;
+
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
@@ -46,24 +50,27 @@ impl ScriptArgs {
         let (func, calldata) = self.get_method_and_calldata(&abi)?;
         script_config.called_function = Some(func);
 
-        let script_result = runner.script(address, calldata)?;
+        // Only call the method if `setUp()` succeeded.
+        if result.success {
+            let script_result = runner.script(address, calldata)?;
 
-        result.success &= script_result.success;
-        result.gas = script_result.gas;
-        result.logs.extend(script_result.logs);
-        result.traces.extend(script_result.traces);
-        result.debug = script_result.debug;
-        result.labeled_addresses.extend(script_result.labeled_addresses);
-        result.returned = script_result.returned;
+            result.success &= script_result.success;
+            result.gas = script_result.gas;
+            result.logs.extend(script_result.logs);
+            result.traces.extend(script_result.traces);
+            result.debug = script_result.debug;
+            result.labeled_addresses.extend(script_result.labeled_addresses);
+            result.returned = script_result.returned;
 
-        match (&mut result.transactions, script_result.transactions) {
-            (Some(txs), Some(new_txs)) => {
-                txs.extend(new_txs);
+            match (&mut result.transactions, script_result.transactions) {
+                (Some(txs), Some(new_txs)) => {
+                    txs.extend(new_txs);
+                }
+                (None, Some(new_txs)) => {
+                    result.transactions = Some(new_txs);
+                }
+                _ => {}
             }
-            (None, Some(new_txs)) => {
-                result.transactions = Some(new_txs);
-            }
-            _ => {}
         }
 
         Ok(result)
@@ -76,7 +83,7 @@ impl ScriptArgs {
         transactions: VecDeque<TypedTransaction>,
         script_config: &mut ScriptConfig,
         decoder: &mut CallTraceDecoder,
-        contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        contracts: &ContractsByArtifact,
     ) -> eyre::Result<VecDeque<TransactionWithMetadata>> {
         let mut runner = self
             .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
@@ -93,8 +100,7 @@ impl ScriptArgs {
             .iter()
             .filter_map(|(addr, contract_id)| {
                 let contract_name = utils::get_contract_name(contract_id);
-                if let Some((_, (abi, _))) =
-                    contracts.iter().find(|(artifact, _)| artifact.name == contract_name)
+                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(contract_name)
                 {
                     return Some((*addr, (contract_name.to_string(), abi)))
                 }
@@ -117,14 +123,37 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
+                    // Identify all contracts created during the call.
+                    if result.traces.is_empty() {
+                        eyre::bail!(
+                            "Forge script requires tracing enabled to collect created contracts."
+                        )
+                    }
+
+                    let created_contracts = result
+                        .traces
+                        .iter()
+                        .flat_map(|(_, traces)| {
+                            traces.arena.iter().filter_map(|node| {
+                                if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                    return Some(AdditionalContract {
+                                        opcode: node.kind(),
+                                        address: node.trace.address,
+                                        init_code: node.trace.data.to_raw(),
+                                    })
+                                }
+                                None
+                            })
+                        })
+                        .collect();
+
                     // Simulate mining the transaction if the user passes `--slow`.
                     if self.slow {
                         runner.executor.env_mut().block.number += U256::one();
                     }
 
-                    // We inflate the gas used by the transaction by x1.3 since the estimation
-                    // might be off
-                    tx.gas = Some(U256::from(result.gas * 13 / 10));
+                    // We inflate the gas used by the user specified percentage
+                    tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
 
                     if !result.success {
                         failed = true;
@@ -142,6 +171,7 @@ impl ScriptArgs {
                         &result,
                         &address_to_abi,
                         decoder,
+                        created_contracts,
                     )?);
                 }
                 _ => unreachable!(),
@@ -177,7 +207,8 @@ impl ScriptArgs {
             .with_config(env)
             .with_spec(utils::evm_spec(&script_config.config.evm_version))
             .with_gas_limit(script_config.evm_opts.gas_limit())
-            .set_tracing(script_config.evm_opts.verbosity >= 3 || self.debug);
+            // We need it enabled to decode contract names: local or external.
+            .set_tracing(true);
 
         if let SimulationStage::Local = stage {
             builder = builder

@@ -39,3 +39,9 @@ abigen!(
             _exists(uint256)(bool)
 ]"#
 );
+abigen!(
+    BUSD,
+    r#"[
+            balanceOf(address)(uint256)
+]"#
+);

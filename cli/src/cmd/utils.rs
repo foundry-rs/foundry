@@ -1,6 +1,4 @@
-use crate::suggestions;
-
-use clap::Parser;
+use crate::{suggestions, term::cli_warn};
 use ethers::{
     abi::Abi,
     core::types::Chain,
@@ -12,8 +10,9 @@ use ethers::{
         Artifact, ProjectCompileOutput,
     },
 };
-use foundry_config::Chain as ConfigChain;
-use foundry_utils::Retry;
+use forge::executor::opts::EvmOpts;
+use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
 
@@ -109,28 +108,7 @@ pub fn get_cached_entry_by_name(
     eyre::bail!(err)
 }
 
-/// A type that keeps track of attempts
-#[derive(Debug, Clone, Parser)]
-pub struct RetryArgs {
-    #[clap(
-        long,
-        help = "Number of attempts for retrying verification",
-        default_value = "1",
-        validator = u32_validator(1, 10),
-        value_name = "RETRIES"
-    )]
-    pub retries: u32,
-
-    #[clap(
-        long,
-        help = "Optional delay to apply inbetween verification attempts in seconds.",
-        validator = u32_validator(0, 30),
-        value_name = "DELAY"
-    )]
-    pub delay: Option<u32>,
-}
-
-fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
+pub fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
     move |v: &str| -> eyre::Result<()> {
         let v = v.parse::<u32>()?;
         if v >= min && v <= max {
@@ -141,15 +119,18 @@ fn u32_validator(min: u32, max: u32) -> impl FnMut(&str) -> eyre::Result<()> {
     }
 }
 
-impl From<RetryArgs> for Retry {
-    fn from(r: RetryArgs) -> Self {
-        Retry::new(r.retries, r.delay)
+/// Returns error if constructor has arguments.
+pub fn ensure_clean_constructor(abi: &Abi) -> eyre::Result<()> {
+    if let Some(constructor) = &abi.constructor {
+        if !constructor.inputs.is_empty() {
+            eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
+        }
     }
+    Ok(())
 }
 
 pub fn needs_setup(abi: &Abi) -> bool {
-    let setup_fns: Vec<_> =
-        abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+    let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
     for setup_fn in setup_fns.iter() {
         if setup_fn.name != "setUp" {
@@ -167,22 +148,24 @@ pub fn needs_setup(abi: &Abi) -> bool {
 pub fn unwrap_contracts(
     contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
     deployed_code: bool,
-) -> BTreeMap<ArtifactId, (Abi, Vec<u8>)> {
-    contracts
-        .iter()
-        .filter_map(|(id, c)| {
-            let bytecode = if deployed_code {
-                c.deployed_bytecode.clone().into_bytes()
-            } else {
-                c.bytecode.clone().object.into_bytes()
-            };
+) -> ContractsByArtifact {
+    ContractsByArtifact(
+        contracts
+            .iter()
+            .filter_map(|(id, c)| {
+                let bytecode = if deployed_code {
+                    c.deployed_bytecode.clone().into_bytes()
+                } else {
+                    c.bytecode.clone().object.into_bytes()
+                };
 
-            if let Some(bytecode) = bytecode {
-                return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
-            }
-            None
-        })
-        .collect()
+                if let Some(bytecode) = bytecode {
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                }
+                None
+            })
+            .collect(),
+    )
 }
 
 #[macro_export]
@@ -227,4 +210,62 @@ pub fn has_batch_support(chain: u64) -> bool {
         )
     }
     true
+}
+
+/// Helpers for loading configuration.
+///
+/// This is usually implicity implemented on a "&CmdArgs" struct via impl macros defined in
+/// `forge_config` (See [`forge_config::impl_figment_convert`] for more details) and the impl
+/// definition on `T: Into<Config> + Into<Figment>` below.
+///
+/// Each function also has an `emit_warnings` form which does the same thing as its counterpart but
+/// also prints `Config::__warnings` to stderr
+pub trait LoadConfig {
+    /// Load and sanitize the [`Config`] based on the options provided in self
+    fn load_config(self) -> Config;
+    /// Load and sanitize the [`Config`], as well as extract [`EvmOpts`] from self
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Load [`Config`] but do not sanitize. See [`Config::sanitized`] for more information
+    fn load_config_unsanitized(self) -> Config;
+
+    /// Same as [`LoadConfig::load_config`] but also emits warnings generated
+    fn load_config_emit_warnings(self) -> Config;
+    /// Same as [`LoadConfig::load_config_and_evm_opts`] but also emits warnings generated
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)>;
+    /// Same as [`LoadConfig::load_config_unsanitized`] but also emits warnings generated
+    fn load_config_unsanitized_emit_warnings(self) -> Config;
+}
+
+impl<T> LoadConfig for T
+where
+    T: Into<Config> + Into<Figment>,
+{
+    fn load_config(self) -> Config {
+        self.into()
+    }
+    fn load_config_and_evm_opts(self) -> eyre::Result<(Config, EvmOpts)> {
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized(self) -> Config {
+        let figment: Figment = self.into();
+        Config::from_provider(figment)
+    }
+    fn load_config_emit_warnings(self) -> Config {
+        let config = self.load_config();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
+    fn load_config_and_evm_opts_emit_warnings(self) -> eyre::Result<(Config, EvmOpts)> {
+        let (config, evm_opts) = self.load_config_and_evm_opts()?;
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        Ok((config, evm_opts))
+    }
+    fn load_config_unsanitized_emit_warnings(self) -> Config {
+        let config = self.load_config_unsanitized();
+        config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
+        config
+    }
 }

@@ -5,12 +5,7 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Emitter {
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
     /// This event has 0 indexed topics, but the one in our tests
     /// has exactly one indexed topic. Even though both of these
@@ -18,16 +13,9 @@ contract Emitter {
     /// be non-comparable.
     ///
     /// Ref: issue #760
-    event SomethingElse(
-        uint256 data
-    );
+    event SomethingElse(uint256 data);
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         emit Something(topic1, topic2, topic3, data);
     }
 
@@ -36,18 +24,14 @@ contract Emitter {
         uint256[2] memory topic2,
         uint256[2] memory topic3,
         uint256[2] memory data
-    ) public {
+    )
+        public
+    {
         emit Something(topic1[0], topic2[0], topic3[0], data[0]);
         emit Something(topic1[1], topic2[1], topic3[1], data[1]);
     }
 
-    function emitNested(
-        Emitter inner,
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        uint256 data
-    ) public {
+    function emitNested(Emitter inner, uint256 topic1, uint256 topic2, uint256 topic3, uint256 data) public {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
@@ -73,16 +57,9 @@ contract ExpectEmitTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     Emitter emitter;
 
-    event Something(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        uint256 data
-    );
+    event Something(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, uint256 data);
 
-    event SomethingElse(
-        uint256 indexed topic1
-    );
+    event SomethingElse(uint256 indexed topic1);
 
     function setUp() public {
         emitter = new Emitter();
@@ -108,7 +85,9 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    ) public {
+    )
+        public
+    {
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
         uint256 transformedTopic2 = checkTopic2 ? uint256(topic2) : uint256(topic2) + 1;
         uint256 transformedTopic3 = checkTopic3 ? uint256(topic3) : uint256(topic3) + 1;
@@ -131,7 +110,9 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    ) public {
+    )
+        public
+    {
         cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) + 1 : uint256(topic1);
@@ -156,7 +137,9 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    ) public {
+    )
+        public
+    {
         Emitter inner = new Emitter();
 
         uint256 transformedTopic1 = checkTopic1 ? uint256(topic1) : uint256(topic1) + 1;
@@ -181,7 +164,9 @@ contract ExpectEmitTest is DSTest {
         uint128 topic2,
         uint128 topic3,
         uint128 data
-    ) public {
+    )
+        public
+    {
         cheats.assume(checkTopic1 || checkTopic2 || checkTopic3 || checkData);
         Emitter inner = new Emitter();
 
@@ -203,10 +188,7 @@ contract ExpectEmitTest is DSTest {
         emit Something(5, 6, 7, 8);
 
         emitter.emitMultiple(
-            [uint256(1), uint256(5)],
-            [uint256(2), uint256(6)],
-            [uint256(3), uint256(7)],
-            [uint256(4), uint256(8)]
+            [uint256(1), uint256(5)], [uint256(2), uint256(6)], [uint256(3), uint256(7)], [uint256(4), uint256(8)]
         );
     }
 

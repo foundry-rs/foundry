@@ -13,9 +13,11 @@
 //! create a `clap` subcommand into a `figment::Provider` and integrate it in the
 //! `foundry_config::Config`:
 //!
-//! ```rust
-//! use crate::{cmd::build::BuildArgs, foundry_common::evm::EvmArgs};
+//! ```
 //! use clap::Parser;
+//! use forge::executor::opts::EvmOpts;
+//! use foundry_cli::cmd::forge::build::BuildArgs;
+//! use foundry_common::evm::EvmArgs;
 //! use foundry_config::{figment::Figment, *};
 //!
 //! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`

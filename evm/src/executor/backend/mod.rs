@@ -1,12 +1,19 @@
-use crate::executor::{
-    fork::{CreateFork, ForkId, MultiFork, SharedBackend},
-    snapshot::Snapshots,
+use crate::{
+    abi::CHEATCODE_ADDRESS,
+    executor::{
+        backend::snapshot::BackendSnapshot,
+        fork::{CreateFork, ForkId, MultiFork, SharedBackend},
+        inspector::DEFAULT_CREATE2_DEPLOYER,
+        snapshot::Snapshots,
+    },
+    CALLER,
 };
 use ethers::{
     prelude::{H160, H256, U256},
     types::Address,
 };
 use hashbrown::HashMap as Map;
+pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log,
@@ -21,13 +28,6 @@ pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;
 mod in_memory_db;
-
-use crate::{
-    abi::CHEATCODE_ADDRESS,
-    executor::{backend::snapshot::BackendSnapshot, inspector::DEFAULT_CREATE2_DEPLOYER},
-    CALLER,
-};
-pub use in_memory_db::MemDb;
 
 // A `revm::Database` that is used in forking mode
 type ForkDB = CacheDB<SharedBackend>;
@@ -112,9 +112,10 @@ pub trait DatabaseExt: Database {
     /// Returns an error if not matching fork was found.
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -251,6 +252,23 @@ pub struct Backend {
     forks: MultiFork,
     // The default in memory db
     mem_db: InMemoryDB,
+    /// The subroutine to use to initialize new forks with
+    ///
+    /// The way [`revm::SubRoutine`] works is, that it holds the "hot" accounts loaded from the
+    /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
+    /// subroutine so it can apply changes to the state while the evm executes.
+    ///
+    /// In a way the `Subroutine` is something like a cache that
+    /// 1. check if account is already loaded (hot)
+    /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
+    /// mode)
+    ///
+    /// To properly initialize we store the `Subroutine` before the first fork is selected
+    /// ([`DatabaseExt::select_fork`]).
+    ///
+    /// This will be an empty `Subroutine`, which will be populated with persistent accounts, See
+    /// [`Self::update_fork_db()`] and [`clone_data()`].
+    fork_init_subroutine: SubRoutine,
     /// The currently active fork database
     ///
     /// If this is set, then the Backend is currently in forking mode
@@ -276,6 +294,7 @@ impl Backend {
         let mut backend = Self {
             forks,
             mem_db: InMemoryDB::default(),
+            fork_init_subroutine: Default::default(),
             active_fork_ids: None,
             inner: BackendInner {
                 persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
@@ -284,7 +303,8 @@ impl Backend {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork) = backend.forks.create_fork(fork).expect("Unable to create fork");
+            let (fork_id, fork, _) =
+                backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
             backend.active_fork_ids =
                 Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
@@ -299,6 +319,7 @@ impl Backend {
         Self {
             forks: self.forks.clone(),
             mem_db: InMemoryDB::default(),
+            fork_init_subroutine: Default::default(),
             active_fork_ids: None,
             inner: Default::default(),
         }
@@ -404,7 +425,7 @@ impl Backend {
             "Test contract address must be set"
         );
         self.update_fork_db_contracts(
-            self.inner.persistent_accounts.iter().cloned(),
+            self.inner.persistent_accounts.iter().copied(),
             subroutine,
             fork,
         )
@@ -433,6 +454,11 @@ impl Backend {
     /// Returns true if the `id` is currently active
     pub fn is_active_fork(&self, id: LocalForkId) -> bool {
         self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
+    }
+
+    /// Returns `true` if the `Backend` is currently in forking mode
+    pub fn is_in_forking_mode(&self) -> bool {
+        self.active_fork().is_some()
     }
 
     /// Returns the currently active `Fork`, if any
@@ -560,12 +586,14 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        subroutine: &SubRoutine,
+        _subroutine: &SubRoutine,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork) = self.forks.create_fork(fork)?;
+        let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
-        let (id, _) = self.inner.insert_new_fork(fork_id, fork_db, subroutine.clone());
+
+        let (id, _) =
+            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_subroutine.clone());
         Ok(id)
     }
 
@@ -589,9 +617,21 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        // if currently active we need to update the subroutine to this point
+        // If we're currently in forking mode we need to update the subroutine to this point, this
+        // ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.subroutine = subroutine.clone();
+        } else {
+            // this is the first time a fork is selected. This means up to this point all changes
+            // are made in a single `SubRoutine`, for example after a `setup` that only created
+            // different forks. Since the `Subroutine` is valid for all forks until the
+            // first fork is selected, we need to update it for all forks and use it as init state
+            // for all future forks
+            trace!("recording fork init subroutine");
+            self.fork_init_subroutine = subroutine.clone();
+            for fork in self.inner.forks_iter_mut() {
+                fork.subroutine = self.fork_init_subroutine.clone();
+            }
         }
 
         // update the shared state and track
@@ -605,21 +645,39 @@ impl DatabaseExt for Backend {
         Ok(())
     }
 
+    /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing fork
     fn roll_fork(
         &mut self,
-        env: &mut Env,
-        block_number: U256,
         id: Option<LocalForkId>,
+        block_number: U256,
+        env: &mut Env,
+        subroutine: &mut SubRoutine,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
-        let (fork_id, backend) =
+        let (fork_id, backend, fork_env) =
             self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number.as_u64())?;
         // this will update the local mapping
         self.inner.roll_fork(id, fork_id, backend)?;
-        if self.active_fork_id() == Some(id) {
-            // need to update the block number right away
-            env.block.number = block_number;
+
+        if let Some((active_id, active_idx)) = self.active_fork_ids {
+            // the currently active fork is the targeted fork of this call
+            if active_id == id {
+                // need to update the block's env settings right away, which is otherwise set when
+                // forks are selected `select_fork`
+                update_current_env_with_fork_env(env, fork_env);
+
+                // we also need to update the subroutine right away, this has essentially the same
+                // effect as selecting (`select_fork`) by discarding non-persistent storage from the
+                // subroutine. This which will reset cached state from the previous block
+                let persitent_addrs = self.inner.persistent_accounts.clone();
+                let active = self.inner.get_fork_mut(active_idx);
+                active.subroutine = self.fork_init_subroutine.clone();
+                for addr in persitent_addrs {
+                    clone_subroutine_data(addr, subroutine, &mut active.subroutine);
+                }
+                *subroutine = active.subroutine.clone();
+            }
         }
         Ok(())
     }
@@ -936,6 +994,11 @@ impl BackendInner {
             .map(|(id, fork_id)| (*id, self.get_fork(self.created_forks[fork_id])))
     }
 
+    /// Returns a mutable iterator over all Forks
+    pub fn forks_iter_mut(&mut self) -> impl Iterator<Item = &mut Fork> + '_ {
+        self.forks.iter_mut().filter_map(|f| f.as_mut())
+    }
+
     /// Reverts the entire fork database
     pub fn revert_snapshot(
         &mut self,
@@ -975,10 +1038,14 @@ impl BackendInner {
         let fork_id = self.ensure_fork_id(id)?;
         let idx = self.ensure_fork_index(fork_id)?;
 
-        if let Some(f) = self.forks[idx].as_mut() {
-            f.db.db = backend;
+        if let Some(active) = self.forks[idx].as_mut() {
+            // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
+            let mut new_db = ForkDB::new(backend);
+            for addr in self.persistent_accounts.iter().copied() {
+                clone_db_account_data(addr, &active.db, &mut new_db);
+            }
+            active.db = new_db;
         }
-
         // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
         self.created_forks.insert(new_fork_id, idx);
@@ -1035,18 +1102,35 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
-        trace!(?addr, "cloning data");
-        let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
-        if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
-            fork.db.contracts.insert(acc.info.code_hash, code);
-        }
-        fork.db.accounts.insert(addr, acc);
-
-        if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-            trace!(?addr, "updating subroutine account data");
-            fork.subroutine.state.insert(addr, acc);
-        }
+        clone_db_account_data(addr, active, &mut fork.db);
+        clone_subroutine_data(addr, active_subroutine, &mut fork.subroutine);
     }
 
     *active_subroutine = fork.subroutine.clone();
+}
+
+/// Clones the account data from the `active_subroutine`  into the `fork_subroutine`
+fn clone_subroutine_data(
+    addr: Address,
+    active_subroutine: &mut SubRoutine,
+    fork_subroutine: &mut SubRoutine,
+) {
+    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
+        trace!(?addr, "updating subroutine account data");
+        fork_subroutine.state.insert(addr, acc);
+    }
+}
+
+/// Clones the account data from the `active` db into the `ForkDB`
+fn clone_db_account_data<ExtDB: DatabaseRef>(
+    addr: Address,
+    active: &CacheDB<ExtDB>,
+    fork_db: &mut ForkDB,
+) {
+    trace!(?addr, "cloning database data");
+    let acc = active.accounts.get(&addr).cloned().unwrap_or_default();
+    if let Some(code) = active.contracts.get(&acc.info.code_hash).cloned() {
+        fork_db.contracts.insert(acc.info.code_hash, code);
+    }
+    fork_db.accounts.insert(addr, acc);
 }

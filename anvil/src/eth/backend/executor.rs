@@ -1,7 +1,10 @@
-use crate::eth::{
-    backend::{db::Db, validate::TransactionValidator},
-    error::InvalidTransactionError,
-    pool::transactions::PoolTransaction,
+use crate::{
+    eth::{
+        backend::{db::Db, validate::TransactionValidator},
+        error::InvalidTransactionError,
+        pool::transactions::PoolTransaction,
+    },
+    mem::inspector::Inspector,
 };
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
@@ -15,70 +18,12 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
-    executor::inspector::Tracer,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
     trace::node::CallTraceNode,
 };
-use parking_lot::RwLock;
 use std::sync::Arc;
 use tracing::{trace, warn};
-
-/// A lock that's used to guard access to evm execution, depending on the mode of the evm
-///
-/// The necessity for this type is that when in fork, transacting on the evm can take quite a bit of
-/// time if the requested state needs to be fetched from the remote endpoint first. This can cause
-/// block production to stall, because this is a blocking operation. This type is used to guard
-/// access to evm execution.
-///
-/// This is only necessary in fork mode, so if `is_fork` is `false` `read` and `write` will be a
-/// noop.
-#[derive(Debug, Clone)]
-pub(crate) struct EvmExecutorLock {
-    executor_lock: Arc<tokio::sync::RwLock<()>>,
-    is_fork: Arc<RwLock<bool>>,
-}
-
-// === impl EvmExecutorLock ===
-
-impl EvmExecutorLock {
-    pub fn new(is_fork: bool) -> Self {
-        Self {
-            executor_lock: Arc::new(tokio::sync::RwLock::new(())),
-            is_fork: Arc::new(RwLock::new(is_fork)),
-        }
-    }
-
-    /// Sets the fork status
-    #[allow(unused)]
-    pub fn set_fork(&self, is_fork: bool) {
-        *self.is_fork.write() = is_fork
-    }
-
-    pub fn is_fork(&self) -> bool {
-        *self.is_fork.read()
-    }
-
-    /// Locks this RwLock with shared read access, causing the current task to yield until the lock
-    /// has been acquired.
-    pub async fn read(&self) -> EvmExecutorReadGuard<'_> {
-        let guard = if self.is_fork() { Some(self.executor_lock.read().await) } else { None };
-        EvmExecutorReadGuard(guard)
-    }
-
-    /// Locks this RwLock with exclusive write access, causing the current task to yield until the
-    /// lock has been acquired.
-    pub async fn write(&self) -> EvmExecutorWriteGuard<'_> {
-        let guard = if self.is_fork() { Some(self.executor_lock.write().await) } else { None };
-        EvmExecutorWriteGuard(guard)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct EvmExecutorReadGuard<'a>(Option<tokio::sync::RwLockReadGuard<'a, ()>>);
-
-#[derive(Debug)]
-pub(crate) struct EvmExecutorWriteGuard<'a>(Option<tokio::sync::RwLockWriteGuard<'a, ()>>);
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
@@ -188,7 +133,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let ExecutedTransaction { transaction, logs, out, traces, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -206,6 +151,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
                 traces,
+                exit,
+                out: match out {
+                    TransactOut::Call(b) => Some(b.into()),
+                    TransactOut::Create(b, _) => Some(b.into()),
+                    _ => None,
+                },
             };
 
             transaction_infos.push(info);
@@ -283,11 +234,12 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         evm.database(&mut self.db);
 
         // records all call traces
-        let mut tracer = Tracer::default();
+        let mut inspector = Inspector::default().with_tracing();
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
+        let (exit, out, gas, logs) = evm.inspect_commit(&mut inspector);
+        inspector.print_logs();
 
         if exit == Return::OutOfGas {
             // this currently useful for debugging estimations
@@ -306,7 +258,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             out,
             gas,
             logs: logs.into_iter().map(Into::into).collect(),
-            traces: tracer.traces.arena,
+            traces: inspector.tracer.unwrap_or_default().traces.arena,
         };
 
         Some(TransactionExecutionOutcome::Executed(tx))

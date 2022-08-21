@@ -5,7 +5,9 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+pub mod estimate;
 pub mod find_block;
+pub mod interface;
 pub mod rpc;
 pub mod run;
 pub mod wallet;

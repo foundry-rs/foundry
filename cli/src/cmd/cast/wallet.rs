@@ -62,7 +62,8 @@ pub enum WalletSubcommands {
     Address {
         #[clap(
             help = "If provided, the address will be derived from the specified private key.",
-            value_name = "PRIVATE_KEY"
+            value_name = "PRIVATE_KEY",
+            value_parser = foundry_common::clap_helpers::strip_0x_prefix
         )]
         private_key_override: Option<String>,
         #[clap(flatten)]
