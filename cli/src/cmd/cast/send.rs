@@ -172,6 +172,12 @@ impl SendTxArgs {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
 
+            let code = if let Some(SendTxSubcommands::Create { code }) = command {
+                Some(code)
+            } else {
+                None
+            };
+
             cast_send(
                 provider,
                 config.sender,
