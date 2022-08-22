@@ -246,7 +246,7 @@ where
         let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
 
         if let Some((sig, args)) = params {
-            let (mut sigdata, _) = builder.create_args(&sig, args).await?;
+            let (mut sigdata, _) = builder.create_args(sig, args).await?;
             data.append(&mut sigdata);
         }
 
