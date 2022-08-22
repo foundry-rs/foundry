@@ -68,7 +68,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         self.enter(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             call.context.code_address,
             call.context.scheme.into(),
         );
@@ -164,10 +164,10 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        data.journaled_state.load_account(call.caller, data.db);
+        let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.enter(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             get_create_address(call, nonce),
             CallKind::Create,
         );

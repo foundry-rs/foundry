@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, Filth, SpecId,
+    opcode, spec_opcode_gas, SpecId,
 };
 use std::{
     collections::BTreeSet,
@@ -119,7 +119,7 @@ pub fn collect_state_from_call(
         // Insert storage
         for (slot, value) in &account.storage {
             state.insert(utils::u256_to_h256_be(*slot).into());
-            state.insert(utils::u256_to_h256_be(*value).into());
+            state.insert(utils::u256_to_h256_be(value.present_value()).into());
         }
 
         // Insert push bytes
@@ -201,7 +201,7 @@ pub fn collect_created_contracts(
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
-            if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
+            if let (true, Some(code)) = (&account.is_touched, &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {
