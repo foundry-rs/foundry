@@ -1,7 +1,6 @@
-use revm::{Env, JournaledState};
 use ethers::types::{Address, H256, U256};
 use hashbrown::HashMap as Map;
-use revm::{AccountInfo};
+use revm::{AccountInfo, Env, JournaledState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
