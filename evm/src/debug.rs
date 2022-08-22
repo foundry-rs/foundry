@@ -151,7 +151,7 @@ impl DebugStep {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Instruction {
     OpCode(u8),
     Cheatcode([u8; 4]),

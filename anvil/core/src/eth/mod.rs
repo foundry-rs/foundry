@@ -3,13 +3,13 @@ use crate::{
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
-    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index},
+    types::{EvmMineOptions, Forking, Index},
 };
 use ethers_core::{
     abi::ethereum_types::H64,
     types::{
         serde_helpers::*, transaction::eip712::TypedData, Address, BlockId, BlockNumber, Bytes,
-        Filter, TxHash, H256, U256,
+        Filter, GethDebugTracingOptions, TxHash, H256, U256,
     },
 };
 use serde::Deserialize;

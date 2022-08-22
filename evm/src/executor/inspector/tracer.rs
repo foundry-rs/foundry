@@ -1,4 +1,5 @@
 use crate::{
+    debug::Instruction::OpCode,
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
         CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
@@ -13,7 +14,7 @@ use ethers::{
 };
 use revm::{
     return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, OpCode, Return,
+    Interpreter, Return,
 };
 
 /// An inspector that collects call traces.
@@ -85,7 +86,7 @@ impl Tracer {
         step.gas_cost = step.gas - gas;
 
         // Error codes only
-        if status > 0x50 {
+        if status as u8 > 0x50 {
             step.error = Some(format!("{:?}", status));
         }
     }
@@ -201,20 +202,24 @@ where
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
+        let depth = data.subroutine.depth();
         let pc = interp.program_counter();
         let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
         let stack = interp.stack.clone();
         let memory = interp.memory.clone();
         let state = data.subroutine.state.clone();
         let gas = interp.gas.remaining();
+        let gas_refund_counter = interp.gas.refunded() as u64; // TODO: use https://github.com/bluealloy/revm/pull/180
 
         self.start_step(CallTraceStep {
+            depth,
             pc,
             op,
             stack,
             memory,
             state,
             gas,
+            gas_refund_counter,
             gas_cost: 0,
             error: None,
         });

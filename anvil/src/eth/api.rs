@@ -33,7 +33,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
+    types::{EvmMineOptions, Forking, Index, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
@@ -45,9 +45,9 @@ use ethers::{
             eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
-        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
-        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
-        TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
+        GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
     },
     utils::rlp,
 };

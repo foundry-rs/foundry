@@ -7,16 +7,19 @@ mod decoder;
 pub mod node;
 mod utils;
 
-use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind, H160};
+use crate::{
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    H160,
+};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
-    abi::{Address, RawLog},
-    types::U256,
+    abi::{ethereum_types::BigEndianHash, Address, RawLog},
+    types::{StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{Account, CallContext, Memory, OpCode, Return, Stack};
+use revm::{Account, CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -288,11 +291,13 @@ impl fmt::Display for RawOrDecodedReturnData {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTraceStep {
+    pub depth: u64,
     /// Program counter before step execution
     pub pc: usize,
     /// Opcode to be executed
-    pub op: OpCode,
+    pub op: Instruction,
     /// Stack before step execution
     pub stack: Stack,
     /// Memory before step execution
@@ -303,8 +308,43 @@ pub struct CallTraceStep {
     pub gas: u64,
     /// Gas cost of step execution
     pub gas_cost: u64,
+    /// Gas refund counter before step execution
+    pub gas_refund_counter: u64,
     /// Error (if any) after after step execution
     pub error: Option<String>,
+}
+
+impl From<&CallTraceStep> for StructLog {
+    fn from(step: &CallTraceStep) -> Self {
+        StructLog {
+            depth: step.depth,
+            error: step.error.clone(),
+            gas: step.gas,
+            gas_cost: step.gas_cost,
+            memory: Some(step.memory.data().clone()),
+            op: step.op.to_string(),
+            pc: U256::from(step.pc),
+            refund_counter: Some(step.gas_refund_counter),
+            stack: Some(step.stack.data().clone()),
+            storage: Some(
+                step.state
+                    .into_iter()
+                    .map(|(key, value)| {
+                        (
+                            key,
+                            value
+                                .storage
+                                .into_iter()
+                                .map(|(key, value)| {
+                                    (H256::from_uint(&key), H256::from_uint(&value))
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
 }
 
 /// A trace of a call.

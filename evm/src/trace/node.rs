@@ -9,8 +9,8 @@ use crate::{
 use ethers::{
     abi::{Abi, Function},
     types::{
-        Action, Address, Call, CallResult, Create, CreateResult, GethTrace, Res, StructLog,
-        Suicide, U256,
+        Action, Address, Call, CallResult, Create, CreateResult, GethDebugTracingOptions,
+        GethTrace, Res, StructLog, Suicide,
     },
 };
 use foundry_common::SELECTOR_LEN;
@@ -94,7 +94,7 @@ impl CallTraceNode {
         }
     }
 
-    pub fn geth_trace(&self) -> GethTrace {
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
         GethTrace {
             failed: !self.trace.success,
             gas: self.trace.gas_cost,
@@ -103,21 +103,20 @@ impl CallTraceNode {
                 .trace
                 .steps
                 .iter()
-                .map(|step| StructLog {
-                    depth: self.trace.depth as u64,
-                    error: step.error.clone(),
-                    gas: step.gas,
-                    gas_cost: step.gas_cost,
-                    memory: Some(step.memory.data().clone()),
-                    op: step.op.as_str().to_string(),
-                    pc: U256::from(step.pc),
-                    refund_counter: None, // TODO
-                    stack: Some(step.stack.data().clone()),
-                    storage: step
-                        .state
-                        .into_iter()
-                        .map(|(key, value)| (key, value.storage))
-                        .collect(),
+                .map(|step| {
+                    let mut log: StructLog = step.into();
+
+                    if opts.disable_storage.unwrap_or_default() {
+                        log.storage = None;
+                    }
+                    if opts.disable_stack.unwrap_or_default() {
+                        log.stack = None;
+                    }
+                    if !opts.enable_memory.unwrap_or_default() {
+                        log.memory = None;
+                    }
+
+                    log
                 })
                 .collect(),
         }
