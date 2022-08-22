@@ -93,15 +93,10 @@ impl SendTxArgs {
                         from,
                         to,
                         (sig, args),
-                        tx.gas_limit,
-                        tx.gas_price,
-                        tx.priority_gas_price,
-                        tx.value,
-                        tx.nonce,
+                        tx,
                         chain,
                         config.etherscan_api_key,
                         cast_async,
-                        tx.legacy,
                         confirmations,
                         to_json,
                     )
@@ -113,15 +108,10 @@ impl SendTxArgs {
                         from,
                         to,
                         (sig, args),
-                        tx.gas_limit,
-                        tx.gas_price,
-                        tx.priority_gas_price,
-                        tx.value,
-                        tx.nonce,
+                        tx,
                         chain,
                         config.etherscan_api_key,
                         cast_async,
-                        tx.legacy,
                         confirmations,
                         to_json,
                     )
@@ -133,15 +123,10 @@ impl SendTxArgs {
                         from,
                         to,
                         (sig, args),
-                        tx.gas_limit,
-                        tx.gas_price,
-                        tx.priority_gas_price,
-                        tx.value,
-                        tx.nonce,
+                        tx,
                         chain,
                         config.etherscan_api_key,
                         cast_async,
-                        tx.legacy,
                         confirmations,
                         to_json,
                     )
@@ -161,15 +146,10 @@ impl SendTxArgs {
                 config.sender,
                 to,
                 (sig, args),
-                tx.gas_limit,
-                tx.gas_price,
-                tx.priority_gas_price,
-                tx.value,
-                tx.nonce,
+                tx,
                 chain,
                 config.etherscan_api_key,
                 cast_async,
-                tx.legacy,
                 confirmations,
                 to_json,
             )
@@ -181,21 +161,15 @@ impl SendTxArgs {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
     from: F,
     to: T,
     args: (String, Vec<String>),
-    gas: Option<U256>,
-    gas_price: Option<U256>,
-    priority_gas_price: Option<U256>,
-    value: Option<U256>,
-    nonce: Option<U256>,
+    tx: TransactionOpts,
     chain: Chain,
     etherscan_api_key: Option<String>,
     cast_async: bool,
-    legacy: bool,
     confs: usize,
     to_json: bool,
 ) -> eyre::Result<()>
@@ -210,11 +184,11 @@ where
         .etherscan_api_key(etherscan_api_key)
         .args(params)
         .await?
-        .gas(gas)
-        .gas_price(gas_price)
-        .priority_gas_price(priority_gas_price)
-        .value(value)
-        .nonce(nonce);
+        .gas(tx.gas_limit)
+        .gas_price(tx.gas_price)
+        .priority_gas_price(tx.priority_gas_price)
+        .value(tx.value)
+        .nonce(tx.nonce);
     let builder_output = builder.build();
 
     let cast = Cast::new(provider);
