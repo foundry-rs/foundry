@@ -4,7 +4,7 @@ use crate::REQUEST_TIMEOUT;
 use ethers_core::types::Chain;
 use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
-    DEFAULT_LOCAL_POLL_INTERVAL,
+    RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
 use reqwest::{IntoUrl, Url};
 use std::time::Duration;
@@ -43,6 +43,7 @@ pub struct ProviderBuilder {
     url: reqwest::Result<Url>,
     chain: Chain,
     max_retry: u32,
+    timeout_retry: u32,
     initial_backoff: u64,
     timeout: Duration,
 }
@@ -56,6 +57,7 @@ impl ProviderBuilder {
             url: url.into_url(),
             chain: Chain::Mainnet,
             max_retry: 100,
+            timeout_retry: 5,
             initial_backoff: 100,
             timeout: REQUEST_TIMEOUT,
         }
@@ -86,6 +88,12 @@ impl ProviderBuilder {
         self
     }
 
+    /// How often to retry a failed request due to connection issues
+    pub fn timeout_retry(mut self, timeout_retry: u32) -> Self {
+        self.timeout_retry = timeout_retry;
+        self
+    }
+
     /// The starting backoff delay to use after the first failed request
     pub fn initial_backoff(mut self, initial_backoff: u64) -> Self {
         self.initial_backoff = initial_backoff;
@@ -113,7 +121,8 @@ impl ProviderBuilder {
 
     /// Constructs the `RetryProvider` taking all configs into account
     pub fn build(self) -> eyre::Result<RetryProvider> {
-        let ProviderBuilder { url, chain, max_retry, initial_backoff, timeout } = self;
+        let ProviderBuilder { url, chain, max_retry, timeout_retry, initial_backoff, timeout } =
+            self;
         let url = url?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
@@ -121,12 +130,13 @@ impl ProviderBuilder {
 
         let provider = Http::new_with_client(url, client);
 
-        let mut provider = Provider::new(RetryClient::new(
-            provider,
-            Box::new(HttpRateLimitRetryPolicy::default()),
-            max_retry,
-            initial_backoff,
-        ));
+        let mut provider = Provider::new(
+            RetryClientBuilder::default()
+                .initial_backoff(Duration::from_millis(initial_backoff))
+                .rate_limit_retries(max_retry)
+                .timeout_retries(timeout_retry)
+                .build(provider, Box::new(HttpRateLimitRetryPolicy::default())),
+        );
 
         if is_local {
             provider = provider.interval(DEFAULT_LOCAL_POLL_INTERVAL);
