@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
 
 /// Helper trait get access to the data in `HashDb` form
-#[auto_impl::auto_impl(&, Box)]
+#[auto_impl::auto_impl(Box)]
 pub trait MaybeHashDatabase: DatabaseRef {
     /// Return the DB as read-only hashdb and the root key
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
@@ -37,6 +37,20 @@ pub trait MaybeHashDatabase: DatabaseRef {
     fn maybe_account_db(&self, _addr: Address) -> Option<(AsHashDB, H256)> {
         None
     }
+
+    /// Clear the state and move it into a new `StateSnapshot`
+    fn clear_into_snapshot(&mut self) -> StateSnapshot;
+
+    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
+}
+
+impl MaybeHashDatabase for &dyn Db {
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        unimplemented!()
+    }
+
+    fn init_from_snapshot(&mut self, _: StateSnapshot) {}
 }
 
 /// This bundles all required revm traits
@@ -76,12 +90,6 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + MaybeHashDatabase + Send
 
     /// inserts a blockhash for the given number
     fn insert_block_hash(&mut self, number: U256, hash: H256);
-
-    /// Clear the state and move it into a new `StateSnapshot`
-    fn clear_into_snapshot(&mut self) -> StateSnapshot;
-
-    /// Reverses `clear_into_snapshot` by initializing the db's state with the snapshot
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
 
     /// Write all chain data to serialized bytes buffer
     fn dump_state(&self) -> Option<SerializableState>;
@@ -123,40 +131,6 @@ impl<T: DatabaseRef + Send + Sync + Clone> Db for CacheDB<T> {
         self.block_hashes.insert(number, hash);
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        let db_accounts = std::mem::take(&mut self.accounts);
-        let mut accounts = BTreeMap::new();
-        let mut account_storage = BTreeMap::new();
-
-        for (addr, mut acc) in db_accounts {
-            account_storage.insert(addr, std::mem::take(&mut acc.storage));
-            let mut info = acc.info;
-            info.code = self.contracts.remove(&info.code_hash);
-            accounts.insert(addr, info);
-        }
-        let block_hashes = std::mem::take(&mut self.block_hashes);
-        StateSnapshot { accounts, storage: account_storage, block_hashes }
-    }
-
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
-
-        for (addr, mut acc) in accounts {
-            if let Some(code) = acc.code.take() {
-                self.contracts.insert(acc.code_hash, code);
-            }
-            self.accounts.insert(
-                addr,
-                DbAccount {
-                    info: acc.info,
-                    storage: storage.remove(&addr).unwrap_or_default(),
-                    ..Default::default()
-                },
-            );
-        }
-        self.block_hashes = block_hashes;
-    }
-
     fn dump_state(&self) -> Option<SerializableState> {
         None
     }
@@ -182,10 +156,43 @@ impl<T: DatabaseRef> MaybeHashDatabase for CacheDB<T> {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         Some(trie_hash_db(&self.accounts))
     }
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        let db_accounts = std::mem::take(&mut self.accounts);
+        let mut accounts = BTreeMap::new();
+        let mut account_storage = BTreeMap::new();
+
+        for (addr, mut acc) in db_accounts {
+            account_storage.insert(addr, std::mem::take(&mut acc.storage));
+            let mut info = acc.info;
+            info.code = self.contracts.remove(&info.code_hash);
+            accounts.insert(addr, info);
+        }
+        let block_hashes = std::mem::take(&mut self.block_hashes);
+        StateSnapshot { accounts, storage: account_storage, block_hashes }
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        let StateSnapshot { accounts, mut storage, block_hashes } = snapshot;
+
+        for (addr, mut acc) in accounts {
+            if let Some(code) = acc.code.take() {
+                self.contracts.insert(acc.code_hash, code);
+            }
+            self.accounts.insert(
+                addr,
+                DbAccount {
+                    info: acc,
+                    storage: storage.remove(&addr).unwrap_or_default(),
+                    ..Default::default()
+                },
+            );
+        }
+        self.block_hashes = block_hashes;
+    }
 }
 
 /// Represents a state at certain point
-pub struct StateDb(Box<dyn MaybeHashDatabase + Send + Sync>);
+pub struct StateDb(pub(crate) Box<dyn MaybeHashDatabase + Send + Sync>);
 
 // === impl StateDB ===
 
@@ -217,6 +224,26 @@ impl MaybeHashDatabase for StateDb {
     fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
         self.0.maybe_as_hash_db()
     }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.0.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.0.init_from_snapshot(snapshot)
+    }
+}
+
+impl<'a> MaybeHashDatabase for &'a StateDb {
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        self.0.maybe_as_hash_db()
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        unimplemented!()
+    }
+
+    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

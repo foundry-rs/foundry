@@ -24,22 +24,6 @@ impl Db for ForkedDatabase {
         self.inner().block_hashes().write().insert(number, hash);
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        let db = self.inner().db();
-        let accounts = std::mem::take(&mut *db.accounts.write());
-        let storage = std::mem::take(&mut *db.storage.write());
-        let block_hashes = std::mem::take(&mut *db.block_hashes.write());
-        StateSnapshot { accounts, storage, block_hashes }
-    }
-
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        let db = self.inner().db();
-        let StateSnapshot { accounts, storage, block_hashes } = snapshot;
-        *db.accounts.write() = accounts;
-        *db.storage.write() = storage;
-        *db.block_hashes.write() = block_hashes;
-    }
-
     fn dump_state(&self) -> Option<SerializableState> {
         None
     }
@@ -61,5 +45,29 @@ impl Db for ForkedDatabase {
     }
 }
 
-impl MaybeHashDatabase for ForkedDatabase {}
-impl MaybeHashDatabase for ForkDbSnapshot {}
+impl MaybeHashDatabase for ForkedDatabase {
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        let db = self.inner().db();
+        let accounts = std::mem::take(&mut *db.accounts.write());
+        let storage = std::mem::take(&mut *db.storage.write());
+        let block_hashes = std::mem::take(&mut *db.block_hashes.write());
+        StateSnapshot { accounts, storage, block_hashes }
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        let db = self.inner().db();
+        let StateSnapshot { accounts, storage, block_hashes } = snapshot;
+        *db.accounts.write() = accounts;
+        *db.storage.write() = storage;
+        *db.block_hashes.write() = block_hashes;
+    }
+}
+impl MaybeHashDatabase for ForkDbSnapshot {
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        std::mem::take(&mut self.snapshot)
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.snapshot = snapshot;
+    }
+}

@@ -30,14 +30,6 @@ impl Db for MemDb {
         self.inner.block_hashes.insert(number, hash);
     }
 
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        self.inner.clear_into_snapshot()
-    }
-
-    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
-        self.inner.init_from_snapshot(snapshot)
-    }
-
     fn dump_state(&self) -> Option<SerializableState> {
         let accounts = self
             .inner
@@ -134,6 +126,14 @@ impl MaybeHashDatabase for MemDb {
         } else {
             Some(storage_trie_db(&Default::default()))
         }
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_snapshot(snapshot)
     }
 }
 

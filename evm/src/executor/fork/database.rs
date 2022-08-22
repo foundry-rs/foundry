@@ -195,8 +195,8 @@ impl DatabaseCommit for ForkedDatabase {
 /// This mimics `revm::CacheDB`
 #[derive(Debug)]
 pub struct ForkDbSnapshot {
-    local: CacheDB<SharedBackend>,
-    snapshot: StateSnapshot,
+    pub local: CacheDB<SharedBackend>,
+    pub snapshot: StateSnapshot,
 }
 
 // === impl DbSnapshot ===
