@@ -97,7 +97,7 @@ impl CallTraceNode {
     pub fn geth_trace(&self) -> GethTrace {
         GethTrace {
             failed: !self.trace.success,
-            gas: 0, // TODO
+            gas: self.trace.gas_cost,
             return_value: self.trace.output.to_raw().into(),
             struct_logs: self
                 .trace
@@ -105,9 +105,9 @@ impl CallTraceNode {
                 .iter()
                 .map(|step| StructLog {
                     depth: self.trace.depth as u64,
-                    error: None, // TODO
-                    gas: 0,      // TODO
-                    gas_cost: 0, // TODO
+                    error: step.error.clone(),
+                    gas: step.gas,
+                    gas_cost: step.gas_cost,
                     memory: Some(step.memory.data().clone()),
                     op: step.op.as_str().to_string(),
                     pc: U256::from(step.pc),

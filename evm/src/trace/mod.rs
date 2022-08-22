@@ -294,6 +294,9 @@ pub struct CallTraceStep {
     pub stack: Stack,
     pub memory: Memory,
     pub state: HashMap<H160, Account>,
+    pub gas: u64,
+    pub gas_cost: u64,
+    pub error: Option<String>,
 }
 
 /// A trace of a call.
@@ -332,7 +335,7 @@ pub struct CallTrace {
     pub status: Return,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
-
+    /// Opcode-level execution steps
     pub steps: Vec<CallTraceStep>,
 }
 

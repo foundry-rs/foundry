@@ -69,10 +69,25 @@ impl Tracer {
         }
     }
 
-    pub fn fill_step(&mut self, step: CallTraceStep) {
+    pub fn start_step(&mut self, step: CallTraceStep) {
+        let trace = &mut self.traces.arena
+            [*self.trace_stack.last().expect("can't start step without starting a trace first")];
+
+        trace.trace.steps.push(step);
+    }
+
+    pub fn fill_step(&mut self, gas: u64, status: Return) {
         let trace = &mut self.traces.arena
             [*self.trace_stack.last().expect("can't fill step without starting a trace first")];
-        trace.trace.steps.push(step);
+        let step =
+            trace.trace.steps.last_mut().expect("can't fill step without starting a step first");
+
+        step.gas_cost = step.gas - gas;
+
+        // Error codes only
+        if status > 0x50 {
+            step.error = Some(format!("{:?}", status));
+        }
     }
 }
 
@@ -191,9 +206,22 @@ where
         let stack = interp.stack.clone();
         let memory = interp.memory.clone();
         let state = data.subroutine.state.clone();
+        let gas = interp.gas.remaining();
 
-        self.fill_step(CallTraceStep { pc, op, stack, memory, state });
+        self.start_step(CallTraceStep { pc, op, stack, memory, state, gas, gas_cost: 0 });
 
         Return::Continue
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        self.fill_step(interp.gas.remaining(), status);
+
+        status
     }
 }
