@@ -368,7 +368,7 @@ impl ScriptArgs {
     {
         tx.set_gas(
             provider
-                .estimate_gas(tx)
+                .estimate_gas(tx, None)
                 .await
                 .wrap_err_with(|| format!("Failed to estimate gas for tx: {}", tx.sighash()))
                 .map_err(|err| BroadcastError::Simple(err.to_string()))? *
