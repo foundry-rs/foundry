@@ -88,7 +88,6 @@ impl ScriptArgs {
         let mut runner = self
             .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
             .await;
-        let mut failed = false;
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -130,6 +129,17 @@ impl ScriptArgs {
                         )
                     }
 
+                    if !result.success || script_config.evm_opts.verbosity > 3 {
+                        for (_kind, trace) in &mut result.traces {
+                            decoder.decode(trace).await;
+                            println!("{}", trace);
+                        }
+                    }
+
+                    if !result.success {
+                        eyre::bail!("Simulated execution failed");
+                    }
+
                     let created_contracts = result
                         .traces
                         .iter()
@@ -155,17 +165,6 @@ impl ScriptArgs {
                     // We inflate the gas used by the user specified percentage
                     tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
 
-                    if !result.success {
-                        failed = true;
-                    }
-
-                    if script_config.evm_opts.verbosity > 3 {
-                        for (_kind, trace) in &mut result.traces {
-                            decoder.decode(trace).await;
-                            println!("{}", trace);
-                        }
-                    }
-
                     final_txs.push_back(TransactionWithMetadata::new(
                         tx.into(),
                         &result,
@@ -178,11 +177,7 @@ impl ScriptArgs {
             }
         }
 
-        if failed {
-            eyre::bail!("Simulated execution failed")
-        } else {
-            Ok(final_txs)
-        }
+        Ok(final_txs)
     }
 
     /// Creates the Runner that drives script execution
