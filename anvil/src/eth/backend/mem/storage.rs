@@ -301,7 +301,7 @@ mod tests {
         let mut state = MemDb::default();
         let addr = Address::random();
         let info = AccountInfo::from_balance(1337.into());
-        state.insert_account(addr, info.clone());
+        state.insert_account(addr, info);
         storage.insert(one, StateDb::new(state));
         storage.insert(two, StateDb::new(MemDb::default()));
 
