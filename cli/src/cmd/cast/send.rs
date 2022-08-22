@@ -231,8 +231,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let sig = args.0;
-    let params = args.1;
+    let (sig, params) = args;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
     let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
