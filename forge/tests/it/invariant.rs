@@ -106,7 +106,7 @@ fn test_invariant_storage() {
 
     let mut opts = TEST_OPTS;
     opts.invariant.depth = 100;
-    opts.fuzz_seed = Some(U256::from(6u32));
+    opts.fuzz.seed = Some(U256::from(6u32));
     runner.test_options = opts;
 
     let results = runner
@@ -136,7 +136,7 @@ fn test_invariant_shrink() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.fuzz_seed = Some(U256::from(102u32));
+    opts.fuzz.seed = Some(U256::from(102u32));
     runner.test_options = opts;
 
     let results = runner

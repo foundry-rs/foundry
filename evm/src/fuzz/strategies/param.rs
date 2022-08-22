@@ -142,7 +142,7 @@ mod tests {
         let func = HumanReadableParser::parse_function(f).unwrap();
 
         let db = CacheDB::new(EmptyDB());
-        let state = build_initial_state(&db);
+        let state = build_initial_state(&db, true);
 
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),

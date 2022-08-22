@@ -2,24 +2,27 @@
 
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
-use foundry_config::{Config, InvariantConfig, RpcEndpoint, RpcEndpoints};
+use foundry_config::{Config, FuzzConfig, InvariantConfig, RpcEndpoint, RpcEndpoints};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
 use std::collections::BTreeMap;
 
 pub static TEST_OPTS: TestOptions = TestOptions {
-    fuzz_runs: 256,
-    fuzz_max_local_rejects: 1024,
-    fuzz_max_global_rejects: 65536,
-    fuzz_seed: None,
+    fuzz: FuzzConfig {
+        runs: 256,
+        max_local_rejects: 1024,
+        max_global_rejects: 65536,
+        seed: None,
+        include_stack: true,
+        include_memory: true,
+        include_storage: true,
+        dict_weight: 80,
+    },
     invariant: InvariantConfig {
         runs: 256,
         depth: 15,
         fail_on_revert: false,
         call_override: false,
-        include_stack: true,
-        include_memory: true,
-        include_storage_keys: true,
-        dict_weight: 80,
+        include_storage: true,
     },
 };
 

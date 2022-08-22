@@ -8,7 +8,8 @@ use ethers::{
     types::{Address, Bytes, Log},
 };
 use foundry_common::{calc, contracts::ContractsByAddress};
-pub use proptest::test_runner::{Config as FuzzConfig, Reason};
+use foundry_config::FuzzConfig;
+pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
@@ -34,12 +35,19 @@ pub struct FuzzedExecutor<'a> {
     runner: TestRunner,
     /// The account that calls tests
     sender: Address,
+    /// The fuzz configuration
+    config: FuzzConfig,
 }
 
 impl<'a> FuzzedExecutor<'a> {
     /// Instantiates a fuzzed executor given a testrunner
-    pub fn new(executor: &'a Executor, runner: TestRunner, sender: Address) -> Self {
-        Self { executor, runner, sender }
+    pub fn new(
+        executor: &'a Executor,
+        runner: TestRunner,
+        sender: Address,
+        config: FuzzConfig,
+    ) -> Self {
+        Self { executor, runner, sender, config }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -65,9 +73,9 @@ impl<'a> FuzzedExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(fork_db)
+            build_initial_state(fork_db, self.config.include_storage)
         } else {
-            build_initial_state(self.executor.backend().mem_db())
+            build_initial_state(self.executor.backend().mem_db(), self.config.include_storage)
         };
 
         // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we

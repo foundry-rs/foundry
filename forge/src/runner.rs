@@ -441,6 +441,7 @@ impl<'a> ContractRunner<'a> {
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
+            test_options.invariant,
             &identified_contracts,
             project_contracts,
         );
@@ -449,7 +450,7 @@ impl<'a> ContractRunner<'a> {
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
         if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
-            evm.invariant_fuzz(invariant_contract, test_options.invariant)?
+            evm.invariant_fuzz(invariant_contract)?
         {
             let results = invariants
                 .iter()
@@ -503,12 +504,13 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
-            func,
-            address,
-            should_fail,
-            self.errors,
-        );
+        let mut result = FuzzedExecutor::new(
+            &self.executor,
+            runner,
+            self.sender,
+            Default::default(),
+        )
+        .fuzz(func, address, should_fail, self.errors);
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);

@@ -71,6 +71,9 @@ mod providers;
 use crate::etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 use providers::*;
 
+mod fuzz;
+pub use fuzz::FuzzConfig;
+
 mod invariant;
 pub use invariant::InvariantConfig;
 
@@ -204,8 +207,8 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
-    /// The number of test cases that must execute for each property test
-    pub fuzz_runs: u32,
+    /// Configuration for fuzz testing
+    pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
@@ -267,19 +270,6 @@ pub struct Config {
     /// output selection as separate files.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// The maximum number of local test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_local_rejects: u32,
-    /// The maximum number of global test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_global_rejects: u32,
-    /// Optional seed for the fuzzing RNG algorithm
-    #[serde(
-        deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
-    )]
-    pub fuzz_seed: Option<U256>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -355,7 +345,8 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] =
+        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1556,10 +1547,7 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            fuzz_runs: 256,
-            fuzz_max_local_rejects: 1024,
-            fuzz_max_global_rejects: 65536,
-            fuzz_seed: None,
+            fuzz: Default::default(),
             invariant: Default::default(),
             ffi: false,
             sender: Config::DEFAULT_SENDER,
@@ -3003,10 +2991,6 @@ mod tests {
                 extra_output_files = []
                 ffi = false
                 force = false
-                fuzz_max_global_rejects = 65536
-                fuzz_max_local_rejects = 1024
-                fuzz_runs = 256
-                fuzz_seed = '0x3e8'
                 invariant_runs = 256
                 invariant_depth = 15
                 invariant_fail_on_revert = false
@@ -3044,12 +3028,17 @@ mod tests {
                 mainnet = "${RPC_MAINNET}"
                 mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
 
+                [fuzz]
+                runs = 256
+                seed = '0x3e8'
+                max_global_rejects = 65536
+                max_local_rejects = 1024
             "#,
             )?;
 
             let config = Config::load_with_root(jail.directory());
 
-            assert_eq!(config.fuzz_seed, Some(1000.into()));
+            assert_eq!(config.fuzz.seed, Some(1000.into()));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
@@ -3279,7 +3268,7 @@ mod tests {
 
             assert_eq!(config.block_number, 1337);
             assert_eq!(config.sender, addr);
-            assert_eq!(config.fuzz_runs, 420);
+            assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
             assert!(!config.optimizer);

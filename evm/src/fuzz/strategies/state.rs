@@ -80,17 +80,22 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 }
 
 /// Builds the initial [EvmFuzzState] from a database.
-pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
+pub fn build_initial_state<DB: DatabaseRef>(
+    db: &CacheDB<DB>,
+    include_storage_values: bool,
+) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
         // Insert basic account information
         state.insert(H256::from(*address).into());
 
-        // Insert storage
-        for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_be(*slot).into());
-            state.insert(utils::u256_to_h256_be(*value).into());
+        if include_storage_values {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.insert(utils::u256_to_h256_be(*slot).into());
+                state.insert(utils::u256_to_h256_be(*value).into());
+            }
         }
     }
 

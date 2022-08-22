@@ -2,16 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// TODO:
-// exposing config items for
-// - percent of time dict vs. random vs. edge is used (edge + dict should be merged)
-// - include-stack
-// - include-memory
-// - include-storage-keys
-// - include-storage-values
-// - include-push-bytes (constants, immutables)
-// could help people fine tune that trade off, but also may be overkill
-
 /// Contains for invariant testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
@@ -24,14 +14,9 @@ pub struct InvariantConfig {
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
     /// checks
     pub call_override: bool,
+    // TODO:
     ///
-    pub include_stack: bool,
-    ///
-    pub include_memory: bool,
-    ///
-    pub include_storage_keys: bool,
-    ///
-    pub dict_weight: u32, // TODO: validation
+    pub include_storage: bool,
 }
 
 impl Default for InvariantConfig {
@@ -41,10 +26,7 @@ impl Default for InvariantConfig {
             depth: 15,
             fail_on_revert: false,
             call_override: false,
-            include_stack: true,
-            include_memory: true,
-            include_storage_keys: true,
-            dict_weight: 80,
+            include_storage: true,
         }
     }
 }
