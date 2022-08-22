@@ -79,7 +79,7 @@ pub struct CreateArgs {
     unlocked: bool,
 
     #[clap(flatten)]
-    pub verifier: verify::VerifierArg,
+    pub verifier: verify::VerifierArgs,
 }
 
 impl CreateArgs {

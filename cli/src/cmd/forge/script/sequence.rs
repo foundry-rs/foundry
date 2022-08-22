@@ -16,8 +16,6 @@ use foundry_common::fs;
 use foundry_config::Config;
 use yansi::Paint;
 
-use crate::cmd::forge::verify::VerificationProviderType;
-
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -287,7 +285,7 @@ fn get_verify_args(
                 retry: verify.retry.clone(),
                 libraries: libraries.to_vec(),
                 root: None,
-                verifier: verify::VerifierArg { verifier: VerificationProviderType::Etherscan },
+                verifier: Default::default(),
             };
 
             return Some(verify)
