@@ -220,8 +220,7 @@ impl ScriptArgs {
                     .await
                     .map_err(|_| {
                         eyre::eyre!(
-                            "One or more transactions failed when simulating the
-                    on-chain version. Check the trace by re-running with `-vvv`"
+                            "Transaction failed when running the on-chain simulation. Check the trace above for more information."
                         )
                     })?
                 };
