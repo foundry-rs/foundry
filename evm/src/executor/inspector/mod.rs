@@ -4,6 +4,9 @@ mod utils;
 mod logs;
 pub use logs::LogCollector;
 
+mod access_list;
+pub use access_list::AccessListTracer;
+
 mod tracer;
 pub use tracer::Tracer;
 

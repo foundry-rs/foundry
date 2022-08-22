@@ -275,7 +275,7 @@ where
     pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx).await?;
+        let res = self.provider.estimate_gas(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
