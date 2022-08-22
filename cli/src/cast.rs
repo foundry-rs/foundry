@@ -5,16 +5,13 @@ use ethers::{
     abi::HumanReadableParser,
     core::types::{BlockId, BlockNumber::Latest, H256},
     providers::Middleware,
-    types::{Address, NameOrAddress, U256},
+    types::{Address, U256},
 };
 
 use foundry_cli::{
     cmd::Cmd,
     handler,
-    opts::{
-        cast::{Opts, Subcommands},
-        WalletType,
-    },
+    opts::cast::{Opts, Subcommands},
     utils,
     utils::consume_config_rpc_url,
 };
@@ -31,7 +28,6 @@ use rustc_hex::ToHex;
 use std::{
     io::{self, Read, Write},
     str::FromStr,
-    sync::Arc,
 };
 
 #[tokio::main]

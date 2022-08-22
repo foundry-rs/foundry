@@ -1,4 +1,4 @@
-use super::{ClapChain, EthereumOpts, TransactionOpts};
+use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
         estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,

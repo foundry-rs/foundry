@@ -1,13 +1,10 @@
 // cast send subcommands
-use crate::{
-    opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, WalletType},
-    utils::parse_ether_value,
-};
+use crate::opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, WalletType};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{
     providers::Middleware,
-    types::{Address, NameOrAddress, U256},
+    types::{Address, NameOrAddress},
 };
 use foundry_common::get_http_provider;
 use foundry_config::{Chain, Config};
