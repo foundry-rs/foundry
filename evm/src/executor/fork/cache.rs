@@ -204,7 +204,7 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.is_destroyed || acc.is_touched {
+                if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
