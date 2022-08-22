@@ -289,13 +289,21 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 pub struct CallTraceStep {
+    /// Program counter before step execution
     pub pc: usize,
+    /// Opcode to be executed
     pub op: OpCode,
+    /// Stack before step execution
     pub stack: Stack,
+    /// Memory before step execution
     pub memory: Memory,
+    /// State before step execution
     pub state: HashMap<H160, Account>,
+    /// Remaining gas before step execution
     pub gas: u64,
+    /// Gas cost of step execution
     pub gas_cost: u64,
+    /// Error (if any) after after step execution
     pub error: Option<String>,
 }
 

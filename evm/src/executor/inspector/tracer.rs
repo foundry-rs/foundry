@@ -208,7 +208,16 @@ where
         let state = data.subroutine.state.clone();
         let gas = interp.gas.remaining();
 
-        self.start_step(CallTraceStep { pc, op, stack, memory, state, gas, gas_cost: 0 });
+        self.start_step(CallTraceStep {
+            pc,
+            op,
+            stack,
+            memory,
+            state,
+            gas,
+            gas_cost: 0,
+            error: None,
+        });
 
         Return::Continue
     }
