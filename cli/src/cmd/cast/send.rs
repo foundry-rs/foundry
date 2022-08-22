@@ -16,11 +16,11 @@ use std::{str::FromStr, sync::Arc};
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(
-            help = "The destination of the transaction.",
+            help = "The destination of the transaction. If not provided, you must use cast send --create.",
             parse(try_from_str = parse_name_or_address),
             value_name = "TO"
         )]
-    to: NameOrAddress,
+    to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,
     #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
@@ -53,12 +53,34 @@ pub struct SendTxArgs {
         conflicts_with = "nonce"
     )]
     resend: bool,
+
+    #[clap(subcommand)]
+    command: Option<SendTxSubcommands>,
+}
+
+#[derive(Debug, Parser)]
+pub enum SendTxSubcommands {
+    #[clap(name = "--create", about = "Use to deploy raw contract bytecode")]
+    Create {
+        #[clap(help = "Bytecode of contract.", value_name = "CODE")]
+        code: String,
+    },
 }
 
 impl SendTxArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        let SendTxArgs { eth, to, sig, cast_async, args, mut tx, confirmations, to_json, resend } =
-            self;
+        let SendTxArgs {
+            eth,
+            to,
+            sig,
+            cast_async,
+            args,
+            mut tx,
+            confirmations,
+            to_json,
+            resend,
+            command,
+        } = self;
         let config = Config::from(&eth);
         let provider = Arc::new(get_http_provider(
             &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
@@ -86,12 +108,19 @@ impl SendTxArgs {
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?);
             }
 
+            let code = if let Some(SendTxSubcommands::Create { code }) = command {
+                Some(code)
+            } else {
+                None
+            };
+
             match signer {
                 WalletType::Ledger(signer) => {
                     cast_send(
                         &signer,
                         from,
                         to,
+                        code,
                         (sig, args),
                         tx,
                         chain,
@@ -107,6 +136,7 @@ impl SendTxArgs {
                         &signer,
                         from,
                         to,
+                        code,
                         (sig, args),
                         tx,
                         chain,
@@ -122,6 +152,7 @@ impl SendTxArgs {
                         &signer,
                         from,
                         to,
+                        code,
                         (sig, args),
                         tx,
                         chain,
@@ -145,6 +176,7 @@ impl SendTxArgs {
                 provider,
                 config.sender,
                 to,
+                code,
                 (sig, args),
                 tx,
                 chain,
@@ -161,10 +193,12 @@ impl SendTxArgs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
     from: F,
-    to: T,
+    to: Option<T>,
+    code: Option<String>,
     args: (String, Vec<String>),
     tx: TransactionOpts,
     chain: Chain,
@@ -179,16 +213,27 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let mut builder = TxBuilder::new(&provider, from, Some(to), chain, legacy).await?;
+    let mut builder = TxBuilder::new(&provider, from, to, chain, tx.legacy).await?;
     builder
         .etherscan_api_key(etherscan_api_key)
-        .args(params)
-        .await?
         .gas(tx.gas_limit)
         .gas_price(tx.gas_price)
         .priority_gas_price(tx.priority_gas_price)
         .value(tx.value)
         .nonce(tx.nonce);
+
+    if let Some(code) = code {
+        let mut data = hex::decode(code.strip_prefix("0x").unwrap_or(&code))?;
+
+        if let Some((sig, args)) = params {
+            let (mut sigdata, _) = builder.create_args(&sig, args).await?;
+            data.append(&mut sigdata);
+        }
+
+        builder.set_data(data);
+    } else {
+        builder.args(params).await?;
+    };
     let builder_output = builder.build();
 
     let cast = Cast::new(provider);
