@@ -32,6 +32,13 @@ contract ExcludeSenders is DSTest {
         return addrs;
     }
 
+    // Tests clashing. Exclusion takes priority.
+    function targetSenders() public returns (address[] memory) {
+        address[] memory addrs = new address[](1);
+        addrs[0] = address(0xdeadbeef);
+        return addrs;
+    }
+
     function invariantTrueWorld() public {
         require(hello.world() == true, "false world.");
     }
