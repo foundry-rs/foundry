@@ -74,14 +74,16 @@ impl Tracer {
         let trace = &mut self.traces.arena
             [*self.trace_stack.last().expect("can't start step without starting a trace first")];
 
+        trace.trace.step_stack.push(trace.trace.steps.len());
         trace.trace.steps.push(step);
     }
 
     pub fn fill_step(&mut self, gas: u64, status: Return) {
         let trace = &mut self.traces.arena
             [*self.trace_stack.last().expect("can't fill step without starting a trace first")];
-        let step =
-            trace.trace.steps.last_mut().expect("can't fill step without starting a step first");
+        let step_idx =
+            trace.trace.step_stack.pop().expect("can't fill step without starting a step first");
+        let step = &mut trace.trace.steps[step_idx];
 
         step.gas_cost = step.gas - gas;
 

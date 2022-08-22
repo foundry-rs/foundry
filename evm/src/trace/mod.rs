@@ -385,6 +385,7 @@ pub struct CallTrace {
     pub call_context: Option<CallContext>,
     /// Opcode-level execution steps
     pub steps: Vec<CallTraceStep>,
+    pub step_stack: Vec<usize>,
 }
 
 // === impl CallTrace ===
@@ -413,6 +414,7 @@ impl Default for CallTrace {
             status: Return::Continue,
             call_context: Default::default(),
             steps: Default::default(),
+            step_stack: Default::default(),
         }
     }
 }
