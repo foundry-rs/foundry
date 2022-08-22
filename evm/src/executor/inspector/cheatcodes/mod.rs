@@ -275,11 +275,11 @@ where
 
             // Apply our prank
             if let Some(prank) = &self.prank {
-                if data.subroutine.depth() >= prank.depth &&
+                if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == prank.prank_caller
                 {
                     // At the target depth we set `msg.sender`
-                    if data.subroutine.depth() == prank.depth {
+                    if data.journaled_state.depth() == prank.depth {
                         call.context.caller = prank.new_caller;
                         call.transfer.source = prank.new_caller;
                     }
@@ -297,7 +297,7 @@ where
                 //
                 // We do this because any subsequent contract calls *must* exist on chain and
                 // we only want to grab *this* call, not internal ones
-                if data.subroutine.depth() == broadcast.depth &&
+                if data.journaled_state.depth() == broadcast.depth &&
                     call.context.caller == broadcast.original_caller
                 {
                     // At the target depth we set `msg.sender` & tx.origin.
@@ -310,8 +310,9 @@ where
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
                     if !is_static {
-                        data.subroutine.load_account(broadcast.origin, data.db);
-                        let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
+                        data.journaled_state.load_account(broadcast.origin, data.db);
+                        let account =
+                            data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
 
                         self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                             TransactionRequest {
@@ -360,7 +361,7 @@ where
 
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() == prank.depth {
+            if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = prank.prank_origin;
             }
             if prank.single_call {
@@ -377,7 +378,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.subroutine.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(false, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
@@ -390,7 +391,7 @@ where
         if !self
             .expected_emits
             .iter()
-            .filter(|expected| expected.depth == data.subroutine.depth())
+            .filter(|expected| expected.depth == data.journaled_state.depth())
             .all(|expected| expected.found)
         {
             return (
@@ -404,7 +405,7 @@ where
         }
 
         // If the depth is 0, then this is the root call terminating
-        if data.subroutine.depth() == 0 {
+        if data.journaled_state.depth() == 0 {
             // Handle expected calls that were not fulfilled
             if let Some((address, expecteds)) =
                 self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
@@ -456,7 +457,7 @@ where
             if data.db.is_forked_mode() && status == Return::Stop && call.contract != test_contract
             {
                 self.fork_revert_diagnostic =
-                    data.db.diagnose_revert(call.contract, &data.subroutine);
+                    data.db.diagnose_revert(call.contract, &data.journaled_state);
             }
         }
 
@@ -470,9 +471,9 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() >= prank.depth && call.caller == prank.prank_caller {
+            if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 // At the target depth we set `msg.sender`
-                if data.subroutine.depth() == prank.depth {
+                if data.journaled_state.depth() == prank.depth {
                     call.caller = prank.new_caller;
                 }
 
@@ -485,10 +486,10 @@ where
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.subroutine.depth() == broadcast.depth &&
+            if data.journaled_state.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                data.subroutine.load_account(broadcast.origin, data.db);
+                data.journaled_state.load_account(broadcast.origin, data.db);
 
                 let (bytecode, to, nonce) =
                     process_create(broadcast.origin, call.init_code.clone(), data, call);
@@ -520,7 +521,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() == prank.depth {
+            if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = prank.prank_origin;
             }
             if prank.single_call {
@@ -537,7 +538,7 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.subroutine.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match handle_expect_revert(true, &expected_revert.reason, status, retdata) {
                     Err(retdata) => (Return::Revert, None, remaining_gas, retdata),

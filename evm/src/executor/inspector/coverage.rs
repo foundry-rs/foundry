@@ -69,9 +69,8 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        data.journaled_state.load_account(call.caller, data.db);
+        let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.enter(get_create_address(call, nonce));
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())

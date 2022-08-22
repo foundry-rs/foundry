@@ -55,7 +55,7 @@ impl ScriptArgs {
             let script_result = runner.script(address, calldata)?;
 
             result.success &= script_result.success;
-            result.gas = script_result.gas;
+            result.gas_used = script_result.gas_used;
             result.logs.extend(script_result.logs);
             result.traces.extend(script_result.traces);
             result.debug = script_result.debug;
@@ -163,7 +163,7 @@ impl ScriptArgs {
                     }
 
                     // We inflate the gas used by the user specified percentage
-                    tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
+                    tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
 
                     final_txs.push_back(TransactionWithMetadata::new(
                         tx.into(),

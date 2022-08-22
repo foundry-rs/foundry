@@ -53,7 +53,7 @@ impl InvariantFuzzError {
                     match decode_revert(
                         call_result.result.as_ref(),
                         Some(invariant_contract.abi),
-                        Some(call_result.status)
+                        Some(call_result.exit_reason)
                     ) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
@@ -66,7 +66,7 @@ impl InvariantFuzzError {
             revert_reason: decode_revert(
                 call_result.result.as_ref(),
                 Some(invariant_contract.abi),
-                Some(call_result.status),
+                Some(call_result.exit_reason),
             )
             .unwrap_or_default(),
             addr: invariant_contract.address,

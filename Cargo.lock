@@ -98,7 +98,7 @@ dependencies = [
  "memory-db",
  "parking_lot 0.12.0",
  "pretty_assertions",
- "revm_precompiles",
+ "revm_precompiles 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "thiserror",
@@ -4401,8 +4401,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab402ae244afdd560b2aa710df5af557bc791b1cca6fec174ced0cf781e13134"
+source = "git+https://github.com/bluealloy/revm#97b16315c307e8ace22a56f4d2a574216fea77de"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4411,7 +4410,7 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles",
+ "revm_precompiles 1.1.0 (git+https://github.com/bluealloy/revm)",
  "rlp",
  "serde",
  "sha3",
@@ -4424,11 +4423,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af88e7e9feb30cc4ed64645f09b966e84a1f6be56551ce5f1691105def45705d"
 dependencies = [
  "bytes",
+ "num 0.4.0",
+ "primitive-types",
+ "ripemd",
+ "secp256k1 0.23.4",
+ "sha2 0.10.2",
+ "sha3",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm_precompiles"
+version = "1.1.0"
+source = "git+https://github.com/bluealloy/revm#97b16315c307e8ace22a56f4d2a574216fea77de"
+dependencies = [
+ "bytes",
  "k256",
  "num 0.4.0",
  "primitive-types",
  "ripemd",
- "secp256k1",
+ "secp256k1 0.24.0",
  "sha2 0.10.2",
  "sha3",
  "substrate-bn",
@@ -4663,6 +4677,15 @@ name = "secp256k1"
 version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ece73253dd9e1fb540ff324eae554113a31c25fb598d22fd13b088a6a03f90d"
+dependencies = [
+ "secp256k1-sys",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7649a0b3ffb32636e60c7ce0d70511eda9c52c658cd0634e194d5a19943aeff"
 dependencies = [
  "secp256k1-sys",
 ]
