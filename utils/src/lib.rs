@@ -262,7 +262,24 @@ pub fn to_table(value: serde_json::Value) -> String {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(HumanReadableParser::parse_function(sig)?)
+    Ok(match HumanReadableParser::parse_function(sig) {
+        Ok(func) => func,
+        Err(err) => {
+            if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                #[allow(deprecated)]
+                Function {
+                    name: "constructor".to_string(),
+                    inputs: constructor.inputs,
+                    outputs: vec![],
+                    constant: None,
+                    state_mutability: Default::default(),
+                }
+            } else {
+                // we return the `Function` parse error as this case is more likely
+                return Err(err.into())
+            }
+        }
+    })
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
