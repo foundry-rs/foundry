@@ -161,16 +161,26 @@ impl ScriptRunner {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
+            let (address, gas, logs, traces, debug) = match self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
                 None,
-            )?;
+            ) {
+                Ok(DeployResult { address, gas, logs, traces, debug }) => {
+                    (address, gas, logs, traces, debug)
+                }
+                Err(EvmError::Execution { reason, traces, gas, logs, debug, .. }) => {
+                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+
+                    (Address::zero(), gas, logs, traces, debug)
+                }
+                e => eyre::bail!("Unrecoverable error: {:?}", e),
+            };
 
             Ok(ScriptResult {
                 returned: bytes::Bytes::new(),
-                success: true,
+                success: address != Address::zero(),
                 gas,
                 logs,
                 traces: traces
