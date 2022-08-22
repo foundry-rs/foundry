@@ -75,7 +75,7 @@ impl SendTxArgs {
             to,
             sig,
             cast_async,
-            args,
+            mut args,
             mut tx,
             confirmations,
             to_json,
