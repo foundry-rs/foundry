@@ -12,17 +12,16 @@ pub static TEST_OPTS: TestOptions = TestOptions {
         max_local_rejects: 1024,
         max_global_rejects: 65536,
         seed: None,
-        include_stack: true,
-        include_memory: true,
         include_storage: true,
-        dict_weight: 80,
+        include_push_bytes: true,
+        dictionary_weight: 40,
     },
     invariant: InvariantConfig {
         runs: 256,
         depth: 15,
         fail_on_revert: false,
         call_override: false,
-        include_storage: true,
+        include_push_bytes: true,
     },
 };
 

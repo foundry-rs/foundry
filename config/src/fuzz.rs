@@ -31,15 +31,12 @@ pub struct FuzzConfig {
         deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
     )]
     pub seed: Option<U256>,
-    // TODO:
-    ///
-    pub include_stack: bool,
-    ///
-    pub include_memory: bool,
-    ///
+    /// The weight of the dictionary
+    pub dictionary_weight: u32, // TODO: validation
+    /// The flag indicating whether to include values from storage
     pub include_storage: bool,
-    ///
-    pub dict_weight: u32, // TODO: validation
+    /// The flag indicating whether to include push bytes values
+    pub include_push_bytes: bool,
 }
 
 impl Default for FuzzConfig {
@@ -49,10 +46,9 @@ impl Default for FuzzConfig {
             max_local_rejects: 1024,
             max_global_rejects: 65536,
             seed: None,
-            include_stack: true,
-            include_memory: true,
+            dictionary_weight: 40,
             include_storage: true,
-            dict_weight: 80,
+            include_push_bytes: true,
         }
     }
 }

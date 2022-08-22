@@ -150,7 +150,14 @@ impl<'a> InvariantExecutor<'a> {
                     let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("to have a state changeset.");
 
-                    collect_data(&mut state_changeset, sender, &call_result, fuzz_state.clone());
+                    collect_data(
+                        &mut state_changeset,
+                        sender,
+                        &call_result,
+                        fuzz_state.clone(),
+                        self.config.include_push_bytes,
+                        self.config.include_push_bytes,
+                    );
 
                     if let Err(error) = collect_created_contracts(
                         &state_changeset,
@@ -233,7 +240,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
         let fuzz_state: EvmFuzzState =
-            build_initial_state(self.executor.backend().mem_db(), self.config.include_storage);
+            build_initial_state(self.executor.backend().mem_db(), self.config.include_push_bytes);
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
@@ -510,6 +517,8 @@ fn collect_data(
     sender: &Address,
     call_result: &RawCallResult,
     fuzz_state: EvmFuzzState,
+    include_storage: bool,
+    include_push_bytes: bool,
 ) {
     // Verify it has no code.
     let mut has_code = false;
@@ -524,7 +533,13 @@ fn collect_data(
         sender_changeset = state_changeset.remove(sender);
     }
 
-    collect_state_from_call(&call_result.logs, &*state_changeset, fuzz_state);
+    collect_state_from_call(
+        &call_result.logs,
+        &*state_changeset,
+        fuzz_state,
+        include_storage,
+        include_push_bytes,
+    );
 
     // Re-add changes
     if let Some(changed) = sender_changeset {

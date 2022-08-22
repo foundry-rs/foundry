@@ -14,9 +14,8 @@ pub struct InvariantConfig {
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
     /// checks
     pub call_override: bool,
-    // TODO:
-    ///
-    pub include_storage: bool,
+    /// The flag indicating whether to include push bytes values
+    pub include_push_bytes: bool,
 }
 
 impl Default for InvariantConfig {
@@ -26,7 +25,7 @@ impl Default for InvariantConfig {
             depth: 15,
             fail_on_revert: false,
             call_override: false,
-            include_storage: true,
+            include_push_bytes: true,
         }
     }
 }

@@ -82,7 +82,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 /// Builds the initial [EvmFuzzState] from a database.
 pub fn build_initial_state<DB: DatabaseRef>(
     db: &CacheDB<DB>,
-    include_storage_values: bool,
+    include_storage: bool,
 ) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
@@ -90,7 +90,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
         // Insert basic account information
         state.insert(H256::from(*address).into());
 
-        if include_storage_values {
+        if include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
                 state.insert(utils::u256_to_h256_be(*slot).into());
@@ -114,6 +114,8 @@ pub fn collect_state_from_call(
     logs: &[Log],
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
+    include_storage: bool,
+    include_push_bytes: bool,
 ) {
     let mut state = state.write();
 
@@ -121,19 +123,23 @@ pub fn collect_state_from_call(
         // Insert basic account information
         state.insert(H256::from(*address).into());
 
-        // Insert storage
-        for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_be(*slot).into());
-            state.insert(utils::u256_to_h256_be(*value).into());
+        if include_storage {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.insert(utils::u256_to_h256_be(*slot).into());
+                state.insert(utils::u256_to_h256_be(*value).into());
+            }
         }
 
-        // Insert push bytes
-        if let Some(code) = &account.info.code {
-            if !state.cache.contains(address) {
-                state.cache.insert(*address);
+        if include_push_bytes {
+            // Insert push bytes
+            if let Some(code) = &account.info.code {
+                if !state.cache.contains(address) {
+                    state.cache.insert(*address);
 
-                for push_byte in collect_push_bytes(code.bytes().clone()) {
-                    state.insert(push_byte);
+                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                        state.insert(push_byte);
+                    }
                 }
             }
         }

@@ -13,7 +13,7 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, OptimizerDetails, SolcReq,
+    Config, FuzzConfig, OptimizerDetails, SolcReq,
 };
 use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
@@ -57,10 +57,13 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         contract_pattern_inverse: None,
         path_pattern: None,
         path_pattern_inverse: None,
-        fuzz_runs: 1000,
-        fuzz_max_local_rejects: 2000,
-        fuzz_max_global_rejects: 100203,
-        fuzz_seed: Some(1000.into()),
+        fuzz: FuzzConfig {
+            runs: 1000,
+            max_local_rejects: 2000,
+            max_global_rejects: 100203,
+            seed: Some(1000.into()),
+            ..Default::default()
+        },
         invariant: Default::default(),
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),

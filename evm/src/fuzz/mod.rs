@@ -78,11 +78,9 @@ impl<'a> FuzzedExecutor<'a> {
             build_initial_state(self.executor.backend().mem_db(), self.config.include_storage)
         };
 
-        // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
-        // have that, we should add a way to configure strategy weights
         let strat = proptest::strategy::Union::new_weighted(vec![
-            (60, fuzz_calldata(func.clone())),
-            (40, fuzz_calldata_from_state(func.clone(), state.clone())),
+            (100 - self.config.dictionary_weight, fuzz_calldata(func.clone())),
+            (self.config.dictionary_weight, fuzz_calldata_from_state(func.clone(), state.clone())),
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
@@ -94,7 +92,13 @@ impl<'a> FuzzedExecutor<'a> {
                 call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
-            collect_state_from_call(&call.logs, state_changeset, state.clone());
+            collect_state_from_call(
+                &call.logs,
+                state_changeset,
+                state.clone(),
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            );
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
