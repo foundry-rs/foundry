@@ -39,20 +39,13 @@ pub struct TestOptions {
     pub fuzz_max_global_rejects: u32,
     /// Optional seed for the fuzzing RNG algorithm
     pub fuzz_seed: Option<U256>,
-    /// The number of runs that must execute for each invariant test group.
-    pub invariant_runs: u32,
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub invariant_depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub invariant_fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
-    /// checks
-    pub invariant_call_override: bool,
+    /// The invariant test configuration
+    pub invariant: foundry_config::InvariantConfig,
 }
 
 impl TestOptions {
     pub fn invariant_fuzzer(&self) -> TestRunner {
-        self.fuzzer_with_cases(self.invariant_runs)
+        self.fuzzer_with_cases(self.invariant.runs)
     }
 
     pub fn fuzzer(&self) -> TestRunner {

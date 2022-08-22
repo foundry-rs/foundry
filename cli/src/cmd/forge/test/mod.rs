@@ -316,10 +316,7 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
         fuzz_max_local_rejects: config.fuzz_max_local_rejects,
         fuzz_max_global_rejects: config.fuzz_max_global_rejects,
         fuzz_seed: config.fuzz_seed,
-        invariant_runs: config.invariant_runs,
-        invariant_depth: config.invariant_depth,
-        invariant_fail_on_revert: config.invariant_fail_on_revert,
-        invariant_call_override: config.invariant_call_override,
+        invariant: config.invariant,
     };
 
     let mut filter = args.filter(&config);

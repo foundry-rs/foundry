@@ -115,6 +115,7 @@ fn select_random_sender(
     if !senders.targeted.is_empty() {
         let selector = any::<prop::sample::Selector>()
             .prop_map(move |selector| *selector.select(&*senders.targeted));
+        // TODO: config
         proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
             .boxed()
     } else {

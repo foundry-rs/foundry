@@ -80,7 +80,7 @@ fn test_invariant_override() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.invariant_call_override = true;
+    opts.invariant.call_override = true;
     runner.test_options = opts;
 
     let results = runner
@@ -105,7 +105,7 @@ fn test_invariant_storage() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.invariant_depth = 100;
+    opts.invariant.depth = 100;
     opts.fuzz_seed = Some(U256::from(6u32));
     runner.test_options = opts;
 

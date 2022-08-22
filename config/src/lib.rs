@@ -71,6 +71,9 @@ mod providers;
 use crate::etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
 use providers::*;
 
+mod invariant;
+pub use invariant::InvariantConfig;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -203,15 +206,8 @@ pub struct Config {
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
-    /// The number of runs that must execute for each invariant test group.
-    pub invariant_runs: u32,
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub invariant_depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub invariant_fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
-    /// checks
-    pub invariant_call_override: bool,
+    /// Configuration for invariant testing
+    pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -1564,10 +1560,7 @@ impl Default for Config {
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
             fuzz_seed: None,
-            invariant_runs: 256,
-            invariant_depth: 15,
-            invariant_fail_on_revert: false,
-            invariant_call_override: false,
+            invariant: Default::default(),
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -3574,6 +3567,28 @@ mod tests {
                     bracket_spacing: true,
                     ..Default::default()
                 }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                runs = 5123
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().sanitized();
+            assert_eq!(
+                loaded.invariant,
+                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
             );
 
             Ok(())
