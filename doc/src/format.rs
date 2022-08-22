@@ -22,6 +22,13 @@ impl<'a> DocFormat for DocOutput<'a> {
     }
 }
 
+// TODO:
+impl DocFormat for String {
+    fn doc(&self) -> String {
+        self.to_owned()
+    }
+}
+
 impl DocFormat for DocComment {
     fn doc(&self) -> String {
         match self {

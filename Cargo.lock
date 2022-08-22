@@ -2010,7 +2010,7 @@ dependencies = [
 name = "forge-doc"
 version = "0.1.0"
 dependencies = [
- "clap",
+ "clap 3.2.16",
  "ethers-solc",
  "eyre",
  "forge-fmt",

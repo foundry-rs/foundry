@@ -1,6 +1,6 @@
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use forge_doc::builder::DocBuilder;
+use forge_doc::builder::{DocBuilder, DocConfig};
 use foundry_config::{find_project_root_path, load_config_with_root};
 use std::path::PathBuf;
 
@@ -21,8 +21,11 @@ impl Cmd for DocArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         let config = load_config_with_root(self.root.clone());
-        DocBuilder::new(self.root.as_ref().unwrap_or(&find_project_root_path()?))
-            .with_paths(config.project_paths().input_files())
-            .build()
+        DocBuilder::from_config(DocConfig {
+            root: self.root.as_ref().unwrap_or(&find_project_root_path()?).to_path_buf(),
+            paths: config.project_paths().input_files(),
+            ..Default::default()
+        })
+        .build()
     }
 }
