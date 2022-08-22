@@ -139,24 +139,29 @@ impl RunArgs {
                 if let Some(to) = tx.to {
                     env.tx.transact_to = TransactTo::Call(to);
                     let RawCallResult {
-                        reverted, gas, traces, debug: run_debug, status: _, ..
+                        reverted,
+                        gas_used: gas,
+                        traces,
+                        debug: run_debug,
+                        exit_reason: _,
+                        ..
                     } = executor.commit_tx_with_env(env).unwrap();
 
                     RunResult {
                         success: !reverted,
                         traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                         debug: run_debug.unwrap_or_default(),
-                        gas,
+                        gas_used: gas,
                     }
                 } else {
-                    let DeployResult { gas, traces, debug: run_debug, .. }: DeployResult =
+                    let DeployResult { gas_used, traces, debug: run_debug, .. }: DeployResult =
                         executor.deploy_with_env(env, None).unwrap();
 
                     RunResult {
                         success: true,
                         traces: vec![(TraceKind::Execution, traces.unwrap_or_default())],
                         debug: run_debug.unwrap_or_default(),
-                        gas,
+                        gas_used,
                     }
                 }
             };
@@ -253,7 +258,7 @@ async fn print_traces(
         println!("{}", Paint::red("Transaction failed."));
     }
 
-    println!("Gas used: {}", result.gas);
+    println!("Gas used: {}", result.gas_used);
     Ok(())
 }
 
@@ -261,5 +266,5 @@ struct RunResult {
     pub success: bool,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: DebugArena,
-    pub gas: u64,
+    pub gas_used: u64,
 }

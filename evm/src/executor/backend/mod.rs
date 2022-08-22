@@ -16,8 +16,8 @@ use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, InMemoryDB, Inspector, Log,
-    Return, SubRoutine, TransactOut, TransactTo, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, InMemoryDB,
+    Inspector, JournaledState, Log, TransactTo, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -53,7 +53,7 @@ pub trait DatabaseExt: Database {
     /// A snapshot is associated with a new unique id that's created for the snapshot.
     /// Snapshots can be reverted: [DatabaseExt::revert], however a snapshot can only be reverted
     /// once. After a successful revert, the same snapshot id cannot be used again.
-    fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256;
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256;
     /// Reverts the snapshot if it exists
     ///
     /// Returns `true` if the snapshot was successfully reverted, `false` if no snapshot for that id
@@ -64,7 +64,12 @@ pub trait DatabaseExt: Database {
     /// snapshot and its revert.
     /// This will also revert any changes in the `Env` and replace it with the captured `Env` of
     /// `Self::snapshot`
-    fn revert(&mut self, id: U256, subroutine: &SubRoutine, env: &mut Env) -> Option<SubRoutine>;
+    fn revert(
+        &mut self,
+        id: U256,
+        journaled_state: &JournaledState,
+        env: &mut Env,
+    ) -> Option<JournaledState>;
 
     /// Creates and also selects a new fork
     ///
@@ -73,10 +78,10 @@ pub trait DatabaseExt: Database {
         &mut self,
         fork: CreateFork,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
-        let id = self.create_fork(fork, subroutine)?;
-        self.select_fork(id, env, subroutine)?;
+        let id = self.create_fork(fork, journaled_state)?;
+        self.select_fork(id, env, journaled_state)?;
         Ok(id)
     }
 
@@ -84,7 +89,7 @@ pub trait DatabaseExt: Database {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId>;
 
     /// Selects the fork's state
@@ -100,7 +105,7 @@ pub trait DatabaseExt: Database {
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Updates the fork to given block number.
@@ -115,7 +120,7 @@ pub trait DatabaseExt: Database {
         id: Option<LocalForkId>,
         block_number: U256,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -167,8 +172,11 @@ pub trait DatabaseExt: Database {
     /// the contract is deployed there.
     ///
     /// Returns a more useful error message if that's the case
-    fn diagnose_revert(&self, callee: Address, subroutine: &SubRoutine)
-        -> Option<RevertDiagnostic>;
+    fn diagnose_revert(
+        &self,
+        callee: Address,
+        journaled_state: &JournaledState,
+    ) -> Option<RevertDiagnostic>;
 
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
@@ -230,7 +238,7 @@ pub trait DatabaseExt: Database {
 /// accordingly, so that all `block.*` config values match
 ///
 /// When another for is selected [`DatabaseExt::select_fork()`] the entire storage, including
-/// `Subroutine` is swapped, but the storage of the caller's and the test contract account is
+/// `JournaledState` is swapped, but the storage of the caller's and the test contract account is
 /// _always_ cloned. This way a fork has entirely separate storage but data can still be shared
 /// across fork boundaries via stack and contract variables.
 ///
@@ -252,23 +260,23 @@ pub struct Backend {
     forks: MultiFork,
     // The default in memory db
     mem_db: InMemoryDB,
-    /// The subroutine to use to initialize new forks with
+    /// The journaled_state to use to initialize new forks with
     ///
-    /// The way [`revm::SubRoutine`] works is, that it holds the "hot" accounts loaded from the
+    /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
     /// underlying `Database` that feeds the Account and State data ([`revm::AccountInfo`])to the
-    /// subroutine so it can apply changes to the state while the evm executes.
+    /// journaled_state so it can apply changes to the state while the evm executes.
     ///
-    /// In a way the `Subroutine` is something like a cache that
+    /// In a way the `JournaledState` is something like a cache that
     /// 1. check if account is already loaded (hot)
     /// 2. if not load from the `Database` (this will then retrieve the account via RPC in forking
     /// mode)
     ///
-    /// To properly initialize we store the `Subroutine` before the first fork is selected
+    /// To properly initialize we store the `JournaledState` before the first fork is selected
     /// ([`DatabaseExt::select_fork`]).
     ///
-    /// This will be an empty `Subroutine`, which will be populated with persistent accounts, See
-    /// [`Self::update_fork_db()`] and [`clone_data()`].
-    fork_init_subroutine: SubRoutine,
+    /// This will be an empty `JournaledState`, which will be populated with persistent accounts,
+    /// See [`Self::update_fork_db()`] and [`clone_data()`].
+    fork_init_journaled_state: JournaledState,
     /// The currently active fork database
     ///
     /// If this is set, then the Backend is currently in forking mode
@@ -294,7 +302,7 @@ impl Backend {
         let mut backend = Self {
             forks,
             mem_db: InMemoryDB::default(),
-            fork_init_subroutine: Default::default(),
+            fork_init_journaled_state: Default::default(),
             active_fork_ids: None,
             inner: BackendInner {
                 persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
@@ -319,7 +327,7 @@ impl Backend {
         Self {
             forks: self.forks.clone(),
             mem_db: InMemoryDB::default(),
-            fork_init_subroutine: Default::default(),
+            fork_init_journaled_state: Default::default(),
             active_fork_ids: None,
             inner: Default::default(),
         }
@@ -419,14 +427,14 @@ impl Backend {
     }
 
     /// when creating or switching forks, we update the AccountInfo of the contract
-    pub(crate) fn update_fork_db(&self, subroutine: &mut SubRoutine, fork: &mut Fork) {
+    pub(crate) fn update_fork_db(&self, journaled_state: &mut JournaledState, fork: &mut Fork) {
         debug_assert!(
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
         );
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
-            subroutine,
+            journaled_state,
             fork,
         )
     }
@@ -435,14 +443,14 @@ impl Backend {
     pub(crate) fn update_fork_db_contracts(
         &self,
         accounts: impl IntoIterator<Item = Address>,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
         fork: &mut Fork,
     ) {
         if let Some((_, fork_idx)) = self.active_fork_ids.as_ref() {
             let active = self.inner.get_fork(*fork_idx);
-            clone_data(accounts, &active.db, subroutine, fork)
+            clone_data(accounts, &active.db, journaled_state, fork)
         } else {
-            clone_data(accounts, &self.mem_db, subroutine, fork)
+            clone_data(accounts, &self.mem_db, journaled_state, fork)
         }
     }
 
@@ -506,7 +514,7 @@ impl Backend {
                     if idx == active {
                         all_logs.append(&mut logs);
                     } else {
-                        all_logs.extend(f.subroutine.logs.clone())
+                        all_logs.extend(f.journaled_state.logs.clone())
                     }
                 });
             return all_logs
@@ -520,7 +528,7 @@ impl Backend {
         &mut self,
         mut env: Env,
         mut inspector: INSP,
-    ) -> (Return, TransactOut, u64, Map<Address, Account>, Vec<Log>)
+    ) -> (ExecutionResult, Map<Address, Account>)
     where
         INSP: Inspector<Self>,
     {
@@ -535,11 +543,11 @@ impl Backend {
 // === impl a bunch of `revm::Database` adjacent implementations ===
 
 impl DatabaseExt for Backend {
-    fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("create snapshot");
         let id = self.inner.snapshots.insert(BackendSnapshot::new(
             self.create_db_snapshot(),
-            subroutine.clone(),
+            journaled_state.clone(),
             env.clone(),
         ));
         trace!(target: "backend", "Created new snapshot {}", id);
@@ -549,9 +557,9 @@ impl DatabaseExt for Backend {
     fn revert(
         &mut self,
         id: U256,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
         current: &mut Env,
-    ) -> Option<SubRoutine> {
+    ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
@@ -561,8 +569,8 @@ impl DatabaseExt for Backend {
             }
 
             // merge additional logs
-            snapshot.merge(subroutine);
-            let BackendSnapshot { db, subroutine, env } = snapshot;
+            snapshot.merge(journaled_state);
+            let BackendSnapshot { db, journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
@@ -576,7 +584,7 @@ impl DatabaseExt for Backend {
             update_current_env_with_fork_env(current, env);
 
             trace!(target: "backend", "Reverted snapshot {}", id);
-            Some(subroutine)
+            Some(journaled_state)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
             None
@@ -586,14 +594,14 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        _subroutine: &SubRoutine,
+        _journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
 
         let (id, _) =
-            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_subroutine.clone());
+            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
         Ok(id)
     }
 
@@ -602,7 +610,7 @@ impl DatabaseExt for Backend {
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, "select fork");
         if self.is_active_fork(id) {
@@ -617,26 +625,26 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
-        // If we're currently in forking mode we need to update the subroutine to this point, this
-        // ensures the changes performed while the fork was active are recorded
+        // If we're currently in forking mode we need to update the journaled_state to this point,
+        // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
-            active.subroutine = subroutine.clone();
+            active.journaled_state = journaled_state.clone();
         } else {
             // this is the first time a fork is selected. This means up to this point all changes
-            // are made in a single `SubRoutine`, for example after a `setup` that only created
-            // different forks. Since the `Subroutine` is valid for all forks until the
+            // are made in a single `JournaledState`, for example after a `setup` that only created
+            // different forks. Since the `JournaledState` is valid for all forks until the
             // first fork is selected, we need to update it for all forks and use it as init state
             // for all future forks
-            trace!("recording fork init subroutine");
-            self.fork_init_subroutine = subroutine.clone();
+            trace!("recording fork init journaled_state");
+            self.fork_init_journaled_state = journaled_state.clone();
             for fork in self.inner.forks_iter_mut() {
-                fork.subroutine = self.fork_init_subroutine.clone();
+                fork.journaled_state = self.fork_init_journaled_state.clone();
             }
         }
 
         // update the shared state and track
         let mut fork = self.inner.take_fork(idx);
-        self.update_fork_db(subroutine, &mut fork);
+        self.update_fork_db(journaled_state, &mut fork);
         self.inner.set_fork(idx, fork);
 
         self.active_fork_ids = Some((id, idx));
@@ -651,7 +659,7 @@ impl DatabaseExt for Backend {
         id: Option<LocalForkId>,
         block_number: U256,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "roll fork");
         let id = self.ensure_fork(id)?;
@@ -667,16 +675,17 @@ impl DatabaseExt for Backend {
                 // forks are selected `select_fork`
                 update_current_env_with_fork_env(env, fork_env);
 
-                // we also need to update the subroutine right away, this has essentially the same
-                // effect as selecting (`select_fork`) by discarding non-persistent storage from the
-                // subroutine. This which will reset cached state from the previous block
+                // we also need to update the journaled_state right away, this has essentially the
+                // same effect as selecting (`select_fork`) by discarding
+                // non-persistent storage from the journaled_state. This which will
+                // reset cached state from the previous block
                 let persitent_addrs = self.inner.persistent_accounts.clone();
                 let active = self.inner.get_fork_mut(active_idx);
-                active.subroutine = self.fork_init_subroutine.clone();
+                active.journaled_state = self.fork_init_journaled_state.clone();
                 for addr in persitent_addrs {
-                    clone_subroutine_data(addr, subroutine, &mut active.subroutine);
+                    clone_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
-                *subroutine = active.subroutine.clone();
+                *journaled_state = active.journaled_state.clone();
             }
         }
         Ok(())
@@ -707,7 +716,7 @@ impl DatabaseExt for Backend {
     fn diagnose_revert(
         &self,
         callee: Address,
-        _subroutine: &SubRoutine,
+        _journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
@@ -875,7 +884,7 @@ pub enum BackendDatabaseSnapshot {
 #[derive(Debug, Clone)]
 pub struct Fork {
     db: ForkDB,
-    subroutine: SubRoutine,
+    journaled_state: JournaledState,
 }
 
 // === impl Fork ===
@@ -884,7 +893,7 @@ impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
         self.db.basic(acc).code_hash != KECCAK_EMPTY ||
-            self.subroutine
+            self.journaled_state
                 .state
                 .get(&acc)
                 .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
@@ -926,8 +935,8 @@ pub struct BackendInner {
     /// failed. When a snapshot is reverted, it reverts the state of the evm, but we still want
     /// to know if there was an `assert` that failed after the snapshot was taken so that we can
     /// check if the test function passed all asserts even across snapshots. When a snapshot is
-    /// reverted we get the _current_ `revm::Subroutine` which contains the state that we can check
-    /// if the `_failed` variable is set,
+    /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
+    /// check if the `_failed` variable is set,
     /// additionally
     pub has_failure_snapshot: bool,
     /// Tracks the address of a Test contract
@@ -1018,13 +1027,13 @@ impl BackendInner {
         id: LocalForkId,
         fork_id: ForkId,
         db: ForkDB,
-        subroutine: SubRoutine,
+        journaled_state: JournaledState,
     ) -> ForkLookupIndex {
         let idx = self.forks.len();
         self.issued_local_fork_ids.insert(id, fork_id.clone());
         self.created_forks.insert(fork_id, idx);
 
-        let fork = Fork { db, subroutine };
+        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         idx
     }
@@ -1059,13 +1068,13 @@ impl BackendInner {
         &mut self,
         fork_id: ForkId,
         db: ForkDB,
-        subroutine: SubRoutine,
+        journaled_state: JournaledState,
     ) -> (LocalForkId, ForkLookupIndex) {
         let idx = self.forks.len();
         self.created_forks.insert(fork_id.clone(), idx);
         let id = self.next_id();
         self.issued_local_fork_ids.insert(id, fork_id);
-        let fork = Fork { db, subroutine };
+        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         (id, idx)
     }
@@ -1094,30 +1103,30 @@ pub(crate) fn update_current_env_with_fork_env(current: &mut Env, fork: Env) {
 }
 
 /// Clones the data of the given `accounts` from the `active` database into the `fork_db`
-/// This includes the data held in storage (`CacheDB`) and kept in the `Subroutine`
+/// This includes the data held in storage (`CacheDB`) and kept in the `JournaledState`
 pub(crate) fn clone_data<ExtDB: DatabaseRef>(
     accounts: impl IntoIterator<Item = Address>,
     active: &CacheDB<ExtDB>,
-    active_subroutine: &mut SubRoutine,
+    active_journaled_state: &mut JournaledState,
     fork: &mut Fork,
 ) {
     for addr in accounts.into_iter() {
         clone_db_account_data(addr, active, &mut fork.db);
-        clone_subroutine_data(addr, active_subroutine, &mut fork.subroutine);
+        clone_journaled_state_data(addr, active_journaled_state, &mut fork.journaled_state);
     }
 
-    *active_subroutine = fork.subroutine.clone();
+    *active_journaled_state = fork.journaled_state.clone();
 }
 
-/// Clones the account data from the `active_subroutine`  into the `fork_subroutine`
-fn clone_subroutine_data(
+/// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
+fn clone_journaled_state_data(
     addr: Address,
-    active_subroutine: &mut SubRoutine,
-    fork_subroutine: &mut SubRoutine,
+    active_journaled_state: &mut JournaledState,
+    fork_journaled_state: &mut JournaledState,
 ) {
-    if let Some(acc) = active_subroutine.state.get(&addr).cloned() {
-        trace!(?addr, "updating subroutine account data");
-        fork_subroutine.state.insert(addr, acc);
+    if let Some(acc) = active_journaled_state.state.get(&addr).cloned() {
+        trace!(?addr, "updating journaled_state account data");
+        fork_journaled_state.state.insert(addr, acc);
     }
 }
 

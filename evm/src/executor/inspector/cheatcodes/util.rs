@@ -137,13 +137,13 @@ pub fn process_create<DB: Database>(
         revm::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
-            (bytecode, None, data.subroutine.account(broadcast_sender).info.nonce)
+            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
         }
         revm::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.subroutine.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
 
-            let info = &data.subroutine.account(DEFAULT_CREATE2_DEPLOYER).info;
+            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -162,7 +162,7 @@ pub fn process_create<DB: Database>(
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
-            let account = data.subroutine.state().get_mut(&broadcast_sender).unwrap();
+            let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let nonce = account.info.nonce;
             account.info.nonce += 1;
 

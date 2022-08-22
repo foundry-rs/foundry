@@ -1,7 +1,7 @@
 //! Cache related abstraction
 use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
+use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -189,7 +189,7 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || matches!(acc.filth, Filth::Destroyed) {
+            if acc.is_empty() || acc.is_destroyed {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {
@@ -204,14 +204,14 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.filth.abandon_old_storage() {
+                if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.is_zero() {
+                    if value.present_value().is_zero() {
                         acc_storage.remove(&index);
                     } else {
-                        acc_storage.insert(index, value);
+                        acc_storage.insert(index, value.present_value());
                     }
                 }
                 if acc_storage.is_empty() {
