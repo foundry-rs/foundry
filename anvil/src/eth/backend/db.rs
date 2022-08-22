@@ -45,12 +45,22 @@ pub trait MaybeHashDatabase: DatabaseRef {
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot);
 }
 
-impl MaybeHashDatabase for &dyn Db {
+impl<'a, T: 'a + MaybeHashDatabase + ?Sized> MaybeHashDatabase for &'a T
+where
+    &'a T: DatabaseRef,
+{
+    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
+        T::maybe_as_hash_db(self)
+    }
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        T::maybe_account_db(self, addr)
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         unimplemented!()
     }
 
-    fn init_from_snapshot(&mut self, _: StateSnapshot) {}
+    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
 /// This bundles all required revm traits
@@ -225,6 +235,10 @@ impl MaybeHashDatabase for StateDb {
         self.0.maybe_as_hash_db()
     }
 
+    fn maybe_account_db(&self, addr: Address) -> Option<(AsHashDB, H256)> {
+        self.0.maybe_account_db(addr)
+    }
+
     fn clear_into_snapshot(&mut self) -> StateSnapshot {
         self.0.clear_into_snapshot()
     }
@@ -232,18 +246,6 @@ impl MaybeHashDatabase for StateDb {
     fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
         self.0.init_from_snapshot(snapshot)
     }
-}
-
-impl<'a> MaybeHashDatabase for &'a StateDb {
-    fn maybe_as_hash_db(&self) -> Option<(AsHashDB, H256)> {
-        self.0.maybe_as_hash_db()
-    }
-
-    fn clear_into_snapshot(&mut self) -> StateSnapshot {
-        unimplemented!()
-    }
-
-    fn init_from_snapshot(&mut self, _snapshot: StateSnapshot) {}
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
