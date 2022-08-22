@@ -64,6 +64,10 @@ pub enum SendTxSubcommands {
     Create {
         #[clap(help = "Bytecode of contract.", value_name = "CODE")]
         code: String,
+        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
+        sig: Option<String>,
+        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
+        args: Vec<String>,
     },
 }
 
@@ -87,7 +91,7 @@ impl SendTxArgs {
         ));
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
-        let sig = sig.unwrap_or_default();
+        let mut sig = sig.unwrap_or_default();
 
         if let Ok(Some(signer)) = eth.signer_with(chain.into(), provider.clone()).await {
             let from = match &signer {
@@ -108,7 +112,14 @@ impl SendTxArgs {
                 tx.nonce = Some(provider.get_transaction_count(from, None).await?);
             }
 
-            let code = if let Some(SendTxSubcommands::Create { code }) = command {
+            let code = if let Some(SendTxSubcommands::Create {
+                code,
+                sig: constructor_sig,
+                args: constructor_args,
+            }) = command
+            {
+                sig = constructor_sig.unwrap_or_default();
+                args = constructor_args;
                 Some(code)
             } else {
                 None
@@ -172,7 +183,14 @@ impl SendTxArgs {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
 
-            let code = if let Some(SendTxSubcommands::Create { code }) = command {
+            let code = if let Some(SendTxSubcommands::Create {
+                code,
+                sig: constructor_sig,
+                args: constructor_args,
+            }) = command
+            {
+                sig = constructor_sig.unwrap_or_default();
+                args = constructor_args;
                 Some(code)
             } else {
                 None
