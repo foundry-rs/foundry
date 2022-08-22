@@ -170,7 +170,9 @@ impl ScriptRunner {
                 Ok(DeployResult { address, gas, logs, traces, debug }) => {
                     (address, gas, logs, traces, debug)
                 }
-                Err(EvmError::Execution { traces, gas, logs, debug, .. }) => {
+                Err(EvmError::Execution { reason, traces, gas, logs, debug, .. }) => {
+                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+
                     (Address::zero(), gas, logs, traces, debug)
                 }
                 e => eyre::bail!("Unrecoverable error: {:?}", e),
