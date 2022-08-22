@@ -70,6 +70,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
 use trie_db::{Recorder, Trie};
 
+pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;

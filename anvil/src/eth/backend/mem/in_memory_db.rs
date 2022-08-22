@@ -14,6 +14,7 @@ use tracing::{trace, warn};
 
 // reexport for convenience
 use crate::mem::state::storage_trie_db;
+use foundry_evm::executor::backend::snapshot::StateSnapshot;
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
@@ -27,6 +28,14 @@ impl Db for MemDb {
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {
         self.inner.block_hashes.insert(number, hash);
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_snapshot(snapshot)
     }
 
     fn dump_state(&self) -> Option<SerializableState> {

@@ -1,5 +1,8 @@
 //! In-memory blockchain storage
-use crate::eth::{backend::db::StateDb, pool::transactions::PoolTransaction};
+use crate::eth::{
+    backend::{db::StateDb, mem::cache::DiskStateCache},
+    pool::transactions::PoolTransaction,
+};
 use anvil_core::eth::{
     block::{Block, PartialHeader},
     receipt::TypedReceipt,
@@ -14,8 +17,12 @@ use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
+    path::PathBuf,
     sync::Arc,
 };
+use tempfile::TempDir;
+
+// === impl DiskStateCache ===
 
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
@@ -25,6 +32,8 @@ pub struct InMemoryBlockStates {
     limit: usize,
     /// all states present, used to enforce `limit`
     present: VecDeque<H256>,
+    /// Stores old states on disk
+    disk_cache: DiskStateCache,
 }
 
 // === impl InMemoryBlockStates ===
@@ -32,7 +41,12 @@ pub struct InMemoryBlockStates {
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
     pub fn new(limit: usize) -> Self {
-        Self { states: Default::default(), limit, present: Default::default() }
+        Self {
+            states: Default::default(),
+            limit,
+            present: Default::default(),
+            disk_cache: Default::default(),
+        }
     }
 
     /// Inserts a new (hash -> state) pair
@@ -42,7 +56,11 @@ impl InMemoryBlockStates {
     pub fn insert(&mut self, hash: H256, state: StateDb) {
         if self.present.len() > self.limit {
             // evict the oldest block
-            self.present.pop_front().and_then(|hash| self.states.remove(&hash));
+            if let Some((hash, state)) = self
+                .present
+                .pop_front()
+                .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
+            {}
         }
         self.states.insert(hash, state);
         self.present.push_back(hash);
@@ -71,8 +89,9 @@ impl fmt::Debug for InMemoryBlockStates {
 
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
-        // unlimited
-        Self::new(usize::MAX)
+        // enough in memory to store 1_000 blocks in memory, this is ~30min of up-time with 1s
+        // interval mining mode
+        Self::new(1_000)
     }
 }
 

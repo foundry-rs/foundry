@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
 
 mod fuzz;
-mod snapshot;
+pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;

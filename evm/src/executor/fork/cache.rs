@@ -72,7 +72,7 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds all the block hashes
-    pub fn block_hashes(&self) -> &RwLock<BTreeMap<u64, H256>> {
+    pub fn block_hashes(&self) -> &RwLock<Map<U256, H256>> {
         &self.db.block_hashes
     }
 
@@ -168,7 +168,7 @@ pub struct MemDb {
     /// Storage related data
     pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
     /// All retrieved block hashes
-    pub block_hashes: RwLock<BTreeMap<u64, H256>>,
+    pub block_hashes: RwLock<Map<U256, H256>>,
 }
 
 impl MemDb {
@@ -266,7 +266,7 @@ impl JsonBlockCacheDB {
         trace!(target: "cache", "reading json cache path={:?}", path);
         let span = trace_span!("cache", "path={:?}", &path);
         let _enter = span.enter();
-        let file = std::fs::File::open(&path).in_current_span()?;
+        let file = fs::File::open(&path).in_current_span()?;
         let file = std::io::BufReader::new(file);
         let data = serde_json::from_reader(file).in_current_span()?;
         Ok(Self { cache_path: Some(path), data })
@@ -353,7 +353,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
             meta: BlockchainDbMeta,
             accounts: BTreeMap<Address, AccountInfo>,
             storage: BTreeMap<Address, StorageInfo>,
-            block_hashes: BTreeMap<u64, H256>,
+            block_hashes: Map<u64, H256>,
         }
 
         let Data { meta, accounts, storage, block_hashes } = Data::deserialize(deserializer)?;
@@ -363,7 +363,9 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),
                 storage: RwLock::new(storage),
-                block_hashes: RwLock::new(block_hashes),
+                block_hashes: RwLock::new(
+                    block_hashes.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+                ),
             }),
         })
     }
