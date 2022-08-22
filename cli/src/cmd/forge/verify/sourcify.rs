@@ -88,7 +88,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                         SimpleCast::checksum_address(&args.address)?
                     );
                     let response = client
-                        .post(SOURCIFY_URL)
+                        .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")
                         .body(serde_json::to_string(&body)?)
                         .send()
@@ -125,7 +125,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 async {
                     let url = format!(
                         "{}check-by-addresses?addresses={}&chainIds={}",
-                        SOURCIFY_URL,
+                        args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL),
                         args.id,
                         args.chain.id(),
                     );
