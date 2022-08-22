@@ -1,6 +1,6 @@
 use crate::fuzz::{
     fuzz_calldata, fuzz_calldata_from_state,
-    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
+    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::fuzz_param,
     EvmFuzzState,
 };
@@ -11,7 +11,7 @@ use ethers::{
 use parking_lot::RwLock;
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use super::fuzz_param_from_state;
 
@@ -55,7 +55,7 @@ pub fn override_call_strat(
 /// `targetContracts()`, `targetSenders()`, `excludeContracts()`, `targetSelectors()`
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
@@ -67,10 +67,11 @@ pub fn invariant_strat(
 /// through specific strategies.
 fn generate_call(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
 ) -> BoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
+    let senders = Rc::new(senders);
     random_contract
         .prop_flat_map(move |(contract, abi, functions)| {
             let func = select_random_function(abi, functions);
@@ -90,8 +91,9 @@ fn generate_call(
 ///   remaining 20% will either be a random address (10%) or from the dictionary (90%).
 fn select_random_sender(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: Rc<SenderFilters>,
 ) -> impl Strategy<Value = Address> {
+    let senders_ref = senders.clone();
     let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
         (
             10,
@@ -106,11 +108,13 @@ fn select_random_sender(
                 .boxed(),
         ),
     ])
+    // Too many exclusions can slow down testing.
+    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(addr))
     .boxed();
 
-    if !senders.is_empty() {
-        let selector =
-            any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&*senders));
+    if !senders.targeted.is_empty() {
+        let selector = any::<prop::sample::Selector>()
+            .prop_map(move |selector| *selector.select(&*senders.targeted));
         proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
             .boxed()
     } else {
