@@ -1,7 +1,8 @@
 use super::{
-    assert_invariants, filters::ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts,
-    InvariantContract, InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions,
-    RandomCallGenerator, TargetedContracts,
+    assert_invariants,
+    filters::{ArtifactFilters, SenderFilters},
+    BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract, InvariantFuzzError,
+    InvariantFuzzTestResult, InvariantTestOptions, RandomCallGenerator, TargetedContracts,
 };
 use crate::{
     executor::{
@@ -378,9 +379,9 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         invariant_address: Address,
         abi: &Abi,
-    ) -> eyre::Result<(Vec<Address>, TargetedContracts)> {
-        let [senders, selected, excluded] =
-            ["targetSenders", "targetContracts", "excludeContracts"]
+    ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
+        let [targeted_senders, excluded_senders, selected, excluded] =
+            ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"]
                 .map(|method| self.get_list::<Address>(invariant_address, abi, method));
 
         let mut contracts: TargetedContracts = self
@@ -403,7 +404,7 @@ impl<'a> InvariantExecutor<'a> {
 
         self.select_selectors(invariant_address, abi, &mut contracts)?;
 
-        Ok((senders, contracts))
+        Ok((SenderFilters::new(targeted_senders, excluded_senders), contracts))
     }
 
     /// Selects the functions to fuzz based on the contract method `targetSelectors()` and
