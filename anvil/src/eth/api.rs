@@ -16,7 +16,6 @@ use crate::{
         },
         sign,
         sign::Signer,
-        util::PRECOMPILES,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -42,7 +41,7 @@ use ethers::{
     providers::ProviderError,
     types::{
         transaction::{
-            eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
+            eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
@@ -53,10 +52,7 @@ use ethers::{
 };
 use forge::{executor::DatabaseRef, revm::BlockEnv};
 use foundry_common::ProviderBuilder;
-use foundry_evm::{
-    revm::{return_ok, return_revert, Return},
-    utils::u256_to_h256_be,
-};
+use foundry_evm::revm::{return_ok, return_revert, Return};
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
@@ -804,37 +800,33 @@ impl EthApi {
             }
         }
 
-        // ensure tx succeeds
-        let (exit, out, _, mut state) =
-            self.backend.call(request.clone(), FeeDetails::zero(), Some(block_request)).await?;
+        self.backend
+            .with_database_at(Some(block_request), |state, block_env| {
+                let (exit, out, _, access_list) = self.backend.build_access_list_with_state(
+                    &state,
+                    request.clone(),
+                    FeeDetails::zero(),
+                    block_env.clone(),
+                )?;
+                ensure_return_ok(exit, &out)?;
 
-        ensure_return_ok(exit, &out)?;
+                // execute again but with access list set
+                request.access_list = Some(access_list.0.clone());
 
-        // cleanup state map
-        if let Some(from) = request.from {
-            // remove the sender
-            let _ = state.remove(&from);
-        }
+                let (exit, out, gas_used, _) = self.backend.call_with_state(
+                    &state,
+                    request.clone(),
+                    FeeDetails::zero(),
+                    block_env,
+                )?;
+                ensure_return_ok(exit, &out)?;
 
-        // remove all precompiles
-        for precompile in PRECOMPILES.iter() {
-            let _ = state.remove(precompile);
-        }
-
-        let items = state
-            .into_iter()
-            .map(|(address, acc)| {
-                let storage_keys = acc.storage.into_keys().map(u256_to_h256_be).collect();
-                AccessListItem { address, storage_keys }
+                Ok(AccessListWithGasUsed {
+                    access_list: AccessList(access_list.0),
+                    gas_used: gas_used.into(),
+                })
             })
-            .collect::<Vec<_>>();
-
-        // execute again but with access list set
-        request.access_list = Some(items.clone());
-
-        let gas_used = self.do_estimate_gas(request, block_number).await?;
-
-        Ok(AccessListWithGasUsed { access_list: AccessList(items), gas_used })
+            .await?
     }
 
     /// Estimate gas needed for execution of given contract.

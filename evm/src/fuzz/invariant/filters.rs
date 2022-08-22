@@ -1,6 +1,6 @@
 use crate::utils::get_function;
 use ethers::{
-    abi::{Abi, FixedBytes, Function},
+    abi::{Abi, Address, FixedBytes, Function},
     solc::ArtifactId,
 };
 use std::collections::BTreeMap;
@@ -48,5 +48,28 @@ impl ArtifactFilters {
         }
 
         Ok(None)
+    }
+}
+
+/// Filter for acceptable senders to use for invariant testing. Exclusion takes priority if
+/// clashing.
+///
+/// `address(0)` is excluded by default.
+#[derive(Default)]
+pub struct SenderFilters {
+    pub targeted: Vec<Address>,
+    pub excluded: Vec<Address>,
+}
+
+impl SenderFilters {
+    pub fn new(mut targeted: Vec<Address>, mut excluded: Vec<Address>) -> Self {
+        let addr_0 = Address::zero();
+        if !excluded.contains(&addr_0) {
+            excluded.push(addr_0);
+        }
+
+        targeted.retain(|addr| !excluded.contains(addr));
+
+        SenderFilters { targeted, excluded }
     }
 }

@@ -16,6 +16,7 @@ use crate::{
         fees::{FeeDetails, FeeManager},
         macros::node_info,
         pool::transactions::PoolTransaction,
+        util::get_precompiles_for,
     },
     mem::{
         in_memory_db::MemDb,
@@ -42,17 +43,20 @@ use ethers::{
     abi::ethereum_types::BigEndianHash,
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
-        Address, Block as EthersBlock, BlockId, Bytes, Filter, FilteredParams, Log, Trace,
-        Transaction, TransactionReceipt,
+        transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes, Filter,
+        FilteredParams, Log, Trace, Transaction, TransactionReceipt,
     },
-    utils::{keccak256, rlp},
+    utils::{get_contract_address, keccak256, rlp},
 };
-use forge::revm::{return_ok, return_revert, BlockEnv};
+use forge::{
+    executor::inspector::AccessListTracer,
+    revm::{return_ok, return_revert, BlockEnv, Return},
+};
 use foundry_evm::{
     decode::decode_revert,
     revm,
     revm::{
-        db::CacheDB, Account, CreateScheme, Env, Return, SpecId, TransactOut, TransactTo, TxEnv,
+        db::CacheDB, Account, CreateScheme, Env, SpecId, TransactOut, TransactTo, TxEnv,
         KECCAK_EMPTY,
     },
     utils::u256_to_h256_be,
@@ -278,6 +282,10 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.is_some()
+    }
+
+    pub fn precompiles(&self) -> Vec<Address> {
+        get_precompiles_for(self.env().read().cfg.spec_id)
     }
 
     /// Resets the fork to a fresh state
@@ -753,16 +761,12 @@ impl Backend {
         }).await?
     }
 
-    pub fn call_with_state<D>(
+    fn build_call_env(
         &self,
-        state: D,
         request: EthTransactionRequest,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
-    where
-        D: DatabaseRef,
-    {
+    ) -> Env {
         let EthTransactionRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -776,9 +780,10 @@ impl Backend {
         }
 
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+        let caller = from.unwrap_or_default();
 
         env.tx = TxEnv {
-            caller: from.unwrap_or_default(),
+            caller,
             gas_limit: gas_limit.as_u64(),
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
@@ -792,14 +797,57 @@ impl Backend {
             nonce: nonce.map(|n| n.as_u64()),
             access_list: to_access_list(access_list.unwrap_or_default()),
         };
+        env
+    }
 
+    pub fn call_with_state<D>(
+        &self,
+        state: D,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+    ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
+    where
+        D: DatabaseRef,
+    {
         let mut inspector = Inspector::default();
         let mut evm = revm::EVM::new();
-        evm.env = env;
+        evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
         let (exit, out, gas, state, _) = evm.inspect_ref(&mut inspector);
         inspector.print_logs();
         Ok((exit, out, gas, state))
+    }
+
+    pub fn build_access_list_with_state<D>(
+        &self,
+        state: D,
+        request: EthTransactionRequest,
+        fee_details: FeeDetails,
+        block_env: BlockEnv,
+    ) -> Result<(Return, TransactOut, u64, AccessList), BlockchainError>
+    where
+        D: DatabaseRef,
+    {
+        let from = request.from.unwrap_or_default();
+        let to = request.to.unwrap_or_else(|| {
+            let nonce = state.basic(from).nonce;
+            get_contract_address(from, nonce)
+        });
+
+        let mut tracer = AccessListTracer::new(
+            AccessList(request.access_list.clone().unwrap_or_default()),
+            from,
+            to,
+            self.precompiles(),
+        );
+
+        let mut evm = revm::EVM::new();
+        evm.env = self.build_call_env(request, fee_details, block_env);
+        evm.database(state);
+        let (exit, out, gas, _, _) = evm.inspect_ref(&mut tracer);
+        let access_list = tracer.access_list();
+        Ok((exit, out, gas, access_list))
     }
 
     /// returns all receipts for the given transactions

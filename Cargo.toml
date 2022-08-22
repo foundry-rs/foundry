@@ -65,5 +65,3 @@ debug = 0
 
 [patch.crates-io]
 #revm = { path = "../../revm/crates/revm" }
-svm-rs = { git = "https://github.com/onbjerg/svm-rs", branch = "onbjerg/linux-aarch-bump" }
-svm-rs-builds = { git = "https://github.com/onbjerg/svm-rs", branch = "onbjerg/linux-aarch-bump" }

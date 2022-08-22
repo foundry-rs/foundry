@@ -3,7 +3,7 @@ use crate::{fuzz::*, CALLER};
 mod error;
 use error::*;
 mod filters;
-pub use filters::ArtifactFilters;
+pub use filters::{ArtifactFilters, SenderFilters};
 mod call_override;
 pub use call_override::{set_up_inner_replay, RandomCallGenerator};
 mod executor;
