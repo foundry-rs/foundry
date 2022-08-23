@@ -140,7 +140,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             logs: call.logs,
             labeled_addresses: call.labels,
-            traces: traces.into_inner(),
+            traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
         };
 
         match run_result {
