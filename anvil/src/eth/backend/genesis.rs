@@ -1,10 +1,15 @@
 //! Genesis settings
 
-use ethers::types::{Address, U256};
+use crate::{eth::backend::db::Db, genesis::Genesis};
+use ethers::{
+    abi::ethereum_types::BigEndianHash,
+    types::{Address, U256},
+};
 use forge::revm::KECCAK_EMPTY;
 use foundry_evm::revm::AccountInfo;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use tokio::sync::RwLockWriteGuard;
 
 /// Genesis settings
 #[derive(Debug, Clone, Default)]
@@ -20,6 +25,8 @@ pub struct GenesisConfig {
     /// We store this for forking mode so we can cheaply reset the dev accounts and don't
     /// need to fetch them again.
     pub fork_genesis_account_infos: Arc<Mutex<Vec<AccountInfo>>>,
+    /// The `genesis.json` if provided
+    pub genesis_init: Option<Genesis>,
 }
 
 // === impl GenesisConfig ===
@@ -37,5 +44,20 @@ impl GenesisConfig {
             };
             (address, info)
         })
+    }
+
+    /// If an initial `genesis.json` was provided, this applies the account alloc to the db
+    pub fn apply_genesis_json_alloc(&self, mut db: RwLockWriteGuard<'_, dyn Db>) {
+        if let Some(ref genesis) = self.genesis_init {
+            for (addr, mut acc) in genesis.alloc.accounts.clone() {
+                let storage = std::mem::take(&mut acc.storage);
+                // insert all accounts
+                db.insert_account(addr, acc.into());
+                // insert all storage values
+                for (k, v) in storage.iter() {
+                    db.set_storage_at(addr, k.into_uint(), v.into_uint());
+                }
+            }
+        }
     }
 }

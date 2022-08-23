@@ -19,7 +19,7 @@ mod sourcify;
 
 /// Verification provider arguments
 #[derive(Debug, Clone, Parser)]
-pub struct VerifierArg {
+pub struct VerifierArgs {
     #[clap(
         arg_enum,
         long = "verifier",
@@ -28,6 +28,20 @@ pub struct VerifierArg {
         default_value = "etherscan"
     )]
     pub verifier: VerificationProviderType,
+
+    #[clap(
+        long,
+        env = "VERIFIER_URL",
+        help = "The verifier URL, if using a custom provider",
+        value_name = "VERIFIER_URL"
+    )]
+    verifier_url: Option<String>,
+}
+
+impl Default for VerifierArgs {
+    fn default() -> Self {
+        VerifierArgs { verifier: VerificationProviderType::Etherscan, verifier_url: None }
+    }
 }
 
 /// Verification arguments
@@ -112,7 +126,7 @@ pub struct VerifyArgs {
     pub root: Option<PathBuf>,
 
     #[clap(flatten)]
-    pub verifier: VerifierArg,
+    pub verifier: VerifierArgs,
 }
 
 impl_figment_convert_basic!(VerifyArgs);
@@ -155,7 +169,7 @@ pub struct VerifyCheckArgs {
     etherscan_key: Option<String>,
 
     #[clap(flatten)]
-    pub verifier: VerifierArg,
+    verifier: VerifierArgs,
 }
 
 impl VerifyCheckArgs {

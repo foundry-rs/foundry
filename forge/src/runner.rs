@@ -362,7 +362,7 @@ impl<'a> ContractRunner<'a> {
             ) {
                 Ok(CallResult {
                     reverted,
-                    gas,
+                    gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
@@ -378,7 +378,7 @@ impl<'a> ContractRunner<'a> {
                 Err(EvmError::Execution {
                     reverted,
                     reason,
-                    gas,
+                    gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,

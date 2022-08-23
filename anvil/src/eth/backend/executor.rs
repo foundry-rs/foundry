@@ -17,6 +17,7 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
+use forge::revm::ExecutionResult;
 use foundry_evm::{
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
@@ -28,9 +29,9 @@ use tracing::{trace, warn};
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
-    exit: Return,
+    exit_reason: Return,
     out: TransactOut,
-    gas: u64,
+    gas_used: u64,
     logs: Vec<Log>,
     traces: Vec<CallTraceNode>,
 }
@@ -40,13 +41,14 @@ pub struct ExecutedTransaction {
 impl ExecutedTransaction {
     /// Creates the receipt for the transaction
     fn create_receipt(&self) -> TypedReceipt {
-        let used_gas: U256 = self.gas.into();
+        let used_gas: U256 = self.gas_used.into();
         let mut bloom = Bloom::default();
         logs_bloom(self.logs.clone(), &mut bloom);
         let logs = self.logs.clone();
 
         // successful return see [Return]
-        let status_code: u8 = if self.exit as u8 <= Return::SelfDestruct as u8 { 1 } else { 0 };
+        let status_code: u8 =
+            if self.exit_reason as u8 <= Return::SelfDestruct as u8 { 1 } else { 0 };
         match &self.transaction.pending_transaction.transaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,
@@ -133,7 +135,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let ExecutedTransaction { transaction, logs, out, traces, exit, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, exit_reason: exit, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -238,25 +240,26 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.inspect_commit(&mut inspector);
+        let ExecutionResult { exit_reason, out, gas_used, logs, .. } =
+            evm.inspect_commit(&mut inspector);
         inspector.print_logs();
 
-        if exit == Return::OutOfGas {
+        if exit_reason == Return::OutOfGas {
             // this currently useful for debugging estimations
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
 
-        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas);
+        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas_used);
 
-        self.gas_used.saturating_add(U256::from(gas));
+        self.gas_used.saturating_add(U256::from(gas_used));
 
-        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit, gas);
+        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit_reason, gas_used);
 
         let tx = ExecutedTransaction {
             transaction,
-            exit,
+            exit_reason,
             out,
-            gas,
+            gas_used,
             logs: logs.into_iter().map(Into::into).collect(),
             traces: inspector.tracer.unwrap_or_default().traces.arena,
         };

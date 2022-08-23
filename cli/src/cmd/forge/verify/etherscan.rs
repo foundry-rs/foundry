@@ -37,7 +37,8 @@ pub struct EtherscanVerificationProvider;
 #[async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let etherscan = self.client(&args.chain, &args.etherscan_key)?;
+        let etherscan =
+            self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
         let verify_args = self.create_verify_request(&args).await?;
 
         trace!("submitting verification request {:?}", verify_args);
@@ -103,7 +104,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> eyre::Result<()> {
-        let etherscan = self.client(&args.chain, &args.etherscan_key)?;
+        let etherscan =
+            self.client(&args.chain, &args.verifier.verifier_url, &args.etherscan_key)?;
         println!("Waiting for verification result...");
         let retry: Retry = args.retry.into();
         retry
@@ -143,9 +145,21 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
 impl EtherscanVerificationProvider {
     /// Create an etherscan client
-    fn client(&self, chain: &Chain, etherscan_key: &Option<String>) -> eyre::Result<Client> {
-        Client::builder()
-            .chain(chain.to_owned().try_into()?)?
+    fn client(
+        &self,
+        chain: &Chain,
+        url: &Option<String>,
+        etherscan_key: &Option<String>,
+    ) -> eyre::Result<Client> {
+        let mut builder = Client::builder();
+
+        builder = if let Some(url) = url {
+            builder.with_api_url(url)?.with_url(url)?
+        } else {
+            builder.chain(chain.to_owned().try_into()?)?
+        };
+
+        builder
             .with_api_key(etherscan_key.clone().unwrap_or_default())
             .build()
             .wrap_err("Failed to create etherscan client")

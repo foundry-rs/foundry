@@ -175,7 +175,7 @@ impl<'a> InvariantExecutor<'a> {
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
-                        gas: call_result.gas,
+                        gas: call_result.gas_used,
                         stipend: call_result.stipend,
                     });
 

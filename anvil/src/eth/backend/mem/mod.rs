@@ -50,7 +50,7 @@ use ethers::{
 };
 use forge::{
     executor::inspector::AccessListTracer,
-    revm::{return_ok, return_revert, BlockEnv, Return},
+    revm::{return_ok, return_revert, BlockEnv, ExecutionResult, Return},
 };
 use foundry_evm::{
     decode::decode_revert,
@@ -233,6 +233,9 @@ impl Backend {
                 db.insert_account(account, info);
             }
         }
+
+        // apply the genesis.json alloc
+        self.genesis.apply_genesis_json_alloc(db);
     }
 
     /// Sets the account to impersonate
@@ -333,6 +336,9 @@ impl Backend {
             {
                 db.insert_account(address, info);
             }
+
+            // reset the genesis.json alloc
+            self.genesis.apply_genesis_json_alloc(db);
 
             Ok(())
         } else {
@@ -555,9 +561,10 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
-        let out = evm.inspect_ref(&mut inspector);
+        let (ExecutionResult { exit_reason, out, gas_used, logs, .. }, state) =
+            evm.inspect_ref(&mut inspector);
         inspector.print_logs();
-        out
+        (exit_reason, out, gas_used, state, logs)
     }
 
     /// Creates the pending block
@@ -814,9 +821,10 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (exit, out, gas, state, _) = evm.inspect_ref(&mut inspector);
+        let (ExecutionResult { exit_reason, out, gas_used, .. }, state) =
+            evm.inspect_ref(&mut inspector);
         inspector.print_logs();
-        Ok((exit, out, gas, state))
+        Ok((exit_reason, out, gas_used, state))
     }
 
     pub fn build_access_list_with_state<D>(
@@ -845,9 +853,9 @@ impl Backend {
         let mut evm = revm::EVM::new();
         evm.env = self.build_call_env(request, fee_details, block_env);
         evm.database(state);
-        let (exit, out, gas, _, _) = evm.inspect_ref(&mut tracer);
+        let (ExecutionResult { exit_reason, out, gas_used, .. }, _) = evm.inspect_ref(&mut tracer);
         let access_list = tracer.access_list();
-        Ok((exit, out, gas, access_list))
+        Ok((exit_reason, out, gas_used, access_list))
     }
 
     /// returns all receipts for the given transactions

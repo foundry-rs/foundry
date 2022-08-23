@@ -65,3 +65,4 @@ debug = 0
 
 [patch.crates-io]
 #revm = { path = "../../revm/crates/revm" }
+revm = { git = "https://github.com/bluealloy/revm" }
