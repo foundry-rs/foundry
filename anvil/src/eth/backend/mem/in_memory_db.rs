@@ -14,6 +14,7 @@ use tracing::{trace, warn};
 
 // reexport for convenience
 use crate::mem::state::storage_trie_db;
+use foundry_evm::executor::backend::snapshot::StateSnapshot;
 pub use foundry_evm::executor::{backend::MemDb, DatabaseRef};
 
 impl Db for MemDb {
@@ -125,6 +126,14 @@ impl MaybeHashDatabase for MemDb {
         } else {
             Some(storage_trie_db(&Default::default()))
         }
+    }
+
+    fn clear_into_snapshot(&mut self) -> StateSnapshot {
+        self.inner.clear_into_snapshot()
+    }
+
+    fn init_from_snapshot(&mut self, snapshot: StateSnapshot) {
+        self.inner.init_from_snapshot(snapshot)
     }
 }
 

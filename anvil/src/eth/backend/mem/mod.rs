@@ -71,6 +71,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use tracing::{trace, warn};
 use trie_db::{Recorder, Trie};
 
+pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
@@ -1259,7 +1260,7 @@ impl Backend {
         let block_number: U256 = self.convert_block_number(block_number).into();
 
         if block_number < self.env.read().block.number {
-            let states = self.states.read();
+            let mut states = self.states.write();
             return if let Some((state, block)) = self
                 .get_block(block_number.as_u64())
                 .and_then(|block| Some((states.get(&block.header.hash())?, block)))

@@ -2,6 +2,7 @@
 
 use crate::{
     executor::{
+        backend::snapshot::StateSnapshot,
         fork::{BlockchainDb, SharedBackend},
         snapshot::Snapshots,
     },
@@ -14,7 +15,7 @@ use ethers::{
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
 use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// a [revm::Database] that's forked off another client
@@ -96,12 +97,12 @@ impl ForkedDatabase {
 
     pub fn create_snapshot(&self) -> ForkDbSnapshot {
         let db = self.db.db();
-        ForkDbSnapshot {
-            local: self.cache_db.clone(),
+        let snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
-        }
+        };
+        ForkDbSnapshot { local: self.cache_db.clone(), snapshot }
     }
 
     pub fn insert_snapshot(&self) -> U256 {
@@ -115,7 +116,10 @@ impl ForkedDatabase {
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots().lock().remove(id) };
         if let Some(snapshot) = snapshot {
-            let ForkDbSnapshot { accounts, storage, block_hashes, local } = snapshot;
+            let ForkDbSnapshot {
+                local,
+                snapshot: StateSnapshot { accounts, storage, block_hashes },
+            } = snapshot;
             let db = self.inner().db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -187,12 +191,12 @@ impl DatabaseCommit for ForkedDatabase {
 }
 
 /// Represents a snapshot of the database
+///
+/// This mimics `revm::CacheDB`
 #[derive(Debug)]
 pub struct ForkDbSnapshot {
-    local: CacheDB<SharedBackend>,
-    accounts: BTreeMap<Address, AccountInfo>,
-    storage: BTreeMap<Address, BTreeMap<U256, U256>>,
-    block_hashes: BTreeMap<u64, H256>,
+    pub local: CacheDB<SharedBackend>,
+    pub snapshot: StateSnapshot,
 }
 
 // === impl DbSnapshot ===
@@ -210,9 +214,12 @@ impl DatabaseRef for ForkDbSnapshot {
     fn basic(&self, address: Address) -> AccountInfo {
         match self.local.accounts.get(&address) {
             Some(account) => account.info.clone(),
-            None => {
-                self.accounts.get(&address).cloned().unwrap_or_else(|| self.local.basic(address))
-            }
+            None => self
+                .snapshot
+                .accounts
+                .get(&address)
+                .cloned()
+                .unwrap_or_else(|| self.local.basic(address)),
         }
     }
 
@@ -235,8 +242,9 @@ impl DatabaseRef for ForkDbSnapshot {
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.block_hashes
-            .get(&number.as_u64())
+        self.snapshot
+            .block_hashes
+            .get(&number)
             .copied()
             .unwrap_or_else(|| self.local.block_hash(number))
     }

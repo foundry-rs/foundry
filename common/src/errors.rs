@@ -33,6 +33,8 @@ pub enum FsPathError {
     Open { source: io::Error, path: PathBuf },
     #[error("failed to parse json file: {path:?}: {source}")]
     ReadJson { source: serde_json::Error, path: PathBuf },
+    #[error("failed to write to json file: {path:?}: {source}")]
+    WriteJson { source: serde_json::Error, path: PathBuf },
 }
 
 impl FsPathError {
@@ -83,6 +85,7 @@ impl AsRef<Path> for FsPathError {
             FsPathError::RemoveFile { path, .. } => path,
             FsPathError::Open { path, .. } => path,
             FsPathError::ReadJson { path, .. } => path,
+            FsPathError::WriteJson { path, .. } => path,
         }
     }
 }
@@ -98,6 +101,7 @@ impl From<FsPathError> for io::Error {
             FsPathError::RemoveFile { source, .. } => source,
             FsPathError::Open { source, .. } => source,
             FsPathError::ReadJson { source, .. } => source.into(),
+            FsPathError::WriteJson { source, .. } => source.into(),
         }
     }
 }

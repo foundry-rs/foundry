@@ -1,6 +1,6 @@
 //! Contains various `std::fs` wrapper functions that also contain the target path in their errors
 use crate::errors::FsPathError;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{fs, path::Path};
 
 type Result<T> = std::result::Result<T, FsPathError>;
@@ -35,6 +35,15 @@ pub fn read_json_file<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> 
     let file = std::io::BufReader::new(file);
     serde_json::from_reader(file)
         .map_err(|source| FsPathError::ReadJson { source, path: path.to_path_buf() })
+}
+
+/// Writes the object as a json object
+pub fn write_json_file<T: Serialize>(path: impl AsRef<Path>, obj: &T) -> Result<()> {
+    let path = path.as_ref();
+    let file = create_file(path)?;
+    let file = std::io::BufWriter::new(file);
+    serde_json::to_writer(file, obj)
+        .map_err(|source| FsPathError::WriteJson { source, path: path.to_path_buf() })
 }
 
 /// Wrapper for `std::fs::write`
