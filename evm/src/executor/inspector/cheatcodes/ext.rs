@@ -10,9 +10,9 @@ use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::*,
-    utils::hex::FromHex,
 };
 use foundry_common::fs;
+use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
 use serde_json::Value;
@@ -132,51 +132,6 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
         Ok(Bytes::new())
     }
 }
-fn value_to_abi(val: Vec<String>, r#type: ParamType, is_array: bool) -> Result<Bytes, Bytes> {
-    let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
-    let parse_uint = |v: &str| {
-        if v.starts_with("0x") {
-            let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_little_endian(&v))
-        } else {
-            U256::from_dec_str(v).map_err(|e| e.to_string())
-        }
-    };
-    let parse_int = |v: &str| {
-        // hex string may start with "0x", "+0x", or "-0x"
-        if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
-            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
-        } else {
-            I256::from_dec_str(v).map(|v| v.into_raw())
-        }
-    };
-    let parse_address = |v: &str| Address::from_str(v);
-    let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
-    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(v));
-
-    val.iter()
-        .map(|v| match r#type {
-            ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
-            ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
-            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
-            ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
-            ParamType::FixedBytes(32) => {
-                parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
-            }
-            ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
-            ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
-            _ => Err(format!("{} is not a supported type", r#type)),
-        })
-        .collect::<Result<Vec<Token>, String>>()
-        .map(|mut tokens| {
-            if is_array {
-                abi::encode(&[Token::Array(tokens)]).into()
-            } else {
-                abi::encode(&[tokens.remove(0)]).into()
-            }
-        })
-        .map_err(|e| e.into())
-}
 
 fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
@@ -186,7 +141,7 @@ fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, B
         vec![val]
     };
     let is_array: bool = delim.is_some();
-    value_to_abi(val, r#type, is_array)
+    util::value_to_abi(val, r#type, is_array)
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
