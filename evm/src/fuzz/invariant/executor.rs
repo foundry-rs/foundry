@@ -248,10 +248,14 @@ impl<'a> InvariantExecutor<'a> {
             Arc::new(Mutex::new(targeted_contracts));
 
         // Creates the invariant strategy.
-        let strat =
-            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone())
-                .no_shrink()
-                .boxed();
+        let strat = invariant_strat(
+            fuzz_state.clone(),
+            targeted_senders,
+            targeted_contracts.clone(),
+            self.config.dictionary_weight,
+        )
+        .no_shrink()
+        .boxed();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.

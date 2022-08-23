@@ -16,6 +16,8 @@ pub struct InvariantConfig {
     pub call_override: bool,
     /// The flag indicating whether to include push bytes values
     pub include_push_bytes: bool,
+    /// The weight of the dictionary
+    pub dictionary_weight: u32, // TODO: validation
 }
 
 impl Default for InvariantConfig {
@@ -26,6 +28,7 @@ impl Default for InvariantConfig {
             fail_on_revert: false,
             call_override: false,
             include_push_bytes: true,
+            dictionary_weight: 80,
         }
     }
 }
