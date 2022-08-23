@@ -253,7 +253,12 @@ pub fn apply<DB: Database>(
             })
         }
         HEVMCalls::GetNonce(inner) => {
-            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            );
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
@@ -268,19 +273,39 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Broadcast0(_) => {
-            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            );
             broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)
         }
         HEVMCalls::Broadcast1(inner) => {
-            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            );
             broadcast(state, inner.0, caller, data.journaled_state.depth(), true)
         }
         HEVMCalls::StartBroadcast0(_) => {
-            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            );
             broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)
         }
         HEVMCalls::StartBroadcast1(inner) => {
-            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            );
             broadcast(state, inner.0, caller, data.journaled_state.depth(), false)
         }
         HEVMCalls::StopBroadcast(_) => {
@@ -294,13 +319,16 @@ pub fn apply<DB: Database>(
 /// When using `forge script`, the script method is called using the address from `--sender`.
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
-fn correct_sender_nonce(
+fn correct_sender_nonce<DB: Database>(
     sender: Address,
     journaled_state: &mut revm::JournaledState,
+    db: &mut DB,
     state: &mut Cheatcodes,
 ) {
     if !state.corrected_nonce {
-        journaled_state.inc_nonce(sender);
-        state.corrected_nonce = true;
+        with_journaled_account(journaled_state, db, sender, |account| {
+            account.info.nonce = account.info.nonce.saturating_sub(1);
+            state.corrected_nonce = true;
+        });
     }
 }
