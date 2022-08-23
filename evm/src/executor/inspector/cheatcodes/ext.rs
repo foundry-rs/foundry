@@ -281,31 +281,42 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 fn value_to_token(value: &Value) -> Result<Token, Token> {
-    if value.is_boolean() {
-        Ok(Token::Bool(value.as_bool().unwrap()))
-    } else if value.is_string() {
-        let val = value.as_str().unwrap();
+    if let Some(boolean) = value.as_bool() {
+        Ok(Token::Bool(boolean))
+    } else if let Some(string) = value.as_str() {
         // If it can decoded as an address, it's an address
-        if let Ok(addr) = H160::from_str(val) {
+        if let Ok(addr) = H160::from_str(string) {
             Ok(Token::Address(addr))
+        } else if let Some(val) = string.strip_prefix("0x") {
+            // If incornrect length, pad 0 at the beginning
+            if hex::decode(val).is_ok() {
+                // if length == 32 bytes, then encode as Bytes32, else Bytes
+                Ok(if val.len() == 64 {
+                    Token::FixedBytes(Vec::from_hex(val).unwrap())
+                } else {
+                    Token::Bytes(Vec::from_hex(val).unwrap())
+                })
+            } else {
+                let arr = format!("0{}", val);
+                Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
+            }
         } else {
-            Ok(Token::String(val.to_owned()))
+            Ok(Token::String(string.to_owned()))
         }
-    } else if value.is_u64() {
-        Ok(Token::Uint(value.as_u64().unwrap().into()))
-    } else if value.is_i64() {
-        Ok(Token::Int(value.as_i64().unwrap().into()))
-    } else if value.is_array() {
-        let arr = value.as_array().unwrap();
-        Ok(Token::Array(arr.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>()))
-    } else if value.is_object() {
-        let values = value
-            .as_object()
-            .unwrap()
-            .values()
-            .map(|val| value_to_token(val).unwrap())
-            .collect::<Vec<Token>>();
+    } else if let Some(number) = value.as_u64() {
+        Ok(Token::Uint(number.into()))
+    } else if let Some(number) = value.as_i64() {
+        Ok(Token::Int(number.into()))
+    } else if let Some(array) = value.as_array() {
+        Ok(Token::Array(
+            array.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>(),
+        ))
+    } else if let Some(object) = value.as_object() {
+        let values =
+            object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
         Ok(Token::Tuple(values))
+    } else if value.is_null() {
+        Ok(Token::FixedBytes(Vec::with_capacity(32)))
     } else {
         Err(Token::String("Could not decode field".to_string()))
     }
