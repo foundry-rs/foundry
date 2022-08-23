@@ -17,7 +17,7 @@ use forge::{
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
-        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier, SignaturesIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
@@ -522,6 +522,10 @@ fn test(
                         .with_labels(result.labeled_addresses.clone())
                         .with_events(local_identifier.events())
                         .build();
+
+                    decoder.add_signature_identifier(SignaturesIdentifier::new(
+                        Config::foundry_cache_dir(),
+                    )?);
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();

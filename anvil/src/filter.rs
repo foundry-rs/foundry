@@ -94,7 +94,13 @@ impl Filters {
         trace!(target: "node::filter", "Evicting stale filters");
         let now = Instant::now();
         let mut active_filters = self.active_filters.lock().await;
-        active_filters.retain(|_, (_, deadline)| *deadline > now);
+        active_filters.retain(|id, (_, deadline)| {
+            if now > *deadline {
+                trace!(target: "node::filter",?id, "Evicting stale filter");
+                return false
+            }
+            true
+        });
     }
 }
 

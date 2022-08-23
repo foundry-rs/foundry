@@ -16,7 +16,6 @@ use crate::{
         },
         sign,
         sign::Signer,
-        util::PRECOMPILES,
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
@@ -27,6 +26,7 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         proof::AccountProof,
+        state::StateOverride,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -42,7 +42,7 @@ use ethers::{
     providers::ProviderError,
     types::{
         transaction::{
-            eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
+            eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
         Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
@@ -53,10 +53,7 @@ use ethers::{
 };
 use forge::{executor::DatabaseRef, revm::BlockEnv};
 use foundry_common::ProviderBuilder;
-use foundry_evm::{
-    revm::{return_ok, return_revert, Return},
-    utils::u256_to_h256_be,
-};
+use foundry_evm::revm::{return_ok, return_revert, Return};
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
@@ -203,7 +200,9 @@ impl EthApi {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::EthCall(call, block) => self.call(call, block).await.to_rpc_result(),
+            EthRequest::EthCall(call, block, overrides) => {
+                self.call(call, block, overrides).await.to_rpc_result()
+            }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
@@ -292,7 +291,10 @@ impl EthApi {
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
-                self.evm_set_next_block_timestamp(time).to_rpc_result()
+                match u64::try_from(time).map_err(BlockchainError::UintConversion) {
+                    Ok(time) => self.evm_set_next_block_timestamp(time).to_rpc_result(),
+                    err @ Err(_) => err.to_rpc_result(),
+                }
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
                 self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
@@ -591,7 +593,7 @@ impl EthApi {
     pub async fn get_proof(
         &self,
         address: Address,
-        keys: Vec<U256>,
+        keys: Vec<H256>,
         block_number: Option<BlockId>,
     ) -> Result<AccountProof> {
         node_info!("eth_getProof");
@@ -747,6 +749,7 @@ impl EthApi {
         &self,
         request: EthTransactionRequest,
         block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
         node_info!("eth_call");
         let block_request = self.block_request(block_number)?;
@@ -754,6 +757,11 @@ impl EthApi {
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number.as_u64()) {
+                    if overrides.is_some() {
+                        return Err(BlockchainError::StateOverrideError(
+                            "not available on past forked blocks".into(),
+                        ))
+                    }
                     return Ok(fork.call(&request, Some(number.into())).await?)
                 }
             }
@@ -766,7 +774,8 @@ impl EthApi {
         )?
         .or_zero_fees();
 
-        let (exit, out, gas, _) = self.backend.call(request, fees, Some(block_request)).await?;
+        let (exit, out, gas, _) =
+            self.backend.call(request, fees, Some(block_request), overrides).await?;
         trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
 
         ensure_return_ok(exit, &out)
@@ -801,37 +810,33 @@ impl EthApi {
             }
         }
 
-        // ensure tx succeeds
-        let (exit, out, _, mut state) =
-            self.backend.call(request.clone(), FeeDetails::zero(), Some(block_request)).await?;
+        self.backend
+            .with_database_at(Some(block_request), |state, block_env| {
+                let (exit, out, _, access_list) = self.backend.build_access_list_with_state(
+                    &state,
+                    request.clone(),
+                    FeeDetails::zero(),
+                    block_env.clone(),
+                )?;
+                ensure_return_ok(exit, &out)?;
 
-        ensure_return_ok(exit, &out)?;
+                // execute again but with access list set
+                request.access_list = Some(access_list.0.clone());
 
-        // cleanup state map
-        if let Some(from) = request.from {
-            // remove the sender
-            let _ = state.remove(&from);
-        }
+                let (exit, out, gas_used, _) = self.backend.call_with_state(
+                    &state,
+                    request.clone(),
+                    FeeDetails::zero(),
+                    block_env,
+                )?;
+                ensure_return_ok(exit, &out)?;
 
-        // remove all precompiles
-        for precompile in PRECOMPILES.iter() {
-            let _ = state.remove(precompile);
-        }
-
-        let items = state
-            .into_iter()
-            .map(|(address, acc)| {
-                let storage_keys = acc.storage.into_keys().map(u256_to_h256_be).collect();
-                AccessListItem { address, storage_keys }
+                Ok(AccessListWithGasUsed {
+                    access_list: AccessList(access_list.0),
+                    gas_used: gas_used.into(),
+                })
             })
-            .collect::<Vec<_>>();
-
-        // execute again but with access list set
-        request.access_list = Some(items.clone());
-
-        let gas_used = self.do_estimate_gas(request, block_number).await?;
-
-        Ok(AccessListWithGasUsed { access_list: AccessList(items), gas_used })
+            .await?
     }
 
     /// Estimate gas needed for execution of given contract.

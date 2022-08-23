@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use super::Cheatcodes;
-use crate::abi::HEVMCalls;
+use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util::with_journaled_account};
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
     types::{Address, U256},
 };
 use revm::{Bytecode, Database, EVMData};
+use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct Broadcast {
@@ -114,7 +115,7 @@ fn start_record_logs(state: &mut Cheatcodes) {
 
 fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     if let Some(recorded_logs) = state.recorded_logs.replace(Default::default()) {
-        ethers::abi::encode(
+        abi::encode(
             &recorded_logs
                 .entries
                 .iter()
@@ -129,7 +130,7 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
         )
         .into()
     } else {
-        ethers::abi::encode(&[Token::Array(vec![])]).into()
+        abi::encode(&[Token::Array(vec![])]).into()
     }
 }
 
@@ -162,62 +163,68 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::Store(inner) => {
             // TODO: Does this increase gas usage?
-            data.subroutine.load_account(inner.0, data.db);
-            data.subroutine.sstore(inner.0, inner.1.into(), inner.2.into(), data.db);
+            data.journaled_state.load_account(inner.0, data.db);
+            data.journaled_state.sstore(inner.0, inner.1.into(), inner.2.into(), data.db);
             Ok(Bytes::new())
         }
         HEVMCalls::Load(inner) => {
             // TODO: Does this increase gas usage?
-            data.subroutine.load_account(inner.0, data.db);
-            let (val, _) = data.subroutine.sload(inner.0, inner.1.into(), data.db);
+            data.journaled_state.load_account(inner.0, data.db);
+            let (val, _) = data.journaled_state.sload(inner.0, inner.1.into(), data.db);
             Ok(val.encode().into())
         }
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
 
             // TODO: Does this increase gas usage?
-            data.subroutine.load_account(inner.0, data.db);
-            data.subroutine.set_code(inner.0, Bytecode::new_raw(code.0).to_checked());
+            data.journaled_state.load_account(inner.0, data.db);
+            data.journaled_state.set_code(inner.0, Bytecode::new_raw(code.0).to_checked());
             Ok(Bytes::new())
         }
         HEVMCalls::Deal(inner) => {
             let who = inner.0;
             let value = inner.1;
+            trace!(?who, ?value, "deal cheatcode");
 
-            // TODO: Does this increase gas usage?
-            data.subroutine.load_account(who, data.db);
-            let balance = data.subroutine.account(inner.0).info.balance;
-
-            // TODO: We should probably upstream a `set_balance` function
-            if balance < value {
-                data.subroutine.balance_add(who, value - balance);
-            } else {
-                data.subroutine.balance_sub(who, balance - value);
-            }
+            with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
+                account.info.balance = value;
+            });
             Ok(Bytes::new())
         }
-        HEVMCalls::Prank0(inner) => {
-            prank(state, caller, data.env.tx.caller, inner.0, None, data.subroutine.depth(), true)
-        }
+        HEVMCalls::Prank0(inner) => prank(
+            state,
+            caller,
+            data.env.tx.caller,
+            inner.0,
+            None,
+            data.journaled_state.depth(),
+            true,
+        ),
         HEVMCalls::Prank1(inner) => prank(
             state,
             caller,
             data.env.tx.caller,
             inner.0,
             Some(inner.1),
-            data.subroutine.depth(),
+            data.journaled_state.depth(),
             true,
         ),
-        HEVMCalls::StartPrank0(inner) => {
-            prank(state, caller, data.env.tx.caller, inner.0, None, data.subroutine.depth(), false)
-        }
+        HEVMCalls::StartPrank0(inner) => prank(
+            state,
+            caller,
+            data.env.tx.caller,
+            inner.0,
+            None,
+            data.journaled_state.depth(),
+            false,
+        ),
         HEVMCalls::StartPrank1(inner) => prank(
             state,
             caller,
             data.env.tx.caller,
             inner.0,
             Some(inner.1),
-            data.subroutine.depth(),
+            data.journaled_state.depth(),
             false,
         ),
         HEVMCalls::StopPrank(_) => {
@@ -235,29 +242,25 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::GetRecordedLogs(_) => Ok(get_recorded_logs(state)),
         HEVMCalls::SetNonce(inner) => {
-            // TODO:  this is probably not a good long-term solution since it might mess up the gas
-            // calculations
-            data.subroutine.load_account(inner.0, data.db);
-
-            // we can safely unwrap because `load_account` insert inner.0 to DB.
-            let account = data.subroutine.state().get_mut(&inner.0).unwrap();
-            // nonce must increment only
-            if account.info.nonce < inner.1 {
-                account.info.nonce = inner.1;
-                Ok(Bytes::new())
-            } else {
-                Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
-            }
+            with_journaled_account(&mut data.journaled_state, data.db, inner.0, |account| {
+                // nonce must increment only
+                if account.info.nonce < inner.1 {
+                    account.info.nonce = inner.1;
+                    Ok(Bytes::new())
+                } else {
+                    Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
+                }
+            })
         }
         HEVMCalls::GetNonce(inner) => {
-            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
+            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
-            data.subroutine.load_account(inner.0, data.db);
+            data.journaled_state.load_account(inner.0, data.db);
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
-            let account = data.subroutine.state().get(&inner.0).unwrap();
+            let account = data.journaled_state.state().get(&inner.0).unwrap();
             Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
         }
         HEVMCalls::ChainId(inner) => {
@@ -265,20 +268,20 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Broadcast0(_) => {
-            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
-            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), true)
+            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)
         }
         HEVMCalls::Broadcast1(inner) => {
-            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
-            broadcast(state, inner.0, caller, data.subroutine.depth(), true)
+            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            broadcast(state, inner.0, caller, data.journaled_state.depth(), true)
         }
         HEVMCalls::StartBroadcast0(_) => {
-            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
-            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), false)
+            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)
         }
         HEVMCalls::StartBroadcast1(inner) => {
-            correct_sender_nonce(&data.env.tx.caller, &mut data.subroutine, state);
-            broadcast(state, inner.0, caller, data.subroutine.depth(), false)
+            correct_sender_nonce(data.env.tx.caller, &mut data.journaled_state, state);
+            broadcast(state, inner.0, caller, data.journaled_state.depth(), false)
         }
         HEVMCalls::StopBroadcast(_) => {
             state.broadcast = None;
@@ -292,13 +295,12 @@ pub fn apply<DB: Database>(
 /// That leads to its nonce being incremented by `call_raw`. In a `broadcast` scenario this is
 /// undesirable. Therefore, we make sure to fix the sender's nonce **once**.
 fn correct_sender_nonce(
-    sender: &Address,
-    subroutine: &mut revm::SubRoutine,
+    sender: Address,
+    journaled_state: &mut revm::JournaledState,
     state: &mut Cheatcodes,
 ) {
     if !state.corrected_nonce {
-        let account = subroutine.state().get_mut(sender).unwrap();
-        account.info.nonce -= 1;
+        journaled_state.inc_nonce(sender);
         state.corrected_nonce = true;
     }
 }

@@ -15,7 +15,7 @@ use ethers::{
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
-use revm::{CreateInputs, Database, EVMData};
+use revm::{Account, CreateInputs, Database, EVMData};
 use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -29,6 +29,24 @@ pub const MISSING_CREATE2_DEPLOYER: &str =
 // keccak(Error(string))
 pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
 pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
+
+/// Applies the given function `f` to the `revm::Account` belonging to the `addr`
+///
+/// This will ensure the `Account` is loaded and `touched`, see [`JournaledState::touch`]
+pub fn with_journaled_account<F, R, DB: Database>(
+    journaled_state: &mut JournaledState,
+    db: &mut DB,
+    addr: Address,
+    mut f: F,
+) -> R
+where
+    F: FnMut(&mut Account) -> R,
+{
+    journaled_state.load_account(addr, db);
+    journaled_state.touch(&addr);
+    let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
+    f(account)
+}
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
@@ -147,13 +165,13 @@ pub fn process_create<DB: Database>(
         revm::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
-            (bytecode, None, data.subroutine.account(broadcast_sender).info.nonce)
+            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
         }
         revm::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.subroutine.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
 
-            let info = &data.subroutine.account(DEFAULT_CREATE2_DEPLOYER).info;
+            let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
@@ -172,7 +190,7 @@ pub fn process_create<DB: Database>(
 
             // We have to increment the nonce of the user address, since this create2 will be done
             // by the create2_deployer
-            let account = data.subroutine.state().get_mut(&broadcast_sender).unwrap();
+            let account = data.journaled_state.state().get_mut(&broadcast_sender).unwrap();
             let nonce = account.info.nonce;
             account.info.nonce += 1;
 

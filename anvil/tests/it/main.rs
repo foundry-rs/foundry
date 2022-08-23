@@ -5,6 +5,7 @@ mod api;
 mod fork;
 mod ganache;
 mod gas;
+mod genesis;
 mod geth;
 mod logs;
 mod proof;

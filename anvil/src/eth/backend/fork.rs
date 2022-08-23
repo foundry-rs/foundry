@@ -48,8 +48,9 @@ impl ClientFork {
     pub async fn reset(
         &self,
         url: Option<String>,
-        block_number: Option<u64>,
+        block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
+        let block_number = block_number.into();
         {
             self.database
                 .write()
@@ -69,19 +70,20 @@ impl ClientFork {
             self.config.write().chain_id = chain_id.as_u64();
         }
 
-        let block = if let Some(block_number) = block_number {
-            let provider = self.provider();
-            let block =
-                provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-            let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
-            let timestamp = block.timestamp.as_u64();
-            let base_fee = block.base_fee_per_gas;
-            Some((block_number, block_hash, timestamp, base_fee))
-        } else {
-            None
-        };
+        let provider = self.provider();
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+        let timestamp = block.timestamp.as_u64();
+        let base_fee = block.base_fee_per_gas;
 
-        self.config.write().update_block(block);
+        self.config.write().update_block(
+            block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
+            block_hash,
+            timestamp,
+            base_fee,
+        );
+
         self.clear_cached_storage();
         Ok(())
     }
@@ -151,14 +153,10 @@ impl ClientFork {
     pub async fn get_proof(
         &self,
         address: Address,
-        keys: Vec<U256>,
+        keys: Vec<H256>,
         block_number: Option<BlockId>,
     ) -> Result<AccountProof, ProviderError> {
-        let address = ethers::utils::serialize(&address);
-        let keys = ethers::utils::serialize(&keys);
-        let block_number =
-            ethers::utils::serialize(&block_number.unwrap_or_else(|| BlockNumber::Latest.into()));
-        self.provider().request("eth_getProof", [address, keys, block_number]).await
+        self.provider().get_proof(address, keys, block_number).await
     }
 
     /// Sends `eth_call`
@@ -450,14 +448,18 @@ impl ClientForkConfig {
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
-    pub fn update_block(&mut self, block: Option<(u64, H256, u64, Option<U256>)>) {
-        if let Some((block_number, block_hash, timestamp, base_fee)) = block {
-            self.block_number = block_number;
-            self.block_hash = block_hash;
-            self.timestamp = timestamp;
-            self.base_fee = base_fee;
-            trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
-        }
+    pub fn update_block(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+        timestamp: u64,
+        base_fee: Option<U256>,
+    ) {
+        self.block_number = block_number;
+        self.block_hash = block_hash;
+        self.timestamp = timestamp;
+        self.base_fee = base_fee;
+        trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
 
@@ -480,32 +482,5 @@ impl ForkedStorage {
     pub fn clear(&mut self) {
         // simply replace with a completely new, empty instance
         *self = Self::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anvil_core::eth::EthRequest;
-
-    #[test]
-    fn serialize_get_proof_payload() {
-        let s = r#"{"method":"eth_getProof","params":["0x7f0d15c7faae65896648c8273b6d7e43f58fa842",["0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"],"latest"]}"#;
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let req = serde_json::from_value::<EthRequest>(value.clone()).unwrap();
-        match req {
-            EthRequest::EthGetProof(address, keys, block_number) => {
-                let address = ethers::utils::serialize(&address);
-                let keys = ethers::utils::serialize(&keys);
-                let block_number = ethers::utils::serialize(
-                    &block_number.unwrap_or_else(|| BlockNumber::Latest.into()),
-                );
-                let params = ethers::utils::serialize(&[address, keys, block_number]);
-                let mut payload = value.clone();
-                payload["params"] = params;
-                assert_eq!(payload, value);
-            }
-            _ => panic!("unexpected variant"),
-        }
     }
 }

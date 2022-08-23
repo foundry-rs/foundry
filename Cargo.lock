@@ -98,6 +98,7 @@ dependencies = [
  "memory-db",
  "parking_lot 0.12.0",
  "pretty_assertions",
+ "revm_precompiles 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "thiserror",
@@ -1559,7 +1560,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1574,7 +1575,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1585,7 +1586,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1603,7 +1604,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1626,7 +1627,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1640,7 +1641,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1671,7 +1672,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1687,9 +1688,10 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "async-trait",
+ "auto_impl 0.5.0",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1711,7 +1713,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1747,7 +1749,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1770,7 +1772,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.17.0"
-source = "git+https://github.com/gakonst/ethers-rs#ffcf10d6b3fa2ea90eb02a2cc7b5cb3b4c7726eb"
+source = "git+https://github.com/gakonst/ethers-rs#10f74f818af71a66c236d0a3c99259e306382c9e"
 dependencies = [
  "cfg-if 1.0.0",
  "colored",
@@ -3509,9 +3511,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18a6dbe30758c9f83eb00cbea4ac95966305f5a7772f3f42ebfc7fc7eddbd8e1"
+checksum = "074864da206b4973b84eb91683020dbefd6a8c3f0f38e054d93954e891935e4e"
 
 [[package]]
 name = "oorandom"
@@ -4399,8 +4401,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab402ae244afdd560b2aa710df5af557bc791b1cca6fec174ced0cf781e13134"
+source = "git+https://github.com/bluealloy/revm#97b16315c307e8ace22a56f4d2a574216fea77de"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4409,7 +4410,7 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles",
+ "revm_precompiles 1.1.0 (git+https://github.com/bluealloy/revm)",
  "rlp",
  "serde",
  "sha3",
@@ -4422,11 +4423,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af88e7e9feb30cc4ed64645f09b966e84a1f6be56551ce5f1691105def45705d"
 dependencies = [
  "bytes",
+ "num 0.4.0",
+ "primitive-types",
+ "ripemd",
+ "secp256k1 0.23.4",
+ "sha2 0.10.2",
+ "sha3",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm_precompiles"
+version = "1.1.0"
+source = "git+https://github.com/bluealloy/revm#97b16315c307e8ace22a56f4d2a574216fea77de"
+dependencies = [
+ "bytes",
  "k256",
  "num 0.4.0",
  "primitive-types",
  "ripemd",
- "secp256k1",
+ "secp256k1 0.24.0",
  "sha2 0.10.2",
  "sha3",
  "substrate-bn",
@@ -4661,6 +4677,15 @@ name = "secp256k1"
 version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ece73253dd9e1fb540ff324eae554113a31c25fb598d22fd13b088a6a03f90d"
+dependencies = [
+ "secp256k1-sys",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7649a0b3ffb32636e60c7ce0d70511eda9c52c658cd0634e194d5a19943aeff"
 dependencies = [
  "secp256k1-sys",
 ]
@@ -5102,9 +5127,9 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d3173bcc4e5c210a147bd6d61becd3cc053517bf38253bd93c376ae7d818172"
+checksum = "a9da7be4aa3d6b944579b66af0cfdca48f2682de7d5b85cf40449805e2e93db9"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -5133,9 +5158,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9667365ef795e87d08cb456815d028ce96bfdcfd7b9aaa2bb461766e2e4a738b"
+checksum = "a8d68b31f727e62896d9c1d375f169ca3b4e3ba4c8fa5ab23eaf4de244bb43d3"
 dependencies = [
  "build_const",
  "hex",

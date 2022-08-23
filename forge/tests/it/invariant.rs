@@ -45,6 +45,10 @@ fn test_invariant() {
                 vec![("invariantTrueWorld", false, Some("false world.".into()), None, None)],
             ),
             (
+                "fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",
+                vec![("invariantTrueWorld", true, None, None, None)],
+            ),
+            (
                 "fuzz/invariant/target/TargetSelectors.t.sol:TargetSelectors",
                 vec![("invariantTrueWorld", true, None, None, None)],
             ),

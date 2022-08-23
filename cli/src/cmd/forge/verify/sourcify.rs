@@ -39,7 +39,9 @@ pub struct SourcifyVerificationProvider;
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
     async fn verify(&self, args: VerifyArgs) -> eyre::Result<()> {
-        let config = args.load_config_emit_warnings();
+        let mut config = args.load_config_emit_warnings();
+        config.libraries.extend(args.libraries.clone());
+
         let project = config.project()?;
 
         if !config.cache {
@@ -86,7 +88,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                         SimpleCast::checksum_address(&args.address)?
                     );
                     let response = client
-                        .post(SOURCIFY_URL)
+                        .post(args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL))
                         .header("Content-Type", "application/json")
                         .body(serde_json::to_string(&body)?)
                         .send()
@@ -123,7 +125,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 async {
                     let url = format!(
                         "{}check-by-addresses?addresses={}&chainIds={}",
-                        SOURCIFY_URL,
+                        args.verifier.verifier_url.as_deref().unwrap_or(SOURCIFY_URL),
                         args.id,
                         args.chain.id(),
                     );

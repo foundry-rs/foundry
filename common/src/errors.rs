@@ -31,6 +31,8 @@ pub enum FsPathError {
     /// Provides additional path context for `std::fs::open`.
     #[error("failed to open file {path:?}: {source}")]
     Open { source: io::Error, path: PathBuf },
+    #[error("failed to parse json file: {path:?}: {source}")]
+    ReadJson { source: serde_json::Error, path: PathBuf },
 }
 
 impl FsPathError {
@@ -80,6 +82,7 @@ impl AsRef<Path> for FsPathError {
             FsPathError::CreateFile { path, .. } => path,
             FsPathError::RemoveFile { path, .. } => path,
             FsPathError::Open { path, .. } => path,
+            FsPathError::ReadJson { path, .. } => path,
         }
     }
 }
@@ -94,6 +97,7 @@ impl From<FsPathError> for io::Error {
             FsPathError::CreateFile { source, .. } => source,
             FsPathError::RemoveFile { source, .. } => source,
             FsPathError::Open { source, .. } => source,
+            FsPathError::ReadJson { source, .. } => source.into(),
         }
     }
 }

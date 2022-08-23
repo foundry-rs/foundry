@@ -11,7 +11,7 @@ use crate::{
     logging::{LoggingManager, NodeLogLayer},
     service::NodeService,
     shutdown::Signal,
-    task_manager::TaskManager,
+    tasks::TaskManager,
 };
 use eth::backend::fork::ClientFork;
 use ethers::{
@@ -37,13 +37,14 @@ use tokio::{runtime::Handle, task::JoinError};
 mod service;
 
 mod config;
-
 pub use config::{AccountGenerator, Hardfork, NodeConfig, CHAIN_ID, VERSION_MESSAGE};
 
 /// ethereum related implementations
 pub mod eth;
 /// support for polling filters
 pub mod filter;
+/// support for handling `genesis.json` files
+pub mod genesis;
 /// commandline output
 pub mod logging;
 /// types for subscriptions
@@ -53,7 +54,7 @@ pub mod server;
 /// Futures for shutdown signal
 mod shutdown;
 /// additional task management
-mod task_manager;
+mod tasks;
 
 /// contains cli command
 #[cfg(feature = "cmd")]
