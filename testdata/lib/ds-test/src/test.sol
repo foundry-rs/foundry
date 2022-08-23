@@ -477,4 +477,21 @@ contract DSTest {
             assertEq0(a, b);
         }
     }
+
+    function assertEq(bytes memory a, bytes memory b) internal {
+        assertEq0(a, b);
+    }
+
+    function assertEq(bytes memory a, bytes memory b, string memory err) internal {
+        assertEq0(a, b, err);
+    }
+
+    function assertEq(bool a, bool b) internal {
+        if (a != b) {
+            emit log("Error: a == b not satisfied [bool]");
+            emit log_named_string("  Expected", b ? "true" : "false");
+            emit log_named_string("    Actual", a ? "true" : "false");
+            fail();
+        }
+    }
 }
