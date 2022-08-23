@@ -138,6 +138,7 @@ impl Cheatcodes {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "applying cheatcode")]
     fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
