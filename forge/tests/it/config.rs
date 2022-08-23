@@ -19,6 +19,7 @@ pub static TEST_OPTS: TestOptions = TestOptions {
     invariant: InvariantConfig {
         runs: 256,
         depth: 15,
+        dictionary_weight: 80,
         fail_on_revert: false,
         call_override: false,
         include_push_bytes: true,
