@@ -13,7 +13,8 @@ fn test_cheats_local() {
     let mut runner = runner();
     let suite_result = runner
         .test(
-            &Filter::new(".*", ".*", &format!(".*cheats{}[^Fork]", RE_PATH_SEPARATOR)),
+            &Filter::new(".*", ".*", &format!(".*cheats{}*", RE_PATH_SEPARATOR))
+                .exclude_paths("Fork"),
             None,
             TEST_OPTS,
         )
