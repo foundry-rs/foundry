@@ -12,6 +12,7 @@ use ethers::{
     types::*,
 };
 use foundry_common::fs;
+use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
 use serde_json::Value;

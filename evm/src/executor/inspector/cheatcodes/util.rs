@@ -15,7 +15,7 @@ use ethers::{
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
-use revm::{Account, CreateInputs, Database, EVMData};
+use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
 use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";

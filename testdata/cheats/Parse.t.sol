@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "forge-std/Test.sol";
+import "ds-test/test.sol";
 import "./Cheats.sol";
 
-contract ParseTest is Test {
+contract ParseTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function testParseBytes() public {
@@ -18,7 +18,7 @@ contract ParseTest is Test {
     }
 
     function testParseBytesFuzzed(bytes memory testBytes) public {
-        string memory stringBytes = vm.toString(testBytes);
+        string memory stringBytes = cheats.toString(testBytes);
         assertEq(testBytes, cheats.parseBytes(stringBytes));
     }
 
@@ -33,7 +33,7 @@ contract ParseTest is Test {
     }
 
     function testParseAddressFuzzed(address testAddress) public {
-        string memory stringAddress = vm.toString(testAddress);
+        string memory stringAddress = cheats.toString(testAddress);
         assertEq(testAddress, cheats.parseAddress(stringAddress));
     }
 
@@ -45,7 +45,7 @@ contract ParseTest is Test {
     }
 
     function testParseUint256Fuzzed(uint256 testUint256) public {
-        string memory stringUint256 = vm.toString(testUint256);
+        string memory stringUint256 = cheats.toString(testUint256);
         assertEq(testUint256, cheats.parseUint256(stringUint256));
     }
 
@@ -57,7 +57,7 @@ contract ParseTest is Test {
     }
 
     function testParseInt256Fuzzed(int256 testInt256) public {
-        string memory stringInt256 = vm.toString(testInt256);
+        string memory stringInt256 = cheats.toString(testInt256);
         assertEq(testInt256, cheats.parseInt256(stringInt256));
     }
 
@@ -72,7 +72,7 @@ contract ParseTest is Test {
     }
 
     function testParseBytes32Fuzzed(bytes32 testBytes) public {
-        string memory stringBytes = vm.toString(testBytes);
+        string memory stringBytes = cheats.toString(testBytes);
         assertEq(testBytes, cheats.parseBytes32(stringBytes));
     }
 
@@ -84,7 +84,7 @@ contract ParseTest is Test {
     }
 
     function testParseBoolFuzzed(bool testBool) public {
-        string memory stringBool = vm.toString(testBool);
+        string memory stringBool = cheats.toString(testBool);
         assertEq(testBool, cheats.parseBool(stringBool));
     }
 }
