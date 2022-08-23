@@ -93,6 +93,7 @@ pub mod filter {
         contract_regex: Regex,
         path_regex: Regex,
         exclude_tests: Option<Regex>,
+        exclude_paths: Option<Regex>,
     }
 
     impl Filter {
@@ -102,6 +103,7 @@ pub mod filter {
                 contract_regex: Regex::new(contract_pattern).unwrap(),
                 path_regex: Regex::new(path_pattern).unwrap(),
                 exclude_tests: None,
+                exclude_paths: None,
             }
         }
 
@@ -113,12 +115,21 @@ pub mod filter {
             self
         }
 
+        /// All paths to also exclude
+        ///
+        /// This is a workaround since regex does not support negative look aheads
+        pub fn exclude_paths(mut self, pattern: &str) -> Self {
+            self.exclude_paths = Some(Regex::new(pattern).unwrap());
+            self
+        }
+
         pub fn matches_all() -> Self {
             Filter {
                 test_regex: Regex::new(".*").unwrap(),
                 contract_regex: Regex::new(".*").unwrap(),
                 path_regex: Regex::new(".*").unwrap(),
                 exclude_tests: None,
+                exclude_paths: None,
             }
         }
     }
@@ -139,7 +150,13 @@ pub mod filter {
         }
 
         fn matches_path(&self, path: impl AsRef<str>) -> bool {
-            self.path_regex.is_match(path.as_ref())
+            let path = path.as_ref();
+            if let Some(ref exclude) = self.exclude_paths {
+                if exclude.is_match(path) {
+                    return false
+                }
+            }
+            self.path_regex.is_match(path)
         }
     }
 }
