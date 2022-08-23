@@ -1391,10 +1391,10 @@ impl EthApi {
     /// Jump forward in time by the given amount of time, in seconds.
     ///
     /// Handler for RPC call: `evm_increaseTime`
-    pub async fn evm_increase_time(&self, seconds: U256) -> Result<()> {
+    pub async fn evm_increase_time(&self, seconds: U256) -> Result<U256> {
         node_info!("evm_increaseTime");
         self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX));
-        Ok(())
+        Ok(seconds)
     }
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
