@@ -7,7 +7,7 @@ use ethers_core::{
     abi::{
         token::{LenientTokenizer, Tokenizer},
         Abi, Function, HumanReadableParser, Token, 
-        Event, EventParam, ParamType, RawLog
+        Event, RawLog
     },
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units, rlp},
@@ -645,30 +645,36 @@ where
             
             // If it's not there, go to Etherscan to look up the contract, and parse the interface into an Event ABI.
             } else {
-                let interfaces = SimpleCast::generate_interface(InterfacePath::Etherscan {
-                    chain: chain,
-                    api_key: api_key.clone(),
-                    address: format!("{:#x}", log.address)
-                        .parse::<Address>()
-                        .wrap_err("Invalid address provided. Did you make a typo?")?,
-                }).await;
+                let client = Client::new(chain, api_key.clone())?;
 
-                if let Ok(interfaces) = interfaces {
-                    let interface: Vec<Event> = interfaces
+                // Get the source from Etherscan.
+                let contract_source = match client.contract_source_code(log.address.clone()).await {
+                    Ok(src) => src,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("Invalid API Key") {
+                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                        } else {
+                            eyre::bail!(err)
+                        }
+                    }
+                };
+
+                // If the contract has verified source code, grab the events.
+                if contract_source.items.iter().all(|item| item.abi != "Contract source code not verified") {
+
+                    let interface: Vec<Event> = contract_source.abis()?
                         .iter()
-                        .map(|iface| iface.source.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .split("\n")
-                        .map(|line| line.trim().to_string())
-                        .filter(|line| line.starts_with("event"))
-                        .map(|line| translate_event_string_to_event_type(&line).unwrap())
+                        .map(|contract_abi| contract_abi.events())
+                        .flatten()
+                        .map(|event| event.clone())
                         .collect();
 
-                        // Save to cache in case a future event in the loop is from the same address.
-                        cached_abis.insert(log.address, Some(interface.clone()));
-                    
-                        Some(interface)
+                    // Save to cache in case a future event in the loop is from the same address.
+                    cached_abis.insert(log.address, Some(interface.clone()));
+            
+                    Some(interface)
+
                 // If the contract isn't in the cache or Etherscan, let ABI = None so that raw data is returned below.
                 } else {
                     None
@@ -691,8 +697,7 @@ where
                 let data: Vec<u8> = log.data.to_vec();
                 let raw_log = RawLog::from((log.topics.clone(), data));
 
-                let event_return_string = event.parse_log(raw_log)
-                        .unwrap()
+                let event_return_string = event.parse_log(raw_log)?
                         .params
                         .iter()
                         .map(|param| format!("{}: {}\n", param.name, param.value))
@@ -1493,54 +1498,6 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
-}
-
-// EVENT SPECIFIC UTILS
-
-
-fn translate_event_string_to_event_type(event: &str) -> Result<Event, eyre::Error> {
-    let mut sig_chunks: Vec<String> = event
-        .split(&[',', '(', ')'][..])
-        .map(|arg| arg.trim().to_string())
-        .collect(); 
-    sig_chunks.retain(|arg| arg != ";");
-
-    let args = sig_chunks[1..]
-        .iter()
-        .map(|chunk| EventParam {
-            name: chunk.split_whitespace().last().unwrap().to_string(),
-            kind: convert_string_to_param_type(chunk.split_whitespace().nth(0).unwrap()).unwrap(),
-            indexed: chunk.split_whitespace().nth(2) != None,
-        })
-        .collect::<Vec<EventParam>>();
-
-    Ok(Event {
-        name: sig_chunks[0].split_whitespace().nth(1).unwrap().to_string(),
-        inputs: args,
-        anonymous: false,
-    })
-}
-
-fn convert_string_to_param_type (param_type: &str) -> Result<ParamType, eyre::Error> {
-    match param_type {
-        "address" => Ok(ParamType::Address),
-        "bool" => Ok(ParamType::Bool),
-        "string" => Ok(ParamType::String),
-        "bytes" => Ok(ParamType::Bytes),
-        "uint8" => Ok(ParamType::Uint(8)),
-        "uint16" => Ok(ParamType::Uint(16)),
-        "uint32" => Ok(ParamType::Uint(32)),
-        "uint64" => Ok(ParamType::Uint(64)),
-        "uint128" => Ok(ParamType::Uint(128)),
-        "uint256" => Ok(ParamType::Uint(256)),
-        "int8" => Ok(ParamType::Int(8)),
-        "int16" => Ok(ParamType::Int(16)),
-        "int32" => Ok(ParamType::Int(32)),
-        "int64" => Ok(ParamType::Int(64)),
-        "int128" => Ok(ParamType::Int(128)),
-        "int256" => Ok(ParamType::Int(256)),
-        _ => Err(eyre::eyre!("unsupported param type: {}", param_type))
-    }
 }
 
 #[cfg(test)]
