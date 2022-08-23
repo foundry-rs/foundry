@@ -2,11 +2,11 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
-    abi::{AbiEncode, Address, Token},
+    abi::{AbiEncode, Address, ParamType, Token},
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
-        Lazy, LocalWallet, Signer, H160,
+        Lazy, LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
     types::{NameOrAddress, H256, U256},
@@ -14,7 +14,9 @@ use ethers::{
     utils::keccak256,
 };
 use foundry_common::fmt::*;
+use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
+use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
@@ -141,6 +143,14 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString5(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
+        HEVMCalls::ParseBytes(inner) => value_to_abi(vec![&inner.0], ParamType::Bytes, false),
+        HEVMCalls::ParseAddress(inner) => value_to_abi(vec![&inner.0], ParamType::Address, false),
+        HEVMCalls::ParseUint256(inner) => value_to_abi(vec![&inner.0], ParamType::Uint(256), false),
+        HEVMCalls::ParseInt256(inner) => value_to_abi(vec![&inner.0], ParamType::Int(256), false),
+        HEVMCalls::ParseBytes32(inner) => {
+            value_to_abi(vec![&inner.0], ParamType::FixedBytes(32), false)
+        }
+        HEVMCalls::ParseBool(inner) => value_to_abi(vec![&inner.0], ParamType::Bool, false),
         _ => return None,
     })
 }
@@ -198,4 +208,55 @@ pub fn process_create<DB: Database>(
 
 pub fn encode_error(reason: impl ToString) -> Bytes {
     [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
+}
+
+pub fn value_to_abi(
+    val: Vec<impl AsRef<str>>,
+    r#type: ParamType,
+    is_array: bool,
+) -> Result<Bytes, Bytes> {
+    let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
+    let parse_uint = |v: &str| {
+        if v.starts_with("0x") {
+            let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
+            Ok(U256::from_little_endian(&v))
+        } else {
+            U256::from_dec_str(v).map_err(|e| e.to_string())
+        }
+    };
+    let parse_int = |v: &str| {
+        // hex string may start with "0x", "+0x", or "-0x"
+        if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
+            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
+        } else {
+            I256::from_dec_str(v).map(|v| v.into_raw())
+        }
+    };
+    let parse_address = |v: &str| Address::from_str(v);
+    let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
+    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(v));
+
+    val.iter()
+        .map(AsRef::as_ref)
+        .map(|v| match r#type {
+            ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
+            ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
+            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
+            ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
+            ParamType::FixedBytes(32) => {
+                parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
+            }
+            ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
+            ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
+            _ => Err(format!("{} is not a supported type", r#type)),
+        })
+        .collect::<Result<Vec<Token>, String>>()
+        .map(|mut tokens| {
+            if is_array {
+                abi::encode(&[Token::Array(tokens)]).into()
+            } else {
+                abi::encode(&[tokens.remove(0)]).into()
+            }
+        })
+        .map_err(|e| e.into())
 }

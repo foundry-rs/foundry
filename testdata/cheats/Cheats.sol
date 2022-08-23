@@ -147,6 +147,14 @@ interface Cheats {
     function toString(bool) external returns (string memory);
     function toString(uint256) external returns (string memory);
     function toString(int256) external returns (string memory);
+
+    function parseBytes(string memory) external returns (bytes memory);
+    function parseAddress(string memory) external returns (address);
+    function parseUint256(string memory) external returns (uint256);
+    function parseInt256(string memory) external returns (int256);
+    function parseBytes32(string memory) external returns (bytes32);
+    function parseBool(string memory) external returns (bool);
+
     // Snapshot the current state of the evm.
     // Returns the id of the snapshot that was created.
     // To revert a snapshot use `revertTo`
