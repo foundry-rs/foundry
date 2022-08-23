@@ -44,10 +44,10 @@ tracing = "0.1"
 console = "0.15.0"
 watchexec = "2.0.0"
 atty = "0.2.14"
-comfy-table = "5.0.0"
+comfy-table = "6.0.0"
 reqwest ={ version = "0.11.8", default-features = false, features = ["json", "rustls"] }
 dotenv = "0.15.0"
-dialoguer = { version = "0.8.0", default-features = false }
+dialoguer = { version = "0.10.2", default-features = false }
 
 # async / parallel
 tokio = { version = "1", features = ["macros"] }
@@ -68,7 +68,7 @@ color-eyre = "0.6"
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"
 regex = { version = "1.5.4", default-features = false }
-rpassword = "5.0.1"
+rpassword = "7.0.0"
 hex = "0.4.3"
 serde = { version="1.0.133", features = ["derive"] }
 itertools = "0.10.3"
@@ -89,7 +89,7 @@ foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
-serial_test = "0.8.0"
+serial_test = "0.9.0"
 criterion = "0.3"
 
 [features]
