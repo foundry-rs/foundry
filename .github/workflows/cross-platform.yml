@@ -66,8 +66,8 @@ jobs:
       # Required for forge commands that use git
       - name: Setup git
         run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "<>"
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
 
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
@@ -103,6 +103,7 @@ jobs:
     needs: build-tests
     timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         archive:
           - name: unit-tests
@@ -123,8 +124,6 @@ jobs:
         nextest:
           - name: non-forking
             filter: '!test(~fork) & !test(~live)'
-          - name: forking
-            filter: 'test(~fork) & !test(~live)'
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -145,6 +144,7 @@ jobs:
     runs-on: ${{ matrix.job.os }}
     needs: build-tests
     strategy:
+      fail-fast: false
       matrix:
         archive:
           - name: integration-tests
@@ -165,9 +165,6 @@ jobs:
         nextest:
           - name: non-forking
             filter: '!test(~fork) & !test(~live)'
-          - name: forking
-            filter: 'test(~fork) & !test(~live)'
-        partition: [1, 2]
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
@@ -188,59 +185,8 @@ jobs:
           key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
       - name: Setup git config
         run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "<>"
-
-      - name: cargo nextest
-        run: ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
-
-  external-integration:
-    name: external integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
-    runs-on: ${{ matrix.job.os }}
-    needs: build-tests
-    strategy:
-      matrix:
-        archive:
-          - name: external-integration-tests
-            file: nextest-external-integration.tar.zst
-        job:
-          # The OS is used for the runner
-          # The target is used by Cargo
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-        nextest:
-          - name: non-forking
-            filter: '!test(~fork_integration) & !test(~live)'
-          - name: forking
-            filter: 'test(~fork_integration) & !test(~live)'
-    env:
-      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Download archives
-        uses: actions/download-artifact@v3
-        with:
-          name:  ${{ matrix.job.target }}-${{ matrix.archive.name }}
-
-      - name: Forge RPC cache
-        uses: actions/cache@v3
-        if: matrix.nextest.name != 'non-forking'
-        with:
-          path: "$HOME/.foundry/cache"
-          key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
-      - name: Force use of HTTPS for submodules
-        run: git config url."https://github.com/".insteadOf "git@github.com:"
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "<>"
 
       - name: cargo nextest
         run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
