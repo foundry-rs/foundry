@@ -28,7 +28,7 @@ pub struct TimeManager {
 // === impl TimeManager ===
 
 impl TimeManager {
-    fn offset(&self) -> i128 {
+    pub fn offset(&self) -> i128 {
         *self.offset.read()
     }
 
