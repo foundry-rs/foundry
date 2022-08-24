@@ -1,6 +1,7 @@
 use crate::executor::opts::EvmOpts;
 use bytes::Bytes;
 
+use foundry_common::fs::normalize_path;
 use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
 use tracing::trace;
@@ -10,8 +11,6 @@ use super::util;
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
 /// This is essentially a subset of various `Config` settings `Cheatcodes` needs to know.
-/// Since each test gets its own cheatcode inspector, but these values here are expected to be
-/// constant for all test runs, everything is `Arc'ed` here to avoid unnecessary, expensive clones.
 #[derive(Debug, Clone, Default)]
 pub struct CheatsConfig {
     pub ffi: bool,
@@ -51,13 +50,22 @@ impl CheatsConfig {
         }
     }
 
+    /// Returns true if the given path is allowed, if any path `allowed_paths` is an ancestor of the
+    /// path
+    ///
+    /// We only allow paths that are inside  allowed paths. To prevent path traversal
+    /// ("../../etc/passwd") we normalize the path first. We always join with the configured
+    /// root directory.
     pub fn is_path_allowed(&self, path: impl AsRef<Path>) -> bool {
-        return self.allowed_paths.iter().any(|allowed_path| path.as_ref().starts_with(allowed_path))
+        let path = normalize_path(&self.root.join(path));
+        return self.allowed_paths.iter().any(|allowed_path| path.starts_with(allowed_path))
     }
 
+    /// Returns an error
     pub fn ensure_path_allowed(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        let path = path.as_ref();
         if !self.is_path_allowed(path) {
-            return Err("Path is not allowed.".to_string())
+            return Err(format!("Path {:?} is not allowed.", path))
         }
 
         Ok(())
@@ -93,5 +101,25 @@ impl CheatsConfig {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allowed_paths() {
+        let root = "/my/project/root/";
+
+        let config = CheatsConfig::new(
+            &Config { __root: PathBuf::from(root).into(), ..Default::default() },
+            &Default::default(),
+        );
+
+        assert!(config.ensure_path_allowed("./t.txt").is_ok());
+        assert!(config.ensure_path_allowed("../root/t.txt").is_ok());
+
+        assert!(config.ensure_path_allowed("../../root/t.txt").is_err());
     }
 }
