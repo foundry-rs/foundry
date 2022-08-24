@@ -189,10 +189,12 @@ impl ScriptArgs {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (failed, mut traces) = res?;
+            let (passed, mut traces) = res?;
 
-            if failed || script_config.evm_opts.verbosity > 3 {
-                abort = true;
+            if !passed || script_config.evm_opts.verbosity > 3 {
+                if !passed {
+                    abort = true;
+                }
 
                 // Identify all contracts created during the call.
                 if traces.is_empty() {

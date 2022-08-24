@@ -19,7 +19,7 @@ use ethers::{
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{ContextCompat, WrapErr};
-use foundry_common::{get_http_provider, RetryProvider};
+use foundry_common::get_http_provider;
 use foundry_config::Chain;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -244,9 +244,9 @@ impl ScriptArgs {
                         &verify.known_contracts,
                     )
                     .await
-                    .map_err(|_| {
+                    .map_err(|err| {
                         eyre::eyre!(
-                            "Transaction failed when running the on-chain simulation. Check the trace above for more information."
+                            "{err}\n\nTransaction failed when running the on-chain simulation. Check the trace above for more information."
                         )
                     })?
                 };
@@ -307,11 +307,7 @@ impl ScriptArgs {
 
         // TODO(joshie)
         let last_rpc = transactions.back().unwrap().rpc.clone();
-        let is_multi = transactions.iter().any(|tx| tx.rpc != last_rpc);
-
-        if is_multi {
-            config.broadcast = config.broadcast.join("multi");
-        };
+        let is_multi_deployment = transactions.iter().any(|tx| tx.rpc != last_rpc);
 
         // TODO(joshie): make it accessible outside for broadcasting stage.
         let mut addresses = HashSet::new();
@@ -389,10 +385,11 @@ impl ScriptArgs {
                 returns.clone(),
                 &self.sig,
                 target,
-                &config,
+                config,
                 provider_info.chain,
             )?;
-            sequence.set_multi(is_multi);
+
+            sequence.set_multi(is_multi_deployment);
             sequence.save()?;
             deployments.push(sequence);
 
