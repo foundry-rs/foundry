@@ -5,29 +5,51 @@ use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
+use crate::eth::error::BlockchainError;
+
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
     DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(secs as i64, 0), Utc)
 }
 
 /// Manages block time
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TimeManager {
     /// tracks the overall applied timestamp offset
     offset: Arc<RwLock<i128>>,
+    /// The timestamp of the last block header
+    last_timestamp: Arc<RwLock<u64>>,
     /// Contains the next timestamp to use
     /// if this is set then the next time `[TimeManager::current_timestamp()]` is called this value
     /// will be taken and returned. After which the `offset` will be updated accordingly
     next_exact_timestamp: Arc<RwLock<Option<u64>>>,
     /// The interval to use when determining the next block's timestamp
     interval: Arc<RwLock<Option<u64>>>,
-    /// The last timestamp that was returned
-    last_timestamp: Arc<RwLock<Option<u64>>>,
 }
 
 // === impl TimeManager ===
 
 impl TimeManager {
+    pub fn new(start_timestamp: u64) -> TimeManager {
+        let time_manager = TimeManager {
+            last_timestamp: Default::default(),
+            offset: Default::default(),
+            next_exact_timestamp: Default::default(),
+            interval: Default::default(),
+        };
+        time_manager.reset(start_timestamp);
+        time_manager
+    }
+
+    /// Resets the current time manager to the given timestamp, resetting the offsets and
+    /// next block timestamp option
+    pub fn reset(&self, start_timestamp: u64) {
+        let current = duration_since_unix_epoch().as_secs() as i128;
+        *self.last_timestamp.write() = start_timestamp;
+        *self.offset.write() = (start_timestamp as i128) - current;
+        self.next_exact_timestamp.write().take();
+    }
+
     pub fn offset(&self) -> i128 {
         *self.offset.read()
     }
@@ -41,12 +63,6 @@ impl TimeManager {
         next
     }
 
-    /// Sets the timestamp we should base further timestamps on
-    pub fn set_start_timestamp(&self, seconds: u64) {
-        let current = duration_since_unix_epoch().as_secs() as i128;
-        *self.offset.write() = (seconds as i128) - current;
-    }
-
     /// Jumps forward in time by the given seconds
     ///
     /// This will apply a permanent offset to the natural UNIX Epoch timestamp
@@ -55,9 +71,17 @@ impl TimeManager {
     }
 
     /// Sets the exact timestamp to use in the next block
-    pub fn set_next_block_timestamp(&self, timestamp: u64) {
+    /// Fails if it's before (or at the same time) the last timestamp
+    pub fn set_next_block_timestamp(&self, timestamp: u64) -> Result<(), BlockchainError> {
         trace!(target: "time", "override next timestamp {}", timestamp);
+        if timestamp <= *self.last_timestamp.read() {
+            return Err(BlockchainError::TimestampError(format!(
+                "{} is lower than or equal to previous block's timestamp",
+                timestamp
+            )))
+        }
         self.next_exact_timestamp.write().replace(timestamp);
+        Ok(())
     }
 
     /// Sets an interval to use when computing the next timestamp
@@ -73,66 +97,49 @@ impl TimeManager {
     pub fn remove_block_timestamp_interval(&self) -> bool {
         if self.interval.write().take().is_some() {
             trace!(target: "time", "removed interval");
-            // interval mode disabled but need to update the offset accordingly
-            let last = self.last_timestamp();
-            let now = duration_since_unix_epoch().as_secs() as i128;
-            let offset = (last as i128) - now;
-            *self.offset.write() = offset.saturating_add(1);
             true
         } else {
             false
         }
     }
 
-    fn set_last_timestamp(&self, last_timestamp: u64) {
-        self.last_timestamp.write().replace(last_timestamp);
-    }
+    /// Computes the next timestamp without updating internals
+    fn compute_next_timestamp(&self) -> (u64, Option<i128>) {
+        let current = duration_since_unix_epoch().as_secs() as i128;
+        let last_timestamp = *self.last_timestamp.read();
 
-    /// Returns the last timestamp
-    fn last_timestamp(&self) -> u64 {
-        self.last_timestamp.read().unwrap_or_else(|| {
-            let current = duration_since_unix_epoch().as_secs() as i128;
-            current.saturating_add(self.offset()) as u64
-        })
+        let (mut next_timestamp, update_offset) =
+            if let Some(next) = *self.next_exact_timestamp.read() {
+                (next, true)
+            } else if let Some(interval) = *self.interval.read() {
+                (last_timestamp.saturating_add(interval), false)
+            } else {
+                (current.saturating_add(self.offset()) as u64, false)
+            };
+        // Ensures that the timestamp is always increasing
+        if next_timestamp <= last_timestamp {
+            next_timestamp = last_timestamp + 1;
+        }
+        let next_offset = if update_offset { Some(current - next_timestamp as i128) } else { None };
+        (next_timestamp, next_offset)
     }
 
     /// Returns the current timestamp and updates the underlying offset and interval accordingly
     pub fn next_timestamp(&self) -> u64 {
-        let current = duration_since_unix_epoch().as_secs() as i128;
-
-        let next = if let Some(next) = self.next_exact_timestamp.write().take() {
-            // return the custom block timestamp and adjust the offset accordingly
-            // the offset will be negative if the `next` timestamp is in the past
-            let offset = (next as i128) - current;
-            let mut current_offset = self.offset.write();
-            // increase the offset by one second, so that we don't yield the same timestamp twice if
-            // it's set manually
-            *current_offset = offset.saturating_add(1);
-            next
-        } else if let Some(interval) = *self.interval.read() {
-            self.last_timestamp().saturating_add(interval)
-        } else {
-            current.saturating_add(self.offset()) as u64
-        };
-
-        self.set_last_timestamp(next);
-        next
+        let (next_timestamp, next_offset) = self.compute_next_timestamp();
+        // Make sure we reset the `next_exact_timestamp`
+        self.next_exact_timestamp.write().take();
+        if let Some(next_offset) = next_offset {
+            *self.offset.write() = next_offset;
+        }
+        *self.last_timestamp.write() = next_timestamp;
+        next_timestamp
     }
 
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
-        let current = duration_since_unix_epoch().as_secs() as i128;
-
-        if let Some(next) = *self.next_exact_timestamp.read() {
-            // return the custom block timestamp and adjust the offset accordingly
-            // the offset will be negative if the `next` timestamp is in the past
-            let offset = (next as i128) - current;
-            current.saturating_add(offset) as u64
-        } else if let Some(interval) = *self.interval.read() {
-            self.last_timestamp().saturating_add(interval)
-        } else {
-            current.saturating_add(self.offset()) as u64
-        }
+        let (next_timestamp, _) = self.compute_next_timestamp();
+        next_timestamp
     }
 }
 

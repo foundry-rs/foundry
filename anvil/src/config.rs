@@ -601,7 +601,6 @@ impl NodeConfig {
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
-        let mut fork_timestamp = None;
 
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
@@ -657,7 +656,6 @@ impl NodeConfig {
                     coinbase: env.block.coinbase,
                     basefee: env.block.basefee,
                 };
-                fork_timestamp = Some(block.timestamp);
 
                 // if not set explicitly we use the base fee of the latest block
                 if self.base_fee.is_none() {
@@ -747,15 +745,7 @@ impl NodeConfig {
         };
 
         // only memory based backend for now
-        let backend =
-            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork).await;
-
-        if let Some(timestamp) = fork_timestamp {
-            backend.time().set_start_timestamp(timestamp.as_u64());
-        } else {
-            backend.time().set_start_timestamp(self.get_genesis_timestamp());
-        }
-        backend
+        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork).await
     }
 }
 
