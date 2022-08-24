@@ -55,7 +55,7 @@ pub fn find_anchor_simple(
     let instruction = source_map
         .iter()
         .enumerate()
-        .find_map(|(ic, element)| is_in_source_range(element, loc).then(|| ic))
+        .find_map(|(ic, element)| is_in_source_range(element, loc).then_some(ic))
         .ok_or_else(|| {
             eyre::eyre!("Could not find anchor: No matching instruction in range {}", loc)
         })?;
