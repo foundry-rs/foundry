@@ -211,7 +211,7 @@ where
         let memory = interp.memory.clone();
         let state = data.subroutine.state.clone();
         let gas = interp.gas.remaining();
-        let gas_refund_counter = interp.gas.refunded() as u64; // TODO: use https://github.com/bluealloy/revm/pull/180
+        let gas_refund_counter = interp.gas.refunded() as u64;
 
         self.start_step(CallTraceStep {
             depth,
