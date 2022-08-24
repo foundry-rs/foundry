@@ -9,7 +9,7 @@ use crate::{
             fork::ClientFork,
             genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
-            time::{duration_since_unix_epoch, utc_from_secs, TimeManager},
+            time::{utc_from_secs, TimeManager},
             validate::TransactionValidator,
         },
         error::{BlockchainError, InvalidTransactionError},
@@ -19,7 +19,6 @@ use crate::{
         util::get_precompiles_for,
     },
     mem::{
-        in_memory_db::MemDb,
         inspector::Inspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
@@ -141,35 +140,6 @@ pub struct Backend {
 }
 
 impl Backend {
-    /// Create a new instance of in-mem backend.
-    pub fn new(db: Arc<AsyncRwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
-        let blockchain = Blockchain::new(
-            &env.read(),
-            fees.is_eip1559().then(|| fees.base_fee()),
-            duration_since_unix_epoch().as_secs(),
-        );
-        Self {
-            db,
-            blockchain,
-            states: Arc::new(RwLock::new(Default::default())),
-            env,
-            fork: None,
-            time: Default::default(),
-            cheats: Default::default(),
-            new_block_listeners: Default::default(),
-            fees,
-            genesis: Default::default(),
-            active_snapshots: Arc::new(Mutex::new(Default::default())),
-        }
-    }
-
-    /// Creates a new empty blockchain backend
-    pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
-        let db = MemDb::default();
-        let fees = FeeManager::new(env.read().cfg.spec_id, gas_price, gas_price);
-        Self::new(Arc::new(AsyncRwLock::new(db)), env, fees)
-    }
-
     /// Initialises the balance of the given accounts
     pub async fn with_genesis(
         db: Arc<AsyncRwLock<dyn Db>>,
@@ -190,13 +160,15 @@ impl Backend {
             )
         };
 
+        let start_timestamp =
+            if let Some(fork) = fork.as_ref() { fork.timestamp() } else { genesis.timestamp };
         let backend = Self {
             db,
             blockchain,
             states: Arc::new(RwLock::new(Default::default())),
             env,
             fork,
-            time: Default::default(),
+            time: TimeManager::new(start_timestamp),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
             fees,
@@ -320,7 +292,7 @@ impl Backend {
                     basefee: env.block.basefee,
                 };
 
-                self.time.set_start_timestamp(env.block.timestamp.as_u64());
+                self.time.reset(env.block.timestamp.as_u64());
                 self.fees.set_base_fee(env.block.basefee);
             }
 
@@ -482,10 +454,10 @@ impl Backend {
     }
 
     /// Reverts the state to the snapshot
-    pub async fn revert_snapshot(&self, id: U256) -> bool {
+    pub async fn revert_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
-            {
+            let best_block_hash = {
                 // revert the storage that's newer than the snapshot
                 let current_height = self.best_number().as_u64();
                 let mut storage = self.blockchain.storage.write();
@@ -504,10 +476,14 @@ impl Backend {
 
                 storage.best_number = num.into();
                 storage.best_hash = hash;
-            }
+                hash
+            };
+            let block =
+                self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+            self.time.reset(block.timestamp.as_u64());
             self.set_block_number(num.into());
         }
-        self.db.write().await.revert(id)
+        Ok(self.db.write().await.revert(id))
     }
 
     /// Write all chain data to serialized bytes buffer

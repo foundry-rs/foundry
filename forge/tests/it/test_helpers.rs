@@ -6,6 +6,7 @@ use ethers::{
     solc::{artifacts::Libraries, utils::RuntimeOrHandle, Project, ProjectPathsConfig},
     types::{Address, U256},
 };
+use foundry_config::Config;
 use foundry_evm::{
     executor::{
         backend::Backend,
@@ -63,12 +64,12 @@ pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
     env: Env {
         gas_limit: 18446744073709551615,
         chain_id: Some(foundry_common::DEV_CHAIN_ID),
-        tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+        tx_origin: Config::DEFAULT_SENDER,
         block_number: 1,
         block_timestamp: 1,
         ..Default::default()
     },
-    sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+    sender: Config::DEFAULT_SENDER,
     initial_balance: U256::MAX,
     ffi: true,
     memory_limit: 2u64.pow(24),

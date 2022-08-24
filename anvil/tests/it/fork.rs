@@ -13,6 +13,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
@@ -107,7 +108,7 @@ async fn test_fork_eth_get_nonce() {
         assert_eq!(api_nonce, provider_nonce);
     }
 
-    let addr: Address = "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap();
+    let addr = Config::DEFAULT_SENDER;
     let api_nonce = api.transaction_count(addr, None).await.unwrap();
     let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
@@ -585,4 +586,30 @@ async fn test_fork_call() {
         .unwrap();
 
     assert_eq!(res0, res1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert!(initial_block.timestamp.as_u64() < latest_block.timestamp.as_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_snapshot_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_set_next_block_timestamp(initial_block.timestamp.as_u64()).unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert_eq!(initial_block.timestamp.as_u64(), latest_block.timestamp.as_u64());
 }

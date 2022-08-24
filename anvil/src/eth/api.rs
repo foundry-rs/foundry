@@ -1401,16 +1401,15 @@ impl EthApi {
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
-        Ok(self.backend.revert_snapshot(id).await)
+        self.backend.revert_snapshot(id).await
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
     ///
     /// Handler for RPC call: `evm_increaseTime`
-    pub async fn evm_increase_time(&self, seconds: U256) -> Result<()> {
+    pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
         node_info!("evm_increaseTime");
-        self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX));
-        Ok(())
+        Ok(self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX)) as i64)
     }
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
@@ -1418,8 +1417,7 @@ impl EthApi {
     /// Handler for RPC call: `evm_setNextBlockTimestamp`
     pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
         node_info!("evm_setNextBlockTimestamp");
-        self.backend.time().set_next_block_timestamp(seconds);
-        Ok(())
+        self.backend.time().set_next_block_timestamp(seconds)
     }
 
     /// Set the next block gas limit

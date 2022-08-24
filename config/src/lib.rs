@@ -368,6 +368,8 @@ impl Config {
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Default address for tx.origin
+    ///
+    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
     pub const DEFAULT_SENDER: H160 = H160([
         0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
     ]);
@@ -2413,20 +2415,26 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
-    use figment::error::Kind::InvalidType;
-    use std::{collections::BTreeMap, str::FromStr};
-
-    use crate::cache::{CachedChains, CachedEndpoints};
-    use figment::{value::Value, Figment};
-    use pretty_assertions::assert_eq;
-
     use super::*;
-
-    use crate::{endpoints::RpcEndpoint, etherscan::ResolvedEtherscanConfigs};
+    use crate::{
+        cache::{CachedChains, CachedEndpoints},
+        endpoints::RpcEndpoint,
+        etherscan::ResolvedEtherscanConfigs,
+    };
     use ethers_core::types::Chain::Moonbeam;
-    use std::{fs::File, io::Write};
+    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
+    use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use pretty_assertions::assert_eq;
+    use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
+
+    #[test]
+    fn default_sender() {
+        assert_eq!(
+            Config::DEFAULT_SENDER,
+            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+        );
+    }
 
     #[test]
     fn test_caching() {

@@ -4,7 +4,7 @@ use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, 
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz_runs: 256,
@@ -26,7 +26,15 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
     config.rpc_endpoints = rpc_endpoints();
-    config.allow_paths.push(env!("CARGO_MANIFEST_DIR").into());
+
+    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // need to check here where we're executing the test from, if in `forge` we need to also allow
+    // `testdata`
+    if root.ends_with("forge") {
+        root = root.parent().unwrap();
+    }
+
+    config.allow_paths.push(root.into());
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))

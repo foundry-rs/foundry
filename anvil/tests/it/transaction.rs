@@ -424,16 +424,17 @@ async fn get_blocktimestamp_works() {
     assert_eq!(timestamp, latest_block.timestamp);
 
     // mock timestamp
-    api.evm_set_next_block_timestamp(1337).unwrap();
+    let next_timestamp = timestamp.as_u64() + 1337;
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 
     // repeat call same result
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
