@@ -167,7 +167,7 @@ impl Strategy for UintStrategy {
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
         let bias = runner.rng().gen_range(0..total_weight);
-        // randomly selecty one of 3 strategies
+        // randomly select one of 3 strategies
         match bias {
             x if x < self.edge_weight => self.generate_edge_tree(runner),
             x if x < self.edge_weight + self.fixtures_weight => self.generate_fixtures_tree(runner),

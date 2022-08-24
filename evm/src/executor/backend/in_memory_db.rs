@@ -1,9 +1,7 @@
 //! The in memory DB
-
-use bytes::Bytes;
 use ethers::prelude::{H160, H256, U256};
 use hashbrown::HashMap as Map;
-use revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit, InMemoryDB};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit, InMemoryDB};
 
 use crate::executor::snapshot::Snapshots;
 
@@ -27,7 +25,7 @@ impl DatabaseRef for MemDb {
         DatabaseRef::basic(&self.inner, address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         DatabaseRef::code_by_hash(&self.inner, code_hash)
     }
 
@@ -45,7 +43,7 @@ impl Database for MemDb {
         Database::basic(&mut self.inner, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
         Database::code_by_hash(&mut self.inner, code_hash)
     }
 

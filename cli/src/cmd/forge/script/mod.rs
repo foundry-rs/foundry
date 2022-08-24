@@ -1,22 +1,27 @@
 //! script command
 use crate::{
-    cmd::{
-        forge::build::{BuildArgs, ProjectPathsArgs},
-        RetryArgs,
-    },
+    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
-use cast::executor::inspector::cheatcodes::BroadcastableTransaction;
+use cast::{
+    decode,
+    executor::inspector::{cheatcodes::BroadcastableTransaction, DEFAULT_CREATE2_DEPLOYER},
+};
 use clap::{Parser, ValueHint};
+use dialoguer::Confirm;
 use ethers::{
     abi::{Abi, Function},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
-    types::{transaction::eip2718::TypedTransaction, Address, Log, TransactionRequest, U256},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
+        U256,
+    },
 };
+use eyre::ContextCompat;
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -26,14 +31,13 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::evm::EvmArgs;
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
 use foundry_config::Config;
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
-    time::Duration,
 };
 use yansi::Paint;
 
@@ -52,11 +56,13 @@ mod multi;
 mod providers;
 mod receipts;
 mod sequence;
+use crate::cmd::retry::RetryArgs;
+pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
     /// The contract you want to run. Either the file path or contract name.
     ///
@@ -85,6 +91,18 @@ pub struct ScriptArgs {
 
     #[clap(long, help = "Broadcasts the transactions.")]
     pub broadcast: bool,
+
+    #[clap(long, help = "Skips on-chain simulation")]
+    pub skip_simulation: bool,
+
+    #[clap(
+        long,
+        short,
+        default_value = "130",
+        value_name = "GAS_ESTIMATE_MULTIPLIER",
+        help = "Relative percentage to multiply gas estimates by"
+    )]
+    pub gas_estimate_multiplier: u64,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     pub opts: BuildArgs,
@@ -146,14 +164,12 @@ impl ScriptArgs {
         &self,
         script_config: &ScriptConfig,
         result: &mut ScriptResult,
-        known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let etherscan_identifier = EtherscanIdentifier::new(
+            &script_config.config,
             script_config.evm_opts.get_remote_chain_id(),
-            script_config.config.etherscan_api_key.clone(),
-            Config::foundry_etherscan_chain_cache_dir(script_config.evm_opts.get_chain_id()),
-            Duration::from_secs(24 * 60 * 60),
-        );
+        )?;
 
         let local_identifier = LocalTraceIdentifier::new(known_contracts);
         let mut decoder =
@@ -213,40 +229,36 @@ impl ScriptArgs {
         let verbosity = script_config.evm_opts.verbosity;
         let func = script_config.called_function.as_ref().expect("There should be a function.");
 
-        if verbosity >= 3 {
+        if !result.success || verbosity > 3 {
             if result.traces.is_empty() {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             }
 
-            if !result.success && verbosity == 3 || verbosity > 3 {
-                println!("Traces:");
-                for (kind, trace) in &mut result.traces {
-                    let should_include = match kind {
-                        TraceKind::Setup => (verbosity >= 5) || (verbosity == 4 && !result.success),
-                        TraceKind::Execution => verbosity > 3 || !result.success,
-                        _ => false,
-                    };
+            println!("Traces:");
+            for (kind, trace) in &mut result.traces {
+                let should_include = match kind {
+                    TraceKind::Setup => verbosity >= 5,
+                    TraceKind::Execution => verbosity > 3,
+                    _ => false,
+                } || !result.success;
 
-                    if should_include {
-                        decoder.decode(trace).await;
-                        println!("{trace}");
-                    }
+                if should_include {
+                    decoder.decode(trace).await;
+                    println!("{trace}");
                 }
-                println!();
             }
+            println!();
         }
 
         if result.success {
             println!("{}", Paint::green("Script ran successfully."));
-        } else {
-            println!("{}", Paint::red("Script failed."));
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            println!("Gas used: {}", result.gas);
+            println!("Gas used: {}", result.gas_used);
         }
 
-        if !result.returned.is_empty() {
+        if result.success && !result.returned.is_empty() {
             println!("\n== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
@@ -276,7 +288,11 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            eyre::bail!("{}", Paint::red("Script failed."));
+            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
+                .map(|err| format!("{}\n", err))
+                .unwrap_or_else(|_| "Script failed.\n".to_string());
+
+            eyre::bail!("{}", Paint::red(revert_msg));
         }
 
         Ok(())
@@ -290,7 +306,7 @@ impl ScriptArgs {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
@@ -366,8 +382,10 @@ impl ScriptArgs {
     ) -> eyre::Result<()> {
         let (sources, artifacts) =
             filter_sources_and_artifacts(&self.path, sources, highlevel_known_contracts, project)?;
-        let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
-        let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+        let flattened = result
+            .debug
+            .and_then(|arena| arena.last().map(|arena| arena.flatten(0)))
+            .expect("We should have collected debug information");
         let identified_contracts = decoder
             .contracts
             .iter()
@@ -395,12 +413,82 @@ impl ScriptArgs {
                 (
                     abi.functions()
                         .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .expect("Function signature not found in the ABI"),
+                        .wrap_err(format!(
+                            "Function `{}` is not implemented in your script.",
+                            self.sig
+                        ))?,
                     encode_args(&func, &self.args)?.into(),
                 )
             }
         };
         Ok((func.clone(), data))
+    }
+
+    /// Checks if the transaction is a deployment with a size above the `CONTRACT_MAX_SIZE`.
+    ///
+    /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
+    /// the user.
+    fn check_contract_sizes(
+        &self,
+        transactions: Option<&VecDeque<BroadcastableTransaction>>,
+        known_contracts: &BTreeMap<ArtifactId, ContractBytecodeSome>,
+    ) -> eyre::Result<()> {
+        for (data, to) in transactions.iter().flat_map(|txes| {
+            txes.iter().filter_map(|tx| {
+                tx.transaction
+                    .data()
+                    .filter(|data| data.len() > CONTRACT_MAX_SIZE)
+                    .map(|data| (data, tx.transaction.to()))
+            })
+        }) {
+            let mut offset = 0;
+
+            // Find if it's a CREATE or CREATE2. Otherwise, skip transaction.
+            if let Some(NameOrAddress::Address(to)) = to {
+                if *to == DEFAULT_CREATE2_DEPLOYER {
+                    // Size of the salt prefix.
+                    offset = 32;
+                }
+            } else if to.is_some() {
+                continue
+            }
+
+            // Find artifact with a deployment code same as the data.
+            if let Some((artifact, bytecode)) =
+                known_contracts.iter().find(|(_, bytecode)| {
+                    bytecode
+                        .bytecode
+                        .object
+                        .as_bytes()
+                        .expect("Code should have been linked before.") ==
+                        &data[offset..]
+                })
+            {
+                // Find the deployed code size of the artifact.
+                if let Some(deployed_bytecode) = &bytecode.deployed_bytecode.bytecode {
+                    let deployment_size = deployed_bytecode.object.bytes_len();
+
+                    if deployment_size > CONTRACT_MAX_SIZE {
+                        println!(
+                            "{}",
+                            Paint::red(format!(
+                                "`{}` is above the contract size limit ({} vs {}).",
+                                artifact.name, deployment_size, CONTRACT_MAX_SIZE
+                            ))
+                        );
+
+                        if self.broadcast &&
+                            !Confirm::new()
+                                .with_prompt("Do you wish to continue?".to_string())
+                                .interact()?
+                        {
+                            eyre::bail!("User canceled the script.");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -409,7 +497,7 @@ pub struct ScriptResult {
     pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
+    pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<BroadcastableTransaction>>,
     pub returned: bytes::Bytes,
@@ -442,7 +530,7 @@ pub struct ScriptConfig {
 #[derive(Clone)]
 pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
-    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+    pub known_contracts: ContractsByArtifact,
     pub etherscan_key: Option<String>,
     pub project_paths: ProjectPathsArgs,
     pub retry: RetryArgs,
@@ -452,7 +540,7 @@ impl VerifyBundle {
     pub fn new(
         project: &Project,
         config: &Config,
-        known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
+        known_contracts: ContractsByArtifact,
         retry: RetryArgs,
     ) -> Self {
         let num_of_optimizations =

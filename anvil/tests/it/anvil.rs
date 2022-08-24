@@ -20,7 +20,7 @@ async fn test_can_change_mining_mode() {
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 0);
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     let num = provider.get_block_number().await.unwrap();
     assert_eq!(num.as_u64(), 1);
 }
@@ -42,4 +42,22 @@ async fn can_set_empty_code() {
     api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
     let code = api.get_code(addr, None).await.unwrap();
     assert!(code.as_ref().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_set_genesis_timestamp() {
+    let genesis_timestamp = 1000u64;
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into())).await;
+    let provider = handle.http_provider();
+
+    assert_eq!(genesis_timestamp, provider.get_block(0).await.unwrap().unwrap().timestamp.as_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_use_default_genesis_timestamp() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    assert_ne!(0u64, provider.get_block(0).await.unwrap().unwrap().timestamp.as_u64());
 }

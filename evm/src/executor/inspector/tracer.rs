@@ -11,10 +11,12 @@ use ethers::{
     abi::RawLog,
     types::{Address, H256, U256},
 };
-use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
+use revm::{
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+};
 
 /// An inspector that collects call traces.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Tracer {
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
@@ -71,29 +73,36 @@ impl<DB> Inspector<DB> for Tracer
 where
     DB: Database,
 {
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        node.logs
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
+        let (from, to) = match call.context.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => {
+                (call.context.address, call.context.code_address)
+            }
+            _ => (call.context.caller, call.context.address),
+        };
+
         self.start_trace(
-            data.subroutine.depth() as usize,
-            call.context.code_address,
+            data.journaled_state.depth() as usize,
+            to,
             call.input.to_vec(),
             call.transfer.value,
             call.context.scheme.into(),
-            call.context.caller,
+            from,
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
-        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-        node.ordering.push(LogCallOrder::Log(node.logs.len()));
-        node.logs
-            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
     fn call_end(
@@ -121,14 +130,14 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        data.journaled_state.load_account(call.caller, data.db);
+        let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.start_trace(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
-            CallKind::Create,
+            call.scheme.into(),
             call.caller,
         );
 
@@ -146,12 +155,12 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
-                .subroutine
+                .journaled_state
                 .account(address)
                 .info
                 .code
                 .as_ref()
-                .map_or(vec![], |code| code.to_vec()),
+                .map_or(vec![], |code| code.bytes()[..code.len()].to_vec()),
             None => vec![],
         };
         self.fill_trace(

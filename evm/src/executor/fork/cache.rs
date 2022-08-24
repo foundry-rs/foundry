@@ -1,10 +1,7 @@
 //! Cache related abstraction
-use ethers::{
-    types::{Address, H256, U256},
-    utils::keccak256,
-};
+use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
-use revm::{Account, AccountInfo, DatabaseCommit, Filth, KECCAK_EMPTY};
+use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -75,7 +72,7 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds all the block hashes
-    pub fn block_hashes(&self) -> &RwLock<BTreeMap<u64, H256>> {
+    pub fn block_hashes(&self) -> &RwLock<Map<U256, H256>> {
         &self.db.block_hashes
     }
 
@@ -171,7 +168,7 @@ pub struct MemDb {
     /// Storage related data
     pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
     /// All retrieved block hashes
-    pub block_hashes: RwLock<BTreeMap<u64, H256>>,
+    pub block_hashes: RwLock<Map<U256, H256>>,
 }
 
 impl MemDb {
@@ -192,17 +189,13 @@ impl MemDb {
         let mut storage = self.storage.write();
         let mut accounts = self.accounts.write();
         for (add, mut acc) in changes {
-            if acc.is_empty() || matches!(acc.filth, Filth::Destroyed) {
+            if acc.is_empty() || acc.is_destroyed {
                 accounts.remove(&add);
                 storage.remove(&add);
             } else {
                 // insert account
-                if let Some(code_hash) = acc
-                    .info
-                    .code
-                    .as_ref()
-                    .filter(|code| !code.is_empty())
-                    .map(|code| H256::from_slice(&keccak256(code)))
+                if let Some(code_hash) =
+                    acc.info.code.as_ref().filter(|code| !code.is_empty()).map(|code| code.hash())
                 {
                     acc.info.code_hash = code_hash;
                 } else if acc.info.code_hash.is_zero() {
@@ -211,14 +204,14 @@ impl MemDb {
                 accounts.insert(add, acc.info);
 
                 let acc_storage = storage.entry(add).or_default();
-                if acc.filth.abandon_old_storage() {
+                if acc.storage_cleared {
                     acc_storage.clear();
                 }
                 for (index, value) in acc.storage {
-                    if value.is_zero() {
+                    if value.present_value().is_zero() {
                         acc_storage.remove(&index);
                     } else {
-                        acc_storage.insert(index, value);
+                        acc_storage.insert(index, value.present_value());
                     }
                 }
                 if acc_storage.is_empty() {
@@ -273,7 +266,7 @@ impl JsonBlockCacheDB {
         trace!(target: "cache", "reading json cache path={:?}", path);
         let span = trace_span!("cache", "path={:?}", &path);
         let _enter = span.enter();
-        let file = std::fs::File::open(&path).in_current_span()?;
+        let file = fs::File::open(&path).in_current_span()?;
         let file = std::io::BufReader::new(file);
         let data = serde_json::from_reader(file).in_current_span()?;
         Ok(Self { cache_path: Some(path), data })
@@ -360,7 +353,7 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
             meta: BlockchainDbMeta,
             accounts: BTreeMap<Address, AccountInfo>,
             storage: BTreeMap<Address, StorageInfo>,
-            block_hashes: BTreeMap<u64, H256>,
+            block_hashes: Map<u64, H256>,
         }
 
         let Data { meta, accounts, storage, block_hashes } = Data::deserialize(deserializer)?;
@@ -370,7 +363,9 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
             data: Arc::new(MemDb {
                 accounts: RwLock::new(accounts),
                 storage: RwLock::new(storage),
-                block_hashes: RwLock::new(block_hashes),
+                block_hashes: RwLock::new(
+                    block_hashes.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+                ),
             }),
         })
     }

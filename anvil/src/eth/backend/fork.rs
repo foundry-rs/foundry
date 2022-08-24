@@ -1,21 +1,23 @@
 //! Support for forking off another client
 
 use crate::eth::{backend::mem::fork_db::ForkedDatabase, error::BlockchainError};
-use anvil_core::eth::transaction::EthTransactionRequest;
+use anvil_core::eth::{proof::AccountProof, transaction::EthTransactionRequest};
 use ethers::{
-    prelude::{BlockNumber, Http, Provider},
-    providers::{Middleware, ProviderError, RetryClient},
+    prelude::BlockNumber,
+    providers::{Middleware, ProviderError},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
         Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
     },
 };
+use foundry_common::{ProviderBuilder, RetryProvider};
 use foundry_evm::utils::u256_to_h256_be;
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
 
 /// Represents a fork of a remote client
@@ -31,14 +33,14 @@ pub struct ClientFork {
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
     /// This also holds a handle to the underlying database
-    pub database: Arc<RwLock<ForkedDatabase>>,
+    pub database: Arc<AsyncRwLock<ForkedDatabase>>,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
     /// Creates a new instance of the fork
-    pub fn new(config: ClientForkConfig, database: Arc<RwLock<ForkedDatabase>>) -> Self {
+    pub fn new(config: ClientForkConfig, database: Arc<AsyncRwLock<ForkedDatabase>>) -> Self {
         Self { storage: Default::default(), config: Arc::new(RwLock::new(config)), database }
     }
 
@@ -46,11 +48,13 @@ impl ClientFork {
     pub async fn reset(
         &self,
         url: Option<String>,
-        block_number: Option<u64>,
+        block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
+        let block_number = block_number.into();
         {
             self.database
                 .write()
+                .await
                 .reset(url.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
@@ -66,19 +70,20 @@ impl ClientFork {
             self.config.write().chain_id = chain_id.as_u64();
         }
 
-        let block = if let Some(block_number) = block_number {
-            let provider = self.provider();
-            let block =
-                provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-            let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
-            let timestamp = block.timestamp.as_u64();
-            let base_fee = block.base_fee_per_gas;
-            Some((block_number, block_hash, timestamp, base_fee))
-        } else {
-            None
-        };
+        let provider = self.provider();
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let block_hash = block.hash.ok_or(BlockchainError::BlockNotFound)?;
+        let timestamp = block.timestamp.as_u64();
+        let base_fee = block.base_fee_per_gas;
 
-        self.config.write().update_block(block);
+        self.config.write().update_block(
+            block.number.ok_or(BlockchainError::BlockNotFound)?.as_u64(),
+            block_hash,
+            timestamp,
+            base_fee,
+        );
+
         self.clear_cached_storage();
         Ok(())
     }
@@ -91,6 +96,11 @@ impl ClientFork {
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
         block < self.block_number()
+    }
+
+    /// Returns true whether the block predates the fork _or_ is the same block as the fork
+    pub fn predates_fork_inclusive(&self, block: u64) -> bool {
+        block <= self.block_number()
     }
 
     pub fn timestamp(&self) -> u64 {
@@ -117,7 +127,7 @@ impl ClientFork {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<Provider<RetryClient<Http>>> {
+    fn provider(&self) -> Arc<RetryProvider> {
         self.config.read().provider.clone()
     }
 
@@ -137,6 +147,16 @@ impl ClientFork {
         reward_percentiles: &[f64],
     ) -> Result<FeeHistory, ProviderError> {
         self.provider().fee_history(block_count, newest_block, reward_percentiles).await
+    }
+
+    /// Sends `eth_getProof`
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<H256>,
+        block_number: Option<BlockId>,
+    ) -> Result<AccountProof, ProviderError> {
+        self.provider().get_proof(address, keys, block_number).await
     }
 
     /// Sends `eth_call`
@@ -396,7 +416,7 @@ pub struct ClientForkConfig {
     pub block_number: u64,
     pub block_hash: H256,
     // TODO make provider agnostic
-    pub provider: Arc<Provider<RetryClient<Http>>>,
+    pub provider: Arc<RetryProvider>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
     /// The timestamp for the forked block
@@ -414,23 +434,32 @@ impl ClientForkConfig {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
+        let interval = self.provider.get_interval();
         self.provider = Arc::new(
-            Provider::<RetryClient<Http>>::new_client(url.as_str(), 10, 1000)
-                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+            ProviderBuilder::new(url.as_str())
+                .max_retry(10)
+                .initial_backoff(1000)
+                .build()
+                .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
+                .interval(interval),
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
-    pub fn update_block(&mut self, block: Option<(u64, H256, u64, Option<U256>)>) {
-        if let Some((block_number, block_hash, timestamp, base_fee)) = block {
-            self.block_number = block_number;
-            self.block_hash = block_hash;
-            self.timestamp = timestamp;
-            self.base_fee = base_fee;
-            trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
-        }
+    pub fn update_block(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+        timestamp: u64,
+        base_fee: Option<U256>,
+    ) {
+        self.block_number = block_number;
+        self.block_hash = block_hash;
+        self.timestamp = timestamp;
+        self.base_fee = base_fee;
+        trace!(target: "fork", "Updated block number={} hash={:?}", block_number, block_hash);
     }
 }
 

@@ -1,10 +1,11 @@
 use super::sequence::TransactionWithMetadata;
-use crate::{cmd::has_batch_support, opts::WalletType, utils::get_http_provider};
+use crate::{cmd::has_batch_support, opts::WalletType};
 use ethers::{
     abi::Address,
     prelude::{Http, Middleware, Provider, RetryClient, U256},
     types::transaction::eip2718::TypedTransaction,
 };
+use foundry_common::get_http_provider;
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
@@ -27,7 +28,7 @@ impl ProviderInfo {
         tx: &TransactionWithMetadata,
         is_sequential: bool,
     ) -> eyre::Result<ProviderInfo> {
-        let provider = get_http_provider(rpc, true);
+        let provider = Arc::new(get_http_provider(rpc));
         let chain = provider.get_chainid().await?.as_u64();
         let (gas_price, eip1559_fees) = {
             match tx.typed_tx() {

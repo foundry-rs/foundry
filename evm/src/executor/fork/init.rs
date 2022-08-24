@@ -52,6 +52,7 @@ where
         cfg: CfgEnv {
             chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
             memory_limit,
+            limit_contract_code_size: usize::MAX,
             ..Default::default()
         },
         block: BlockEnv {

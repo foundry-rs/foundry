@@ -171,6 +171,7 @@ pub enum ScriptOutcome {
     WarnSpecifyDeployer,
     MissingSender,
     MissingWallet,
+    StaticCallNotAllowed,
     FailedScript,
 }
 
@@ -182,6 +183,7 @@ impl ScriptOutcome {
             ScriptOutcome::WarnSpecifyDeployer => "You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
             ScriptOutcome::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
             ScriptOutcome::MissingWallet => "No associated wallet",
+            ScriptOutcome::StaticCallNotAllowed => "Staticcalls are not allowed after vm.broadcast. Either remove it, or use vm.startBroadcast instead.",
             ScriptOutcome::FailedScript => "Script failed.",
         }
     }
@@ -193,6 +195,7 @@ impl ScriptOutcome {
             ScriptOutcome::WarnSpecifyDeployer => false,
             ScriptOutcome::MissingSender |
             ScriptOutcome::MissingWallet |
+            ScriptOutcome::StaticCallNotAllowed |
             ScriptOutcome::FailedScript => true,
         }
     }

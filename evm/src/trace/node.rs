@@ -53,7 +53,7 @@ impl CallTraceNode {
                     output: self.trace.output.to_raw().into(),
                 })
             }
-            CallKind::Create => Res::Create(CreateResult {
+            CallKind::Create | CallKind::Create2 => Res::Create(CreateResult {
                 gas_used: self.trace.gas_cost.into(),
                 code: self.trace.output.to_raw().into(),
                 address: self.trace.address,
@@ -82,7 +82,7 @@ impl CallTraceNode {
                     call_type: self.kind().into(),
                 })
             }
-            CallKind::Create => Action::Create(Create {
+            CallKind::Create | CallKind::Create2 => Action::Create(Create {
                 from: self.trace.caller,
                 value: self.trace.value,
                 gas: self.trace.gas_cost.into(),

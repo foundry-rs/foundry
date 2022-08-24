@@ -5,78 +5,41 @@ import "ds-test/test.sol";
 import "./Cheats.sol";
 
 contract Emitter {
-    event LogAnonymous(
-        bytes data
-    ) anonymous;
+    event LogAnonymous(bytes data) anonymous;
 
-    event LogTopic0(
-        bytes data
-    );
+    event LogTopic0(bytes data);
 
-    event LogTopic1(
-        uint256 indexed topic1,
-        bytes data
-    );
+    event LogTopic1(uint256 indexed topic1, bytes data);
 
-    event LogTopic12(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        bytes data
-    );
+    event LogTopic12(uint256 indexed topic1, uint256 indexed topic2, bytes data);
 
-    event LogTopic123(
-        uint256 indexed topic1,
-        uint256 indexed topic2,
-        uint256 indexed topic3,
-        bytes data
-    );
+    event LogTopic123(uint256 indexed topic1, uint256 indexed topic2, uint256 indexed topic3, bytes data);
 
-    function emitAnonymousEvent(
-        bytes memory data
-    ) public {
+    function emitAnonymousEvent(bytes memory data) public {
         emit LogAnonymous(data);
     }
 
-    function emitEvent(
-        bytes memory data
-    ) public {
+    function emitEvent(bytes memory data) public {
         emit LogTopic0(data);
     }
 
-    function emitEvent(
-        uint256 topic1,
-        bytes memory data
-    ) public {
+    function emitEvent(uint256 topic1, bytes memory data) public {
         emit LogTopic1(topic1, data);
     }
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        bytes memory data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, bytes memory data) public {
         emit LogTopic12(topic1, topic2, data);
     }
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        bytes memory data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, bytes memory data) public {
         emit LogTopic123(topic1, topic2, topic3, data);
     }
 }
 
 contract Emitterv2 {
-    Emitter emitter  = new Emitter();
+    Emitter emitter = new Emitter();
 
-    function emitEvent(
-        uint256 topic1,
-        uint256 topic2,
-        uint256 topic3,
-        bytes memory data
-    ) public {
+    function emitEvent(uint256 topic1, uint256 topic2, uint256 topic3, bytes memory data) public {
         emitter.emitEvent(topic1, topic2, topic3, data);
     }
 }
@@ -87,10 +50,7 @@ contract RecordLogsTest is DSTest {
     bytes32 internal seedTestData = keccak256(abi.encodePacked("Some data"));
 
     // Used on testRecordOnEmitDifferentDepths()
-    event LogTopic(
-        uint256 indexed topic1,
-        bytes data
-    );
+    event LogTopic(uint256 indexed topic1, bytes data);
 
     function setUp() public {
         emitter = new Emitter();
@@ -100,8 +60,8 @@ contract RecordLogsTest is DSTest {
         bytes memory output = new bytes(n);
 
         for (uint8 i = 0; i < n; i++) {
-            output[i] = seedTestData[ i % 32 ];
-            if ( i % 32 == 31 ) {
+            output[i] = seedTestData[i % 32];
+            if (i % 32 == 31) {
                 seedTestData = keccak256(abi.encodePacked(seedTestData));
             }
         }

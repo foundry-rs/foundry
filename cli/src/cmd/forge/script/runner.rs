@@ -2,6 +2,7 @@ use super::*;
 use ethers::types::{Address, Bytes, NameOrAddress, U256};
 use forge::{
     executor::{CallResult, DeployResult, EvmError, Executor, RawCallResult},
+    revm::{return_ok, Return},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
@@ -72,12 +73,16 @@ impl ScriptRunner {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
+        } = self
+            .executor
+            .deploy(CALLER, code.0, 0u32.into(), None)
+            .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        let (success, gas, labeled_addresses, transactions, debug) = if !setup {
+        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
             (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
             match self.executor.setup(Some(self.sender), address) {
@@ -87,7 +92,7 @@ impl ScriptRunner {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas,
+                    gas_used,
                     transactions,
                     ..
                 }) |
@@ -97,7 +102,7 @@ impl ScriptRunner {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas,
+                    gas_used,
                     transactions,
                     ..
                 }) => {
@@ -115,7 +120,7 @@ impl ScriptRunner {
 
                     (
                         !reverted,
-                        gas,
+                        gas_used,
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
@@ -130,7 +135,7 @@ impl ScriptRunner {
             ScriptResult {
                 returned: bytes::Bytes::new(),
                 success,
-                gas,
+                gas_used,
                 labeled_addresses,
                 transactions,
                 logs,
@@ -157,22 +162,32 @@ impl ScriptRunner {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
+            let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
                 None,
-            )?;
+            ) {
+                Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
+                    (address, gas_used, logs, traces, debug)
+                }
+                Err(EvmError::Execution { reason, traces, gas_used, logs, debug, .. }) => {
+                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+
+                    (Address::zero(), gas_used, logs, traces, debug)
+                }
+                e => eyre::bail!("Unrecoverable error: {:?}", e),
+            };
 
             Ok(ScriptResult {
                 returned: bytes::Bytes::new(),
-                success: true,
-                gas,
+                success: address != Address::zero(),
+                gas_used,
                 logs,
                 traces: traces
                     .map(|mut traces| {
                         // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas;
+                        traces.arena[0].trace.gas_cost = gas_used;
                         vec![(TraceKind::Execution, traces)]
                     })
                     .unwrap_or_default(),
@@ -186,6 +201,12 @@ impl ScriptRunner {
         }
     }
 
+    /// Executes the call
+    ///
+    /// This will commit the changes if `commit` is true.
+    ///
+    /// This will return _estimated_ gas instead of the precise gas the call would consume, so it
+    /// can be used as `gas_limit`.
     fn call(
         &mut self,
         from: Address,
@@ -194,34 +215,67 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
-        let RawCallResult {
-            result,
-            reverted,
-            gas: tx_gas,
-            stipend,
-            logs,
-            traces,
-            labels,
-            debug,
-            transactions,
-            ..
-        } = if !commit {
-            self.executor.call_raw(from, to, calldata.0, value)?
-        } else {
-            self.executor.call_raw_committing(from, to, calldata.0, value)?
-        };
+        let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+        let mut gas_used = res.gas_used;
+        if matches!(res.exit_reason, return_ok!()) {
+            // store the current gas limit and reset it later
+            let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
-        let gas = if commit { tx_gas } else { tx_gas.overflowing_sub(stipend).0 };
+            // the executor will return the _exact_ gas value this transaction consumed, setting
+            // this value as gas limit will result in `OutOfGas` so to come up with a
+            // better estimate we search over a possible range we pick a higher gas
+            // limit 3x of a succeeded call should be safe
+            let mut highest_gas_limit = gas_used * 3;
+            let mut lowest_gas_limit = gas_used;
+            let mut last_highest_gas_limit = highest_gas_limit;
+            while (highest_gas_limit - lowest_gas_limit) > 1 {
+                let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
+                self.executor.env_mut().tx.gas_limit = mid_gas_limit;
+                let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
+                match res.exit_reason {
+                    Return::Revert |
+                    Return::OutOfGas |
+                    Return::LackOfFundForGasLimit |
+                    Return::OutOfFund => {
+                        lowest_gas_limit = mid_gas_limit;
+                    }
+                    _ => {
+                        highest_gas_limit = mid_gas_limit;
+                        // if last two successful estimations only vary by 10%, we consider this to
+                        // sufficiently accurate
+                        const ACCURACY: u64 = 10;
+                        if (last_highest_gas_limit - highest_gas_limit) * ACCURACY /
+                            last_highest_gas_limit <
+                            1
+                        {
+                            // update the gas
+                            gas_used = highest_gas_limit;
+                            break
+                        }
+                        last_highest_gas_limit = highest_gas_limit;
+                    }
+                }
+            }
+            // reset gas limit in the
+            self.executor.env_mut().tx.gas_limit = init_gas_limit;
+        }
+
+        if commit {
+            // if explicitly requested we can now commit the call
+            res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
+        }
+
+        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, .. } = res;
 
         Ok(ScriptResult {
             returned: result,
             success: !reverted,
-            gas,
+            gas_used,
             logs,
             traces: traces
                 .map(|mut traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas;
+                    traces.arena[0].trace.gas_cost = gas_used;
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),

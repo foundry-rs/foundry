@@ -9,7 +9,10 @@ use ethers_core::{
         Abi, Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
-    utils::{self, get_contract_address, keccak256, parse_units, rlp},
+    utils::{
+        self, format_bytes32_string, get_contract_address, keccak256, parse_bytes32_string,
+        parse_units, rlp,
+    },
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -70,7 +73,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.build();
@@ -132,7 +135,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?;
     /// let builder_output = builder.peek();
@@ -195,7 +198,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
@@ -258,7 +261,7 @@ where
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
-    /// let mut builder = TxBuilder::new(&provider, from, to, Chain::Mainnet, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, Some(to), Chain::Mainnet, false).await?;
     /// builder
     ///     .set_value(value)
     ///     .set_args(sig, args).await?;
@@ -272,7 +275,7 @@ where
     pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx).await?;
+        let res = self.provider.estimate_gas(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -714,13 +717,11 @@ impl SimpleCast {
                 // get the source
                 let contract_source = match client.contract_source_code(address).await {
                     Ok(src) => src,
+                    Err(ethers_etherscan::errors::EtherscanError::InvalidApiKey) => {
+                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                    }
                     Err(err) => {
-                        let msg = err.to_string();
-                        if msg.contains("Invalid API Key") {
-                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
-                        } else {
-                            eyre::bail!(err)
-                        }
+                        eyre::bail!(err)
                     }
                 };
 
@@ -1179,8 +1180,9 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn from_rlp(value: String) -> Result<String> {
-        let striped_value = strip_0x(&value);
+    pub fn from_rlp(value: impl AsRef<str>) -> Result<String> {
+        let value = value.as_ref();
+        let striped_value = strip_0x(value);
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
         Ok(format!("{}", item))
@@ -1391,6 +1393,26 @@ impl SimpleCast {
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
     }
+
+    /// Encodes string into bytes32 value
+    pub fn format_bytes32_string(s: &str) -> Result<String> {
+        let formatted = format_bytes32_string(s)?;
+        Ok(format!("0x{}", hex::encode(&formatted)))
+    }
+
+    /// Decodes string from bytes32 value
+    pub fn parse_bytes32_string(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() != 64 {
+            eyre::bail!("string not 32 bytes");
+        }
+
+        let bytes = hex::decode(&s)?;
+        let mut buffer = [0u8; 32];
+        buffer.copy_from_slice(&bytes);
+
+        Ok(parse_bytes32_string(&buffer)?.to_owned())
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -1409,6 +1431,15 @@ mod tests {
         );
     }
 
+    // <https://github.com/foundry-rs/foundry/issues/2681>
+    #[test]
+    fn calldata_array() {
+        assert_eq!(
+            "0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000",
+            Cast::calldata("propose(string[])", &["[\"\"]"]).unwrap().as_str()
+        );
+    }
+
     #[test]
     fn calldata_bool() {
         assert_eq!(
@@ -1421,5 +1452,15 @@ mod tests {
     fn concat_hex() {
         assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
         assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+    }
+
+    #[test]
+    fn from_rlp() {
+        let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
+        let item = Cast::from_rlp(rlp).unwrap();
+        assert_eq!(
+            item,
+            r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
+        )
     }
 }

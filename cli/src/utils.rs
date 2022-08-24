@@ -1,7 +1,7 @@
 use console::Emoji;
 use ethers::{
     abi::token::{LenientTokenizer, Tokenizer},
-    prelude::{Http, Provider, RetryClient, TransactionReceipt},
+    prelude::TransactionReceipt,
     solc::EvmVersion,
     types::U256,
     utils::format_units,
@@ -14,7 +14,6 @@ use std::{
     path::Path,
     process::{Command, Output},
     str::FromStr,
-    sync::Arc,
     time::Duration,
 };
 use tracing_error::ErrorLayer;
@@ -95,6 +94,7 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
 /// # Example
 ///
 /// ```
+/// use foundry_cli::utils;
 /// assert_eq!(
 ///     "SafeTransferLibTest",
 ///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
@@ -109,6 +109,7 @@ pub fn get_contract_name(id: &str) -> &str {
 /// # Example
 ///
 /// ```
+/// use foundry_cli::utils;
 /// assert_eq!(
 ///     "SafeTransferLibTest.json",
 ///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
@@ -175,7 +176,7 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
 ///
-/// ```rust
+/// ```ignore
 /// let quiet = true;
 /// p_println!(!quiet => "message");
 /// ```
@@ -188,6 +189,30 @@ macro_rules! p_println {
 }
 pub(crate) use p_println;
 
+/// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
+///
+/// We could use `tracing::warn!` here, but that would imply that the dotenv file can't configure
+/// the logging behavior of Foundry.
+///
+/// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
+/// to not be able to configure the colors. It would also mess up the JSON output.
+pub fn load_dotenv() {
+    let load = |p: &Path| {
+        dotenv::from_path(p.join(".env")).ok();
+    };
+
+    // we only want the .env file of the cwd and project root
+    // `find_project_root_path` calls `current_dir` internally so both paths are either both `Ok` or
+    // both `Err`
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root_path()) {
+        load(&prj_root);
+        if cwd != prj_root {
+            // prj root and cwd can be identical
+            load(&cwd);
+        }
+    };
+}
+
 /// Disables terminal colours if either:
 /// - Running windows and the terminal does not support colour codes.
 /// - Colour has been disabled by some environment variable.
@@ -198,21 +223,6 @@ pub fn enable_paint() {
     if is_windows || env_colour_disabled {
         Paint::disable();
     }
-}
-
-/// Gives out a provider with a `100ms` interval poll if it's a localhost URL (most likely an anvil
-/// node) and with the default, `7s` if otherwise.
-pub fn get_http_provider(url: &str, aggressive: bool) -> Arc<Provider<RetryClient<Http>>> {
-    let (max_retry, initial_backoff) = if aggressive { (1000, 1) } else { (10, 1000) };
-
-    let provider = Provider::<RetryClient<Http>>::new_client(url, max_retry, initial_backoff)
-        .expect("Bad fork provider.");
-
-    Arc::new(if url.contains("127.0.0.1") || url.contains("localhost") {
-        provider.interval(Duration::from_millis(100))
-    } else {
-        provider
-    })
 }
 
 /// Prints parts of the receipt to stdout
@@ -284,6 +294,9 @@ impl CommandUtils for Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use foundry_common::fs;
+    use std::{env, fs::File, io::Write};
 
     #[test]
     fn foundry_path_ext_works() {
@@ -292,5 +305,33 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    // loads .env from cwd and project dir, See [`find_project_root_path()`]
+    #[test]
+    fn can_load_dotenv() {
+        let temp = tempdir().unwrap();
+        Command::new("git").arg("init").current_dir(temp.path()).exec().unwrap();
+        let cwd_env = temp.path().join(".env");
+        fs::create_file(temp.path().join("foundry.toml")).unwrap();
+        let nested = temp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        let mut cwd_file = File::create(cwd_env).unwrap();
+        let mut prj_file = File::create(nested.join(".env")).unwrap();
+
+        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.sync_all().unwrap();
+
+        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.sync_all().unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(nested).unwrap();
+        load_dotenv();
+        env::set_current_dir(cwd).unwrap();
+
+        assert_eq!(env::var("TESTCWDKEY").unwrap(), "cwd_val");
+        assert_eq!(env::var("TESTPRJKEY").unwrap(), "prj_val");
     }
 }

@@ -65,14 +65,14 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::RollFork0(fork) => {
             let block_number = fork.0;
             data.db
-                .roll_fork(data.env, block_number, None)
+                .roll_fork(None, block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
                 .map_err(util::encode_error)
         }
         HEVMCalls::RollFork1(fork) => {
             let block_number = fork.1;
             data.db
-                .roll_fork(data.env, block_number, Some(fork.0))
+                .roll_fork(Some(fork.0), block_number, data.env, &mut data.journaled_state)
                 .map(|_| Default::default())
                 .map_err(util::encode_error)
         }
@@ -106,7 +106,7 @@ fn select_fork<DB: DatabaseExt>(
     }
 
     data.db
-        .select_fork(fork_id, data.env, &mut data.subroutine)
+        .select_fork(fork_id, data.env, &mut data.journaled_state)
         .map(|_| Default::default())
         .map_err(util::encode_error)
 }
@@ -123,7 +123,9 @@ fn create_select_fork<DB: DatabaseExt>(
     }
 
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_select_fork(fork, data.env, &mut data.subroutine).map_err(util::encode_error)
+    data.db
+        .create_select_fork(fork, data.env, &mut data.journaled_state)
+        .map_err(util::encode_error)
 }
 
 /// Creates a new fork
@@ -134,7 +136,7 @@ fn create_fork<DB: DatabaseExt>(
     block: Option<u64>,
 ) -> Result<U256, Bytes> {
     let fork = create_fork_request(state, url_or_alias, block, data)?;
-    data.db.create_fork(fork, &data.subroutine).map_err(util::encode_error)
+    data.db.create_fork(fork, &data.journaled_state).map_err(util::encode_error)
 }
 
 /// Creates the request object for a new fork request

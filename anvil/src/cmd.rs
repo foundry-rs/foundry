@@ -7,6 +7,7 @@ use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use ethers::utils::WEI_IN_ETHER;
+use foundry_config::Chain;
 use std::{
     net::IpAddr,
     str::FromStr,
@@ -15,6 +16,8 @@ use std::{
         Arc,
     },
 };
+
+use crate::genesis::Genesis;
 use tracing::log::trace;
 
 #[derive(Clone, Debug, Parser)]
@@ -47,6 +50,9 @@ pub struct NodeArgs {
         value_name = "NUM"
     )]
     pub balance: u64,
+
+    #[clap(long, help = "The timestamp of the genesis block", value_name = "NUM")]
+    pub timestamp: Option<u64>,
 
     #[clap(
         long,
@@ -113,6 +119,14 @@ pub struct NodeArgs {
         value_name = "ORDER"
     )]
     pub order: TransactionOrder,
+
+    #[clap(
+        long,
+        help = "Initialize the genesis block with the given `genesis.json` file.",
+        value_name = "PATH",
+        value_parser = Genesis::parse
+    )]
+    pub init: Option<Genesis>,
 }
 
 impl NodeArgs {
@@ -127,6 +141,7 @@ impl NodeArgs {
             .with_no_mining(self.no_mining)
             .with_account_generator(self.account_generator())
             .with_genesis_balance(genesis_balance)
+            .with_genesis_timestamp(self.timestamp)
             .with_port(self.port)
             .with_fork_block_number(
                 self.evm_opts
@@ -142,12 +157,13 @@ impl NodeArgs {
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
+            .with_genesis(self.init)
     }
 
     fn account_generator(&self) -> AccountGenerator {
         let mut gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
-            .chain_id(self.evm_opts.chain_id.unwrap_or(CHAIN_ID));
+            .chain_id(self.evm_opts.chain_id.unwrap_or_else(|| CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }
@@ -161,22 +177,37 @@ impl NodeArgs {
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let (api, handle) = crate::spawn(self.into_node_config()).await;
+        let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
-        let fork = api.get_fork().cloned();
+        let mut fork = api.get_fork().cloned();
         let running = Arc::new(AtomicUsize::new(0));
+
+        // handle for the currently running rt, this must be obtained before setting the crtlc
+        // handler, See [Handle::current]
+        let mut signal = handle.shutdown_signal_mut().take();
+
+        let task_manager = handle.task_manager();
+        let on_shutdown = task_manager.on_shutdown();
+
+        task_manager.spawn(async move {
+            on_shutdown.await;
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            if let Some(fork) = fork.take() {
+                trace!("flushing cache on shutdown");
+                fork.database.read().await.flush_cache();
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+            }
+            std::process::exit(0);
+        });
 
         ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
             if prev == 0 {
-                // cleaning up and shutting down
-                // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
-                if let Some(ref fork) = fork {
-                    fork.database.read().flush_cache();
-                }
-                std::process::exit(0);
+                let _ = signal.take();
             }
         })
         .expect("Error setting Ctrl-C handler");
@@ -240,8 +271,8 @@ pub struct AnvilEvmArgs {
     pub block_base_fee_per_gas: Option<u64>,
 
     /// The chain ID.
-    #[clap(long, value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
-    pub chain_id: Option<u64>,
+    #[clap(long, alias = "chain", value_name = "CHAIN_ID", help_heading = "ENVIRONMENT CONFIG")]
+    pub chain_id: Option<Chain>,
 }
 
 /// Represents the input URL for a fork with an optional trailing block number:

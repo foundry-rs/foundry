@@ -2,17 +2,20 @@
 
 use crate::{
     executor::{
+        backend::snapshot::StateSnapshot,
         fork::{BlockchainDb, SharedBackend},
         snapshot::Snapshots,
     },
     revm::db::CacheDB,
 };
-use bytes::Bytes;
-use ethers::prelude::{Address, H256, U256};
+use ethers::{
+    prelude::{Address, H256, U256},
+    types::BlockId,
+};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
-use revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit};
-use std::{collections::BTreeMap, sync::Arc};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
+use std::sync::Arc;
 use tracing::{trace, warn};
 
 /// a [revm::Database] that's forked off another client
@@ -65,10 +68,12 @@ impl ForkedDatabase {
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(&mut self, _url: Option<String>, block_number: Option<u64>) -> Result<(), String> {
-        if let Some(block_number) = block_number {
-            self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        }
+    pub fn reset(
+        &mut self,
+        _url: Option<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), String> {
+        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
 
         // TODO need to find a way to update generic provider via url
 
@@ -92,12 +97,12 @@ impl ForkedDatabase {
 
     pub fn create_snapshot(&self) -> ForkDbSnapshot {
         let db = self.db.db();
-        ForkDbSnapshot {
-            local: self.cache_db.clone(),
+        let snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
             storage: db.storage.read().clone(),
             block_hashes: db.block_hashes.read().clone(),
-        }
+        };
+        ForkDbSnapshot { local: self.cache_db.clone(), snapshot }
     }
 
     pub fn insert_snapshot(&self) -> U256 {
@@ -111,7 +116,10 @@ impl ForkedDatabase {
     pub fn revert_snapshot(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots().lock().remove(id) };
         if let Some(snapshot) = snapshot {
-            let ForkDbSnapshot { accounts, storage, block_hashes, local } = snapshot;
+            let ForkDbSnapshot {
+                local,
+                snapshot: StateSnapshot { accounts, storage, block_hashes },
+            } = snapshot;
             let db = self.inner().db();
             {
                 let mut accounts_lock = db.accounts.write();
@@ -142,11 +150,11 @@ impl ForkedDatabase {
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        self.cache_db.basic(address)
+        Database::basic(&mut self.cache_db, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        self.cache_db.code_by_hash(code_hash)
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+        Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
@@ -154,7 +162,7 @@ impl Database for ForkedDatabase {
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.cache_db.block_hash(number)
+        Database::block_hash(&mut self.cache_db, number)
     }
 }
 
@@ -163,7 +171,7 @@ impl DatabaseRef for ForkedDatabase {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.cache_db.code_by_hash(code_hash)
     }
 
@@ -183,12 +191,12 @@ impl DatabaseCommit for ForkedDatabase {
 }
 
 /// Represents a snapshot of the database
+///
+/// This mimics `revm::CacheDB`
 #[derive(Debug)]
 pub struct ForkDbSnapshot {
-    local: CacheDB<SharedBackend>,
-    accounts: BTreeMap<Address, AccountInfo>,
-    storage: BTreeMap<Address, BTreeMap<U256, U256>>,
-    block_hashes: BTreeMap<u64, H256>,
+    pub local: CacheDB<SharedBackend>,
+    pub snapshot: StateSnapshot,
 }
 
 // === impl DbSnapshot ===
@@ -206,13 +214,16 @@ impl DatabaseRef for ForkDbSnapshot {
     fn basic(&self, address: Address) -> AccountInfo {
         match self.local.accounts.get(&address) {
             Some(account) => account.info.clone(),
-            None => {
-                self.accounts.get(&address).cloned().unwrap_or_else(|| self.local.basic(address))
-            }
+            None => self
+                .snapshot
+                .accounts
+                .get(&address)
+                .cloned()
+                .unwrap_or_else(|| self.local.basic(address)),
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.local.code_by_hash(code_hash)
     }
 
@@ -231,8 +242,9 @@ impl DatabaseRef for ForkDbSnapshot {
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.block_hashes
-            .get(&number.as_u64())
+        self.snapshot
+            .block_hashes
+            .get(&number)
             .copied()
             .unwrap_or_else(|| self.local.block_hash(number))
     }

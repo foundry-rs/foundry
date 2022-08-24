@@ -1,10 +1,10 @@
 use comfy_table::{Attribute, Cell, Color, Row, Table};
 pub use foundry_evm::coverage::*;
-use std::{collections::HashMap, io::Write, path::PathBuf};
+use std::io::Write;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
-    fn report(self, map: CoverageMap) -> eyre::Result<()>;
+    fn report(self, report: CoverageReport) -> eyre::Result<()>;
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
@@ -37,12 +37,10 @@ impl SummaryReporter {
 }
 
 impl CoverageReporter for SummaryReporter {
-    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
-        for file in map {
-            let summary = file.summary();
-
+    fn report(mut self, report: CoverageReport) -> eyre::Result<()> {
+        for (path, summary) in report.summary_by_file() {
             self.total += &summary;
-            self.add_row(file.path.to_string_lossy(), summary);
+            self.add_row(path, summary);
         }
 
         self.add_row("Total", self.total.clone());
@@ -80,31 +78,29 @@ impl<'a> LcovReporter<'a> {
 }
 
 impl<'a> CoverageReporter for LcovReporter<'a> {
-    fn report(self, map: CoverageMap) -> eyre::Result<()> {
-        for file in map {
-            let summary = file.summary();
+    fn report(self, report: CoverageReport) -> eyre::Result<()> {
+        for (file, items) in report.items_by_source() {
+            let summary = items.iter().fold(CoverageSummary::default(), |mut summary, item| {
+                summary += item;
+                summary
+            });
 
             writeln!(self.destination, "TN:")?;
-            writeln!(self.destination, "SF:{}", file.path.to_string_lossy())?;
+            writeln!(self.destination, "SF:{}", file)?;
 
-            for item in file.items {
-                match item {
-                    CoverageItem::Function {
-                        loc: SourceLocation { line, .. }, name, hits, ..
-                    } => {
+            for item in items {
+                let line = item.loc.line;
+                let hits = item.hits;
+                match item.kind {
+                    CoverageItemKind::Function { name } => {
+                        let name = format!("{}.{}", item.loc.contract_name, name);
                         writeln!(self.destination, "FN:{line},{name}")?;
                         writeln!(self.destination, "FNDA:{hits},{name}")?;
                     }
-                    CoverageItem::Line { loc: SourceLocation { line, .. }, hits, .. } => {
+                    CoverageItemKind::Line => {
                         writeln!(self.destination, "DA:{line},{hits}")?;
                     }
-                    CoverageItem::Branch {
-                        loc: SourceLocation { line, .. },
-                        branch_id,
-                        path_id,
-                        hits,
-                        ..
-                    } => {
+                    CoverageItemKind::Branch { branch_id, path_id } => {
                         writeln!(
                             self.destination,
                             "BRDA:{line},{branch_id},{path_id},{}",
@@ -112,7 +108,7 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
                         )?;
                     }
                     // Statements are not in the LCOV format
-                    CoverageItem::Statement { .. } => (),
+                    CoverageItemKind::Statement => (),
                 }
             }
 
@@ -138,63 +134,37 @@ impl<'a> CoverageReporter for LcovReporter<'a> {
 }
 
 /// A super verbose reporter for debugging coverage while it is still unstable.
-pub struct DebugReporter {
-    /// The summary table.
-    table: Table,
-    /// The total coverage of the entire project.
-    total: CoverageSummary,
-    /// Uncovered items
-    uncovered: HashMap<PathBuf, Vec<CoverageItem>>,
-}
-
-impl Default for DebugReporter {
-    fn default() -> Self {
-        let mut table = Table::new();
-        table.set_header(&["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
-
-        Self { table, total: CoverageSummary::default(), uncovered: HashMap::default() }
-    }
-}
-
-impl DebugReporter {
-    fn add_row(&mut self, name: impl Into<Cell>, summary: CoverageSummary) {
-        let mut row = Row::new();
-        row.add_cell(name.into())
-            .add_cell(format_cell(summary.line_hits, summary.line_count))
-            .add_cell(format_cell(summary.statement_hits, summary.statement_count))
-            .add_cell(format_cell(summary.branch_hits, summary.branch_count))
-            .add_cell(format_cell(summary.function_hits, summary.function_count));
-        self.table.add_row(row);
-    }
-}
+#[derive(Default)]
+pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
-    fn report(mut self, map: CoverageMap) -> eyre::Result<()> {
-        for file in map {
-            let summary = file.summary();
-
-            self.total += &summary;
-            self.add_row(file.path.to_string_lossy(), summary);
-
-            file.items.iter().for_each(|item| {
-                if item.hits() == 0 {
-                    self.uncovered.entry(file.path.clone()).or_default().push(item.clone());
-                }
-            })
-        }
-
-        self.add_row("Total", self.total.clone());
-        println!("{}", self.table);
-
-        for (path, items) in self.uncovered {
-            println!("Uncovered for {}:", path.to_string_lossy());
+    fn report(self, report: CoverageReport) -> eyre::Result<()> {
+        for (path, items) in report.items_by_source() {
+            println!("Uncovered for {path}:");
             items.iter().for_each(|item| {
-                if item.hits() == 0 {
-                    println!("- {}", item);
+                if item.hits == 0 {
+                    println!("- {item}");
                 }
             });
             println!();
         }
+
+        for (contract_id, anchors) in report.anchors {
+            println!("Anchors for {contract_id}:");
+            anchors.iter().for_each(|anchor| {
+                println!("- {}", anchor);
+                println!(
+                    "  - Refers to item: {}",
+                    report
+                        .items
+                        .get(&contract_id.version)
+                        .and_then(|items| items.get(anchor.item_id))
+                        .map_or("None".to_owned(), |item| item.to_string())
+                );
+            });
+            println!();
+        }
+
         Ok(())
     }
 }

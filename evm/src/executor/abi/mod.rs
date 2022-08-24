@@ -18,6 +18,7 @@ ethers::contract::abigen!(
             struct Log {bytes32[] topics; bytes data;}
             roll(uint256)
             warp(uint256)
+            difficulty(uint256)
             fee(uint256)
             coinbase(address)
             store(address,bytes32,bytes32)
@@ -74,6 +75,7 @@ ethers::contract::abigen!(
             startBroadcast()
             startBroadcast(address)
             stopBroadcast()
+            projectRoot()(string)
             readFile(string)(string)
             writeFile(string,string)
             openFile(string)
@@ -87,6 +89,12 @@ ethers::contract::abigen!(
             toString(int256)
             toString(bytes32)
             toString(bool)
+            parseBytes(string)(bytes)
+            parseAddress(string)(address)
+            parseUint256(string)(uint256)
+            parseInt256(string)(int256)
+            parseBytes32(string)(bytes32)
+            parseBool(string)(bool)
             snapshot()(uint256)
             revertTo(uint256)(bool)
             createFork(string,uint256)(uint256)
@@ -106,6 +114,8 @@ ethers::contract::abigen!(
             rollFork(uint256,uint256)
             rpcUrl(string)(string)
             rpcUrls()(string[2][])
+            parseJson(string, string)(bytes)
+            parseJson(string)(bytes)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

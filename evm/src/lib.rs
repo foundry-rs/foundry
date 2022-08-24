@@ -41,13 +41,20 @@ pub const CALLER: Address = H160([
     0x30, 0x9D, 0x1F, 0x38,
 ]);
 
+/// Stores the default test contract address: 0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84
+pub const TEST_CONTRACT_ADDRESS: Address = H160([
+    180, 199, 157, 171, 143, 37, 156, 122, 238, 110, 91, 42, 167, 41, 130, 24, 100, 34, 126, 132,
+]);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum CallKind {
     Call,
     StaticCall,
     CallCode,
     DelegateCall,
     Create,
+    Create2,
 }
 
 impl Default for CallKind {
@@ -68,8 +75,11 @@ impl From<CallScheme> for CallKind {
 }
 
 impl From<CreateScheme> for CallKind {
-    fn from(_: CreateScheme) -> Self {
-        CallKind::Create
+    fn from(create: CreateScheme) -> Self {
+        match create {
+            CreateScheme::Create => CallKind::Create,
+            CreateScheme::Create2 { .. } => CallKind::Create2,
+        }
     }
 }
 
@@ -80,6 +90,7 @@ impl From<CallKind> for ActionType {
                 ActionType::Call
             }
             CallKind::Create => ActionType::Create,
+            CallKind::Create2 => ActionType::Create,
         }
     }
 }
@@ -92,6 +103,7 @@ impl From<CallKind> for CallType {
             CallKind::CallCode => CallType::CallCode,
             CallKind::DelegateCall => CallType::DelegateCall,
             CallKind::Create => CallType::None,
+            CallKind::Create2 => CallType::None,
         }
     }
 }

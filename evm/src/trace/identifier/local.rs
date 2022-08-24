@@ -3,7 +3,7 @@ use ethers::{
     abi::{Abi, Address, Event},
     prelude::ArtifactId,
 };
-use foundry_utils::diff_score;
+use foundry_common::contracts::{diff_score, ContractsByArtifact};
 use std::{borrow::Cow, collections::BTreeMap};
 
 /// A trace identifier that tries to identify addresses using local contracts.
@@ -12,7 +12,7 @@ pub struct LocalTraceIdentifier {
 }
 
 impl LocalTraceIdentifier {
-    pub fn new(known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>) -> Self {
+    pub fn new(known_contracts: &ContractsByArtifact) -> Self {
         Self {
             local_contracts: known_contracts
                 .iter()

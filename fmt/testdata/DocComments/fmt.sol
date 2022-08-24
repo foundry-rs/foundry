@@ -9,8 +9,8 @@ contract HelloWorld {
     }
 
     /**
-        Here's a more double asterix comment
-    */
+     * Here's a more double asterix comment
+     */
     Person public theDude;
 
     /// Constructs the dude
@@ -22,7 +22,13 @@ contract HelloWorld {
     /**
      * @dev does nothing
      */
-    function example() public {}
+    function example() public {
+        /**
+         * Does this add a whitespace error?
+         *
+         * Let's find out.
+         */
+    }
 
     /**
      * @dev Calculates a rectangle's surface and perimeter.

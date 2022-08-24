@@ -1,24 +1,19 @@
-pub mod cmd;
-pub mod compile;
-mod handler;
-mod opts;
-mod suggestions;
-mod term;
-mod utils;
-
-use crate::{
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
+use foundry_cli::{
     cmd::{
         forge::{cache::CacheSubcommands, watch},
         Cmd,
     },
+    handler,
+    opts::forge::{Opts, Subcommands},
+    utils,
     utils::CommandUtils,
 };
-use clap::{IntoApp, Parser};
-use clap_complete::generate;
-use opts::forge::{Opts, Subcommands};
 use std::process::Command;
 
 fn main() -> eyre::Result<()> {
+    utils::load_dotenv();
     handler::install()?;
     utils::subscriber();
     utils::enable_paint();
@@ -44,7 +39,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::forge::watch::watch_build(cmd))?;
+                utils::block_on(watch::watch_build(cmd))?;
             } else {
                 cmd.run()?;
             }
@@ -97,13 +92,19 @@ fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
+        Subcommands::GenerateFigSpec => clap_complete::generate(
+            clap_complete_fig::Fig,
+            &mut Opts::command(),
+            "forge",
+            &mut std::io::stdout(),
+        ),
         Subcommands::Clean { root } => {
             let config = utils::load_config_with_root(root);
             config.project()?.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+                utils::block_on(watch::watch_snapshot(cmd))?;
             } else {
                 cmd.run()?;
             }

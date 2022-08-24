@@ -60,6 +60,14 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("Required data unavailable")]
+    DataUnavailable,
+    #[error("Trie error: {0}")]
+    TrieError(String),
+    #[error("{0}")]
+    UintConversion(&'static str),
+    #[error("State override error: {0}")]
+    StateOverrideError(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -237,6 +245,16 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::DataUnavailable => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::TrieError(_) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
+                err @ BlockchainError::StateOverrideError(_) => {
+                    RpcError::invalid_params(err.to_string())
+                }
             }
             .into(),
         }

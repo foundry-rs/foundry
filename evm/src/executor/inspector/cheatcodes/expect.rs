@@ -8,16 +8,16 @@ use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{return_ok, Database, EVMData, Return};
+use revm::{return_ok, Bytecode, Database, EVMData, Return};
 use std::cmp::Ordering;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
 /// to populate the return with dummy bytes so the decode doesn't fail.
 ///
-/// 320 bytes was arbitrarily chosen because it is long enough for return values up to 10 words in
+/// 512 bytes was arbitrarily chosen because it is long enough for return values up to 16 words in
 /// size.
-static DUMMY_CALL_OUTPUT: [u8; 320] = [0u8; 320];
+static DUMMY_CALL_OUTPUT: [u8; 512] = [0u8; 512];
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 static DUMMY_CREATE_ADDRESS: Address =
@@ -218,16 +218,18 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
-        HEVMCalls::ExpectRevert0(_) => expect_revert(state, Bytes::new(), data.subroutine.depth()),
+        HEVMCalls::ExpectRevert0(_) => {
+            expect_revert(state, Bytes::new(), data.journaled_state.depth())
+        }
         HEVMCalls::ExpectRevert1(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
+            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
         }
         HEVMCalls::ExpectRevert2(inner) => {
-            expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
+            expect_revert(state, inner.0.to_vec().into(), data.journaled_state.depth())
         }
         HEVMCalls::ExpectEmit0(inner) => {
             state.expected_emits.push(ExpectedEmit {
-                depth: data.subroutine.depth() - 1,
+                depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 ..Default::default()
             });
@@ -235,7 +237,7 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::ExpectEmit1(inner) => {
             state.expected_emits.push(ExpectedEmit {
-                depth: data.subroutine.depth() - 1,
+                depth: data.journaled_state.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 address: Some(inner.4),
                 ..Default::default()
@@ -259,6 +261,23 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::MockCall0(inner) => {
+            // TODO: Does this increase gas usage?
+            data.journaled_state.load_account(inner.0, data.db);
+
+            // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
+            // check Solidity might perform.
+            if data
+                .journaled_state
+                .account(inner.0)
+                .info
+                .code
+                .as_ref()
+                .map(|code| code.is_empty())
+                .unwrap_or(true)
+            {
+                let code = Bytecode::new_raw(Bytes::from_static(&[0u8])).to_checked();
+                data.journaled_state.set_code(inner.0, code);
+            }
             state.mocked_calls.entry(inner.0).or_default().insert(
                 MockCallDataContext { calldata: inner.1.to_vec().into(), value: None },
                 inner.2.to_vec().into(),

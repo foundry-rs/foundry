@@ -1,16 +1,21 @@
 use crate::{
     abi::HEVMCalls,
-    executor::inspector::{cheatcodes::util, Cheatcodes},
+    executor::inspector::{
+        cheatcodes::util::{self},
+        Cheatcodes,
+    },
 };
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
-    types::{Address, I256, U256},
-    utils::hex::FromHex,
+    types::*,
 };
 use foundry_common::fs;
+use hex::FromHex;
+use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     env,
     io::{BufRead, BufReader, Write},
@@ -18,7 +23,7 @@ use std::{
     process::Command,
     str::FromStr,
 };
-use tracing::trace;
+use tracing::{error, trace};
 
 /// Invokes a `Command` with the given args and returns the abi encoded response
 ///
@@ -34,20 +39,25 @@ fn ffi(state: &Cheatcodes, args: &[String]) -> Result<Bytes, Bytes> {
 
     trace!(?args, "invoking ffi");
 
-    let stdout = cmd
+    let output = cmd
         .current_dir(&state.config.root)
         .output()
-        .map_err(|err| util::encode_error(format!("Failed to execute command: {}", err)))?
-        .stdout;
+        .map_err(|err| util::encode_error(format!("Failed to execute command: {}", err)))?;
 
-    let output = String::from_utf8(stdout)
+    if !output.stderr.is_empty() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        error!(?err, "stderr");
+    }
+
+    let output = String::from_utf8(output.stdout)
         .map_err(|err| util::encode_error(format!("Failed to decode non utf-8 output: {}", err)))?;
 
-    if let Ok(hex_decoded) = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(&output)) {
+    let trim_out = output.trim();
+    if let Ok(hex_decoded) = hex::decode(trim_out.strip_prefix("0x").unwrap_or(trim_out)) {
         return Ok(abi::encode(&[Token::Bytes(hex_decoded.to_vec())]).into())
     }
 
-    Ok(output.encode().into())
+    Ok(trim_out.to_string().encode().into())
 }
 
 /// An enum which unifies the deserialization of Hardhat-style artifacts with Forge-style artifacts
@@ -126,54 +136,18 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
 fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
     let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
     let val = if let Some(d) = delim {
-        val.split(d).map(|v| v.trim()).collect()
+        val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
-        vec![val.as_str()]
+        vec![val]
     };
+    let is_array: bool = delim.is_some();
+    util::value_to_abi(val, r#type, is_array)
+}
 
-    let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
-    let parse_uint = |v: &str| {
-        if v.starts_with("0x") {
-            let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_little_endian(&v))
-        } else {
-            U256::from_dec_str(v).map_err(|e| e.to_string())
-        }
-    };
-    let parse_int = |v: &str| {
-        // hex string may start with "0x", "+0x", or "-0x"
-        if v.starts_with("0x") || v.starts_with("+0x") || v.starts_with("-0x") {
-            I256::from_hex_str(&v.replacen("0x", "", 1)).map(|v| v.into_raw())
-        } else {
-            I256::from_dec_str(v).map(|v| v.into_raw())
-        }
-    };
-    let parse_address = |v: &str| Address::from_str(v);
-    let parse_string = |v: &str| -> Result<String, ()> { Ok(v.to_string()) };
-    let parse_bytes = |v: &str| Vec::from_hex(v.strip_prefix("0x").unwrap_or(v));
+fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
+    let root = state.config.root.display().to_string();
 
-    val.iter()
-        .map(|v| match r#type {
-            ParamType::Bool => parse_bool(v).map(Token::Bool).map_err(|e| e.to_string()),
-            ParamType::Uint(256) => parse_uint(v).map(Token::Uint),
-            ParamType::Int(256) => parse_int(v).map(Token::Int).map_err(|e| e.to_string()),
-            ParamType::Address => parse_address(v).map(Token::Address).map_err(|e| e.to_string()),
-            ParamType::FixedBytes(32) => {
-                parse_bytes(v).map(Token::FixedBytes).map_err(|e| e.to_string())
-            }
-            ParamType::String => parse_string(v).map(Token::String).map_err(|_| "".to_string()),
-            ParamType::Bytes => parse_bytes(v).map(Token::Bytes).map_err(|e| e.to_string()),
-            _ => Err(format!("{} is not a supported type", r#type)),
-        })
-        .collect::<Result<Vec<Token>, String>>()
-        .map(|mut tokens| {
-            if delim.is_none() {
-                abi::encode(&[tokens.remove(0)]).into()
-            } else {
-                abi::encode(&[Token::Array(tokens)]).into()
-            }
-        })
-        .map_err(|e| e.into())
+    Ok(abi::encode(&[Token::String(root)]).into())
 }
 
 fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
@@ -257,6 +231,71 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     Ok(Bytes::new())
 }
 
+/// Converts a serde_json::Value to an abi::Token
+/// The function is designed to run recursively, so that in case of an object
+/// it will call itself to convert each of it's value and encode the whole as a
+/// Tuple
+fn value_to_token(value: &Value) -> Result<Token, Token> {
+    if let Some(boolean) = value.as_bool() {
+        Ok(Token::Bool(boolean))
+    } else if let Some(string) = value.as_str() {
+        // If it can decoded as an address, it's an address
+        if let Ok(addr) = H160::from_str(string) {
+            Ok(Token::Address(addr))
+        } else if let Some(val) = string.strip_prefix("0x") {
+            // If incornrect length, pad 0 at the beginning
+            if hex::decode(val).is_ok() {
+                // if length == 32 bytes, then encode as Bytes32, else Bytes
+                Ok(if val.len() == 64 {
+                    Token::FixedBytes(Vec::from_hex(val).unwrap())
+                } else {
+                    Token::Bytes(Vec::from_hex(val).unwrap())
+                })
+            } else {
+                let arr = format!("0{}", val);
+                Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
+            }
+        } else {
+            Ok(Token::String(string.to_owned()))
+        }
+    } else if let Some(number) = value.as_u64() {
+        Ok(Token::Uint(number.into()))
+    } else if let Some(number) = value.as_i64() {
+        Ok(Token::Int(number.into()))
+    } else if let Some(array) = value.as_array() {
+        Ok(Token::Array(
+            array.iter().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>(),
+        ))
+    } else if let Some(object) = value.as_object() {
+        let values =
+            object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
+        Ok(Token::Tuple(values))
+    } else if value.is_null() {
+        Ok(Token::FixedBytes(Vec::with_capacity(32)))
+    } else {
+        Err(Token::String("Could not decode field".to_string()))
+    }
+}
+/// Parses a JSON and returns a single value, an array or an entire JSON object encoded as tuple.
+/// As the JSON object is parsed serially, with the keys ordered alphabetically, they must be
+/// deserialized in the same order. That means that the solidity `struct` should order it's fields
+/// alphabetically and not by efficient packing or some other taxonomy.
+fn parse_json(_state: &mut Cheatcodes, json: &str, key: &str) -> Result<Bytes, Bytes> {
+    let values: Value = JsonPathFinder::from_str(json, key)?.find();
+    // values is an array of items. Depending on the JsonPath key, they
+    // can be many or a single item. An item can be a single value or
+    // an entire JSON object.
+    let res = values
+        .as_array()
+        .ok_or_else(|| util::encode_error("JsonPath did not return an array"))?
+        .iter()
+        .map(|inner| value_to_token(inner).map_err(util::encode_error))
+        .collect::<Result<Vec<Token>, Bytes>>();
+    // encode the bytes as the 'bytes' solidity type
+    let abi_encoded = abi::encode(&[Token::Bytes(abi::encode(&res?))]);
+    Ok(abi_encoded.into())
+}
+
 pub fn apply(
     state: &mut Cheatcodes,
     ffi_enabled: bool,
@@ -288,12 +327,17 @@ pub fn apply(
         }
         HEVMCalls::EnvString1(inner) => get_env(&inner.0, ParamType::String, Some(&inner.1)),
         HEVMCalls::EnvBytes1(inner) => get_env(&inner.0, ParamType::Bytes, Some(&inner.1)),
+        HEVMCalls::ProjectRoot(_) => project_root(state),
         HEVMCalls::ReadFile(inner) => read_file(state, &inner.0),
         HEVMCalls::ReadLine(inner) => read_line(state, &inner.0),
         HEVMCalls::WriteFile(inner) => write_file(state, &inner.0, &inner.1),
         HEVMCalls::WriteLine(inner) => write_line(state, &inner.0, &inner.1),
         HEVMCalls::CloseFile(inner) => close_file(state, &inner.0),
         HEVMCalls::RemoveFile(inner) => remove_file(state, &inner.0),
+        // If no key argument is passed, return the whole JSON object.
+        // "$" is the JSONPath key for the root of the object
+        HEVMCalls::ParseJson0(inner) => parse_json(state, &inner.0, "$"),
+        HEVMCalls::ParseJson1(inner) => parse_json(state, &inner.0, &inner.1),
         _ => return None,
     })
 }
@@ -315,7 +359,7 @@ mod tests {
     fn test_ffi_hex() {
         let msg = "gm";
         let cheats = cheats();
-        let args = ["echo".to_string(), "-n".to_string(), hex::encode(msg)];
+        let args = ["echo".to_string(), hex::encode(msg)];
         let output = ffi(&cheats, &args).unwrap();
 
         let output = String::decode(&output).unwrap();
@@ -326,7 +370,8 @@ mod tests {
     fn test_ffi_string() {
         let msg = "gm";
         let cheats = cheats();
-        let args = ["echo".to_string(), "-n".to_string(), msg.to_string()];
+
+        let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
 
         let output = String::decode(&output).unwrap();

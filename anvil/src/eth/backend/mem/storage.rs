@@ -1,6 +1,9 @@
 //! In-memory blockchain storage
 use crate::eth::{
-    backend::{db::StateDb, time::duration_since_unix_epoch},
+    backend::{
+        db::{MaybeHashDatabase, StateDb},
+        mem::cache::DiskStateCache,
+    },
     pool::transactions::PoolTransaction,
 };
 use anvil_core::eth::{
@@ -20,14 +23,20 @@ use std::{
     sync::Arc,
 };
 
+// === impl DiskStateCache ===
+
 /// Represents the complete state of single block
 pub struct InMemoryBlockStates {
     /// The states at a certain block
     states: HashMap<H256, StateDb>,
+    /// states which data is moved to disk
+    on_disk_states: HashMap<H256, StateDb>,
     /// How many states to store at most
     limit: usize,
     /// all states present, used to enforce `limit`
     present: VecDeque<H256>,
+    /// Stores old states on disk
+    disk_cache: DiskStateCache,
 }
 
 // === impl InMemoryBlockStates ===
@@ -35,7 +44,13 @@ pub struct InMemoryBlockStates {
 impl InMemoryBlockStates {
     /// Creates a new instance with limited slots
     pub fn new(limit: usize) -> Self {
-        Self { states: Default::default(), limit, present: Default::default() }
+        Self {
+            states: Default::default(),
+            on_disk_states: Default::default(),
+            limit,
+            present: Default::default(),
+            disk_cache: Default::default(),
+        }
     }
 
     /// Inserts a new (hash -> state) pair
@@ -43,22 +58,39 @@ impl InMemoryBlockStates {
     /// When the configured limit for the number of states that can be stored in memory is reached,
     /// the oldest state is removed.
     pub fn insert(&mut self, hash: H256, state: StateDb) {
-        if self.present.len() > self.limit {
+        if self.present.len() >= self.limit {
             // evict the oldest block
-            self.present.pop_front().and_then(|hash| self.states.remove(&hash));
+            if let Some((hash, mut state)) = self
+                .present
+                .pop_front()
+                .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
+            {
+                let snapshot = state.0.clear_into_snapshot();
+                self.disk_cache.write(hash, &snapshot);
+                self.on_disk_states.insert(hash, state);
+            }
         }
         self.states.insert(hash, state);
         self.present.push_back(hash);
     }
 
     /// Returns the state for the given `hash` if present
-    pub fn get(&self, hash: &H256) -> Option<&StateDb> {
-        self.states.get(hash)
+    pub fn get(&mut self, hash: &H256) -> Option<&StateDb> {
+        self.states.get(hash).or_else(|| {
+            if let Some(state) = self.on_disk_states.get_mut(hash) {
+                if let Some(cached) = self.disk_cache.read(*hash) {
+                    state.init_from_snapshot(cached);
+                    return Some(state)
+                }
+            }
+            None
+        })
     }
 
     /// Clears all entries
     pub fn clear(&mut self) {
         self.states.clear();
+        self.on_disk_states.clear();
         self.present.clear();
     }
 }
@@ -74,8 +106,9 @@ impl fmt::Debug for InMemoryBlockStates {
 
 impl Default for InMemoryBlockStates {
     fn default() -> Self {
-        // unlimited
-        Self::new(usize::MAX)
+        // enough in memory to store 1_000 blocks in memory, this is ~30min of up-time with 1s
+        // interval mining mode
+        Self::new(1_000)
     }
 }
 
@@ -99,10 +132,10 @@ pub struct BlockchainStorage {
 
 impl BlockchainStorage {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
         // create a dummy genesis block
         let partial_header = PartialHeader {
-            timestamp: duration_since_unix_epoch().as_secs(),
+            timestamp,
             base_fee,
             gas_limit: env.block.gas_limit,
             beneficiary: env.block.coinbase,
@@ -173,8 +206,8 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new storage with a genesis block
-    pub fn new(env: &Env, base_fee: Option<U256>) -> Self {
-        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee))) }
+    pub fn new(env: &Env, base_fee: Option<U256>, timestamp: u64) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(env, base_fee, timestamp))) }
     }
 
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
@@ -235,7 +268,7 @@ impl MinedTransaction {
             let trace = Trace {
                 action,
                 result: Some(result),
-                trace_address: self.info.trace_call_graph(idx),
+                trace_address: self.info.trace_address(idx),
                 subtraces: node.children.len(),
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
@@ -248,5 +281,36 @@ impl MinedTransaction {
         }
 
         traces
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eth::backend::db::Db;
+    use ethers::{abi::ethereum_types::BigEndianHash, types::Address};
+    use forge::revm::{db::DatabaseRef, AccountInfo};
+    use foundry_evm::executor::backend::MemDb;
+
+    #[test]
+    fn can_read_write_cached_state() {
+        let mut storage = InMemoryBlockStates::new(1);
+        let one = H256::from_uint(&U256::from(1));
+        let two = H256::from_uint(&U256::from(2));
+
+        let mut state = MemDb::default();
+        let addr = Address::random();
+        let info = AccountInfo::from_balance(1337.into());
+        state.insert_account(addr, info);
+        storage.insert(one, StateDb::new(state));
+        storage.insert(two, StateDb::new(MemDb::default()));
+
+        assert_eq!(storage.on_disk_states.len(), 1);
+        assert!(storage.on_disk_states.get(&one).is_some());
+
+        let loaded = storage.get(&one).unwrap();
+
+        let acc = loaded.basic(addr);
+        assert_eq!(acc.balance, 1337u64.into());
     }
 }

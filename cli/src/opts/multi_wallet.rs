@@ -6,12 +6,13 @@ use std::{
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::{Http, Middleware, Provider, RetryClient, Signer},
+    prelude::{Middleware, Signer},
     signers::{HDPath as LedgerHDPath, Ledger, LocalWallet, Trezor, TrezorHDPath},
     types::Address,
 };
-use eyre::Result;
+use eyre::{Context, Result};
 
+use foundry_common::RetryProvider;
 use foundry_config::Config;
 use serde::Serialize;
 
@@ -100,8 +101,9 @@ pub struct MultiWallet {
     #[clap(
         long = "private-keys",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the provided private key.",
-        value_name = "RAW_PRIVATE_KEYS"
+        help = "Use the provided private keys.",
+        value_name = "RAW_PRIVATE_KEYS",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_keys: Option<Vec<String>>,
 
@@ -110,14 +112,15 @@ pub struct MultiWallet {
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private key.",
         conflicts_with = "private-keys",
-        value_name = "RAW_PRIVATE_KEY"
+        value_name = "RAW_PRIVATE_KEY",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_key: Option<String>,
 
     #[clap(
         long = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path.",
+        help = "Use the mnemonic files at the specified paths.",
         value_name = "PATHS"
     )]
     pub mnemonic_paths: Option<Vec<String>>,
@@ -125,7 +128,7 @@ pub struct MultiWallet {
     #[clap(
         long = "mnemonic-indexes",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
+        help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
         value_name = "INDEXES"
     )]
@@ -191,7 +194,7 @@ impl MultiWallet {
     /// error, if it can't find all.
     pub async fn find_all(
         &self,
-        provider: Arc<Provider<RetryClient<Http>>>,
+        provider: Arc<RetryProvider>,
         mut addresses: HashSet<Address>,
     ) -> Result<HashMap<Address, WalletType>> {
         println!("\n###\nFinding wallets for all the necessary addresses...");
@@ -219,7 +222,7 @@ impl MultiWallet {
             }
         );
 
-        let mut error_msg = "".to_string();
+        let mut error_msg = String::new();
 
         // This is an actual used address
         if addresses.contains(&Config::DEFAULT_SENDER) {
@@ -298,7 +301,16 @@ impl MultiWallet {
 
     pub async fn ledgers(&self, chain_id: u64) -> Result<Option<Vec<Ledger>>> {
         if self.ledger {
-            create_hw_wallets!(self, chain_id, get_from_ledger, wallets);
+            let mut args = self.clone();
+
+            if let Some(paths) = &args.hd_paths {
+                if paths.len() > 1 {
+                    eyre::bail!("Ledger only supports one signer.");
+                }
+                args.mnemonic_indexes = None;
+            }
+
+            create_hw_wallets!(args, chain_id, get_from_ledger, wallets);
             return Ok(Some(wallets))
         }
         Ok(None)
@@ -337,6 +349,6 @@ impl MultiWallet {
             None => LedgerHDPath::LedgerLive(mnemonic_index.unwrap_or(0)),
         };
 
-        Ok(Some(Ledger::new(derivation, chain_id).await?))
+        Ok(Some(Ledger::new(derivation, chain_id).await.wrap_err("Ledger device not available.")?))
     }
 }

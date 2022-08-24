@@ -6,9 +6,9 @@ import "ds-test/test.sol";
 contract DSStyleTest is DSTest {
     function testFailingAssertions() public {
         emit log_string("assertionOne");
-        assertEq(uint(1), uint(2));
+        assertEq(uint256(1), uint256(2));
         emit log_string("assertionTwo");
-        assertEq(uint(3), uint(4));
+        assertEq(uint256(3), uint256(4));
         emit log_string("done");
     }
 }

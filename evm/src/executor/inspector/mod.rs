@@ -4,6 +4,9 @@ mod utils;
 mod logs;
 pub use logs::LogCollector;
 
+mod access_list;
+pub use access_list::AccessListTracer;
+
 mod tracer;
 pub use tracer::Tracer;
 
@@ -22,6 +25,9 @@ pub use cheatcodes::{Cheatcodes, CheatsConfig, DEFAULT_CREATE2_DEPLOYER};
 use ethers::types::U256;
 
 use revm::BlockEnv;
+
+mod fuzzer;
+pub use fuzzer::Fuzzer;
 
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
@@ -42,6 +48,8 @@ pub struct InspectorStackConfig {
     pub tracing: bool,
     /// Whether or not the debugger is enabled
     pub debugger: bool,
+    /// The fuzzer inspector and its state, if it exists.
+    pub fuzzer: Option<Fuzzer>,
     /// Whether or not coverage info should be collected
     pub coverage: bool,
 }
@@ -63,6 +71,8 @@ impl InspectorStackConfig {
         if self.debugger {
             stack.debugger = Some(Debugger::default());
         }
+        stack.fuzzer = self.fuzzer.clone();
+
         if self.coverage {
             stack.coverage = Some(CoverageCollector::default());
         }

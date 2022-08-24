@@ -18,20 +18,17 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_doc_comment(&mut self, _doc_comment: &mut DocComment) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> Result<(), Self::Error> {
         Ok(())
     }
 
     fn visit_pragma(
         &mut self,
+        loc: Loc,
         _ident: &mut Identifier,
         _str: &mut StringLiteral,
     ) -> Result<(), Self::Error> {
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_import_plain(
@@ -434,7 +431,7 @@ impl Visitable for SourceUnitPart {
     {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
-            SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
+            SourceUnitPart::PragmaDirective(loc, ident, str) => v.visit_pragma(*loc, ident, str),
             SourceUnitPart::ImportDirective(import) => import.visit(v),
             SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),
@@ -444,7 +441,6 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
-            SourceUnitPart::DocComment(doc) => v.visit_doc_comment(doc),
             SourceUnitPart::Using(using) => v.visit_using(using),
         }
     }
@@ -480,7 +476,6 @@ impl Visitable for ContractPart {
             ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
-            ContractPart::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }
@@ -524,7 +519,6 @@ impl Visitable for Statement {
             Statement::Try(loc, expr, returns, clauses) => {
                 v.visit_try(*loc, expr, returns, clauses)
             }
-            Statement::DocComment(doc) => v.visit_doc_comment(doc),
         }
     }
 }
@@ -614,7 +608,6 @@ macro_rules! impl_visitable {
     };
 }
 
-impl_visitable!(DocComment, visit_doc_comment);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
 impl_visitable!(VariableAttribute, visit_var_attribute);

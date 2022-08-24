@@ -3,16 +3,15 @@ use std::{str::FromStr, sync::Arc};
 use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
-    prelude::{RetryClient, Signer},
-    providers::{Http, Provider},
+    prelude::Signer,
     signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
 use eyre::{eyre, Result};
-use foundry_common::fs;
+use foundry_common::{fs, RetryProvider};
 use serde::Serialize;
 
-type SignerClient<T> = SignerMiddleware<Arc<Provider<RetryClient<Http>>>, T>;
+type SignerClient<T> = SignerMiddleware<Arc<RetryProvider>, T>;
 
 #[derive(Debug)]
 pub enum WalletType {
@@ -76,7 +75,8 @@ pub struct Wallet {
         long = "private-key",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the provided private key.",
-        value_name = "RAW_PRIVATE_KEY"
+        value_name = "RAW_PRIVATE_KEY",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
     )]
     pub private_key: Option<String>,
 
