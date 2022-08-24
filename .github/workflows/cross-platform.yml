@@ -99,7 +99,7 @@ jobs:
 
   unit:
     name: unit tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.job.os }}
     needs: build-tests
     timeout-minutes: 60
     strategy:
@@ -143,7 +143,7 @@ jobs:
 
   integration:
     name: integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.job.os }}
     needs: build-tests
     strategy:
       matrix:
@@ -198,7 +198,7 @@ jobs:
 
   external-integration:
     name: external integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.job.os }}
     needs: build-tests
     strategy:
       matrix:
