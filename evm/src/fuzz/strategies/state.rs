@@ -92,8 +92,7 @@ pub fn build_initial_state<DB: DatabaseRef>(
 
         // Insert push bytes
         if let Some(code) = &account.info.code {
-            if !state.cache.contains(address) {
-                state.cache.insert(*address);
+            if state.cache.insert(*address) {
 
                 for push_byte in collect_push_bytes(code.bytes().clone()) {
                     state.insert(push_byte);
