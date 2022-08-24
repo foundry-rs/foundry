@@ -17,6 +17,16 @@ pub struct MultiChainSequence {
     pub timestamp: u64,
 }
 
+impl Drop for MultiChainSequence {
+    fn drop(&mut self) {
+        self.deployments.iter_mut().for_each(|sequence| {
+            sequence.sort_receipts();
+        });
+
+        self.save().expect("not able to save multi deployment sequence");
+    }
+}
+
 impl MultiChainSequence {
     pub fn new(
         deployments: Vec<ScriptSequence>,
