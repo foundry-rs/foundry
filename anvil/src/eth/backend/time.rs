@@ -28,16 +28,17 @@ pub struct TimeManager {
 // === impl TimeManager ===
 
 impl TimeManager {
-    fn offset(&self) -> i128 {
+    pub fn offset(&self) -> i128 {
         *self.offset.read()
     }
 
-    /// Adds the given `offset` to the already tracked offset
-    fn add_offset(&self, offset: i128) {
+    /// Adds the given `offset` to the already tracked offset and returns the result
+    fn add_offset(&self, offset: i128) -> i128 {
         let mut current = self.offset.write();
         let next = current.saturating_add(offset);
         trace!(target: "time", "adding timestamp offset={}, total={}", offset, next);
         *current = next;
+        next
     }
 
     /// Sets the timestamp we should base further timestamps on
@@ -49,7 +50,7 @@ impl TimeManager {
     /// Jumps forward in time by the given seconds
     ///
     /// This will apply a permanent offset to the natural UNIX Epoch timestamp
-    pub fn increase_time(&self, seconds: u64) {
+    pub fn increase_time(&self, seconds: u64) -> i128 {
         self.add_offset(seconds as i128)
     }
 
