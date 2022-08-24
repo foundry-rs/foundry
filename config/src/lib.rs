@@ -26,7 +26,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::{hash_map::Entry, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -55,7 +55,7 @@ pub use chain::Chain;
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
-mod error;
+pub mod error;
 pub use error::SolidityErrorCode;
 
 mod warning;
@@ -68,7 +68,10 @@ pub mod fix;
 pub use figment;
 
 mod providers;
-use crate::etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
+use crate::{
+    error::ExtractConfigError,
+    etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
+};
 use providers::*;
 
 /// Foundry configuration
@@ -412,30 +415,7 @@ impl Config {
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
-        match Self::try_from(provider) {
-            Ok(config) => config,
-            Err(errors) => {
-                // providers can be nested and can return duplicate errors
-                let errors: BTreeSet<_> = errors
-                    .into_iter()
-                    .map(|err| {
-                        if err
-                            .metadata
-                            .as_ref()
-                            .map(|meta| meta.name.contains(Toml::NAME))
-                            .unwrap_or_default()
-                        {
-                            return format!("foundry.toml error: {}", err)
-                        }
-                        format!("foundry config error: {}", err)
-                    })
-                    .collect();
-                for error in errors {
-                    eprintln!("{}", error);
-                }
-                panic!("failed to extract foundry config")
-            }
-        }
+        Self::try_from(provider).unwrap()
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -453,9 +433,9 @@ impl Config {
     ///
     /// let config = Config::try_from(figment);
     /// ```
-    pub fn try_from<T: Provider>(provider: T) -> Result<Self, figment::Error> {
+    pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
-        let mut config = figment.extract::<Self>()?;
+        let mut config = figment.extract::<Self>().map_err(|error| ExtractConfigError { error })?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
