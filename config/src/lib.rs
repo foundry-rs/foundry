@@ -55,8 +55,9 @@ pub use chain::Chain;
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
-mod error;
+pub mod error;
 pub use error::SolidityErrorCode;
+use crate::error::FAILED_TO_EXTRACT_CONFIG_PANIC_MSG;
 
 mod warning;
 pub use warning::*;
@@ -431,7 +432,7 @@ impl Config {
                 for error in errors {
                     eprintln!("{}", error);
                 }
-                panic!("failed to extract foundry config")
+                panic!("{}", FAILED_TO_EXTRACT_CONFIG_PANIC_MSG)
             }
         }
     }
