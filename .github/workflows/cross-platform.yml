@@ -107,13 +107,10 @@ jobs:
         archive:
           - name: unit-tests
             file: nextest-unit.tar.zst
-            flags: --workspace --all-features --lib --bins
           - name: integration-tests
             file: nextest-integration.tar.zst
-            flags: --workspace
           - name: external-integration-tests
             file: nextest-external-integration.tar.zst
-            flags: -p foundry-cli --features external-integration-tests
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -157,13 +154,10 @@ jobs:
         archive:
           - name: unit-tests
             file: nextest-unit.tar.zst
-            flags: --workspace --all-features --lib --bins
           - name: integration-tests
             file: nextest-integration.tar.zst
-            flags: --workspace
           - name: external-integration-tests
             file: nextest-external-integration.tar.zst
-            flags: -p foundry-cli --features external-integration-tests
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -219,13 +213,10 @@ jobs:
         archive:
           - name: unit-tests
             file: nextest-unit.tar.zst
-            flags: --workspace --all-features --lib --bins
           - name: integration-tests
             file: nextest-integration.tar.zst
-            flags: --workspace
           - name: external-integration-tests
             file: nextest-external-integration.tar.zst
-            flags: -p foundry-cli --features external-integration-tests
         job:
           # The OS is used for the runner
           # The target is used by Cargo
