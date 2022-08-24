@@ -132,9 +132,6 @@ jobs:
         uses: actions/checkout@v2
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: create bin windows
-        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
-        run: if not exist "~/.cargo/bin" mkdir ~/.cargo/bin
       - name: create bin
         if: ${{ matrix.job.target != 'x86_64-pc-windows-msvc' }}
         run: mkdir -p ~/.cargo/bin
@@ -181,9 +178,6 @@ jobs:
         uses: actions/checkout@v2
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: create bin windows
-        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
-        run: if not exist "~/.cargo/bin" mkdir ~/.cargo/bin
       - name: create bin
         if: ${{ matrix.job.target != 'x86_64-pc-windows-msvc' }}
         run: mkdir -p ~/.cargo/bin
@@ -240,9 +234,6 @@ jobs:
         uses: actions/checkout@v2
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: create bin windows
-        if: ${{ matrix.job.target == 'x86_64-pc-windows-msvc' }}
-        run: if not exist "~/.cargo/bin" mkdir ~/.cargo/bin
       - name: create bin
         if: ${{ matrix.job.target != 'x86_64-pc-windows-msvc' }}
         run: mkdir -p ~/.cargo/bin
