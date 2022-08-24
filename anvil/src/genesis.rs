@@ -62,7 +62,7 @@ pub struct Genesis {
 impl Genesis {
     /// Loads the `Genesis` object from the given json file path
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FsPathError> {
-        foundry_common::fs::read_json_file(path)
+        foundry_common::fs::read_json_file(path.as_ref())
     }
 
     /// The clap `value_parser` function
