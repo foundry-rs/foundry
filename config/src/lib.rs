@@ -56,8 +56,8 @@ pub mod fmt;
 pub use fmt::FormatterConfig;
 
 pub mod error;
-pub use error::SolidityErrorCode;
 use crate::error::FAILED_TO_EXTRACT_CONFIG_PANIC_MSG;
+pub use error::SolidityErrorCode;
 
 mod warning;
 pub use warning::*;

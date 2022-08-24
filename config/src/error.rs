@@ -3,7 +3,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The message shown upon panic if the config could not be extracted from the figment
-pub const FAILED_TO_EXTRACT_CONFIG_PANIC_MSG:&str = "failed to extract foundry config";
+pub const FAILED_TO_EXTRACT_CONFIG_PANIC_MSG: &str = "failed to extract foundry config";
 
 /// A non-exhaustive list of solidity error codes
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
