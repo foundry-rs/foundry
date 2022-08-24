@@ -13,6 +13,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
@@ -107,7 +108,7 @@ async fn test_fork_eth_get_nonce() {
         assert_eq!(api_nonce, provider_nonce);
     }
 
-    let addr: Address = "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap();
+    let addr = Config::DEFAULT_SENDER;
     let api_nonce = api.transaction_count(addr, None).await.unwrap();
     let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);

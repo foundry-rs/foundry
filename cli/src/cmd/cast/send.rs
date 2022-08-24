@@ -2,13 +2,10 @@
 use crate::opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, WalletType};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
-use ethers::{
-    providers::Middleware,
-    types::{Address, NameOrAddress},
-};
+use ethers::{providers::Middleware, types::NameOrAddress};
 use foundry_common::get_http_provider;
 use foundry_config::{Chain, Config};
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
@@ -173,9 +170,7 @@ impl SendTxArgs {
                 }
             } // Checking if signer isn't the default value
               // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-        } else if config.sender !=
-            Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
-        {
+        } else if config.sender != Config::DEFAULT_SENDER {
             if resend {
                 tx.nonce = Some(provider.get_transaction_count(config.sender, None).await?);
             }
