@@ -240,7 +240,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
         Ok(Token::Bool(boolean))
     } else if let Some(string) = value.as_str() {
         // If it can decoded as an address, it's an address
-        if let Ok(addr) = H160::from_str(string) {
+        if let Ok(addr) = H160::from_str(string) && string.starts_with("0x"){
             Ok(Token::Address(addr))
         } else if let Some(val) = string.strip_prefix("0x") {
             // If incornrect length, pad 0 at the beginning
