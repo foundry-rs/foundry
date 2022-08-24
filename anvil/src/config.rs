@@ -27,7 +27,7 @@ use ethers::{
     types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
-use foundry_common::ProviderBuilder;
+use foundry_common::{ProviderBuilder, REQUEST_TIMEOUT};
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -119,6 +119,10 @@ pub struct NodeConfig {
     pub config_out: Option<String>,
     /// The genesis to use to initialize the node
     pub genesis: Option<Genesis>,
+    /// Timeout in for requests sent to remote JSON-RPC server in forking mode
+    pub fork_request_timeout: Duration,
+    /// Number of request retries for spurious networks
+    pub fork_request_retries: u32,
 }
 
 impl NodeConfig {
@@ -326,6 +330,8 @@ impl Default for NodeConfig {
             transaction_order: Default::default(),
             config_out: None,
             genesis: None,
+            fork_request_timeout: REQUEST_TIMEOUT,
+            fork_request_retries: 5,
         }
     }
 }
@@ -523,6 +529,24 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_request_timeout` to use for requests
+    #[must_use]
+    pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
+        if let Some(fork_request_timeout) = fork_request_timeout {
+            self.fork_request_timeout = fork_request_timeout;
+        }
+        self
+    }
+
+    /// Sets the `fork_request_retries` to use for spurious networks
+    #[must_use]
+    pub fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
+        if let Some(fork_request_retries) = fork_request_retries {
+            self.fork_request_retries = fork_request_retries;
+        }
+        self
+    }
+
     /// Sets whether to enable tracing
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
@@ -607,6 +631,8 @@ impl NodeConfig {
                 // TODO make provider agnostic
                 let provider = Arc::new(
                     ProviderBuilder::new(&eth_rpc_url)
+                        .timeout(self.fork_request_timeout)
+                        .timeout_retry(self.fork_request_retries)
                         .max_retry(10)
                         .initial_backoff(1000)
                         .connect()
@@ -722,6 +748,8 @@ impl NodeConfig {
                         override_chain_id,
                         timestamp: block.timestamp.as_u64(),
                         base_fee: block.base_fee_per_gas,
+                        timeout: self.fork_request_timeout,
+                        retries: self.fork_request_retries,
                     },
                     Arc::clone(&db),
                 );

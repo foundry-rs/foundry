@@ -16,7 +16,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 use tracing::trace;
 
@@ -423,6 +423,10 @@ pub struct ClientForkConfig {
     pub timestamp: u64,
     /// The basefee of the forked block
     pub base_fee: Option<U256>,
+    /// request timeout
+    pub timeout: Duration,
+    /// request retries for spurious networks
+    pub retries: u32,
 }
 
 // === impl ClientForkConfig ===
@@ -437,6 +441,8 @@ impl ClientForkConfig {
         let interval = self.provider.get_interval();
         self.provider = Arc::new(
             ProviderBuilder::new(url.as_str())
+                .timeout(self.timeout)
+                .timeout_retry(self.retries)
                 .max_retry(10)
                 .initial_backoff(1000)
                 .build()
