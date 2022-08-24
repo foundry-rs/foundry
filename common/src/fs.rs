@@ -32,8 +32,7 @@ pub fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
 }
 
 /// Reads the json file and deserialize it into the provided type
-pub fn read_json_file<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
-    let path = path.as_ref();
+pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let file = open(path)?;
     let file = std::io::BufReader::new(file);
     serde_json::from_reader(file)
@@ -41,8 +40,7 @@ pub fn read_json_file<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> 
 }
 
 /// Writes the object as a json object
-pub fn write_json_file<T: Serialize>(path: impl AsRef<Path>, obj: &T) -> Result<()> {
-    let path = path.as_ref();
+pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
     let file = std::io::BufWriter::new(file);
     serde_json::to_writer(file, obj)
