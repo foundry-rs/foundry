@@ -228,7 +228,7 @@ where
     let result = api
         .call(
             EthTransactionRequest {
-                data: call.tx.data().map(|d| d.clone()),
+                data: call.tx.data().cloned(),
                 to: Some(to),
                 ..Default::default()
             },
