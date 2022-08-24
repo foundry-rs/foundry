@@ -28,9 +28,6 @@ jobs:
           - name: integration-tests
             file: nextest-integration.tar.zst
             flags: --workspace
-          - name: external-integration-tests
-            file: nextest-external-integration.tar.zst
-            flags: -p foundry-cli --features external-integration-tests
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -146,6 +143,7 @@ jobs:
   integration:
     name: integration tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
     runs-on: ${{ matrix.job.os }}
+    timeout-minutes: 60
     needs: build-tests
     strategy:
       fail-fast: false
@@ -168,7 +166,7 @@ jobs:
             target: x86_64-pc-windows-msvc
         nextest:
           - name: non-forking
-            filter: '!test(~fork) & !test(~live)'
+            filter: '!test(~fork) & !test(~live) & !test(~100)'
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
