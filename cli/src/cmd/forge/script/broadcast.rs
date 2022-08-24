@@ -220,8 +220,7 @@ impl ScriptArgs {
                     .await
                     .map_err(|_| {
                         eyre::eyre!(
-                            "One or more transactions failed when simulating the
-                    on-chain version. Check the trace by re-running with `-vvv`"
+                            "Transaction failed when running the on-chain simulation. Check the trace above for more information."
                         )
                     })?
                 };
@@ -368,7 +367,7 @@ impl ScriptArgs {
     {
         tx.set_gas(
             provider
-                .estimate_gas(tx)
+                .estimate_gas(tx, None)
                 .await
                 .wrap_err_with(|| format!("Failed to estimate gas for tx: {}", tx.sighash()))
                 .map_err(|err| BroadcastError::Simple(err.to_string()))? *

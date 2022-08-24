@@ -94,7 +94,7 @@ where
         };
 
         self.start_trace(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             to,
             call.input.to_vec(),
             call.transfer.value,
@@ -130,10 +130,10 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.subroutine.load_account(call.caller, data.db);
-        let nonce = data.subroutine.account(call.caller).info.nonce;
+        data.journaled_state.load_account(call.caller, data.db);
+        let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.start_trace(
-            data.subroutine.depth() as usize,
+            data.journaled_state.depth() as usize,
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
@@ -155,7 +155,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         let code = match address {
             Some(address) => data
-                .subroutine
+                .journaled_state
                 .account(address)
                 .info
                 .code

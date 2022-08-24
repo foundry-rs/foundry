@@ -12,9 +12,9 @@ fn test_fuzz() {
 
     let suite_result = runner
         .test(
-            &Filter::new(".*", ".*", ".*fuzz/[^invariant]").exclude_tests(
-                r#"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)"#,
-            ),
+            &Filter::new(".*", ".*", ".*fuzz/")
+                .exclude_tests(r#"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)"#)
+                .exclude_paths("invariant"),
             None,
             TEST_OPTS,
         )
@@ -25,7 +25,6 @@ fn test_fuzz() {
     for (_, SuiteResult { test_results, .. }) in suite_result {
         for (test_name, result) in test_results {
             let logs = decode_console_logs(&result.logs);
-
             match test_name.as_str() {
                 "testPositive(uint256)" |
                 "testPositive(int256)" |

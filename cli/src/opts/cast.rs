@@ -1,8 +1,8 @@
-use super::{ClapChain, EthereumOpts, TransactionOpts};
+use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
         estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
-        run::RunArgs, wallet::WalletSubcommands,
+        run::RunArgs, send::SendTxArgs, wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -397,46 +397,7 @@ Examples:
     #[clap(name = "send")]
     #[clap(visible_alias = "s")]
     #[clap(about = "Sign and publish a transaction.")]
-    SendTx {
-        #[clap(
-            help = "The destination of the transaction.",
-            parse(try_from_str = parse_name_or_address),
-            value_name = "TO"
-        )]
-        to: NameOrAddress,
-        #[clap(help = "The signature of the function to call.", value_name = "SIG")]
-        sig: Option<String>,
-        #[clap(help = "The arguments of the function to call.", value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(
-            long = "async",
-            env = "CAST_ASYNC",
-            name = "async",
-            alias = "cast-async",
-            help = "Only print the transaction hash and exit immediately."
-        )]
-        cast_async: bool,
-        #[clap(flatten, next_help_heading = "TRANSACTION OPTIONS")]
-        tx: TransactionOpts,
-        #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
-        eth: EthereumOpts,
-        #[clap(
-            short,
-            long,
-            help = "The number of confirmations until the receipt is fetched.",
-            default_value = "1",
-            value_name = "CONFIRMATIONS"
-        )]
-        confirmations: usize,
-        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
-        to_json: bool,
-        #[clap(
-            long = "resend",
-            help = "Reuse the latest nonce for the sender account.",
-            conflicts_with = "nonce"
-        )]
-        resend: bool,
-    },
+    SendTx(SendTxArgs),
     #[clap(name = "publish")]
     #[clap(visible_alias = "p")]
     #[clap(about = "Publish a raw transaction to the network.")]

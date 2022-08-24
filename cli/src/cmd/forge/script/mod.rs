@@ -250,7 +250,7 @@ impl ScriptArgs {
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            println!("Gas used: {}", result.gas);
+            println!("Gas used: {}", result.gas_used);
         }
 
         if result.success && !result.returned.is_empty() {
@@ -301,7 +301,7 @@ impl ScriptArgs {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
@@ -488,7 +488,7 @@ pub struct ScriptResult {
     pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
+    pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,

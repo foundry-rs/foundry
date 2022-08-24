@@ -103,7 +103,7 @@ impl<'a> FuzzedExecutor<'a> {
             if success {
                 cases.borrow_mut().push(FuzzCase {
                     calldata,
-                    gas: call.gas,
+                    gas: call.gas_used,
                     stipend: call.stipend,
                 });
 
@@ -111,7 +111,7 @@ impl<'a> FuzzedExecutor<'a> {
 
                 Ok(())
             } else {
-                let status = call.status;
+                let status = call.exit_reason;
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
@@ -140,7 +140,7 @@ impl<'a> FuzzedExecutor<'a> {
             counterexample: None,
             logs: call.logs,
             labeled_addresses: call.labels,
-            traces: traces.into_inner(),
+            traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
         };
 
         match run_result {

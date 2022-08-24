@@ -2035,8 +2035,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         left.visit(self)?;
 
                         let right_chunk =
-                            self.chunked(left.loc().end(), Some(loc.end()), |fmt| {
-                                write_chunk!(fmt, left.loc().end(), right.loc().start(), "{op}")?;
+                            self.chunked(right.loc().start(), Some(loc.end()), |fmt| {
+                                write_chunk!(fmt, right.loc().start(), "{op}")?;
                                 right.visit(fmt)?;
                                 Ok(())
                             })?;
@@ -2045,12 +2045,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     }
                     (Some(left), None) => {
                         left.visit(self)?;
-                        write_chunk_spaced!(self, left.loc().end(), Some(spaced), "{op}")?;
+                        write_chunk_spaced!(self, loc.end(), Some(spaced), "{op}")?;
                     }
                     (None, Some(right)) => {
                         write_chunk!(self, right.loc().start(), "{op}")?;
                         let mut right_chunk =
-                            self.visit_to_chunk(right.loc().end(), None, right)?;
+                            self.visit_to_chunk(right.loc().end(), Some(loc.end()), right)?;
                         right_chunk.needs_space = Some(spaced);
                         self.write_chunk(&right_chunk)?;
                     }
@@ -2943,7 +2943,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         return_source_if_disabled!(self, loc);
 
         visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
-            self.surrounded(loc.start(), "if (", ")", Some(cond.loc().end()), |fmt, _| {
+            self.surrounded(loc.start(), "if (", ")", Some(if_branch.loc().start()), |fmt, _| {
                 cond.visit(fmt)
             })?;
         });

@@ -66,6 +66,8 @@ pub enum BlockchainError {
     TrieError(String),
     #[error("{0}")]
     UintConversion(&'static str),
+    #[error("State override error: {0}")]
+    StateOverrideError(String),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -250,6 +252,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::internal_error_with(err.to_string())
                 }
                 BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
+                err @ BlockchainError::StateOverrideError(_) => {
+                    RpcError::invalid_params(err.to_string())
+                }
             }
             .into(),
         }

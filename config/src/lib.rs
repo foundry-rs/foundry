@@ -209,7 +209,7 @@ pub struct Config {
     pub invariant_depth: u32,
     /// Fails the invariant fuzzing if a revert occurs
     pub invariant_fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
+    /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
     /// checks
     pub invariant_call_override: bool,
     /// Whether to allow ffi cheatcodes in test
@@ -246,7 +246,7 @@ pub struct Config {
     /// The memory limit of the EVM (32 MB by default)
     pub memory_limit: u64,
     /// Additional output selection for all contracts
-    /// such as "ir", "devodc", "storageLayout", etc.
+    /// such as "ir", "devdoc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
     ///
     /// The following values are always set because they're required by `forge`
@@ -266,7 +266,7 @@ pub struct Config {
     /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
     /// The difference between `extra_output = ["metadata"]` and
-    /// `extra_output_files = ["metadata]` is that the former will include the
+    /// `extra_output_files = ["metadata"]` is that the former will include the
     /// contract's metadata in the contract's json artifact, whereas the latter will emit the
     /// output selection as separate files.
     #[serde(default)]
