@@ -345,14 +345,14 @@ impl EthApi {
         Ok(self.backend.gas_limit())
     }
 
-    fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
+    async fn block_request(&self, block_number: Option<BlockId>) -> Result<BlockRequest> {
         let block_request = match block_number {
             Some(BlockId::Number(BlockNumber::Pending)) => {
                 let pending_txs = self.pool.ready_transactions().collect();
                 BlockRequest::Pending(pending_txs)
             }
             _ => {
-                let number = self.backend.ensure_block_number(block_number)?;
+                let number = self.backend.ensure_block_number(block_number).await?;
                 BlockRequest::Number(number.into())
             }
         };
@@ -470,7 +470,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getBalance`
     pub async fn balance(&self, address: Address, block_number: Option<BlockId>) -> Result<U256> {
         node_info!("eth_getBalance");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         self.backend.get_balance(address, Some(block_request)).await
     }
 
@@ -484,7 +484,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<H256> {
         node_info!("eth_getStorageAt");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         self.backend.storage_at(address, index, Some(block_request)).await
     }
 
@@ -582,7 +582,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getCode`
     pub async fn get_code(&self, address: Address, block_number: Option<BlockId>) -> Result<Bytes> {
         node_info!("eth_getCode");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         self.backend.get_code(address, Some(block_request)).await
     }
 
@@ -597,7 +597,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<AccountProof> {
         node_info!("eth_getProof");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
 
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
@@ -752,7 +752,7 @@ impl EthApi {
         overrides: Option<StateOverride>,
     ) -> Result<Bytes> {
         node_info!("eth_call");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
@@ -800,7 +800,7 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<AccessListWithGasUsed> {
         node_info!("eth_createAccessList");
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
@@ -1651,7 +1651,7 @@ impl EthApi {
         request: EthTransactionRequest,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = &block_request {
             if let Some(fork) = self.get_fork() {
@@ -1967,7 +1967,7 @@ impl EthApi {
         address: Address,
         block_number: Option<BlockId>,
     ) -> Result<U256> {
-        let block_request = self.block_request(block_number)?;
+        let block_request = self.block_request(block_number).await?;
         let nonce = self.backend.get_nonce(address, Some(block_request)).await?;
 
         Ok(nonce)

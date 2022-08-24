@@ -1163,23 +1163,19 @@ impl Backend {
     /// # Errors
     ///
     /// returns an error if the requested number is larger than the current height
-    pub fn ensure_block_number<T: Into<BlockId>>(
+    pub async fn ensure_block_number<T: Into<BlockId>>(
         &self,
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
         let current = self.best_number().as_u64();
-
         let requested =
             match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
                 BlockId::Hash(hash) => self
-                    .blockchain
-                    .storage
-                    .read()
-                    .blocks
-                    .get(&hash)
+                    .block_by_hash(hash)
+                    .await?
                     .ok_or(BlockchainError::BlockNotFound)?
-                    .header
                     .number
+                    .ok_or(BlockchainError::BlockNotFound)?
                     .as_u64(),
                 BlockId::Number(num) => match num {
                     BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
