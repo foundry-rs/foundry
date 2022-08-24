@@ -1,7 +1,7 @@
 use crate::{
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
-        CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+        CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
     CallKind,
@@ -12,7 +12,8 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{
-    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
+    Interpreter, OpCode, Return,
 };
 
 /// An inspector that collects call traces.
@@ -66,6 +67,12 @@ impl Tracer {
         if let Some(address) = address {
             trace.address = address;
         }
+    }
+
+    pub fn fill_step(&mut self, step: CallTraceStep) {
+        let trace = &mut self.traces.arena
+            [*self.trace_stack.last().expect("can't fill step without starting a trace first")];
+        trace.trace.steps.push(step);
     }
 }
 
@@ -171,5 +178,22 @@ where
         );
 
         (status, address, gas, retdata)
+    }
+
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        let pc = interp.program_counter();
+        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+        let stack = interp.stack.clone();
+        let memory = interp.memory.clone();
+        let state = data.subroutine.state.clone();
+
+        self.fill_step(CallTraceStep { pc, op, stack, memory, state });
+
+        Return::Continue
     }
 }

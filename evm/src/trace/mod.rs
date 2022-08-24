@@ -7,15 +7,16 @@ mod decoder;
 pub mod node;
 mod utils;
 
-use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
+use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind, H160};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{CallContext, Return};
+use revm::{Account, CallContext, Memory, OpCode, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -287,6 +288,14 @@ impl fmt::Display for RawOrDecodedReturnData {
     }
 }
 
+pub struct CallTraceStep {
+    pub pc: usize,
+    pub op: OpCode,
+    pub stack: Stack,
+    pub memory: Memory,
+    pub state: HashMap<H160, Account>,
+}
+
 /// A trace of a call.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTrace {
@@ -323,6 +332,8 @@ pub struct CallTrace {
     pub status: Return,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
+
+    pub steps: Vec<CallTraceStep>,
 }
 
 // === impl CallTrace ===
@@ -350,6 +361,7 @@ impl Default for CallTrace {
             gas_cost: Default::default(),
             status: Return::Continue,
             call_context: Default::default(),
+            steps: Default::default(),
         }
     }
 }

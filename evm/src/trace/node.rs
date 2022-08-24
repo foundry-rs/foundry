@@ -8,7 +8,10 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    types::{Action, Address, Call, CallResult, Create, CreateResult, Res, Suicide},
+    types::{
+        Action, Address, Call, CallResult, Create, CreateResult, GethTrace, Res, StructLog,
+        Suicide, U256,
+    },
 };
 use foundry_common::SELECTOR_LEN;
 use revm::Return;
@@ -88,6 +91,35 @@ impl CallTraceNode {
                 gas: self.trace.gas_cost.into(),
                 init: self.trace.data.to_raw().into(),
             }),
+        }
+    }
+
+    pub fn geth_trace(&self) -> GethTrace {
+        GethTrace {
+            failed: !self.trace.success,
+            gas: 0, // TODO
+            return_value: self.trace.output.to_raw().into(),
+            struct_logs: self
+                .trace
+                .steps
+                .iter()
+                .map(|step| StructLog {
+                    depth: self.trace.depth as u64,
+                    error: None, // TODO
+                    gas: 0,      // TODO
+                    gas_cost: 0, // TODO
+                    memory: Some(step.memory.data().clone()),
+                    op: step.op.as_str().to_string(),
+                    pc: U256::from(step.pc),
+                    refund_counter: None, // TODO
+                    stack: Some(step.stack.data().clone()),
+                    storage: step
+                        .state
+                        .into_iter()
+                        .map(|(key, value)| (key, value.storage))
+                        .collect(),
+                })
+                .collect(),
         }
     }
 

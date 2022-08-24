@@ -12,7 +12,7 @@ use anvil_core::eth::{
     transaction::TransactionInfo,
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
+    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
     types::{ActionType, U256},
 };
 use forge::revm::{Env, Return};
@@ -281,6 +281,10 @@ impl MinedTransaction {
         }
 
         traces
+    }
+
+    pub fn geth_traces(&self) -> Vec<GethTrace> {
+        self.info.traces.iter().map(|node| node.geth_trace()).collect()
     }
 }
 
