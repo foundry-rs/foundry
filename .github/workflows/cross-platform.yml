@@ -97,6 +97,59 @@ jobs:
           name: ${{ matrix.job.target }}-${{ matrix.archive.name }}
           path: ${{ matrix.job.target }}-${{ matrix.archive.file }}
 
+
+
+  unit:
+    name: unit tests ${{ matrix.job.target }} (${{ matrix.job.os }}) / ${{ matrix.archive.name }} / ${{ matrix.nextest.name }}
+    runs-on: ubuntu-latest
+    needs: build-tests
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        archive:
+          - name: unit-tests
+            file: nextest-unit.tar.zst
+            flags: --workspace --all-features --lib --bins
+          - name: integration-tests
+            file: nextest-integration.tar.zst
+            flags: --workspace
+          - name: external-integration-tests
+            file: nextest-external-integration.tar.zst
+            flags: -p foundry-cli --features external-integration-tests
+        job:
+          # The OS is used for the runner
+          # The target is used by Cargo
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+        nextest:
+          - name: non-forking
+            filter: '!test(~fork) & !test(~live)'
+          - name: forking
+            filter: 'test(~fork) & !test(~live)'
+    env:
+      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - run: mkdir -p ~/.cargo/bin
+      - name: Download archives
+        uses: actions/download-artifact@v3
+        with:
+          name: unit-tests
+
+      - name: cargo nextest
+        run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file  ${{ matrix.job.target }}-${{ matrix.archive.name }} -E '${{ matrix.nextest.filter }}'
+
 #      - name:  unit tests / ${{ matrix.job.name }}
 #        uses: actions-rs/cargo@v1
 #        with:
