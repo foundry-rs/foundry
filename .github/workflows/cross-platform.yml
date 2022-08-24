@@ -107,10 +107,6 @@ jobs:
         archive:
           - name: unit-tests
             file: nextest-unit.tar.zst
-          - name: integration-tests
-            file: nextest-integration.tar.zst
-          - name: external-integration-tests
-            file: nextest-external-integration.tar.zst
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -152,12 +148,8 @@ jobs:
     strategy:
       matrix:
         archive:
-          - name: unit-tests
-            file: nextest-unit.tar.zst
           - name: integration-tests
             file: nextest-integration.tar.zst
-          - name: external-integration-tests
-            file: nextest-external-integration.tar.zst
         job:
           # The OS is used for the runner
           # The target is used by Cargo
@@ -211,10 +203,6 @@ jobs:
     strategy:
       matrix:
         archive:
-          - name: unit-tests
-            file: nextest-unit.tar.zst
-          - name: integration-tests
-            file: nextest-integration.tar.zst
           - name: external-integration-tests
             file: nextest-external-integration.tar.zst
         job:
