@@ -66,8 +66,8 @@ jobs:
       # Required for forge commands that use git
       - name: Setup git
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "<>"
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
 
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
@@ -188,8 +188,8 @@ jobs:
           key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
       - name: Setup git config
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "<>"
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
 
       - name: cargo nextest
         run: ~/.cargo/bin/cargo-nextest nextest run --partition count:${{ matrix.partition }}/2 --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
@@ -240,7 +240,7 @@ jobs:
           path: "$HOME/.foundry/cache"
           key: rpc-cache-${{ hashFiles('cli/tests/rpc-cache-keyfile') }}
       - name: Force use of HTTPS for submodules
-        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+        run: git config url."https://github.com/".insteadOf "git@github.com:"
 
       - name: cargo nextest
         run: ~/.cargo/bin/cargo-nextest nextest run --retries 3 --archive-file ${{ matrix.job.target }}-${{ matrix.archive.file }} -E '${{ matrix.nextest.filter }}'
