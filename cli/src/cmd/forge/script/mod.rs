@@ -326,7 +326,8 @@ impl ScriptArgs {
         let mut new_sender = None;
 
         if let Some(txs) = transactions {
-            if !predeploy_libraries.is_empty() {
+            // If the user passed a `--sender` don't check anything.
+            if !predeploy_libraries.is_empty() && self.evm_opts.sender.is_none() {
                 for tx in txs.iter() {
                     match &tx.transaction {
                         TypedTransaction::Legacy(tx) => {
