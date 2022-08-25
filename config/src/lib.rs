@@ -21,6 +21,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -350,6 +351,10 @@ impl Config {
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
         &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
+
+    /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
+    pub const STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
+        Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1315,7 +1320,16 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
-            figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            // let standalone_provider =
+            if let Some(fallback) = Config::STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+                figment = figment.merge(
+                    provider
+                        .fallback(standalone_key, fallback)
+                        .wrap(profile.clone(), standalone_key),
+                );
+            } else {
+                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            }
         }
         // merge the profile
         figment = figment.merge(provider);
@@ -2298,6 +2312,44 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     }
 }
 
+/// Extracts the profile from the `profile` key and sets unset values according to the fallback
+/// provider
+struct FallbackProfileProvider<P> {
+    provider: P,
+    profile: Profile,
+    fallback: Profile,
+}
+
+impl<P> FallbackProfileProvider<P> {
+    pub fn new(provider: P, profile: impl Into<Profile>, fallback: impl Into<Profile>) -> Self {
+        FallbackProfileProvider { provider, profile: profile.into(), fallback: fallback.into() }
+    }
+}
+
+impl<P: Provider> Provider for FallbackProfileProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.provider.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        if let Some(fallback) = self.provider.data()?.get(&self.fallback) {
+            let mut inner = self.provider.data()?.remove(&self.profile).unwrap_or_default();
+            for (k, v) in fallback.iter() {
+                if !inner.contains_key(k) {
+                    inner.insert(k.to_owned(), v.clone());
+                }
+            }
+            Ok(self.profile.collect(inner))
+        } else {
+            self.provider.data()
+        }
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
 trait ProviderExt: Provider {
     fn rename(
         &self,
@@ -2318,6 +2370,13 @@ trait ProviderExt: Provider {
         profiles: impl IntoIterator<Item = impl Into<Profile>>,
     ) -> OptionalStrictProfileProvider<&Self> {
         OptionalStrictProfileProvider::new(self, profiles)
+    }
+    fn fallback(
+        &self,
+        profile: impl Into<Profile>,
+        fallback: impl Into<Profile>,
+    ) -> FallbackProfileProvider<&Self> {
+        FallbackProfileProvider::new(self, profile, fallback)
     }
 }
 impl<P: Provider> ProviderExt for P {}
@@ -2997,10 +3056,6 @@ mod tests {
                 extra_output_files = []
                 ffi = false
                 force = false
-                invariant_runs = 256
-                invariant_depth = 15
-                invariant_fail_on_revert = false
-                invariant_call_override = false
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
@@ -3039,6 +3094,12 @@ mod tests {
                 seed = '0x3e8'
                 max_global_rejects = 65536
                 max_local_rejects = 1024
+
+                [invariant]
+                runs = 256
+                depth = 15
+                fail_on_revert = false
+                call_override = false
             "#,
             )?;
 
@@ -3273,6 +3334,38 @@ mod tests {
             let _config = Config::load();
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_fallback_provider() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 1
+                include_storage = false
+                dictionary_weight = 99
+
+                [invariant]
+                runs = 420
+            "#,
+            )?;
+
+            let invariant_default = InvariantConfig::default();
+            let config = Config::load();
+
+            assert_ne!(config.invariant.runs, config.fuzz.runs);
+            assert_eq!(config.invariant.runs, 420);
+
+            assert_ne!(config.fuzz.include_storage, invariant_default.include_storage);
+            assert_eq!(config.invariant.include_storage, config.fuzz.include_storage);
+
+            assert_ne!(config.fuzz.dictionary_weight, invariant_default.dictionary_weight);
+            assert_eq!(config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+
+            Ok(())
+        })
     }
 
     #[test]
@@ -3593,7 +3686,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [invariant]
-                runs = 5123
+                runs = 512
                 depth = 10
             "#,
             )?;
