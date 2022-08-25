@@ -3254,6 +3254,22 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_parse_invalid_fuzz_weight() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                dictionary_weight = 101
+            "#,
+            )?;
+            let _config = Config::load();
+            Ok(())
+        });
+    }
+
+    #[test]
     fn can_handle_deviating_dapp_aliases() {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();

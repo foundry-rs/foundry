@@ -3,16 +3,6 @@
 use ethers_core::types::U256;
 use serde::{Deserialize, Serialize};
 
-// TODO:
-// exposing config items for
-// - percent of time dict vs. random vs. edge is used (edge + dict should be merged)
-// - include-stack
-// - include-memory
-// - include-storage-keys
-// - include-storage-values
-// - include-push-bytes (constants, immutables)
-// could help people fine tune that trade off, but also may be overkill
-
 /// Contains for fuzz testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
@@ -32,7 +22,8 @@ pub struct FuzzConfig {
     )]
     pub seed: Option<U256>,
     /// The weight of the dictionary
-    pub dictionary_weight: u32, // TODO: validation
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub dictionary_weight: u32,
     /// The flag indicating whether to include values from storage
     pub include_storage: bool,
     /// The flag indicating whether to include push bytes values

@@ -17,7 +17,8 @@ pub struct InvariantConfig {
     /// The flag indicating whether to include push bytes values
     pub include_push_bytes: bool,
     /// The weight of the dictionary
-    pub dictionary_weight: u32, // TODO: validation
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub dictionary_weight: u32,
 }
 
 impl Default for InvariantConfig {

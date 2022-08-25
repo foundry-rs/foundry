@@ -13,7 +13,7 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
-    Config, FuzzConfig, OptimizerDetails, SolcReq,
+    Config, FuzzConfig, InvariantConfig, OptimizerDetails, SolcReq,
 };
 use path_slash::PathBufExt;
 use std::{fs, path::PathBuf, str::FromStr};
@@ -64,7 +64,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             seed: Some(1000.into()),
             ..Default::default()
         },
-        invariant: Default::default(),
+        invariant: InvariantConfig { runs: 256, ..Default::default() },
         ffi: true,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
