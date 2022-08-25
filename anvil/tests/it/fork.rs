@@ -597,9 +597,9 @@ async fn test_fork_call() {
 async fn test_fork_block_timestamp() {
     let (api, _) = spawn(fork_config()).await;
 
-    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    let initial_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
     api.anvil_mine(Some(1.into()), None).await.unwrap();
-    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
 
     assert!(initial_block.timestamp.as_u64() < latest_block.timestamp.as_u64());
 }
@@ -610,11 +610,11 @@ async fn test_fork_snapshot_block_timestamp() {
 
     let snapshot_id = api.evm_snapshot().await.unwrap();
     api.anvil_mine(Some(1.into()), None).await.unwrap();
-    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    let initial_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
     api.evm_revert(snapshot_id).await.unwrap();
     api.evm_set_next_block_timestamp(initial_block.timestamp.as_u64()).unwrap();
     api.anvil_mine(Some(1.into()), None).await.unwrap();
-    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
 
     assert_eq!(initial_block.timestamp.as_u64(), latest_block.timestamp.as_u64());
 }
@@ -706,4 +706,36 @@ async fn test_fork_block_transaction_count() {
         .unwrap()
         .unwrap();
     assert_eq!(count_txs.as_usize(), 3);
+}
+
+// <https://github.com/foundry-rs/foundry/issues/2931>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_impersonate_in_fork() {
+    let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15347924u64))).await;
+    let provider = handle.http_provider();
+
+    let token_holder: Address = "0x2f0b23f53734252bda2277357e97e1517d6b042a".parse().unwrap();
+    let to = Address::random();
+    let val = 1337u64;
+
+    // fund the impersonated account
+    api.anvil_set_balance(token_holder, U256::from(1e18 as u64)).await.unwrap();
+
+    let tx = TransactionRequest::new().from(token_holder).to(to).value(val);
+
+    let res = provider.send_transaction(tx.clone(), None).await;
+    res.unwrap_err();
+
+    api.anvil_impersonate_account(token_holder).await.unwrap();
+
+    let res = provider.send_transaction(tx.clone(), None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(res.from, token_holder);
+    assert_eq!(res.status, Some(1u64.into()));
+
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, val.into());
+
+    api.anvil_stop_impersonating_account(token_holder).await.unwrap();
+    let res = provider.send_transaction(tx, None).await;
+    res.unwrap_err();
 }
