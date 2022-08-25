@@ -239,12 +239,11 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
     if let Some(boolean) = value.as_bool() {
         Ok(Token::Bool(boolean))
     } else if let Some(string) = value.as_str() {
-        // If it can decoded as an address, it's an address
-        if let Ok(addr) = H160::from_str(string) {
-            Ok(Token::Address(addr))
-        } else if let Some(val) = string.strip_prefix("0x") {
-            // If incornrect length, pad 0 at the beginning
-            if hex::decode(val).is_ok() {
+        if let Some(val) = string.strip_prefix("0x") {
+            // If it can decoded as an address, it's an address
+            if let Ok(addr) = H160::from_str(string) {
+                Ok(Token::Address(addr))
+            } else if hex::decode(val).is_ok() {
                 // if length == 32 bytes, then encode as Bytes32, else Bytes
                 Ok(if val.len() == 64 {
                     Token::FixedBytes(Vec::from_hex(val).unwrap())
@@ -252,6 +251,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
                     Token::Bytes(Vec::from_hex(val).unwrap())
                 })
             } else {
+                // If incornrect length, pad 0 at the beginning
                 let arr = format!("0{}", val);
                 Ok(Token::Bytes(Vec::from_hex(arr).unwrap()))
             }
@@ -271,7 +271,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
             object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
         Ok(Token::Tuple(values))
     } else if value.is_null() {
-        Ok(Token::FixedBytes(Vec::with_capacity(32)))
+        Ok(Token::FixedBytes(vec![0; 32]))
     } else {
         Err(Token::String("Could not decode field".to_string()))
     }
