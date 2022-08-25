@@ -61,6 +61,7 @@ serde_json = "1.0.67"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0.30"
 yansi = "0.5.1"
+tempfile = "3.3.0"
 
 # cli
 clap = { version = "3.0.10", features = [

@@ -195,6 +195,7 @@ impl Executor {
         from: Option<Address>,
         to: Address,
     ) -> Result<CallResult<()>, EvmError> {
+        trace!(?from, ?to, "setting up contract");
         let from = from.unwrap_or(CALLER);
         self.backend_mut().set_test_contract(to).set_caller(from);
         self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)

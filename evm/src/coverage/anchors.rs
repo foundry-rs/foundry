@@ -1,6 +1,9 @@
 use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
 use crate::utils::ICPCMap;
-use ethers::prelude::{sourcemap::SourceMap, Bytes};
+use ethers::prelude::{
+    sourcemap::{SourceElement, SourceMap},
+    Bytes,
+};
 use revm::{opcode, spec_opcode_gas, SpecId};
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
@@ -52,17 +55,7 @@ pub fn find_anchor_simple(
     let instruction = source_map
         .iter()
         .enumerate()
-        .find_map(|(ic, element)| {
-            if element.index? as usize == loc.source_id &&
-                loc.start.max(element.offset) <
-                    (element.offset + element.length)
-                        .min(loc.start + loc.length.unwrap_or_default())
-            {
-                return Some(ic)
-            }
-
-            None
-        })
+        .find_map(|(ic, element)| is_in_source_range(element, loc).then_some(ic))
         .ok_or_else(|| {
             eyre::eyre!("Could not find anchor: No matching instruction in range {}", loc)
         })?;
@@ -136,10 +129,7 @@ pub fn find_anchor_branch(
 
             // Check if we are in the source range we are interested in, and if the next opcode
             // is a JUMPI
-            let source_ids_match = element.index.map_or(false, |a| a as usize == loc.source_id);
-            let is_in_source_range = loc.start.max(element.offset) <
-                (element.offset + element.length).min(loc.start + loc.length.unwrap_or_default());
-            if source_ids_match && is_in_source_range && bytecode.0[pc + 1] == opcode::JUMPI {
+            if is_in_source_range(element, loc) && bytecode.0[pc + 1] == opcode::JUMPI {
                 // We do not support program counters bigger than usize. This is also an
                 // assumption in REVM, so this is just a sanity check.
                 if push_size > 8 {
@@ -169,4 +159,18 @@ pub fn find_anchor_branch(
     }
 
     eyre::bail!("Could not detect branches in source: {}", loc)
+}
+
+/// Calculates whether `element` is within the range of the target `location`.
+fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
+    let source_ids_match = element.index.map_or(false, |a| a as usize == location.source_id);
+
+    // Needed because some source ranges in the source map mark the entire contract...
+    let is_within_start = element.offset >= location.start;
+
+    let start_of_ranges = location.start.max(element.offset);
+    let end_of_ranges =
+        (location.start + location.length.unwrap_or_default()).min(element.offset + element.length);
+
+    source_ids_match && is_within_start && start_of_ranges <= end_of_ranges
 }

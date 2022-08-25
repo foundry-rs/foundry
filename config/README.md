@@ -56,44 +56,71 @@ The selected profile is the value of the `FOUNDRY_PROFILE` environment variable,
 
 ### All Options
 
-The following is a foundry.toml file with all configuration options set.
+The following is a foundry.toml file with all configuration options set. See also [/config/src/lib.rs](/config/src/lib.rs) and [/cli/tests/it/config.rs](/cli/tests/it/config.rs).
 
 ```toml
 ## defaults for _all_ profiles
 [profile.default]
 src = 'src'
 test = 'test'
+script = 'script'
 out = 'out'
 libs = ['lib']
 remappings = []
-# additional solc allow paths
-allow_paths = []
-# additional solc include paths
-include_paths = []
 # list of libraries to link in the form of `<path to lib>:<lib name>:<address>`: `"src/MyLib.sol:MyLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"`
 # the <path to lib> supports remappings 
 libraries = []
 cache = true
 cache_path = 'cache'
+broadcast = 'broadcast'
+# additional solc allow paths
+allow_paths = []
+# additional solc include paths
+include_paths = []
 force = false
 evm_version = 'london'
 gas_reports = ['*']
+gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
-# solc_version = '0.8.10'
+# solc = '0.8.10'
 auto_detect_solc = true
 offline = false
 optimizer = true
 optimizer_runs = 200
-via_ir = false
+model_checker = { contracts = { 'a.sol' = [
+    'A1',
+    'A2',
+], 'b.sol' = [
+    'B1',
+    'B2',
+] }, engine = 'chc', targets = [
+    'assert',
+    'outOfBounds',
+], timeout = 10000 }
 verbosity = 0
+eth_rpc_url = "https://example.com/"
+# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
+etherscan_api_key = "YOURETHERSCANAPIKEY"
 # ignore solc warnings for missing license and exceeded contract size
 ignored_error_codes = [1878, 5574]
+match_test = "Foo"
+no_match_test = "Bar"
+match_contract = "Foo"
+no_match_contract = "Bar"
+match_path = "*/Foo*"
+no_match_path = "*/Bar*"
 fuzz_runs = 256
+invariant_runs = 256
+invariant_depth = 15
+invariant_fail_on_revert = false
+invariant_call_override = false
 ffi = false
 sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
+fork_block_number = 0
+chain_id = 1
 # NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
 gas_limit = 9223372036854775807
 gas_price = 0
@@ -101,13 +128,16 @@ block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
-# How to treat revert (and require) reason strings.
-# Possible values are: "default", "strip", "debug" and "verboseDebug".
-#  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
-# "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
-# "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
-# "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
-revert_strings = "default"
+block_gas_limit = 30000000
+memory_limit = 33554432
+extra_output = ["metadata"]
+extra_output_files = []
+fuzz_max_local_rejects = 1024
+fuzz_max_global_rejects = 65536
+fuzz_seed = '0x3e8'
+names = false
+sizes = false
+via_ir = false
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restricted to `chains = ["optimism", "mainnet"]`
 # by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
@@ -118,11 +148,20 @@ no_storage_caching = false
 # use ipfs method to generate the metadata hash, solc's default.
 # To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
 bytecode_hash = "ipfs"
+# How to treat revert (and require) reason strings.
+# Possible values are: "default", "strip", "debug" and "verboseDebug".
+#  "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
+# "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
+# "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
+# "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
+revert_strings = "default"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false
-# Setting this option enables decoding of error traces from mainnet deployed / verfied contracts via etherscan
-etherscan_api_key="YOURETHERSCANAPIKEY"
+build_info = true
+build_info_path = "build-info"
+fmt = { line_length = 100, tab_width = 2, bracket_spacing = true }
+root = "root"
 ```
 
 #### Additional Optimizer settings

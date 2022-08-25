@@ -23,7 +23,7 @@ eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde = "1.0.136"
 serde_json = "1.0.67"
-chrono = "0.2"
+chrono = "0.4.22"
 hex = "0.4.3"
 
 [dev-dependencies]

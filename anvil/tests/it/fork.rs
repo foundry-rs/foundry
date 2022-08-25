@@ -13,6 +13,7 @@ use ethers::{
         U256,
     },
 };
+use foundry_config::Config;
 use foundry_utils::{rpc, rpc::next_http_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
@@ -88,8 +89,13 @@ async fn test_fork_eth_get_code() {
     }
 
     for address in utils::contract_addresses(Chain::Mainnet) {
+        let prev_code = api
+            .get_code(address, Some(BlockNumber::Number((BLOCK_NUMBER - 10).into()).into()))
+            .await
+            .unwrap();
         let code = api.get_code(address, None).await.unwrap();
         let provider_code = provider.get_code(address, None).await.unwrap();
+        assert_eq!(code, prev_code);
         assert_eq!(code, provider_code);
         assert!(!code.as_ref().is_empty());
     }
@@ -107,7 +113,7 @@ async fn test_fork_eth_get_nonce() {
         assert_eq!(api_nonce, provider_nonce);
     }
 
-    let addr: Address = "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap();
+    let addr = Config::DEFAULT_SENDER;
     let api_nonce = api.transaction_count(addr, None).await.unwrap();
     let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
@@ -576,9 +582,128 @@ async fn test_fork_call() {
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
     let res1 = api
-        .call(EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() }, None)
+        .call(
+            EthTransactionRequest { to: Some(to), data: Some(input), ..Default::default() },
+            None,
+            None,
+        )
         .await
         .unwrap();
 
     assert_eq!(res0, res1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert!(initial_block.timestamp.as_u64() < latest_block.timestamp.as_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_snapshot_block_timestamp() {
+    let (api, _) = spawn(fork_config()).await;
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let initial_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+    api.evm_revert(snapshot_id).await.unwrap();
+    api.evm_set_next_block_timestamp(initial_block.timestamp.as_u64()).unwrap();
+    api.anvil_mine(Some(1.into()), None).await.unwrap();
+    let latest_block = api.block_by_number(BlockNumber::Latest.into()).await.unwrap().unwrap();
+
+    assert_eq!(initial_block.timestamp.as_u64(), latest_block.timestamp.as_u64());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_uncles_fetch() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    // Block on ETH mainnet with 2 uncles
+    let block_with_uncles = 190u64;
+
+    let block =
+        api.block_by_number(BlockNumber::Number(block_with_uncles.into())).await.unwrap().unwrap();
+
+    assert_eq!(block.uncles.len(), 2);
+
+    let count = provider.get_uncle_count(block_with_uncles).await.unwrap();
+    assert_eq!(count.as_usize(), block.uncles.len());
+
+    let count = provider.get_uncle_count(block.hash.unwrap()).await.unwrap();
+    assert_eq!(count.as_usize(), block.uncles.len());
+
+    for (uncle_idx, uncle_hash) in block.uncles.iter().enumerate() {
+        // Try with block number
+        let uncle = provider
+            .get_uncle(block_with_uncles, (uncle_idx as u64).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*uncle_hash, uncle.hash.unwrap());
+
+        // Try with block hash
+        let uncle = provider
+            .get_uncle(block.hash.unwrap(), (uncle_idx as u64).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*uncle_hash, uncle.hash.unwrap());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_block_transaction_count() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let sender = accounts[0].address();
+
+    // disable automine (so there are pending transactions)
+    api.anvil_set_auto_mine(false).await.unwrap();
+    // transfer: impersonate real sender
+    api.anvil_impersonate_account(sender).await.unwrap();
+
+    let tx = TransactionRequest::new().from(sender).value(42u64).gas(100_000);
+    provider.send_transaction(tx, None).await.unwrap();
+
+    let pending_txs =
+        api.block_transaction_count_by_number(BlockNumber::Pending).await.unwrap().unwrap();
+    assert_eq!(pending_txs.as_usize(), 1);
+
+    // mine a new block
+    api.anvil_mine(None, None).await.unwrap();
+
+    let pending_txs =
+        api.block_transaction_count_by_number(BlockNumber::Pending).await.unwrap().unwrap();
+    assert_eq!(pending_txs.as_usize(), 0);
+    let latest_txs =
+        api.block_transaction_count_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(latest_txs.as_usize(), 1);
+    let latest_block = api.block_by_number(BlockNumber::Latest).await.unwrap().unwrap();
+    let latest_txs =
+        api.block_transaction_count_by_hash(latest_block.hash.unwrap()).await.unwrap().unwrap();
+    assert_eq!(latest_txs.as_usize(), 1);
+
+    // check txs count on an older block: 420000 has 3 txs on mainnet
+    let count_txs = api
+        .block_transaction_count_by_number(BlockNumber::Number(420000.into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(count_txs.as_usize(), 3);
+    let count_txs = api
+        .block_transaction_count_by_hash(
+            "0xb3b0e3e0c64e23fb7f1ccfd29245ae423d2f6f1b269b63b70ff882a983ce317c".parse().unwrap(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(count_txs.as_usize(), 3);
 }

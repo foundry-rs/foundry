@@ -26,7 +26,7 @@ use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::{hash_map::Entry, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -55,7 +55,7 @@ pub use chain::Chain;
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
-mod error;
+pub mod error;
 pub use error::SolidityErrorCode;
 
 mod warning;
@@ -68,7 +68,10 @@ pub mod fix;
 pub use figment;
 
 mod providers;
-use crate::etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig};
+use crate::{
+    error::ExtractConfigError,
+    etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
+};
 use providers::*;
 
 mod fuzz;
@@ -245,7 +248,7 @@ pub struct Config {
     /// The memory limit of the EVM (32 MB by default)
     pub memory_limit: u64,
     /// Additional output selection for all contracts
-    /// such as "ir", "devodc", "storageLayout", etc.
+    /// such as "ir", "devdoc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
     ///
     /// The following values are always set because they're required by `forge`
@@ -265,7 +268,7 @@ pub struct Config {
     /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
     /// The difference between `extra_output = ["metadata"]` and
-    /// `extra_output_files = ["metadata]` is that the former will include the
+    /// `extra_output_files = ["metadata"]` is that the former will include the
     /// contract's metadata in the contract's json artifact, whereas the latter will emit the
     /// output selection as separate files.
     #[serde(default)]
@@ -355,6 +358,8 @@ impl Config {
     pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Default address for tx.origin
+    ///
+    /// `0x00a329c0648769a73afac7f9381e08fb43dbea72`
     pub const DEFAULT_SENDER: H160 = H160([
         0, 163, 41, 192, 100, 135, 105, 167, 58, 250, 199, 249, 56, 30, 8, 251, 67, 219, 234, 114,
     ]);
@@ -397,30 +402,7 @@ impl Config {
     /// ```
     pub fn from_provider<T: Provider>(provider: T) -> Self {
         trace!("load config with provider: {:?}", provider.metadata());
-        match Self::try_from(provider) {
-            Ok(config) => config,
-            Err(errors) => {
-                // providers can be nested and can return duplicate errors
-                let errors: BTreeSet<_> = errors
-                    .into_iter()
-                    .map(|err| {
-                        if err
-                            .metadata
-                            .as_ref()
-                            .map(|meta| meta.name.contains(Toml::NAME))
-                            .unwrap_or_default()
-                        {
-                            return format!("foundry.toml error: {}", err)
-                        }
-                        format!("foundry config error: {}", err)
-                    })
-                    .collect();
-                for error in errors {
-                    eprintln!("{}", error);
-                }
-                panic!("failed to extract foundry config")
-            }
-        }
+        Self::try_from(provider).unwrap()
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -438,9 +420,9 @@ impl Config {
     ///
     /// let config = Config::try_from(figment);
     /// ```
-    pub fn try_from<T: Provider>(provider: T) -> Result<Self, figment::Error> {
+    pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         let figment = Figment::from(provider);
-        let mut config = figment.extract::<Self>()?;
+        let mut config = figment.extract::<Self>().map_err(|error| ExtractConfigError { error })?;
         config.profile = figment.profile().clone();
         Ok(config)
     }
@@ -2394,20 +2376,26 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
-    use figment::error::Kind::InvalidType;
-    use std::{collections::BTreeMap, str::FromStr};
-
-    use crate::cache::{CachedChains, CachedEndpoints};
-    use figment::{value::Value, Figment};
-    use pretty_assertions::assert_eq;
-
     use super::*;
-
-    use crate::{endpoints::RpcEndpoint, etherscan::ResolvedEtherscanConfigs};
+    use crate::{
+        cache::{CachedChains, CachedEndpoints},
+        endpoints::RpcEndpoint,
+        etherscan::ResolvedEtherscanConfigs,
+    };
     use ethers_core::types::Chain::Moonbeam;
-    use std::{fs::File, io::Write};
+    use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
+    use figment::{error::Kind::InvalidType, value::Value, Figment};
+    use pretty_assertions::assert_eq;
+    use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
+
+    #[test]
+    fn default_sender() {
+        assert_eq!(
+            Config::DEFAULT_SENDER,
+            "0x00a329c0648769a73afac7f9381e08fb43dbea72".parse().unwrap()
+        );
+    }
 
     #[test]
     fn test_caching() {

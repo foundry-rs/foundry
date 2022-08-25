@@ -1,6 +1,7 @@
 use crate::{
     config::{Hardfork, DEFAULT_MNEMONIC},
     eth::pool::transactions::TransactionOrder,
+    genesis::Genesis,
     AccountGenerator, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
@@ -15,9 +16,8 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
-
-use crate::genesis::Genesis;
 use tracing::log::trace;
 
 #[derive(Clone, Debug, Parser)]
@@ -148,6 +148,8 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(self.evm_opts.fork_request_retries)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
@@ -230,6 +232,18 @@ pub struct AnvilEvmArgs {
         help_heading = "FORK CONFIG"
     )]
     pub fork_url: Option<ForkUrl>,
+
+    /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
+    ///
+    /// Default value 45000
+    #[clap(name = "timeout", help_heading = "FORK CONFIG", requires = "fork-url")]
+    pub fork_request_timeout: Option<u64>,
+
+    /// Number of retry requests for spurious networks (timed out requests)
+    ///
+    /// Default value 5
+    #[clap(name = "retries", help_heading = "FORK CONFIG", requires = "fork-url")]
+    pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
