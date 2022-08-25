@@ -338,6 +338,10 @@ pub struct Config {
     pub __warnings: Vec<Warning>,
 }
 
+/// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
+pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
+    Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
+
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
@@ -351,10 +355,6 @@ impl Config {
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
         &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
-
-    /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
-    pub const STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
-        Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1321,7 +1321,7 @@ impl Config {
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
             // let standalone_provider =
-            if let Some(fallback) = Config::STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+            if let Some(fallback) = STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
                 figment = figment.merge(
                     provider
                         .fallback(standalone_key, fallback)
@@ -2309,44 +2309,6 @@ impl<P: Provider> Provider for OptionalStrictProfileProvider<P> {
     }
     fn profile(&self) -> Option<Profile> {
         self.profiles.last().cloned()
-    }
-}
-
-/// Extracts the profile from the `profile` key and sets unset values according to the fallback
-/// provider
-struct FallbackProfileProvider<P> {
-    provider: P,
-    profile: Profile,
-    fallback: Profile,
-}
-
-impl<P> FallbackProfileProvider<P> {
-    pub fn new(provider: P, profile: impl Into<Profile>, fallback: impl Into<Profile>) -> Self {
-        FallbackProfileProvider { provider, profile: profile.into(), fallback: fallback.into() }
-    }
-}
-
-impl<P: Provider> Provider for FallbackProfileProvider<P> {
-    fn metadata(&self) -> Metadata {
-        self.provider.metadata()
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(fallback) = self.provider.data()?.get(&self.fallback) {
-            let mut inner = self.provider.data()?.remove(&self.profile).unwrap_or_default();
-            for (k, v) in fallback.iter() {
-                if !inner.contains_key(k) {
-                    inner.insert(k.to_owned(), v.clone());
-                }
-            }
-            Ok(self.profile.collect(inner))
-        } else {
-            self.provider.data()
-        }
-    }
-
-    fn profile(&self) -> Option<Profile> {
-        Some(self.profile.clone())
     }
 }
 

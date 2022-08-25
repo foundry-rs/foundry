@@ -155,7 +155,7 @@ impl<'a> InvariantExecutor<'a> {
                         sender,
                         &call_result,
                         fuzz_state.clone(),
-                        self.config.include_push_bytes,
+                        self.config.include_storage,
                         self.config.include_push_bytes,
                     );
 
