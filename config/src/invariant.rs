@@ -14,11 +14,13 @@ pub struct InvariantConfig {
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
     /// checks
     pub call_override: bool,
-    /// The flag indicating whether to include push bytes values
-    pub include_push_bytes: bool,
     /// The weight of the dictionary
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub dictionary_weight: u32,
+    /// The flag indicating whether to include values from storage
+    pub include_storage: bool,
+    /// The flag indicating whether to include push bytes values
+    pub include_push_bytes: bool,
 }
 
 impl Default for InvariantConfig {
@@ -28,8 +30,9 @@ impl Default for InvariantConfig {
             depth: 15,
             fail_on_revert: false,
             call_override: false,
-            include_push_bytes: true,
             dictionary_weight: 80,
+            include_storage: true,
+            include_push_bytes: true,
         }
     }
 }

@@ -22,6 +22,7 @@ pub static TEST_OPTS: TestOptions = TestOptions {
         dictionary_weight: 80,
         fail_on_revert: false,
         call_override: false,
+        include_storage: true,
         include_push_bytes: true,
     },
 };
