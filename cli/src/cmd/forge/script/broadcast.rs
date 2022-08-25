@@ -3,7 +3,10 @@ use super::{
     *,
 };
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    cmd::{
+        forge::script::{receipts::wait_for_receipts, verify::VerifyBundle},
+        has_batch_support, has_different_gas_calc,
+    },
     init_progress,
     opts::WalletType,
     update_progress,

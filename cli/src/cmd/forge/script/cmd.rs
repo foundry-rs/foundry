@@ -1,6 +1,7 @@
 use crate::cmd::{unwrap_contracts, LoadConfig};
 use std::sync::Arc;
 
+use crate::cmd::forge::script::verify::VerifyBundle;
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
@@ -26,7 +27,6 @@ impl ScriptArgs {
         };
 
         self.maybe_load_private_key(&mut script_config)?;
-        self.maybe_load_etherscan_api_key(&mut script_config)?;
 
         if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
             // when forking, override the sender's nonce to the onchain value
@@ -37,7 +37,7 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let (build_output, mut verify) = self.compile(&script_config)?;
+        let build_output = self.compile(&script_config)?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
@@ -49,6 +49,14 @@ impl ScriptArgs {
 
             let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
+
+            let mut verify = VerifyBundle::new(
+                &build_output.project,
+                &script_config.config,
+                unwrap_contracts(&build_output.highlevel_known_contracts, false),
+                self.retry.clone(),
+                chain,
+            );
 
             let mut deployment_sequence = ScriptSequence::load(
                 &script_config.config,
@@ -228,16 +236,6 @@ impl ScriptArgs {
             if wallets.len() == 1 {
                 script_config.evm_opts.sender = wallets.get(0).unwrap().address()
             }
-        }
-        Ok(())
-    }
-
-    fn maybe_load_etherscan_api_key(
-        &mut self,
-        script_config: &mut ScriptConfig,
-    ) -> eyre::Result<()> {
-        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
-            script_config.config.etherscan_api_key = Some(etherscan_api_key.clone());
         }
         Ok(())
     }
