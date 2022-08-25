@@ -1347,7 +1347,7 @@ impl From<Config> for Figment {
         // merge environment variables
         figment = figment
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
-            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
+            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE", "FUZZ_RUNS", "DEPTH"]).global())
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
@@ -1892,6 +1892,24 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
             dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
+
+        let mut fuzz_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_FUZZ_RUNS") {
+            fuzz_dict.insert(
+                "runs".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("fuzz".to_string(), fuzz_dict.into());
+
+        let mut invariant_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_DEPTH") {
+            invariant_dict.insert(
+                "depth".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("invariant".to_string(), invariant_dict.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -3264,6 +3282,7 @@ mod tests {
             jail.set_env("DAPP_TEST_NUMBER", 1337);
             jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
+            jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
             jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
@@ -3273,6 +3292,7 @@ mod tests {
             assert_eq!(config.block_number, 1337);
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz.runs, 420);
+            assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
             assert!(!config.optimizer);
