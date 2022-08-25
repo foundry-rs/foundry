@@ -311,16 +311,7 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
 
-    let test_options = TestOptions {
-        fuzz_runs: config.fuzz_runs,
-        fuzz_max_local_rejects: config.fuzz_max_local_rejects,
-        fuzz_max_global_rejects: config.fuzz_max_global_rejects,
-        fuzz_seed: config.fuzz_seed,
-        invariant_runs: config.invariant_runs,
-        invariant_depth: config.invariant_depth,
-        invariant_fail_on_revert: config.invariant_fail_on_revert,
-        invariant_call_override: config.invariant_call_override,
-    };
+    let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
 
     let mut filter = args.filter(&config);
 

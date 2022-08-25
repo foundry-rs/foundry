@@ -269,12 +269,7 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(TestOptions {
-                fuzz_runs: config.fuzz_runs,
-                fuzz_max_local_rejects: config.fuzz_max_local_rejects,
-                fuzz_max_global_rejects: config.fuzz_max_global_rejects,
-                ..Default::default()
-            })
+            .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
 

@@ -14,9 +14,7 @@ use foundry_common::{
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{
-            InvariantContract, InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions,
-        },
+        invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -443,6 +441,7 @@ impl<'a> ContractRunner<'a> {
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
+            test_options.invariant,
             &identified_contracts,
             project_contracts,
         );
@@ -450,14 +449,9 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
-            invariant_contract,
-            InvariantTestOptions {
-                depth: test_options.invariant_depth,
-                fail_on_revert: test_options.invariant_fail_on_revert,
-                call_override: test_options.invariant_call_override,
-            },
-        )? {
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
+            evm.invariant_fuzz(invariant_contract)?
+        {
             let results = invariants
                 .iter()
                 .map(|(_, test_error)| {
@@ -510,12 +504,13 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
-            func,
-            address,
-            should_fail,
-            self.errors,
-        );
+        let mut result = FuzzedExecutor::new(
+            &self.executor,
+            runner,
+            self.sender,
+            Default::default(),
+        )
+        .fuzz(func, address, should_fail, self.errors);
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);
