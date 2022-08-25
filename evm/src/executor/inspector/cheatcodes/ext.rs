@@ -271,7 +271,7 @@ fn value_to_token(value: &Value) -> Result<Token, Token> {
             object.values().map(|val| value_to_token(val).unwrap()).collect::<Vec<Token>>();
         Ok(Token::Tuple(values))
     } else if value.is_null() {
-        Ok(Token::FixedBytes(Vec::with_capacity(32)))
+        Ok(Token::FixedBytes(vec![0; 32]))
     } else {
         Err(Token::String("Could not decode field".to_string()))
     }
