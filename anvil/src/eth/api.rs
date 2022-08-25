@@ -38,7 +38,7 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
-    prelude::TxpoolInspect,
+    prelude::{GethTrace, TxpoolInspect},
     providers::ProviderError,
     types::{
         transaction::{
@@ -1157,12 +1157,15 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn debug_trace_transaction(
         &self,
-        _tx_hash: H256,
-        _opts: GethDebugTracingOptions,
-    ) -> Result<Vec<Trace>> {
+        tx_hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
-        // return `MethodNotFound` until implemented <https://github.com/foundry-rs/foundry/issues/1737>
-        Err(RpcError::method_not_found().into())
+        if opts.tracer.is_some() {
+            return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
+        }
+
+        self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

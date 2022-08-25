@@ -45,7 +45,8 @@ use ethers::{
     prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::{
         transaction::eip2930::AccessList, Address, Block as EthersBlock, BlockId, Bytes, Filter,
-        FilteredParams, Log, Trace, Transaction, TransactionReceipt,
+        FilteredParams, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction,
+        TransactionReceipt,
     },
     utils::{get_contract_address, keccak256, rlp},
 };
@@ -1046,7 +1047,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+    fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
         Some(self.convert_block(block))
     }
@@ -1118,7 +1119,7 @@ impl Backend {
         self.blockchain.storage.read().blocks.get(&hash).cloned()
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
+    fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
         Some(self.convert_block(self.get_block(number)?))
     }
 
@@ -1388,12 +1389,12 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
+    fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
+    fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
         let block = self.get_block(block)?;
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
@@ -1401,6 +1402,31 @@ impl Backend {
             traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
         }
         Some(traces)
+    }
+
+    /// Returns the traces for the given transaction
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        if let Some(traces) = self.mined_geth_trace_transaction(hash, opts.clone()) {
+            return Ok(traces)
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_transaction(hash, opts).await?)
+        }
+
+        Ok(GethTrace::default())
+    }
+
+    fn mined_geth_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Option<GethTrace> {
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.geth_trace(opts))
     }
 
     /// Returns the traces for the given block
@@ -1447,7 +1473,7 @@ impl Backend {
     }
 
     /// Returns the transaction receipt for the given hash
-    pub fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
+    fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
@@ -1560,7 +1586,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_block_hash_and_index(
+    fn mined_transaction_by_block_hash_and_index(
         &self,
         block_hash: H256,
         index: Index,
@@ -1593,7 +1619,7 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
+    fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
         let (info, block) = {
             let storage = self.blockchain.storage.read_recursive();
             let MinedTransaction { info, block_hash, .. } =

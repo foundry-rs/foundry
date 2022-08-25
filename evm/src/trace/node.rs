@@ -8,10 +8,7 @@ use crate::{
 };
 use ethers::{
     abi::{Abi, Function},
-    types::{
-        Action, Address, Call, CallResult, Create, CreateResult, GethDebugTracingOptions,
-        GethTrace, Res, StructLog, Suicide,
-    },
+    types::{Action, Address, Call, CallResult, Create, CreateResult, Res, Suicide},
 };
 use foundry_common::SELECTOR_LEN;
 use revm::Return;
@@ -91,34 +88,6 @@ impl CallTraceNode {
                 gas: self.trace.gas_cost.into(),
                 init: self.trace.data.to_raw().into(),
             }),
-        }
-    }
-
-    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
-        GethTrace {
-            failed: !self.trace.success,
-            gas: self.trace.gas_cost,
-            return_value: self.trace.output.to_raw().into(),
-            struct_logs: self
-                .trace
-                .steps
-                .iter()
-                .map(|step| {
-                    let mut log: StructLog = step.into();
-
-                    if opts.disable_storage.unwrap_or_default() {
-                        log.storage = None;
-                    }
-                    if opts.disable_stack.unwrap_or_default() {
-                        log.stack = None;
-                    }
-                    if !opts.enable_memory.unwrap_or_default() {
-                        log.memory = None;
-                    }
-
-                    log
-                })
-                .collect(),
         }
     }
 

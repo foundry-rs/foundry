@@ -14,7 +14,7 @@ use crate::{
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
     abi::{ethereum_types::BigEndianHash, Address, RawLog},
-    types::{StructLog, H256, U256},
+    types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use hashbrown::HashMap;
@@ -28,7 +28,7 @@ use std::{
 use yansi::{Color, Paint};
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -87,6 +87,32 @@ impl CallTraceArena {
                 (&node.trace.address, None)
             })
             .collect()
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
+            acc.failed |= !trace.trace.success;
+            acc.gas += trace.trace.gas_cost;
+            // acc.return_value // TODO
+
+            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
+                let mut log: StructLog = step.into();
+
+                if opts.disable_storage.unwrap_or_default() {
+                    log.storage = None;
+                }
+                if opts.disable_stack.unwrap_or_default() {
+                    log.stack = None;
+                }
+                if !opts.enable_memory.unwrap_or_default() {
+                    log.memory = None;
+                }
+
+                log
+            }));
+
+            acc
+        })
     }
 }
 
@@ -328,15 +354,15 @@ impl From<&CallTraceStep> for StructLog {
             stack: Some(step.stack.data().clone()),
             storage: Some(
                 step.state
-                    .into_iter()
+                    .iter()
                     .map(|(key, value)| {
                         (
-                            key,
+                            *key,
                             value
                                 .storage
-                                .into_iter()
+                                .iter()
                                 .map(|(key, value)| {
-                                    (H256::from_uint(&key), H256::from_uint(&value))
+                                    (H256::from_uint(key), H256::from_uint(&value.present_value()))
                                 })
                                 .collect(),
                         )

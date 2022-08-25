@@ -204,12 +204,12 @@ where
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
-        let depth = data.subroutine.depth();
+        let depth = data.journaled_state.depth();
         let pc = interp.program_counter();
         let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
         let stack = interp.stack.clone();
         let memory = interp.memory.clone();
-        let state = data.subroutine.state.clone();
+        let state = data.journaled_state.state.clone();
         let gas = interp.gas.remaining();
         let gas_refund_counter = interp.gas.refunded() as u64;
 
