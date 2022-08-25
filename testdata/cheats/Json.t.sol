@@ -61,8 +61,8 @@ contract ParseJson is DSTest {
     }
 
     function test_H160ButNotaddress() public{
-        bytes memory data = cheats.parseJson(json, ".H160NotAddress");
-        assertEq(hex'0000000000000000000000000000000000001337', abi.decode(data, (bytes)));
+        string memory data = abi.decode(cheats.parseJson(json, ".H160NotAddress"), (string));
+        assertEq('0000000000000000000000000000000000001337', data);
     }
 
     struct Nested {
