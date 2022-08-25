@@ -90,6 +90,15 @@ pub fn build_initial_state<DB: DatabaseRef>(
         // Insert basic account information
         state.insert(H256::from(*address).into());
 
+        // Insert push bytes
+        if let Some(code) = &account.info.code {
+            if state.cache.insert(*address) {
+                for push_byte in collect_push_bytes(code.bytes().clone()) {
+                    state.insert(push_byte);
+                }
+            }
+        }
+
         if include_storage {
             // Insert storage
             for (slot, value) in &account.storage {
