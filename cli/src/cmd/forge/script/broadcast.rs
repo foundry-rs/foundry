@@ -220,18 +220,12 @@ impl ScriptArgs {
             // TODO(joshie): validate rpc.
             let num_fork_rpcs = txs.iter().filter(|tx| tx.rpc.is_some()).count();
             let only_fork_rpcs = txs.len() == num_fork_rpcs;
+            let total_rpcs = num_fork_rpcs + script_config.evm_opts.fork_url.is_some() as usize;
 
-            if script_config.evm_opts.fork_url.is_some() || only_fork_rpcs {
-                // TODO?
-                // let fork_url = script_config.evm_opts.fork_url.clone().unwrap_or_default();
+            if total_rpcs > 0 {
+                self.check_multi_chain_constraints(total_rpcs, &libraries)?;
 
                 let gas_filled_txs = if self.skip_simulation {
-                    // TOOD(joshie):??
-                    if num_fork_rpcs != 0 {
-                        eyre::bail!(
-                            "You cannot skip simulation if you're using multichain deployments."
-                        );
-                    }
                     println!("\nSKIPPING ON CHAIN SIMULATION.");
                     txs.into_iter()
                         .map(|tx| TransactionWithMetadata::from_typed_transaction(tx.transaction))
@@ -290,6 +284,27 @@ impl ScriptArgs {
             }
         } else if self.broadcast {
             eyre::bail!("No onchain transactions generated in script");
+        }
+        Ok(())
+    }
+
+    /// Certain features are disabled for multi chain deployments, and if tried, will return
+    /// error.
+    fn check_multi_chain_constraints(
+        &self,
+        total_rpcs: usize,
+        libraries: &Libraries,
+    ) -> eyre::Result<()> {
+        if total_rpcs > 1 {
+            // TODO(joshie) essential cancels any kind of library on foundry.toml
+            if libraries.libs.len() > 0 {
+                eyre::bail!(
+                    "Multi chain deployment does not support library linking at the moment."
+                )
+            }
+            if self.skip_simulation {
+                eyre::bail!("You cannot skip simulation if you're using multichain deployments.");
+            }
         }
         Ok(())
     }
