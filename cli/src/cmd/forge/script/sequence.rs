@@ -1,22 +1,16 @@
-use super::{NestedValue, ScriptResult, VerifyBundle};
-use crate::cmd::forge::{
-    init::get_commit_hash,
-    verify::{self, VerifyArgs},
-};
+use super::{NestedValue, ScriptResult};
+use crate::cmd::forge::{init::get_commit_hash, script::verify::VerifyBundle};
 use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
-    solc::info::ContractInfo,
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::{Context, ContextCompat};
 use forge::trace::CallTraceDecoder;
 use foundry_common::fs;
 use foundry_config::Config;
-use yansi::Paint;
 
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -25,6 +19,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::trace;
+use yansi::Paint;
 
 /// Helper that saves the transactions sequence and its state on which transactions have been
 /// broadcasted
@@ -158,8 +153,14 @@ impl ScriptSequence {
 
     /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
     /// created contract on etherscan.
-    pub async fn verify_contracts(&mut self, verify: VerifyBundle) -> eyre::Result<()> {
+    pub async fn verify_contracts(
+        &mut self,
+        config: &Config,
+        mut verify: VerifyBundle,
+    ) -> eyre::Result<()> {
         trace!(?self.chain, "verifying {} contracts", verify.known_contracts.len());
+        verify.set_chain(config, self.chain.into());
+
         if verify.etherscan_key.is_some() {
             let mut future_verifications = vec![];
             let mut unverifiable_contracts = vec![];
@@ -180,14 +181,7 @@ impl ScriptSequence {
                 if let (Some(address), Some(data)) =
                     (receipt.contract_address, tx.typed_tx().data())
                 {
-                    match get_verify_args(
-                        address,
-                        offset,
-                        &data.0,
-                        &verify,
-                        self.chain,
-                        &self.libraries,
-                    ) {
+                    match verify.get_verify_args(address, offset, &data.0, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(address),
                     };
@@ -195,14 +189,7 @@ impl ScriptSequence {
 
                 // Verify potential contracts created during the transaction execution
                 for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                    match get_verify_args(
-                        *address,
-                        0,
-                        init_code,
-                        &verify,
-                        self.chain,
-                        &self.libraries,
-                    ) {
+                    match verify.get_verify_args(*address, 0, init_code, &self.libraries) {
                         Some(verify) => future_verifications.push(verify.run()),
                         None => unverifiable_contracts.push(*address),
                     };
@@ -264,61 +251,6 @@ impl ScriptSequence {
     pub fn set_multi(&mut self, is_multi: bool) {
         self.multi = is_multi;
     }
-}
-
-/// Given a verify bundle and contract details, it tries to generate a valid `VerifyArgs` to use
-/// against the `contract_address`.
-fn get_verify_args(
-    contract_address: Address,
-    create2_offset: usize,
-    data: &[u8],
-    verify: &VerifyBundle,
-    chain: u64,
-    libraries: &[String],
-) -> Option<VerifyArgs> {
-    for (artifact, (_contract, bytecode)) in verify.known_contracts.iter() {
-        // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
-        // of the transaction
-        if data.split_at(create2_offset).1.starts_with(bytecode) {
-            let constructor_args = data.split_at(create2_offset + bytecode.len()).1.to_vec();
-
-            let contract = ContractInfo {
-                path: Some(
-                    artifact.source.to_str().expect("There should be an artifact.").to_string(),
-                ),
-                name: artifact.name.clone(),
-            };
-
-            // We strip the build metadadata information, since it can lead to
-            // etherscan not identifying it correctly. eg:
-            // `v0.8.10+commit.fc410830.Linux.gcc` != `v0.8.10+commit.fc410830`
-            let version = Version::new(
-                artifact.version.major,
-                artifact.version.minor,
-                artifact.version.patch,
-            );
-
-            let verify = verify::VerifyArgs {
-                address: contract_address,
-                contract,
-                compiler_version: Some(version.to_string()),
-                constructor_args: Some(hex::encode(&constructor_args)),
-                num_of_optimizations: verify.num_of_optimizations,
-                chain: chain.into(),
-                etherscan_key: verify.etherscan_key.clone(),
-                flatten: false,
-                force: false,
-                watch: true,
-                retry: verify.retry.clone(),
-                libraries: libraries.to_vec(),
-                root: None,
-                verifier: Default::default(),
-            };
-
-            return Some(verify)
-        }
-    }
-    None
 }
 
 impl Drop for ScriptSequence {

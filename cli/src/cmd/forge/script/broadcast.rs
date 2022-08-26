@@ -6,7 +6,9 @@ use super::{
 };
 use crate::{
     cmd::{
-        forge::script::{providers::ProvidersManager, receipts::wait_for_receipts},
+        forge::script::{
+            providers::ProvidersManager, receipts::wait_for_receipts, verify::VerifyBundle,
+        },
         has_batch_support, has_different_gas_calc,
     },
     init_progress,
@@ -270,10 +272,18 @@ impl ScriptArgs {
                         deployment_sequence.add_libraries(libraries);
 
                         if self.verify {
-                            deployment_sequence.verify_contracts(verify).await?;
+                            deployment_sequence
+                                .verify_contracts(&script_config.config, verify)
+                                .await?;
                         }
                     } else {
-                        self.multi_chain_deployment(multi, libraries, verify).await?;
+                        self.multi_chain_deployment(
+                            multi,
+                            libraries,
+                            &script_config.config,
+                            verify,
+                        )
+                        .await?;
                     }
                 } else {
                     println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.");
@@ -301,7 +311,7 @@ impl ScriptArgs {
                     "Multi chain deployment is still under development. Use with caution."
                 )
             );
-            if libraries.libs.len() > 0 {
+            if !libraries.libs.is_empty() {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
                 )

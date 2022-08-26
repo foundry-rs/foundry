@@ -5,15 +5,14 @@ use crate::{
         Cmd, LoadConfig,
     },
     compile::ProjectCompiler,
-    utils::{self, p_println},
+    utils::{self, p_println, STATIC_FUZZ_SEED},
 };
-use cast::trace::identifier::TraceIdentifier;
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
     abi::Address,
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput,
+        Artifact, Bytes, Project, ProjectCompileOutput, U256,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
@@ -26,7 +25,6 @@ use forge::{
     executor::{inspector::CheatsConfig, opts::EvmOpts},
     result::SuiteResult,
     revm::SpecId,
-    trace::identifier::LocalTraceIdentifier,
     utils::{build_ic_pc_map, ICPCMap},
     MultiContractRunnerBuilder, TestOptions,
 };
@@ -71,7 +69,11 @@ impl Cmd for CoverageArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let (config, evm_opts) = self.configure()?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Set fuzz seed so coverage reports are deterministic
+        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
         let report = self.prepare(&config, output.clone())?;
@@ -86,17 +88,6 @@ type SourceMaps = HashMap<ContractId, (SourceMap, SourceMap)>;
 
 // The main flow of the command itself
 impl CoverageArgs {
-    /// Collects and adjusts configuration.
-    fn configure(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // Merge all configs
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
-
-        // We always want traces
-        evm_opts.verbosity = 3;
-
-        Ok((config, evm_opts))
-    }
-
     /// Builds the project.
     fn build(&self, config: &Config) -> eyre::Result<(Project, ProjectCompileOutput)> {
         // Set up the project
@@ -269,52 +260,41 @@ impl CoverageArgs {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
-            .with_test_options(TestOptions {
-                fuzz_runs: config.fuzz_runs,
-                fuzz_max_local_rejects: config.fuzz_max_local_rejects,
-                fuzz_max_global_rejects: config.fuzz_max_global_rejects,
-                ..Default::default()
-            })
+            .with_test_options(TestOptions { fuzz: config.fuzz, ..Default::default() })
             .set_coverage(true)
             .build(root.clone(), output, env, evm_opts)?;
 
-        // Set up identifier
-        let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
-
         // Run tests
+        let known_contracts = runner.known_contracts.clone();
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let handle =
             thread::spawn(move || runner.test(&self.filter, Some(tx), Default::default()).unwrap());
 
         // Add hit data to the coverage report
-        for (hit_map, traces) in rx
+        for (artifact_id, hits) in rx
             .into_iter()
             .flat_map(|(_, suite)| suite.test_results.into_values())
-            .flat_map(|mut result| Some((result.coverage.take()?, result.traces)))
-        {
-            let hits = traces
-                .into_iter()
-                .flat_map(|(_, trace)| {
-                    local_identifier.identify_addresses(trace.addresses().into_iter().collect())
+            .filter_map(|mut result| result.coverage.take())
+            .flat_map(|hit_maps| {
+                hit_maps.0.into_values().filter_map(|map| {
+                    Some((known_contracts.find_by_code(map.bytecode.as_ref())?.0, map))
                 })
-                .flat_map(|identity| identity.artifact_id.zip(hit_map.get(&identity.address)));
-            // TODO: Coverage for fuzz tests
+            })
+        {
             // TODO: Note down failing tests
-            for (artifact_id, hits) in hits {
-                if let Some(source_id) = report.get_source_id(
-                    artifact_id.version.clone(),
-                    artifact_id.source.to_string_lossy().to_string(),
-                ) {
-                    // TODO: Distinguish between creation/runtime in a smart way
-                    report.add_hit_map(
-                        &ContractId {
-                            version: artifact_id.version,
-                            source_id: *source_id,
-                            contract_name: artifact_id.name,
-                        },
-                        hits,
-                    );
-                }
+            if let Some(source_id) = report.get_source_id(
+                artifact_id.version.clone(),
+                artifact_id.source.to_string_lossy().to_string(),
+            ) {
+                // TODO: Distinguish between creation/runtime in a smart way
+                report.add_hit_map(
+                    &ContractId {
+                        version: artifact_id.version.clone(),
+                        source_id: *source_id,
+                        contract_name: artifact_id.name.clone(),
+                    },
+                    &hits,
+                );
             }
         }
 

@@ -12,7 +12,7 @@ contract FileTest is DSTest {
 
         assertEq(cheats.readFile(path), "hello readable world\nthis is the second line!");
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.readFile("/etc/hosts");
     }
 
@@ -23,7 +23,7 @@ contract FileTest is DSTest {
         assertEq(cheats.readLine(path), "this is the second line!");
         assertEq(cheats.readLine(path), "");
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.readLine("/etc/hosts");
     }
 
@@ -36,7 +36,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.writeFile("/etc/hosts", "malicious stuff");
     }
 
@@ -53,7 +53,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.writeLine("/etc/hosts", "malicious stuff");
     }
 
@@ -78,7 +78,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.removeFile("/etc/hosts");
     }
 }

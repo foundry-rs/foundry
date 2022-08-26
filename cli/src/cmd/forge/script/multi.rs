@@ -1,7 +1,8 @@
-use super::{sequence::ScriptSequence, ScriptArgs, VerifyBundle};
+use super::{sequence::ScriptSequence, verify::VerifyBundle, ScriptArgs};
 use ethers::prelude::{artifacts::Libraries, ArtifactId};
 use eyre::ContextCompat;
 use foundry_common::fs;
+use foundry_config::Config;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -93,6 +94,7 @@ impl ScriptArgs {
         &self,
         mut deployments: MultiChainSequence,
         libraries: Libraries,
+        config: &Config,
         verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if !libraries.is_empty() {
@@ -106,7 +108,7 @@ impl ScriptArgs {
                 match self.send_transactions(sequence).await {
                     Ok(_) => {
                         if self.verify {
-                            return sequence.verify_contracts(verify.clone()).await
+                            return sequence.verify_contracts(config, verify.clone()).await
                         }
                         Ok(())
                     }

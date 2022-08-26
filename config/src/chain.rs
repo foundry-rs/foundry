@@ -164,3 +164,9 @@ impl Decodable for Chain {
         Ok(u64::decode(buf)?.into())
     }
 }
+
+impl Default for Chain {
+    fn default() -> Self {
+        ethers_core::types::Chain::Mainnet.into()
+    }
+}
