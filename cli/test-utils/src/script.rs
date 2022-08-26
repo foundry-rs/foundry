@@ -1,3 +1,4 @@
+use crate::TestCommand;
 use ethers::{
     abi::Address,
     prelude::{Middleware, NameOrAddress, U256},
@@ -5,7 +6,6 @@ use ethers::{
 };
 use foundry_common::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
-use crate::TestCommand;
 
 pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
