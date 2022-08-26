@@ -484,6 +484,8 @@ fn test(
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
+        let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir())?;
+
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
@@ -517,9 +519,10 @@ fn test(
                         .with_events(local_identifier.events())
                         .build();
 
-                    decoder.add_signature_identifier(SignaturesIdentifier::new(
-                        Config::foundry_cache_dir(),
-                    )?);
+                    // Signatures are of no value for gas reports
+                    if !gas_reporting {
+                        decoder.add_signature_identifier(sig_identifier.clone());
+                    }
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
