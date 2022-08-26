@@ -2,19 +2,29 @@
 
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
-use foundry_config::{Config, RpcEndpoint, RpcEndpoints};
+use foundry_config::{Config, FuzzConfig, InvariantConfig, RpcEndpoint, RpcEndpoints};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
 use std::{collections::BTreeMap, path::Path};
 
 pub static TEST_OPTS: TestOptions = TestOptions {
-    fuzz_runs: 256,
-    fuzz_max_local_rejects: 1024,
-    fuzz_max_global_rejects: 65536,
-    fuzz_seed: None,
-    invariant_runs: 256,
-    invariant_depth: 15,
-    invariant_fail_on_revert: false,
-    invariant_call_override: false,
+    fuzz: FuzzConfig {
+        runs: 256,
+        max_local_rejects: 1024,
+        max_global_rejects: 65536,
+        seed: None,
+        include_storage: true,
+        include_push_bytes: true,
+        dictionary_weight: 40,
+    },
+    invariant: InvariantConfig {
+        runs: 256,
+        depth: 15,
+        dictionary_weight: 80,
+        fail_on_revert: false,
+        call_override: false,
+        include_storage: true,
+        include_push_bytes: true,
+    },
 };
 
 /// Builds a base runner

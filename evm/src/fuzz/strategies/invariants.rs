@@ -57,10 +57,11 @@ pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
+    dictionary_weight: u32,
 ) -> BoxedStrategy<Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    vec![generate_call(fuzz_state, senders, contracts); 1].boxed()
+    vec![generate_call(fuzz_state, senders, contracts, dictionary_weight); 1].boxed()
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
@@ -69,6 +70,7 @@ fn generate_call(
     fuzz_state: EvmFuzzState,
     senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
+    dictionary_weight: u32,
 ) -> BoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
     let senders = Rc::new(senders);
@@ -78,7 +80,8 @@ fn generate_call(
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
             func.prop_flat_map(move |func| {
-                let sender = select_random_sender(fuzz_state.clone(), senders.clone());
+                let sender =
+                    select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
@@ -92,17 +95,18 @@ fn generate_call(
 fn select_random_sender(
     fuzz_state: EvmFuzzState,
     senders: Rc<SenderFilters>,
+    dictionary_weight: u32,
 ) -> impl Strategy<Value = Address> {
     let senders_ref = senders.clone();
     let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
         (
-            10,
+            100 - dictionary_weight,
             fuzz_param(&ParamType::Address)
                 .prop_map(move |addr| addr.into_address().unwrap())
                 .boxed(),
         ),
         (
-            90,
+            dictionary_weight,
             fuzz_param_from_state(&ParamType::Address, fuzz_state)
                 .prop_map(move |addr| addr.into_address().unwrap())
                 .boxed(),
@@ -178,8 +182,8 @@ pub fn fuzz_contract_with_calldata(
     contract: Address,
     func: Function,
 ) -> impl Strategy<Value = (Address, Bytes)> {
-    // // We need to compose all the strategies generated for each parameter in all
-    // // possible combinations
+    // We need to compose all the strategies generated for each parameter in all
+    // possible combinations
     let strats = proptest::strategy::Union::new_weighted(vec![
         (60, fuzz_calldata(func.clone())),
         (40, fuzz_calldata_from_state(func, fuzz_state)),

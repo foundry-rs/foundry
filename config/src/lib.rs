@@ -21,6 +21,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use inflector::Inflector;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -73,6 +74,12 @@ use crate::{
     etherscan::{EtherscanConfigError, EtherscanConfigs, ResolvedEtherscanConfig},
 };
 use providers::*;
+
+mod fuzz;
+pub use fuzz::FuzzConfig;
+
+mod invariant;
+pub use invariant::InvariantConfig;
 
 /// Foundry configuration
 ///
@@ -204,17 +211,10 @@ pub struct Config {
     /// Only run tests in source files that do not match the specified glob pattern.
     #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
-    /// The number of test cases that must execute for each property test
-    pub fuzz_runs: u32,
-    /// The number of runs that must execute for each invariant test group.
-    pub invariant_runs: u32,
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub invariant_depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub invariant_fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
-    /// checks
-    pub invariant_call_override: bool,
+    /// Configuration for fuzz testing
+    pub fuzz: FuzzConfig,
+    /// Configuration for invariant testing
+    pub invariant: InvariantConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// The address which will be executing all tests
@@ -274,19 +274,6 @@ pub struct Config {
     /// output selection as separate files.
     #[serde(default)]
     pub extra_output_files: Vec<ContractOutputSelection>,
-    /// The maximum number of local test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_local_rejects: u32,
-    /// The maximum number of global test case rejections allowed
-    /// by proptest, to be encountered during usage of `vm.assume`
-    /// cheatcode.
-    pub fuzz_max_global_rejects: u32,
-    /// Optional seed for the fuzzing RNG algorithm
-    #[serde(
-        deserialize_with = "ethers_core::types::serde_helpers::deserialize_stringified_numeric_opt"
-    )]
-    pub fuzz_seed: Option<U256>,
     /// Print the names of the compiled contracts
     pub names: bool,
     /// Print the sizes of the compiled contracts
@@ -351,6 +338,10 @@ pub struct Config {
     pub __warnings: Vec<Warning>,
 }
 
+/// Mapping of fallback standalone sections. See [`FallbackProfileProvider`]
+pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
+    Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
+
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
@@ -362,7 +353,8 @@ impl Config {
     pub const PROFILE_SECTION: &'static str = "profile";
 
     /// Standalone sections in the config which get integrated into the selected profile
-    pub const STANDALONE_SECTIONS: &'static [&'static str] = &["rpc_endpoints", "etherscan", "fmt"];
+    pub const STANDALONE_SECTIONS: &'static [&'static str] =
+        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -1328,7 +1320,16 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Config::STANDALONE_SECTIONS {
-            figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            // let standalone_provider =
+            if let Some(fallback) = STANDALONE_FALLBACK_SECTIONS.get(standalone_key) {
+                figment = figment.merge(
+                    provider
+                        .fallback(standalone_key, fallback)
+                        .wrap(profile.clone(), standalone_key),
+                );
+            } else {
+                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
+            }
         }
         // merge the profile
         figment = figment.merge(provider);
@@ -1360,7 +1361,7 @@ impl From<Config> for Figment {
         // merge environment variables
         figment = figment
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
-            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
+            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE", "FUZZ_RUNS", "DEPTH"]).global())
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
@@ -1542,14 +1543,8 @@ impl Default for Config {
             contract_pattern_inverse: None,
             path_pattern: None,
             path_pattern_inverse: None,
-            fuzz_runs: 256,
-            fuzz_max_local_rejects: 1024,
-            fuzz_max_global_rejects: 65536,
-            fuzz_seed: None,
-            invariant_runs: 256,
-            invariant_depth: 15,
-            invariant_fail_on_revert: false,
-            invariant_call_override: false,
+            fuzz: Default::default(),
+            invariant: Default::default(),
             ffi: false,
             sender: Config::DEFAULT_SENDER,
             tx_origin: Config::DEFAULT_SENDER,
@@ -1911,6 +1906,24 @@ impl Provider for DappEnvCompatProvider {
         if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
             dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
+
+        let mut fuzz_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_FUZZ_RUNS") {
+            fuzz_dict.insert(
+                "runs".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("fuzz".to_string(), fuzz_dict.into());
+
+        let mut invariant_dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_DEPTH") {
+            invariant_dict.insert(
+                "depth".to_string(),
+                val.parse::<u32>().map_err(figment::Error::custom)?.into(),
+            );
+        }
+        dict.insert("invariant".to_string(), invariant_dict.into());
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -2319,6 +2332,13 @@ trait ProviderExt: Provider {
         profiles: impl IntoIterator<Item = impl Into<Profile>>,
     ) -> OptionalStrictProfileProvider<&Self> {
         OptionalStrictProfileProvider::new(self, profiles)
+    }
+    fn fallback(
+        &self,
+        profile: impl Into<Profile>,
+        fallback: impl Into<Profile>,
+    ) -> FallbackProfileProvider<&Self> {
+        FallbackProfileProvider::new(self, profile, fallback)
     }
 }
 impl<P: Provider> ProviderExt for P {}
@@ -2998,14 +3018,6 @@ mod tests {
                 extra_output_files = []
                 ffi = false
                 force = false
-                fuzz_max_global_rejects = 65536
-                fuzz_max_local_rejects = 1024
-                fuzz_runs = 256
-                fuzz_seed = '0x3e8'
-                invariant_runs = 256
-                invariant_depth = 15
-                invariant_fail_on_revert = false
-                invariant_call_override = false
                 gas_limit = 9223372036854775807
                 gas_price = 0
                 gas_reports = ['*']
@@ -3039,12 +3051,23 @@ mod tests {
                 mainnet = "${RPC_MAINNET}"
                 mainnet_2 = "https://eth-mainnet.alchemyapi.io/v2/${API_KEY}"
 
+                [fuzz]
+                runs = 256
+                seed = '0x3e8'
+                max_global_rejects = 65536
+                max_local_rejects = 1024
+
+                [invariant]
+                runs = 256
+                depth = 15
+                fail_on_revert = false
+                call_override = false
             "#,
             )?;
 
             let config = Config::load_with_root(jail.directory());
 
-            assert_eq!(config.fuzz_seed, Some(1000.into()));
+            assert_eq!(config.fuzz.seed, Some(1000.into()));
             assert_eq!(
                 config.remappings,
                 vec![Remapping::from_str("nested/=lib/nested/").unwrap().into()]
@@ -3260,12 +3283,61 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_parse_invalid_fuzz_weight() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                dictionary_weight = 101
+            "#,
+            )?;
+            let _config = Config::load();
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fallback_provider() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 1
+                include_storage = false
+                dictionary_weight = 99
+
+                [invariant]
+                runs = 420
+            "#,
+            )?;
+
+            let invariant_default = InvariantConfig::default();
+            let config = Config::load();
+
+            assert_ne!(config.invariant.runs, config.fuzz.runs);
+            assert_eq!(config.invariant.runs, 420);
+
+            assert_ne!(config.fuzz.include_storage, invariant_default.include_storage);
+            assert_eq!(config.invariant.include_storage, config.fuzz.include_storage);
+
+            assert_ne!(config.fuzz.dictionary_weight, invariant_default.dictionary_weight);
+            assert_eq!(config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn can_handle_deviating_dapp_aliases() {
         figment::Jail::expect_with(|jail| {
             let addr = Address::random();
             jail.set_env("DAPP_TEST_NUMBER", 1337);
             jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
+            jail.set_env("DAPP_TEST_DEPTH", 20);
             jail.set_env("DAPP_FORK_BLOCK", 100);
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
             jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
@@ -3274,7 +3346,8 @@ mod tests {
 
             assert_eq!(config.block_number, 1337);
             assert_eq!(config.sender, addr);
-            assert_eq!(config.fuzz_runs, 420);
+            assert_eq!(config.fuzz.runs, 420);
+            assert_eq!(config.invariant.depth, 20);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
             assert!(!config.optimizer);
@@ -3562,6 +3635,28 @@ mod tests {
                     bracket_spacing: true,
                     ..Default::default()
                 }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                runs = 512
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().sanitized();
+            assert_eq!(
+                loaded.invariant,
+                InvariantConfig { runs: 512, depth: 10, ..Default::default() }
             );
 
             Ok(())
