@@ -11,7 +11,7 @@ use std::{collections::HashMap, path::Path};
 
 /// Genesis specifies the header fields, state of a genesis block. It also defines hard fork
 /// switch-over blocks through the chain configuration See also: <https://github.com/ethereum/go-ethereum/blob/0ce494b60cd00d70f1f9f2dd0b9bfbd76204168a/core/genesis.go#L47-L66>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Genesis {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,13 +104,13 @@ impl Genesis {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct Alloc {
     pub accounts: HashMap<Address, GenesisAccount>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenesisAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<Bytes>,
