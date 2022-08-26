@@ -25,7 +25,9 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -647,6 +649,8 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
+        let launched_with_fork = self.inner.launched_with_fork.is_some();
+
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
@@ -654,7 +658,10 @@ impl DatabaseExt for Backend {
 
             // if the Backend was launched in forking mode, then we also need to adjust the depth of
             // the `JournalState` at this point
-            if self.inner.launched_with_fork.is_some() {
+            if launched_with_fork {
+                let caller = env.tx.caller;
+                let caller_account =
+                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
                 let target_fork = self.inner.get_fork_mut(idx);
                 if target_fork.journaled_state.depth == 0 {
                     // depth 0 will be the default value when the fork was created and since we
@@ -662,6 +669,17 @@ impl DatabaseExt for Backend {
                     // `fork_init_journaled_state` instead we need to manually bump the depth to the
                     // current depth of the call _once_
                     target_fork.journaled_state.depth = journaled_state.depth;
+
+                    // we also need to initialize and touch the caller
+                    if let Some(acc) = caller_account {
+                        target_fork.db.insert_account_info(caller, acc);
+                        with_journaled_account(
+                            &mut target_fork.journaled_state,
+                            &mut target_fork.db,
+                            caller,
+                            |_| (),
+                        );
+                    }
                 }
             }
         } else {
