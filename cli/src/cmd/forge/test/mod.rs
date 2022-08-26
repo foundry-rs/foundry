@@ -138,7 +138,7 @@ impl Provider for TestArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
 
-        let fuzz_dict = Dict::default();
+        let mut fuzz_dict = Dict::default();
         if let Some(fuzz_seed) = self.fuzz_seed {
             fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
         }
