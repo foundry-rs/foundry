@@ -1309,3 +1309,9 @@ forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestComman
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 });
+
+// checks forge bind works correctly on the default project
+forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("bind");
+    cmd.assert_non_empty_stdout();
+});
