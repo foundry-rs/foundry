@@ -166,7 +166,7 @@ jobs:
             target: x86_64-pc-windows-msvc
         nextest:
           - name: non-forking
-            filter: '!test(~fork) & !test(~live) & !test(~100)'
+            filter: '!test(~fork) & !test(~live) & !test(~forge_std)' # skip fork,verify,forge-std tests
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/C3JEvfW6VgtqZQa-Qp1E-2srEiIc02sD
     steps:
