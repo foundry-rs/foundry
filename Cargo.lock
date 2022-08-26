@@ -2153,6 +2153,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "walkdir",
 ]
 
 [[package]]
