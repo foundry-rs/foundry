@@ -18,6 +18,8 @@ use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCo
 use std::sync::Arc;
 use tracing::{trace, warn};
 
+pub type DbResult<T> = Result<T, &'static str>;
+
 /// a [revm::Database] that's forked off another client
 ///
 /// The `backend` is used to retrieve (missing) data, which is then fetched from the remote
@@ -149,37 +151,37 @@ impl ForkedDatabase {
 }
 
 impl Database for ForkedDatabase {
-    fn basic(&mut self, address: Address) -> AccountInfo {
+    fn basic(&mut self, address: Address) -> DbResult<Option<AccountInfo>> {
         Database::basic(&mut self.cache_db, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&mut self, code_hash: H256) -> DbResult<Bytecode> {
         Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> U256 {
+    fn storage(&mut self, address: Address, index: U256) -> DbResult<U256> {
         Database::storage(&mut self.cache_db, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> H256 {
+    fn block_hash(&mut self, number: U256) -> DbResult<H256> {
         Database::block_hash(&mut self.cache_db, number)
     }
 }
 
 impl DatabaseRef for ForkedDatabase {
-    fn basic(&self, address: Address) -> AccountInfo {
+    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> DbResult<Bytecode> {
         self.cache_db.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> DbResult<U256> {
         DatabaseRef::storage(&self.cache_db, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> DbResult<H256> {
         self.cache_db.block_hash(number)
     }
 }
@@ -211,41 +213,44 @@ impl ForkDbSnapshot {
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
 impl DatabaseRef for ForkDbSnapshot {
-    fn basic(&self, address: Address) -> AccountInfo {
+    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
         match self.local.accounts.get(&address) {
-            Some(account) => account.info.clone(),
-            None => self
-                .snapshot
-                .accounts
-                .get(&address)
-                .cloned()
-                .unwrap_or_else(|| self.local.basic(address)),
+            Some(account) => Ok(Some(account.info.clone())),
+            None => {
+                let mut acc = self.snapshot.accounts.get(&address).cloned();
+
+                if acc.is_none() {
+                    acc = self.local.basic(address)?;
+                }
+                Ok(acc)
+            }
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&self, code_hash: H256) -> DbResult<Bytecode> {
         self.local.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> DbResult<U256> {
         match self.local.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
-                Some(entry) => *entry,
-                None => self
-                    .get_storage(address, index)
-                    .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+                Some(entry) => Ok(*entry),
+                None => match self.get_storage(address, index) {
+                    None => DatabaseRef::storage(&self.local, address, index),
+                    Some(storage) => Ok(storage),
+                },
             },
-            None => self
-                .get_storage(address, index)
-                .unwrap_or_else(|| DatabaseRef::storage(&self.local, address, index)),
+            None => match self.get_storage(address, index) {
+                None => DatabaseRef::storage(&self.local, address, index),
+                Some(storage) => Ok(storage),
+            },
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
-        self.snapshot
-            .block_hashes
-            .get(&number)
-            .copied()
-            .unwrap_or_else(|| self.local.block_hash(number))
+    fn block_hash(&self, number: U256) -> DbResult<H256> {
+        match self.snapshot.block_hashes.get(&number).copied() {
+            None => self.local.block_hash(number),
+            Some(block_hash) => Ok(block_hash),
+        }
     }
 }

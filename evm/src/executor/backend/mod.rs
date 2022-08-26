@@ -25,7 +25,9 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+use crate::executor::fork::database::DbResult;
 pub use diagnostic::RevertDiagnostic;
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -300,7 +302,7 @@ impl Backend {
         let mut backend = Self {
             forks,
             mem_db: InMemoryDB::default(),
-            fork_init_journaled_state: Default::default(),
+            fork_init_journaled_state: new_journaled_state(),
             active_fork_ids: None,
             inner: BackendInner {
                 persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
@@ -313,7 +315,7 @@ impl Backend {
                 backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
             backend.active_fork_ids =
-                Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
+                Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, new_journaled_state()));
             backend.inner.launched_with_fork = Some(fork_id);
         }
 
@@ -399,9 +401,9 @@ impl Backend {
             bool private _failed;
          }
         */
-        let value = self.storage(address, U256::zero());
-
-        value.byte(1) != 0
+        self.storage(address, U256::zero()).map(|value| {
+            value.byte(1) != 0
+        }).unwrap_or_default()
     }
 
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
@@ -409,8 +411,7 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self) -> bool {
         let index = U256::from(&b"failed"[..]);
-        let value = self.storage(CHEATCODE_ADDRESS, index);
-        value == U256::one()
+         self.storage(CHEATCODE_ADDRESS, index).map(|value| value == U256::one()).unwrap_or_default()
     }
 
     /// when creating or switching forks, we update the AccountInfo of the contract
@@ -747,7 +748,7 @@ impl DatabaseExt for Backend {
 }
 
 impl DatabaseRef for Backend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    fn basic(& self, address: Address) -> DbResult<Option<AccountInfo>> {
         if let Some(db) = self.active_fork_db() {
             db.basic(address)
         } else {
@@ -755,7 +756,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(& self, code_hash: H256) -> DbResult<Bytecode> {
         if let Some(db) = self.active_fork_db() {
             db.code_by_hash(code_hash)
         } else {
@@ -763,7 +764,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(& self, address: Address, index: U256) -> DbResult<U256> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -771,7 +772,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(& self, number: U256) -> DbResult<H256> {
         if let Some(db) = self.active_fork_db() {
             db.block_hash(number)
         } else {
@@ -781,7 +782,7 @@ impl DatabaseRef for Backend {
 }
 
 impl<'a> DatabaseRef for &'a mut Backend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    fn basic(& self, address: Address) -> DbResult<Option<AccountInfo>> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::basic(db, address)
         } else {
@@ -789,7 +790,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(& self, code_hash: H256) -> DbResult<Bytecode> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::code_by_hash(db, code_hash)
         } else {
@@ -797,7 +798,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(& self, address: Address, index: U256) -> DbResult<U256> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -805,7 +806,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(& self, number: U256) -> DbResult<H256> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::block_hash(db, number)
         } else {
@@ -825,7 +826,7 @@ impl DatabaseCommit for Backend {
 }
 
 impl Database for Backend {
-    fn basic(&mut self, address: H160) -> AccountInfo {
+    fn basic(&mut self, address: Address) -> DbResult<Option<AccountInfo>> {
         if let Some(db) = self.active_fork_db_mut() {
             db.basic(address)
         } else {
@@ -833,7 +834,7 @@ impl Database for Backend {
         }
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+    fn code_by_hash(&mut self, code_hash: H256) -> DbResult<Bytecode> {
         if let Some(db) = self.active_fork_db_mut() {
             db.code_by_hash(code_hash)
         } else {
@@ -841,7 +842,7 @@ impl Database for Backend {
         }
     }
 
-    fn storage(&mut self, address: H160, index: U256) -> U256 {
+    fn storage(&mut self, address: Address, index: U256) -> DbResult<U256> {
         if let Some(db) = self.active_fork_db_mut() {
             Database::storage(db, address, index)
         } else {
@@ -849,7 +850,7 @@ impl Database for Backend {
         }
     }
 
-    fn block_hash(&mut self, number: U256) -> H256 {
+    fn block_hash(&mut self, number: U256) -> DbResult<H256> {
         if let Some(db) = self.active_fork_db_mut() {
             db.block_hash(number)
         } else {
@@ -1129,4 +1130,16 @@ fn clone_db_account_data<ExtDB: DatabaseRef>(
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
     fork_db.accounts.insert(addr, acc);
+}
+
+
+fn new_journaled_state () -> JournaledState {
+    JournaledState {
+        state: Default::default(),
+        logs: vec![],
+        depth: 0,
+        journal: vec![],
+        is_before_spurious_dragon: false,
+        num_of_precompiles: 0
+    }
 }

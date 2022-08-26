@@ -1,5 +1,5 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use crate::executor::fork::{cache::FlushJsonBlockCacheDB, BlockchainDb};
+use crate::executor::fork::{cache::FlushJsonBlockCacheDB, database::DbResult, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -491,55 +491,54 @@ impl SharedBackend {
 }
 
 impl DatabaseRef for SharedBackend {
-    fn basic(&self, address: H160) -> AccountInfo {
+    fn basic(&self, address: H160) -> DbResult<Option<AccountInfo>> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
-        self.do_get_basic(address).unwrap_or_else(|_| {
-            panic!("Failed to send/recv `basic` for {address}");
+        self.do_get_basic(address).map(Some).map_err(|err| {
+            error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
+            "Failed to retrieve basic account data from the fork"
         })
     }
 
-    fn code_by_hash(&self, _address: H256) -> Bytecode {
-        panic!("Should not be called. Code is already loaded.")
+    fn code_by_hash(&self, _address: H256) -> DbResult<Bytecode> {
+        Err("Should not be called. Code is already loaded.")
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: H160, index: U256) -> DbResult<U256> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
-        self.do_get_storage(address, index).unwrap_or_else(|_| {
-            panic!("Failed to send/recv `storage` for {address} at {index}");
+        self.do_get_storage(address, index).map_err(|err| {
+            error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
+            "Failed to retrieve storage from the fork"
         })
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, number: U256) -> DbResult<H256> {
         if number > U256::from(u64::MAX) {
-            return KECCAK_EMPTY
+            return Ok(KECCAK_EMPTY)
         }
         let number = number.as_u64();
         trace!( target: "sharedbackend", "request block hash for number {:?}", number);
-        self.do_get_block_hash(number).unwrap_or_else(|_| {
-            panic!("Failed to send/recv `block_hash` for {number}");
+        self.do_get_block_hash(number).map_err(|err| {
+            error!(target: "sharedbackend",?err, ?number, "Failed to send/recv `block_hash`");
+            "Failed to retrieve `block_hash` from the fork"
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::executor::{
-        fork::{BlockchainDbMeta, JsonBlockCacheDB},
+        fork::{BlockchainDbMeta, CreateFork, JsonBlockCacheDB},
         opts::EvmOpts,
         Backend,
     };
     use ethers::{
         providers::{Http, Provider},
         solc::utils::RuntimeOrHandle,
-        types::Address,
+        types::{Address, Chain},
     };
-
-    use crate::executor::fork::CreateFork;
-    use ethers::types::Chain;
     use foundry_config::Config;
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
-
-    use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
 
     #[test]
