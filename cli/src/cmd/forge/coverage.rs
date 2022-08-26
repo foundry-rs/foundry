@@ -5,14 +5,14 @@ use crate::{
         Cmd, LoadConfig,
     },
     compile::ProjectCompiler,
-    utils::{self, p_println},
+    utils::{self, p_println, STATIC_FUZZ_SEED},
 };
 use clap::{AppSettings, ArgEnum, Parser};
 use ethers::{
     abi::Address,
     prelude::{
         artifacts::{Ast, CompactBytecode, CompactDeployedBytecode},
-        Artifact, Bytes, Project, ProjectCompileOutput,
+        Artifact, Bytes, Project, ProjectCompileOutput, U256,
     },
     solc::{artifacts::contract::CompactContractBytecode, sourcemap::SourceMap},
 };
@@ -69,7 +69,11 @@ impl Cmd for CoverageArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (mut config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+
+        // Set fuzz seed so coverage reports are deterministic
+        config.fuzz.seed = Some(U256::from_big_endian(&STATIC_FUZZ_SEED));
+
         let (project, output) = self.build(&config)?;
         p_println!(!self.opts.silent => "Analysing contracts...");
         let report = self.prepare(&config, output.clone())?;
