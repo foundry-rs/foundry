@@ -184,8 +184,8 @@ impl CallTraceDecoder {
         }
     }
 
-    pub fn add_signature_identifier(&mut self, identifier: SignaturesIdentifier) {
-        self.signature_identifier = Some(Arc::new(RwLock::new(identifier)));
+    pub fn add_signature_identifier(&mut self, identifier: Arc<RwLock<SignaturesIdentifier>>) {
+        self.signature_identifier = Some(identifier);
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.

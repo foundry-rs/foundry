@@ -1,5 +1,6 @@
 use ethers::abi::{Event, Function};
 use foundry_utils::{decode_selector, get_event, get_func, selectors::SelectorType};
+use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::BufWriter, path::PathBuf};
 use tracing::warn;
@@ -8,8 +9,12 @@ use tracing::warn;
 /// `sig.eth.samczsun.com`.
 #[derive(Debug, Default)]
 pub struct SignaturesIdentifier {
+    // Cached selectors for functions and events
     cached: CachedSignatures,
+    // Location where to save `CachedSignatures`
     cached_path: Option<PathBuf>,
+    // Selectors that were unavailable during the session.
+    unavailable: HashSet<Vec<u8>>,
 }
 
 impl SignaturesIdentifier {
@@ -24,7 +29,7 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            return Ok(Self { cached, cached_path: Some(path) })
+            return Ok(Self { cached, cached_path: Some(path), unavailable: HashSet::new() })
         }
         Ok(Self::default())
     }
@@ -49,24 +54,32 @@ impl SignaturesIdentifier {
         identifier: &[u8],
         get_type: fn(&str) -> eyre::Result<T>,
     ) -> Option<T> {
+        // Exit early if we have unsuccessfully queried it before.
+        if self.unavailable.contains(&identifier.to_vec()) {
+            return None
+        }
+
         let map = match selector_type {
             SelectorType::Function => &mut self.cached.functions,
             SelectorType::Event => &mut self.cached.events,
         };
 
-        let identifier = format!("0x{}", hex::encode(identifier));
+        let hex_identifier = format!("0x{}", hex::encode(identifier));
 
-        if !map.contains_key(&identifier) {
-            if let Ok(signatures) = decode_selector(&identifier, selector_type).await {
+        if !map.contains_key(&hex_identifier) {
+            if let Ok(signatures) = decode_selector(&hex_identifier, selector_type).await {
                 if let Some(signature) = signatures.into_iter().next() {
-                    map.insert(identifier.to_string(), signature);
+                    map.insert(hex_identifier.clone(), signature);
                 }
             }
         }
 
-        if let Some(signature) = map.get(&identifier) {
+        if let Some(signature) = map.get(&hex_identifier) {
             return get_type(signature).ok()
         }
+
+        self.unavailable.insert(identifier.to_vec());
+
         None
     }
 
