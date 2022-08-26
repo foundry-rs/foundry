@@ -4405,7 +4405,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.9.0"
-source = "git+https://github.com/bluealloy/revm#7ecc92095c14566a264df790cf9f8792a3341b22"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/bytecode-hash#b8157b768e60229d80808c23754d758c79d2d1b6"
 dependencies = [
  "arrayref",
  "auto_impl 1.0.1",
@@ -4414,7 +4414,7 @@ dependencies = [
  "hex",
  "num_enum",
  "primitive-types",
- "revm_precompiles 1.1.0 (git+https://github.com/bluealloy/revm)",
+ "revm_precompiles 1.1.0 (git+https://github.com/onbjerg/revm?branch=onbjerg/bytecode-hash)",
  "rlp",
  "serde",
  "sha3",
@@ -4439,7 +4439,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "1.1.0"
-source = "git+https://github.com/bluealloy/revm#7ecc92095c14566a264df790cf9f8792a3341b22"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/bytecode-hash#b8157b768e60229d80808c23754d758c79d2d1b6"
 dependencies = [
  "bytes",
  "k256",
