@@ -219,7 +219,6 @@ impl ScriptArgs {
         if let Some(txs) = result.transactions {
             // TODO(joshie): validate rpc.
             let num_fork_rpcs = txs.iter().filter(|tx| tx.rpc.is_some()).count();
-            let only_fork_rpcs = txs.len() == num_fork_rpcs;
             let total_rpcs = num_fork_rpcs + script_config.evm_opts.fork_url.is_some() as usize;
 
             if total_rpcs > 0 {
@@ -296,14 +295,24 @@ impl ScriptArgs {
         libraries: &Libraries,
     ) -> eyre::Result<()> {
         if total_rpcs > 1 {
-            // TODO(joshie) essential cancels any kind of library on foundry.toml
+            eprintln!(
+                "{}",
+                Paint::yellow(
+                    "Multi chain deployment is still under development. Use with caution."
+                )
+            );
             if libraries.libs.len() > 0 {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
                 )
             }
             if self.skip_simulation {
-                eyre::bail!("You cannot skip simulation if you're using multichain deployments.");
+                eyre::bail!(
+                    "Multi chain deployment does not support skipping simulations at the moment."
+                );
+            }
+            if self.verify {
+                eyre::bail!("Multi chain deployment does not contract verification at the moment.");
             }
         }
         Ok(())
