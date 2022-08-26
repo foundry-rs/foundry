@@ -16,7 +16,7 @@ fn test_cheats_local() {
 
     // on windows exclude ffi tests since no echo and file test that expect a certain file path
     #[cfg(windows)]
-    let filter = filter.exclude_tests("(Ffi|File|Line)");
+    let filter = filter.exclude_tests("(Ffi|File|Line|Root)");
 
     let suite_result = runner.test(&filter, None, TEST_OPTS).unwrap();
     assert!(!suite_result.is_empty());
