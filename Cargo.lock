@@ -2129,6 +2129,7 @@ dependencies = [
  "ethers",
  "ethers-solc",
  "eyre",
+ "foundry-common",
  "foundry-config",
  "once_cell",
  "parking_lot 0.12.0",

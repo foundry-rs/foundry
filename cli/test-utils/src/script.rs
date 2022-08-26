@@ -1,12 +1,11 @@
+use crate::TestCommand;
 use ethers::{
     abi::Address,
-    prelude::{Http, Middleware, NameOrAddress, Provider, U256},
+    prelude::{Middleware, NameOrAddress, U256},
     utils::hex,
 };
-
+use foundry_common::{get_http_provider, RetryProvider};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
-
-use crate::TestCommand;
 
 pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 
@@ -14,7 +13,7 @@ pub const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
 pub struct ScriptTester {
     pub accounts_pub: Vec<Address>,
     pub accounts_priv: Vec<String>,
-    pub provider: Provider<Http>,
+    pub provider: RetryProvider,
     pub nonces: BTreeMap<u32, U256>,
     pub cmd: TestCommand,
 }
@@ -53,7 +52,7 @@ impl ScriptTester {
                 "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".to_string(),
                 "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a".to_string(),
             ],
-            provider: Provider::<Http>::try_from(endpoint).unwrap(),
+            provider: get_http_provider(endpoint),
             nonces: BTreeMap::default(),
             cmd,
         }
