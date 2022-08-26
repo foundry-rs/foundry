@@ -1,4 +1,5 @@
 use crate::{
+    coverage::HitMaps,
     decode,
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
@@ -17,6 +18,7 @@ use strategies::{
     build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
     EvmFuzzState,
 };
+
 pub mod invariant;
 pub mod strategies;
 
@@ -68,14 +70,25 @@ impl<'a> FuzzedExecutor<'a> {
         // Stores the result and calldata of the last failed call, if any.
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
 
-        // stores the last successful call trace
+        // Stores the last successful call trace
         let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
+
+        // Stores coverage information for all fuzz cases
+        let coverage: RefCell<Option<HitMaps>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(fork_db, self.config.include_storage)
+            build_initial_state(
+                fork_db,
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         } else {
-            build_initial_state(self.executor.backend().mem_db(), self.config.include_storage)
+            build_initial_state(
+                self.executor.backend().mem_db(),
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         };
 
         let strat = proptest::strategy::Union::new_weighted(vec![
@@ -121,6 +134,14 @@ impl<'a> FuzzedExecutor<'a> {
 
                 traces.replace(call.traces);
 
+                if let Some(prev) = coverage.take() {
+                    // Safety: If `Option::or` evaluates to `Some`, then `call.coverage` must
+                    // necessarily also be `Some`
+                    coverage.replace(Some(prev.merge(call.coverage.unwrap())));
+                } else {
+                    coverage.replace(call.coverage);
+                }
+
                 Ok(())
             } else {
                 let status = call.exit_reason;
@@ -153,6 +174,7 @@ impl<'a> FuzzedExecutor<'a> {
             logs: call.logs,
             labeled_addresses: call.labels,
             traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
+            coverage: coverage.into_inner(),
         };
 
         match run_result {
@@ -297,6 +319,9 @@ pub struct FuzzTestResult {
     /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
     /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
     pub traces: Option<CallTraceArena>,
+
+    /// Raw coverage info
+    pub coverage: Option<HitMaps>,
 }
 
 /// Container type for all successful test cases

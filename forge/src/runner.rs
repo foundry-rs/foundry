@@ -530,8 +530,7 @@ impl<'a> ContractRunner<'a> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
-            // TODO: Maybe support coverage for fuzz tests
-            coverage: None,
+            coverage: result.coverage,
             labeled_addresses,
         })
     }
