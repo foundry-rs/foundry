@@ -73,9 +73,17 @@ impl<'a> FuzzedExecutor<'a> {
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(fork_db, self.config.include_storage)
+            build_initial_state(
+                fork_db,
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         } else {
-            build_initial_state(self.executor.backend().mem_db(), self.config.include_storage)
+            build_initial_state(
+                self.executor.backend().mem_db(),
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         };
 
         let strat = proptest::strategy::Union::new_weighted(vec![

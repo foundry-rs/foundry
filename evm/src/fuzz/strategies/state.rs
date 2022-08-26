@@ -83,6 +83,7 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 pub fn build_initial_state<DB: DatabaseRef>(
     db: &CacheDB<DB>,
     include_storage: bool,
+    include_push_bytes: bool,
 ) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
@@ -91,10 +92,12 @@ pub fn build_initial_state<DB: DatabaseRef>(
         state.insert(H256::from(*address).into());
 
         // Insert push bytes
-        if let Some(code) = &account.info.code {
-            if state.cache.insert(*address) {
-                for push_byte in collect_push_bytes(code.bytes().clone()) {
-                    state.insert(push_byte);
+        if include_push_bytes {
+            if let Some(code) = &account.info.code {
+                if state.cache.insert(*address) {
+                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                        state.insert(push_byte);
+                    }
                 }
             }
         }
