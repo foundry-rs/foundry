@@ -363,6 +363,26 @@ async fn test_fork_timestamp() {
     let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
     assert!(diff <= elapsed.into());
+
+    // ensure that after setting a timestamp manually, then next block time is correct
+    let start = std::time::Instant::now();
+    api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
+        .await
+        .unwrap();
+    api.evm_set_next_block_timestamp(BLOCK_TIMESTAMP + 1).unwrap();
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP + 1);
+
+    let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
+    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    let elapsed = start.elapsed().as_secs() + 1;
+    let diff = block.timestamp - (BLOCK_TIMESTAMP + 1);
+    assert!(diff <= elapsed.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
