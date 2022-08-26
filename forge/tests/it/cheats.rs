@@ -11,14 +11,14 @@ use foundry_evm::decode::decode_console_logs;
 #[test]
 fn test_cheats_local() {
     let mut runner = runner();
-    let suite_result = runner
-        .test(
-            &Filter::new(".*", ".*", &format!(".*cheats{}*", RE_PATH_SEPARATOR))
-                .exclude_paths("Fork"),
-            None,
-            TEST_OPTS,
-        )
-        .unwrap();
+    let filter =
+        Filter::new(".*", ".*", &format!(".*cheats{}*", RE_PATH_SEPARATOR)).exclude_paths("Fork");
+
+    // exclude ffi tests on windows since no echo
+    #[cfg(windows)]
+    let filter = filter.exclude_tests("Ffi");
+
+    let suite_result = runner.test(&filter, None, TEST_OPTS).unwrap();
     assert!(!suite_result.is_empty());
 
     for (_, SuiteResult { test_results, .. }) in suite_result {
