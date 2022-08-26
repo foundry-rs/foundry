@@ -35,9 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
-    sync::Arc,
 };
-use tokio::sync::RwLock;
 use yansi::Paint;
 
 mod build;
@@ -173,9 +171,7 @@ impl ScriptArgs {
         let mut decoder =
             CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
 
-        decoder.add_signature_identifier(Arc::new(RwLock::new(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-        )?)));
+        decoder.add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &local_identifier);

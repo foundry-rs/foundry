@@ -2,8 +2,11 @@ use ethers::abi::{Event, Function};
 use foundry_utils::{decode_selector, get_event, get_func, selectors::SelectorType};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io::BufWriter, path::PathBuf};
+use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};
+use tokio::sync::RwLock;
 use tracing::warn;
+
+pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 /// An identifier that tries to identify functions and events using signatures found at
 /// `sig.eth.samczsun.com`.
@@ -18,8 +21,8 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
-    pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<Self> {
-        if let Some(cache_path) = cache_path {
+    pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<SingleSignaturesIdentifier> {
+        let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             let cached = if path.is_file() {
                 serde_json::from_reader(std::fs::File::open(&path)?)?
@@ -29,9 +32,12 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            return Ok(Self { cached, cached_path: Some(path), unavailable: HashSet::new() })
-        }
-        Ok(Self::default())
+            Self { cached, cached_path: Some(path), unavailable: HashSet::new() }
+        } else {
+            Self::default()
+        };
+
+        Ok(Arc::new(RwLock::new(identifier)))
     }
 
     pub fn save(&self) {
@@ -114,13 +120,15 @@ mod tests {
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {
-            let mut sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
+            let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
 
-            assert!(sigs.cached.events.is_empty());
-            assert!(sigs.cached.functions.is_empty());
+            assert!(sigs.read().await.cached.events.is_empty());
+            assert!(sigs.read().await.cached.functions.is_empty());
 
-            let func = sigs.identify_function(&[35, 184, 114, 221]).await.unwrap();
+            let func = sigs.write().await.identify_function(&[35, 184, 114, 221]).await.unwrap();
             let event = sigs
+                .write()
+                .await
                 .identify_event(&[
                     39, 119, 42, 220, 99, 219, 7, 170, 231, 101, 183, 30, 178, 181, 51, 6, 79, 167,
                     129, 189, 87, 69, 126, 27, 19, 133, 146, 216, 25, 141, 9, 89,
@@ -135,7 +143,7 @@ mod tests {
         }
 
         let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
-        assert!(sigs.cached.events.len() == 1);
-        assert!(sigs.cached.functions.len() == 1);
+        assert!(sigs.read().await.cached.events.len() == 1);
+        assert!(sigs.read().await.cached.functions.len() == 1);
     }
 }

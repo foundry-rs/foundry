@@ -25,14 +25,7 @@ use forge::{
 use foundry_common::evm::EvmArgs;
 use foundry_config::{figment, Config};
 use regex::Regex;
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::{mpsc::channel, Arc},
-    thread,
-    time::Duration,
-};
-use tokio::sync::RwLock;
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
@@ -491,8 +484,7 @@ fn test(
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
-        let sig_identifier =
-            Arc::new(RwLock::new(SignaturesIdentifier::new(Config::foundry_cache_dir())?));
+        let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir())?;
 
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();

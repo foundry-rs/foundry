@@ -23,9 +23,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     collections::{BTreeMap, HashMap},
     str::FromStr,
-    sync::Arc,
 };
-use tokio::sync::RwLock;
 use ui::{TUIExitReason, Tui, Ui};
 use yansi::Paint;
 
@@ -188,9 +186,8 @@ impl RunArgs {
 
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 
-            decoder.add_signature_identifier(Arc::new(RwLock::new(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-            )?)));
+            decoder
+                .add_signature_identifier(SignaturesIdentifier::new(Config::foundry_cache_dir())?);
 
             for (_, trace) in &mut result.traces {
                 decoder.identify(trace, &etherscan_identifier);
