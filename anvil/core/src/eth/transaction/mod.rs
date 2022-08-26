@@ -206,6 +206,7 @@ impl fastrlp::Decodable for TransactionKind {
     fn decode(buf: &mut &[u8]) -> Result<Self, fastrlp::DecodeError> {
         if let Some(&first) = buf.first() {
             if first == 0x80 {
+                buf.advance(1);
                 Ok(TransactionKind::Create)
             } else {
                 let addr = <Address as fastrlp::Decodable>::decode(buf)?;
@@ -627,6 +628,16 @@ impl fastrlp::Decodable for TypedTransaction {
         match first.cmp(&fastrlp::EMPTY_LIST_CODE) {
             Ordering::Less => {
                 // strip out the string header
+                // NOTE: typed transaction encodings either contain a "rlp header" which contains
+                // the type of the payload and its length, or they do not contain a header and
+                // start with the tx type byte.
+                //
+                // This line works for both types of encodings because byte slices starting with
+                // 0x01 and 0x02 return a Header { list: false, payload_length: 1 } when input to
+                // Header::decode.
+                // If the encoding includes a header, the header will be properly decoded and
+                // consumed.
+                // Otherwise, header decoding will succeed but nothing is consumed.
                 let _header = Header::decode(buf)?;
                 let tx_type = *buf.first().ok_or(fastrlp::DecodeError::Custom(
                     "typed tx cannot be decoded from an empty slice",
@@ -1088,8 +1099,9 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use bytes::BytesMut;
     use ethers_core::utils::hex;
-    use fastrlp::Decodable;
+    use fastrlp::{Decodable, Encodable};
 
     #[test]
     fn can_recover_sender() {
@@ -1114,6 +1126,62 @@ mod tests {
             tx.recover().unwrap(),
             "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
         );
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create() {
+        // tests that a contract creation tx encodes and decodes properly
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Create,
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
+    }
+
+    #[test]
+    fn test_decode_fastrlp_create_goerli() {
+        // test that an example create tx from goerli decodes properly
+        let tx_bytes =
+              hex::decode("02f901ee05228459682f008459682f11830209bf8080b90195608060405234801561001057600080fd5b50610175806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c80630c49c36c14610030575b600080fd5b61003861004e565b604051610045919061011d565b60405180910390f35b60606020600052600f6020527f68656c6c6f2073746174656d696e64000000000000000000000000000000000060405260406000f35b600081519050919050565b600082825260208201905092915050565b60005b838110156100be5780820151818401526020810190506100a3565b838111156100cd576000848401525b50505050565b6000601f19601f8301169050919050565b60006100ef82610084565b6100f9818561008f565b93506101098185602086016100a0565b610112816100d3565b840191505092915050565b6000602082019050818103600083015261013781846100e4565b90509291505056fea264697066735822122051449585839a4ea5ac23cae4552ef8a96b64ff59d0668f76bfac3796b2bdbb3664736f6c63430008090033c080a0136ebffaa8fc8b9fda9124de9ccb0b1f64e90fbd44251b4c4ac2501e60b104f9a07eb2999eec6d185ef57e91ed099afb0a926c5b536f0155dd67e537c7476e1471")
+                  .unwrap();
+        let _decoded = TypedTransaction::decode(&mut &tx_bytes[..]).unwrap();
+    }
+
+    #[test]
+    fn test_decode_fastrlp_call() {
+        let tx = TypedTransaction::EIP2930(EIP2930Transaction {
+            chain_id: 1u64,
+            nonce: U256::from(0),
+            gas_price: U256::from(1),
+            gas_limit: U256::from(2),
+            kind: TransactionKind::Call(Address::default()),
+            value: U256::from(3),
+            input: Bytes::from(vec![1, 2]),
+            odd_y_parity: true,
+            r: H256::default(),
+            s: H256::default(),
+            access_list: vec![].into(),
+        });
+
+        let mut encoded = BytesMut::new();
+        tx.encode(&mut encoded);
+
+        let decoded = TypedTransaction::decode(&mut &*encoded).unwrap();
+        assert_eq!(decoded, tx);
     }
 
     #[test]
