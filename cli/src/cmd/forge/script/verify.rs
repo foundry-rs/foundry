@@ -4,8 +4,10 @@ use crate::cmd::{
     forge::{build::ProjectPathsArgs, verify, verify::VerifyArgs},
     retry::RetryArgs,
 };
-use ethers::abi::Address;
-use foundry_cli_test_utils::ethers_solc::{info::ContractInfo, Project};
+use ethers::{
+    abi::Address,
+    solc::{info::ContractInfo, Project},
+};
 use foundry_common::ContractsByArtifact;
 use foundry_config::{Chain, Config};
 use semver::Version;
@@ -15,7 +17,7 @@ pub struct VerifyBundle {
     pub num_of_optimizations: Option<usize>,
     pub known_contracts: ContractsByArtifact,
     pub etherscan_key: Option<String>,
-    pub chain: u64,
+    pub chain: Chain,
     pub project_paths: ProjectPathsArgs,
     pub retry: RetryArgs,
 }
@@ -26,7 +28,6 @@ impl VerifyBundle {
         config: &Config,
         known_contracts: ContractsByArtifact,
         retry: RetryArgs,
-        chain: u64,
     ) -> Self {
         let num_of_optimizations =
             if config.optimizer { Some(config.optimizer_runs) } else { None };
@@ -47,15 +48,21 @@ impl VerifyBundle {
         VerifyBundle {
             num_of_optimizations,
             known_contracts,
-            etherscan_key: config.get_etherscan_api_key(Some(chain)),
-            chain,
+            etherscan_key: None,
+            chain: Default::default(),
             project_paths,
             retry,
         }
     }
 
-    /// Given a verify bundle and contract details, it tries to generate a valid `VerifyArgs` to use
-    /// against the `contract_address`.
+    /// Configures the chain and sets the etherscan key, if available
+    pub fn set_chain(&mut self, config: &Config, chain: Chain) {
+        self.etherscan_key = config.get_etherscan_api_key(Some(chain));
+        self.chain = chain;
+    }
+
+    /// Given a `VerifyBundle` and contract details, it tries to generate a valid `VerifyArgs` to
+    /// use against the `contract_address`.
     pub fn get_verify_args(
         &self,
         contract_address: Address,

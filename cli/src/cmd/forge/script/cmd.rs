@@ -28,7 +28,7 @@ impl ScriptArgs {
 
         self.maybe_load_private_key(&mut script_config)?;
 
-        if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
+        if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
                 foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
@@ -39,24 +39,24 @@ impl ScriptArgs {
 
         let build_output = self.compile(&script_config)?;
 
+        let mut verify = VerifyBundle::new(
+            &build_output.project,
+            &script_config.config,
+            unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
+        );
+
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
                 .evm_opts
                 .fork_url
-                .as_ref()
-                .expect("You must provide an RPC URL (see --fork-url).")
-                .clone();
+                .clone()
+                .ok_or_else(|| eyre::eyre!("You must provide an RPC URL (see --fork-url)."))?;
 
             let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
 
-            let mut verify = VerifyBundle::new(
-                &build_output.project,
-                &script_config.config,
-                unwrap_contracts(&build_output.highlevel_known_contracts, false),
-                self.retry.clone(),
-                chain,
-            );
+            verify.set_chain(&script_config.config, chain.into());
 
             let mut deployment_sequence = ScriptSequence::load(
                 &script_config.config,
