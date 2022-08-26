@@ -256,15 +256,6 @@ impl ScriptArgs {
                     )
                     .await?;
 
-                // TODO(joshie): move inside
-                let mut multi = MultiChainSequence::new(
-                    deployments.clone(),
-                    &self.sig,
-                    target,
-                    &script_config.config.broadcast,
-                )?;
-                multi.save()?;
-
                 if self.broadcast {
                     if deployments.len() == 1 {
                         let deployment_sequence = deployments.first_mut().unwrap();
@@ -277,6 +268,14 @@ impl ScriptArgs {
                                 .await?;
                         }
                     } else {
+                        let mut multi = MultiChainSequence::new(
+                            deployments.clone(),
+                            &self.sig,
+                            target,
+                            &script_config.config.broadcast,
+                        )?;
+                        multi.save()?;
+
                         self.multi_chain_deployment(
                             multi,
                             libraries,
