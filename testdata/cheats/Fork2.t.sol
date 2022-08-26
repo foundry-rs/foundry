@@ -96,7 +96,6 @@ contract ForkTest is DSTest {
 
     /// checks that marking as persistent works
     function testMarkPersistent() public {
-        assert(cheats.isPersistent(msg.sender));
         assert(cheats.isPersistent(address(this)));
 
         cheats.selectFork(mainnetFork);
