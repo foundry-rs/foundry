@@ -396,6 +396,52 @@ impl ClientFork {
         Ok(None)
     }
 
+    pub async fn uncle_by_block_hash_and_index(
+        &self,
+        hash: H256,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_hash(hash).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    pub async fn uncle_by_block_number_and_index(
+        &self,
+        number: u64,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        if let Some(block) = self.block_by_number(number).await? {
+            return self.uncles_by_block_and_index(block, index).await
+        }
+        Ok(None)
+    }
+
+    async fn uncles_by_block_and_index(
+        &self,
+        block: Block<H256>,
+        index: usize,
+    ) -> Result<Option<Block<TxHash>>, ProviderError> {
+        let block_hash = block
+            .hash
+            .ok_or_else(|| ProviderError::CustomError("missing block-hash".to_string()))?;
+        if let Some(uncles) = self.storage_read().uncles.get(&block_hash) {
+            return Ok(uncles.get(index).cloned())
+        }
+
+        let mut uncles = Vec::with_capacity(block.uncles.len());
+        for (uncle_idx, _) in block.uncles.iter().enumerate() {
+            let uncle = match self.provider().get_uncle(block_hash, uncle_idx.into()).await? {
+                Some(u) => u,
+                None => return Ok(None),
+            };
+            uncles.push(uncle);
+        }
+        self.storage_write().uncles.insert(block_hash, uncles.clone());
+        Ok(uncles.get(index).cloned())
+    }
+
     /// Converts a block of hashes into a full block
     fn convert_to_full_block(&self, block: Block<TxHash>) -> Block<Transaction> {
         let storage = self.storage.read();
@@ -472,6 +518,7 @@ impl ClientForkConfig {
 /// Contains cached state fetched to serve EthApi requests
 #[derive(Debug, Clone, Default)]
 pub struct ForkedStorage {
+    pub uncles: HashMap<H256, Vec<Block<TxHash>>>,
     pub blocks: HashMap<H256, Block<TxHash>>,
     pub hashes: HashMap<u64, H256>,
     pub transactions: HashMap<H256, Transaction>,

@@ -120,7 +120,7 @@ impl TimeManager {
         if next_timestamp <= last_timestamp {
             next_timestamp = last_timestamp + 1;
         }
-        let next_offset = if update_offset { Some(current - next_timestamp as i128) } else { None };
+        let next_offset = update_offset.then_some((next_timestamp as i128) - current);
         (next_timestamp, next_offset)
     }
 

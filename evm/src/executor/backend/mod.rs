@@ -6,7 +6,6 @@ use crate::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
         snapshot::Snapshots,
     },
-    CALLER,
 };
 use ethers::{
     prelude::{H160, H256, U256},
@@ -42,8 +41,7 @@ pub type LocalForkId = U256;
 type ForkLookupIndex = usize;
 
 /// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
-const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
-    [CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
+const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 2] = [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -363,19 +361,8 @@ impl Backend {
     }
 
     /// Sets the caller address
-    ///
-    /// This will also mark the caller as persistent and remove the persistent status from the
-    /// previous caller
     pub fn set_caller(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting caller account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.caller.take() {
-            if current != CALLER {
-                self.remove_persistent_account(&current);
-            }
-        }
-
-        self.add_persistent_account(acc);
         self.inner.caller = Some(acc);
         self
     }
@@ -538,6 +525,40 @@ impl Backend {
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
+
+    /// Ths will clean up already loaded accounts that would be initialized without the correct data
+    /// from the fork
+    ///
+    /// It can happen that an account is loaded before the first fork is selected, like
+    /// `getNonce(addr)`, which will load an empty account by default.
+    ///
+    /// This account data then would not match the account data of a fork if it exists.
+    /// So when the first fork is initialized we replace these accounts with the actual account as
+    /// it exists on the fork.
+    fn prepare_init_journal_state(&mut self) {
+        let loaded_accounts = self
+            .fork_init_journaled_state
+            .state
+            .iter()
+            .filter(|(addr, acc)| {
+                !acc.is_existing_precompile && acc.is_touched && !self.is_persistent(addr)
+            })
+            .map(|(addr, _)| addr)
+            .copied()
+            .collect::<Vec<_>>();
+
+        for fork in self.inner.forks_iter_mut() {
+            let mut journaled_state = self.fork_init_journaled_state.clone();
+            for loaded_account in loaded_accounts.iter().copied() {
+                trace!(?loaded_account, "replacing account on init");
+                let fork_account = fork.db.basic(loaded_account);
+                let init_account =
+                    journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
+                init_account.info = fork_account;
+            }
+            fork.journaled_state = journaled_state;
+        }
+    }
 }
 
 // === impl a bunch of `revm::Database` adjacent implementations ===
@@ -637,9 +658,7 @@ impl DatabaseExt for Backend {
             // for all future forks
             trace!("recording fork init journaled_state");
             self.fork_init_journaled_state = journaled_state.clone();
-            for fork in self.inner.forks_iter_mut() {
-                fork.journaled_state = self.fork_init_journaled_state.clone();
-            }
+            self.prepare_init_journal_state();
         }
 
         // update the shared state and track

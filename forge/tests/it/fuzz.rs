@@ -56,10 +56,10 @@ fn test_fuzz_collection() {
     let mut runner = runner();
 
     let mut opts = TEST_OPTS;
-    opts.invariant_depth = 100;
-    opts.invariant_runs = 1000;
-    opts.fuzz_runs = 1000;
-    opts.fuzz_seed = Some(U256::from(6u32));
+    opts.invariant.depth = 100;
+    opts.invariant.runs = 1000;
+    opts.fuzz.runs = 1000;
+    opts.fuzz.seed = Some(U256::from(6u32));
     runner.test_options = opts;
 
     let results =

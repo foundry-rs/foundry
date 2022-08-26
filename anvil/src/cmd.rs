@@ -236,13 +236,23 @@ pub struct AnvilEvmArgs {
     /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
     ///
     /// Default value 45000
-    #[clap(name = "timeout", help_heading = "FORK CONFIG", requires = "fork-url")]
+    #[clap(
+        long = "timeout",
+        name = "timeout",
+        help_heading = "FORK CONFIG",
+        requires = "fork-url"
+    )]
     pub fork_request_timeout: Option<u64>,
 
     /// Number of retry requests for spurious networks (timed out requests)
     ///
     /// Default value 5
-    #[clap(name = "retries", help_heading = "FORK CONFIG", requires = "fork-url")]
+    #[clap(
+        long = "retries",
+        name = "retries",
+        help_heading = "FORK CONFIG",
+        requires = "fork-url"
+    )]
     pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.

@@ -1,0 +1,525 @@
+{
+  "_format": "ethers-rs-sol-cache-3",
+  "paths": {
+    "artifacts": "out",
+    "build_infos": "out/build-info",
+    "sources": "fuzz",
+    "tests": "test",
+    "scripts": "script",
+    "libraries": [
+      "lib"
+    ]
+  },
+  "files": {
+    "cheats/Cheats.sol": {
+      "lastModificationDate": 1659314864120,
+      "contentHash": "cc5780c7983b0a6bb1f0744c0b103968",
+      "sourceName": "cheats/Cheats.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Cheats": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "Cheats.sol/Cheats.json"
+        }
+      }
+    },
+    "fuzz/Fuzz.t.sol": {
+      "lastModificationDate": 1657652236720,
+      "contentHash": "cd41de3e37757f0d75364705a6e00c1c",
+      "sourceName": "fuzz/Fuzz.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Cheats": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "Fuzz.t.sol/Cheats.json"
+        },
+        "FuzzTest": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "Fuzz.t.sol/FuzzTest.json"
+        }
+      }
+    },
+    "fuzz/FuzzNumbers.t.sol": {
+      "lastModificationDate": 1651681675775,
+      "contentHash": "c92eea9d87f22708fdcc68c374c583c4",
+      "sourceName": "fuzz/FuzzNumbers.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "FuzzNumbersTest": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "FuzzNumbers.t.sol/FuzzNumbersTest.json"
+        }
+      }
+    },
+    "fuzz/invariant/InvariantInnerContract.t.sol": {
+      "lastModificationDate": 1659314864120,
+      "contentHash": "dce7fb236799e172b4f9b5249e8fe6db",
+      "sourceName": "fuzz/invariant/InvariantInnerContract.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "InvariantInnerContract": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantInnerContract.t.sol/InvariantInnerContract.json"
+        },
+        "Jesus": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantInnerContract.t.sol/Jesus.json"
+        },
+        "Judas": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantInnerContract.t.sol/Judas.json"
+        }
+      }
+    },
+    "fuzz/invariant/InvariantReentrancy.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "27ce86a4a0cc3aae1102b7317275b09d",
+      "sourceName": "fuzz/invariant/InvariantReentrancy.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "InvariantReentrancy": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantReentrancy.t.sol/InvariantReentrancy.json"
+        },
+        "Malicious": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantReentrancy.t.sol/Malicious.json"
+        },
+        "Vulnerable": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantReentrancy.t.sol/Vulnerable.json"
+        }
+      }
+    },
+    "fuzz/invariant/InvariantTest1.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "99b30d02816d21cb44f827ef9f2fd0f9",
+      "sourceName": "fuzz/invariant/InvariantTest1.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "InvariantBreaker": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantTest1.t.sol/InvariantBreaker.json"
+        },
+        "InvariantTest": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "InvariantTest1.t.sol/InvariantTest.json"
+        }
+      }
+    },
+    "fuzz/invariant/target/ExcludeContracts.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "b8e5c6baa6dbffd73ba0b37f56113daf",
+      "sourceName": "fuzz/invariant/target/ExcludeContracts.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "ExcludeContracts": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "ExcludeContracts.t.sol/ExcludeContracts.json"
+        },
+        "Hello": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "ExcludeContracts.t.sol/Hello.json"
+        }
+      }
+    },
+    "fuzz/invariant/target/TargetContracts.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "8e6083ffb8544a9e4d0c286b8ad53ecd",
+      "sourceName": "fuzz/invariant/target/TargetContracts.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Hello": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetContracts.t.sol/Hello.json"
+        },
+        "TargetContracts": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetContracts.t.sol/TargetContracts.json"
+        }
+      }
+    },
+    "fuzz/invariant/target/TargetSelectors.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "e7a429629a74d22fdebcbebab898befe",
+      "sourceName": "fuzz/invariant/target/TargetSelectors.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Hello": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetSelectors.t.sol/Hello.json"
+        },
+        "TargetSelectors": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetSelectors.t.sol/TargetSelectors.json"
+        }
+      }
+    },
+    "fuzz/invariant/target/TargetSenders.t.sol": {
+      "lastModificationDate": 1659314864121,
+      "contentHash": "a84727acbc942f4adb0e700b896e38a4",
+      "sourceName": "fuzz/invariant/target/TargetSenders.t.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Hello": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetSenders.t.sol/Hello.json"
+        },
+        "TargetSenders": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "TargetSenders.t.sol/TargetSenders.json"
+        }
+      }
+    },
+    "lib/ds-test/src/test.sol": {
+      "lastModificationDate": 1648245992542,
+      "contentHash": "5d45a46528eaf8a26f0a8d93669f3148",
+      "sourceName": "lib/ds-test/src/test.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [],
+      "versionRequirement": ">=0.4.23",
+      "artifacts": {
+        "DSTest": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "test.sol/DSTest.json"
+        }
+      }
+    },
+    "script/deploy.sol": {
+      "lastModificationDate": 1659220977038,
+      "contentHash": "a8ca511292267d4ed2797a88aa97617f",
+      "sourceName": "script/deploy.sol",
+      "solcConfig": {
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "metadata": {
+            "bytecodeHash": "ipfs"
+          },
+          "outputSelection": {
+            "*": {
+              "": [
+                "ast"
+              ],
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers"
+              ]
+            }
+          },
+          "evmVersion": "london",
+          "libraries": {}
+        }
+      },
+      "imports": [
+        "cheats/Cheats.sol",
+        "lib/ds-test/src/test.sol"
+      ],
+      "versionRequirement": ">=0.8.0",
+      "artifacts": {
+        "Deploy": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "deploy.sol/Deploy.json"
+        },
+        "Greeter": {
+          "0.8.15+commit.e14f2714.Darwin.appleclang": "deploy.sol/Greeter.json"
+        }
+      }
+    }
+  }
+}

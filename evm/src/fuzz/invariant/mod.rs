@@ -34,18 +34,6 @@ pub struct InvariantContract<'a> {
     pub abi: &'a Abi,
 }
 
-/// Metadata on how to run invariant tests
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InvariantTestOptions {
-    /// The number of calls executed to attempt to break invariants in one run.
-    pub depth: u32,
-    /// Fails the invariant fuzzing if a revert occurs
-    pub fail_on_revert: bool,
-    /// Allows overriding an unsafe external call when running invariant tests. eg. reetrancy
-    /// checks
-    pub call_override: bool,
-}
-
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 pub fn assert_invariants(
