@@ -413,7 +413,8 @@ forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| a
 });
 
 forgetest_async!(
-    can_deploy_100_txes_concurrently,
+    #[serial_test::serial]
+    can_deploy_50_txes_concurrently,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
         let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
@@ -424,12 +425,13 @@ forgetest_async!(
             .add_sig("BroadcastTestNoLinking", "deployMany()")
             .simulate(ScriptOutcome::OkSimulation)
             .broadcast(ScriptOutcome::OkBroadcast)
-            .assert_nonce_increment(vec![(0, 100)])
+            .assert_nonce_increment(vec![(0, 50)])
             .await;
     }
 );
 
 forgetest_async!(
+    #[serial_test::serial]
     can_deploy_mixed_broadcast_modes,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
