@@ -13,7 +13,7 @@ contract WarpTest is DSTest {
     }
 
     function testWarpFuzzed(uint128 jump) public {
-        uint pre = block.timestamp;
+        uint256 pre = block.timestamp;
         cheats.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump, "warp failed");
     }

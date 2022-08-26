@@ -1,6 +1,7 @@
 use crate::{
     config::{Hardfork, DEFAULT_MNEMONIC},
     eth::pool::transactions::TransactionOrder,
+    genesis::Genesis,
     AccountGenerator, NodeConfig, CHAIN_ID,
 };
 use anvil_server::ServerConfig;
@@ -15,8 +16,8 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
-use tokio::runtime::Handle;
 use tracing::log::trace;
 
 #[derive(Clone, Debug, Parser)]
@@ -118,6 +119,14 @@ pub struct NodeArgs {
         value_name = "ORDER"
     )]
     pub order: TransactionOrder,
+
+    #[clap(
+        long,
+        help = "Initialize the genesis block with the given `genesis.json` file.",
+        value_name = "PATH",
+        value_parser = Genesis::parse
+    )]
+    pub init: Option<Genesis>,
 }
 
 impl NodeArgs {
@@ -139,6 +148,8 @@ impl NodeArgs {
                     .fork_block_number
                     .or_else(|| self.evm_opts.fork_url.as_ref().and_then(|f| f.block)),
             )
+            .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(self.evm_opts.fork_request_retries)
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)
@@ -148,6 +159,7 @@ impl NodeArgs {
             .set_config_out(self.config_out)
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
+            .with_genesis(self.init)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -167,7 +179,7 @@ impl NodeArgs {
     ///
     /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let (api, handle) = crate::spawn(self.into_node_config()).await;
+        let (api, mut handle) = crate::spawn(self.into_node_config()).await;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork().cloned();
@@ -175,20 +187,29 @@ impl NodeArgs {
 
         // handle for the currently running rt, this must be obtained before setting the crtlc
         // handler, See [Handle::current]
-        let rt_handle = Handle::current();
+        let mut signal = handle.shutdown_signal_mut().take();
+
+        let task_manager = handle.task_manager();
+        let on_shutdown = task_manager.on_shutdown();
+
+        task_manager.spawn(async move {
+            on_shutdown.await;
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            if let Some(fork) = fork.take() {
+                trace!("flushing cache on shutdown");
+                fork.database.read().await.flush_cache();
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+            }
+            std::process::exit(0);
+        });
 
         ctrlc::set_handler(move || {
             let prev = running.fetch_add(1, Ordering::SeqCst);
             if prev == 0 {
-                // cleaning up and shutting down
-                // this will make sure that the fork RPC cache is flushed if caching is configured
                 trace!("received shutdown signal, shutting down");
-                if let Some(fork) = fork.take() {
-                    rt_handle.block_on(async move {
-                        fork.database.read().await.flush_cache();
-                    });
-                }
-                std::process::exit(0);
+                let _ = signal.take();
             }
         })
         .expect("Error setting Ctrl-C handler");
@@ -211,6 +232,28 @@ pub struct AnvilEvmArgs {
         help_heading = "FORK CONFIG"
     )]
     pub fork_url: Option<ForkUrl>,
+
+    /// Timeout in ms for requests sent to remote JSON-RPC server in forking mode.
+    ///
+    /// Default value 45000
+    #[clap(
+        long = "timeout",
+        name = "timeout",
+        help_heading = "FORK CONFIG",
+        requires = "fork-url"
+    )]
+    pub fork_request_timeout: Option<u64>,
+
+    /// Number of retry requests for spurious networks (timed out requests)
+    ///
+    /// Default value 5
+    #[clap(
+        long = "retries",
+        name = "retries",
+        help_heading = "FORK CONFIG",
+        requires = "fork-url"
+    )]
+    pub fork_request_retries: Option<u32>,
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///

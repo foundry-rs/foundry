@@ -8,8 +8,8 @@ use crate::{
 use ethers::prelude::{H160, H256, U256};
 use hashbrown::HashMap as Map;
 use revm::{
-    db::DatabaseRef, Account, AccountInfo, Bytecode, Database, Env, Inspector, Log, Return,
-    SubRoutine, TransactOut,
+    db::DatabaseRef, Account, AccountInfo, Bytecode, Database, Env, ExecutionResult, Inspector,
+    JournaledState,
 };
 use std::borrow::Cow;
 use tracing::trace;
@@ -50,7 +50,7 @@ impl<'a> FuzzBackendWrapper<'a> {
         &mut self,
         mut env: Env,
         mut inspector: INSP,
-    ) -> (Return, TransactOut, u64, Map<Address, Account>, Vec<Log>)
+    ) -> (ExecutionResult, Map<Address, Account>)
     where
         INSP: Inspector<Self>,
     {
@@ -59,38 +59,38 @@ impl<'a> FuzzBackendWrapper<'a> {
 }
 
 impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
-    fn snapshot(&mut self, subroutine: &SubRoutine, env: &Env) -> U256 {
+    fn snapshot(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         trace!("fuzz: create snapshot");
-        self.backend.to_mut().snapshot(subroutine, env)
+        self.backend.to_mut().snapshot(journaled_state, env)
     }
 
     fn revert(
         &mut self,
         id: U256,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
         current: &mut Env,
-    ) -> Option<SubRoutine> {
+    ) -> Option<JournaledState> {
         trace!(?id, "fuzz: revert snapshot");
-        self.backend.to_mut().revert(id, subroutine, current)
+        self.backend.to_mut().revert(id, journaled_state, current)
     }
 
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId> {
         trace!("fuzz: create fork");
-        self.backend.to_mut().create_fork(fork, subroutine)
+        self.backend.to_mut().create_fork(fork, journaled_state)
     }
 
     fn select_fork(
         &mut self,
         id: LocalForkId,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, "fuzz: select fork");
-        self.backend.to_mut().select_fork(id, env, subroutine)
+        self.backend.to_mut().select_fork(id, env, journaled_state)
     }
 
     fn roll_fork(
@@ -98,10 +98,10 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
         id: Option<LocalForkId>,
         block_number: U256,
         env: &mut Env,
-        subroutine: &mut SubRoutine,
+        journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
         trace!(?id, ?block_number, "fuzz: roll fork");
-        self.backend.to_mut().roll_fork(id, block_number, env, subroutine)
+        self.backend.to_mut().roll_fork(id, block_number, env, journaled_state)
     }
 
     fn active_fork_id(&self) -> Option<LocalForkId> {
@@ -119,9 +119,9 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn diagnose_revert(
         &self,
         callee: Address,
-        subroutine: &SubRoutine,
+        journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic> {
-        self.backend.diagnose_revert(callee, subroutine)
+        self.backend.diagnose_revert(callee, journaled_state)
     }
 
     fn is_persistent(&self, acc: &Address) -> bool {

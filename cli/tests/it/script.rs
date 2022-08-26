@@ -468,7 +468,7 @@ forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand|
         .load_private_keys(vec![0])
         .await
         .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
-        .simulate(ScriptOutcome::FailedScript);
+        .simulate(ScriptOutcome::StaticCallNotAllowed);
 });
 
 forgetest_async!(

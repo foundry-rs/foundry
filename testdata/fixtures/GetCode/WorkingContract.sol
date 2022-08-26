@@ -2,5 +2,5 @@
 pragma solidity >=0.8.0;
 
 contract WorkingContract {
-    uint256 constant public secret = 42;
+    uint256 public constant secret = 42;
 }

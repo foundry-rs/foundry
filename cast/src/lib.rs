@@ -275,7 +275,7 @@ where
     pub async fn estimate(&self, builder_output: TxBuilderPeekOutput<'_>) -> Result<U256> {
         let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(tx).await?;
+        let res = self.provider.estimate_gas(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -717,13 +717,11 @@ impl SimpleCast {
                 // get the source
                 let contract_source = match client.contract_source_code(address).await {
                     Ok(src) => src,
+                    Err(ethers_etherscan::errors::EtherscanError::InvalidApiKey) => {
+                        eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                    }
                     Err(err) => {
-                        let msg = err.to_string();
-                        if msg.contains("Invalid API Key") {
-                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
-                        } else {
-                            eyre::bail!(err)
-                        }
+                        eyre::bail!(err)
                     }
                 };
 

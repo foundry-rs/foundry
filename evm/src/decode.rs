@@ -191,7 +191,7 @@ pub fn decode_revert(
                 .or_else(|| {
                     // try decoding as unknown err
                     String::decode(&err[SELECTOR_LEN..])
-                        .map(|err| format!("{}:{}", hex::encode(&err[..SELECTOR_LEN]), err))
+                        .map(|err_str| format!("{}:{}", hex::encode(&err[..SELECTOR_LEN]), err_str))
                         .ok()
                 })
                 .ok_or_else(|| eyre::eyre!("Non-native error and not string"))

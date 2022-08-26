@@ -1,6 +1,6 @@
 use crate::fuzz::{
     fuzz_calldata, fuzz_calldata_from_state,
-    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
+    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, SenderFilters},
     strategies::fuzz_param,
     EvmFuzzState,
 };
@@ -11,7 +11,9 @@ use ethers::{
 use parking_lot::RwLock;
 use proptest::prelude::*;
 pub use proptest::test_runner::Config as FuzzConfig;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
+
+use super::fuzz_param_from_state;
 
 /// Given a target address, we generate random calldata.
 pub fn override_call_strat(
@@ -53,29 +55,33 @@ pub fn override_call_strat(
 /// `targetContracts()`, `targetSenders()`, `excludeContracts()`, `targetSelectors()`
 pub fn invariant_strat(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
+    dictionary_weight: u32,
 ) -> BoxedStrategy<Vec<BasicTxDetails>> {
     // We only want to seed the first value, since we want to generate the rest as we mutate the
     // state
-    vec![generate_call(fuzz_state, senders, contracts); 1].boxed()
+    vec![generate_call(fuzz_state, senders, contracts, dictionary_weight); 1].boxed()
 }
 
 /// Strategy to generate a transaction where the `sender`, `target` and `calldata` are all generated
 /// through specific strategies.
 fn generate_call(
     fuzz_state: EvmFuzzState,
-    senders: Vec<Address>,
+    senders: SenderFilters,
     contracts: FuzzRunIdentifiedContracts,
+    dictionary_weight: u32,
 ) -> BoxedStrategy<BasicTxDetails> {
     let random_contract = select_random_contract(contracts);
+    let senders = Rc::new(senders);
     random_contract
         .prop_flat_map(move |(contract, abi, functions)| {
             let func = select_random_function(abi, functions);
             let senders = senders.clone();
             let fuzz_state = fuzz_state.clone();
             func.prop_flat_map(move |func| {
-                let sender = select_random_sender(senders.clone());
+                let sender =
+                    select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
                 (sender, fuzz_contract_with_calldata(fuzz_state.clone(), contract, func))
             })
         })
@@ -83,16 +89,36 @@ fn generate_call(
 }
 
 /// Strategy to select a sender address:
-/// * If `senders` is empty, then it's a completely random address.
+/// * If `senders` is empty, then it's either a random address (10%) or from the dictionary (90%).
 /// * If `senders` is not empty, then there's an 80% chance that one from the list is selected. The
-///   remaining 20% will be random.
-fn select_random_sender(senders: Vec<Address>) -> impl Strategy<Value = Address> {
-    let fuzz_strategy =
-        fuzz_param(&ParamType::Address).prop_map(move |addr| addr.into_address().unwrap()).boxed();
+///   remaining 20% will either be a random address (10%) or from the dictionary (90%).
+fn select_random_sender(
+    fuzz_state: EvmFuzzState,
+    senders: Rc<SenderFilters>,
+    dictionary_weight: u32,
+) -> impl Strategy<Value = Address> {
+    let senders_ref = senders.clone();
+    let fuzz_strategy = proptest::strategy::Union::new_weighted(vec![
+        (
+            100 - dictionary_weight,
+            fuzz_param(&ParamType::Address)
+                .prop_map(move |addr| addr.into_address().unwrap())
+                .boxed(),
+        ),
+        (
+            dictionary_weight,
+            fuzz_param_from_state(&ParamType::Address, fuzz_state)
+                .prop_map(move |addr| addr.into_address().unwrap())
+                .boxed(),
+        ),
+    ])
+    // Too many exclusions can slow down testing.
+    .prop_filter("senders not allowed", move |addr| !senders_ref.excluded.contains(addr))
+    .boxed();
 
-    if !senders.is_empty() {
-        let selector =
-            any::<prop::sample::Selector>().prop_map(move |selector| *selector.select(&*senders));
+    if !senders.targeted.is_empty() {
+        let selector = any::<prop::sample::Selector>()
+            .prop_map(move |selector| *selector.select(&*senders.targeted));
         proptest::strategy::Union::new_weighted(vec![(80, selector.boxed()), (20, fuzz_strategy)])
             .boxed()
     } else {
@@ -156,8 +182,8 @@ pub fn fuzz_contract_with_calldata(
     contract: Address,
     func: Function,
 ) -> impl Strategy<Value = (Address, Bytes)> {
-    // // We need to compose all the strategies generated for each parameter in all
-    // // possible combinations
+    // We need to compose all the strategies generated for each parameter in all
+    // possible combinations
     let strats = proptest::strategy::Union::new_weighted(vec![
         (60, fuzz_calldata(func.clone())),
         (40, fuzz_calldata_from_state(func, fuzz_state)),

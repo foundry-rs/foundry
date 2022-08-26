@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-import "ds-test/test.sol"; 
+import "ds-test/test.sol";
 
 /*//////////////////////////////////////////////////////////////
     Here we test that the fuzz engine can include a contract created during the fuzz
         in its fuzz dictionary and eventually break the invariant. 
     Specifically, can Judas, a created contract from Jesus, break Jesus contract
         by revealing his identity.
-/*//////////////////////////////////////////////////////////////
+/*/
+/////////////////////////////////////////////////////////////
 
 contract Jesus {
     address fren;

@@ -1,13 +1,10 @@
 //! script command
 use crate::{
-    cmd::{
-        forge::build::{BuildArgs, ProjectPathsArgs},
-        RetryArgs,
-    },
+    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
-use cast::executor::inspector::DEFAULT_CREATE2_DEPLOYER;
+use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
@@ -21,6 +18,7 @@ use ethers::{
         U256,
     },
 };
+use eyre::ContextCompat;
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -53,12 +51,13 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+use crate::cmd::retry::RetryArgs;
 pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
     /// The contract you want to run. Either the file path or contract name.
     ///
@@ -225,40 +224,36 @@ impl ScriptArgs {
         let verbosity = script_config.evm_opts.verbosity;
         let func = script_config.called_function.as_ref().expect("There should be a function.");
 
-        if verbosity >= 3 {
+        if !result.success || verbosity > 3 {
             if result.traces.is_empty() {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             }
 
-            if !result.success && verbosity == 3 || verbosity > 3 {
-                println!("Traces:");
-                for (kind, trace) in &mut result.traces {
-                    let should_include = match kind {
-                        TraceKind::Setup => (verbosity >= 5) || (verbosity == 4 && !result.success),
-                        TraceKind::Execution => verbosity > 3 || !result.success,
-                        _ => false,
-                    };
+            println!("Traces:");
+            for (kind, trace) in &mut result.traces {
+                let should_include = match kind {
+                    TraceKind::Setup => verbosity >= 5,
+                    TraceKind::Execution => verbosity > 3,
+                    _ => false,
+                } || !result.success;
 
-                    if should_include {
-                        decoder.decode(trace).await;
-                        println!("{trace}");
-                    }
+                if should_include {
+                    decoder.decode(trace).await;
+                    println!("{trace}");
                 }
-                println!();
             }
+            println!();
         }
 
         if result.success {
             println!("{}", Paint::green("Script ran successfully."));
-        } else {
-            println!("{}", Paint::red("Script failed."));
         }
 
         if script_config.evm_opts.fork_url.is_none() {
-            println!("Gas used: {}", result.gas);
+            println!("Gas used: {}", result.gas_used);
         }
 
-        if !result.returned.is_empty() {
+        if result.success && !result.returned.is_empty() {
             println!("\n== Return ==");
             match func.decode_output(&result.returned) {
                 Ok(decoded) => {
@@ -288,7 +283,11 @@ impl ScriptArgs {
         }
 
         if !result.success {
-            eyre::bail!("{}", Paint::red("Script failed."));
+            let revert_msg = decode::decode_revert(&result.returned[..], None, None)
+                .map(|err| format!("{}\n", err))
+                .unwrap_or_else(|_| "Script failed.\n".to_string());
+
+            eyre::bail!("{}", Paint::red(revert_msg));
         }
 
         Ok(())
@@ -302,7 +301,7 @@ impl ScriptArgs {
         let returns = self.get_returns(script_config, &result.returned)?;
 
         let console_logs = decode_console_logs(&result.logs);
-        let output = JsonResult { logs: console_logs, gas_used: result.gas, returns };
+        let output = JsonResult { logs: console_logs, gas_used: result.gas_used, returns };
         let j = serde_json::to_string(&output)?;
         println!("{}", j);
 
@@ -408,7 +407,10 @@ impl ScriptArgs {
                 (
                     abi.functions()
                         .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .expect("Function signature not found in the ABI"),
+                        .wrap_err(format!(
+                            "Function `{}` is not implemented in your script.",
+                            self.sig
+                        ))?,
                     encode_args(&func, &self.args)?.into(),
                 )
             }
@@ -486,7 +488,7 @@ pub struct ScriptResult {
     pub logs: Vec<Log>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
-    pub gas: u64,
+    pub gas_used: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,

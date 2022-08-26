@@ -1,7 +1,7 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, utils, LoadConfig, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE, utils, LoadConfig},
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
@@ -23,8 +23,6 @@ use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::log::trace;
-
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: 3 };
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -79,6 +77,9 @@ pub struct CreateArgs {
         requires = "from"
     )]
     unlocked: bool,
+
+    #[clap(flatten)]
+    pub verifier: verify::VerifierArgs,
 }
 
 impl CreateArgs {
@@ -284,17 +285,14 @@ impl CreateArgs {
             constructor_args,
             num_of_optimizations,
             chain: chain.into(),
-            etherscan_key: self
-                .eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            project_paths: self.opts.project_paths,
+            etherscan_key: self.eth.etherscan_api_key,
             flatten: false,
             force: false,
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
             root: None,
+            verifier: self.verifier,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await

@@ -1,6 +1,7 @@
-use super::*;
+use super::{sequence::AdditionalContract, *};
 use crate::{
     cmd::{
+        ensure_clean_constructor,
         forge::script::{runner::SimulationStage, sequence::TransactionWithMetadata},
         needs_setup,
     },
@@ -13,6 +14,7 @@ use ethers::{
 use forge::{
     executor::{inspector::CheatsConfig, Backend, ExecutorBuilder},
     trace::CallTraceDecoder,
+    CallKind,
 };
 use std::collections::VecDeque;
 use tracing::trace;
@@ -33,6 +35,8 @@ impl ScriptArgs {
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
 
+        ensure_clean_constructor(&abi)?;
+
         let mut runner = self.prepare_runner(script_config, sender, SimulationStage::Local).await;
         let (address, mut result) = runner.setup(
             predeploy_libraries,
@@ -46,24 +50,27 @@ impl ScriptArgs {
         let (func, calldata) = self.get_method_and_calldata(&abi)?;
         script_config.called_function = Some(func);
 
-        let script_result = runner.script(address, calldata)?;
+        // Only call the method if `setUp()` succeeded.
+        if result.success {
+            let script_result = runner.script(address, calldata)?;
 
-        result.success &= script_result.success;
-        result.gas = script_result.gas;
-        result.logs.extend(script_result.logs);
-        result.traces.extend(script_result.traces);
-        result.debug = script_result.debug;
-        result.labeled_addresses.extend(script_result.labeled_addresses);
-        result.returned = script_result.returned;
+            result.success &= script_result.success;
+            result.gas_used = script_result.gas_used;
+            result.logs.extend(script_result.logs);
+            result.traces.extend(script_result.traces);
+            result.debug = script_result.debug;
+            result.labeled_addresses.extend(script_result.labeled_addresses);
+            result.returned = script_result.returned;
 
-        match (&mut result.transactions, script_result.transactions) {
-            (Some(txs), Some(new_txs)) => {
-                txs.extend(new_txs);
+            match (&mut result.transactions, script_result.transactions) {
+                (Some(txs), Some(new_txs)) => {
+                    txs.extend(new_txs);
+                }
+                (None, Some(new_txs)) => {
+                    result.transactions = Some(new_txs);
+                }
+                _ => {}
             }
-            (None, Some(new_txs)) => {
-                result.transactions = Some(new_txs);
-            }
-            _ => {}
         }
 
         Ok(result)
@@ -81,7 +88,6 @@ impl ScriptArgs {
         let mut runner = self
             .prepare_runner(script_config, script_config.evm_opts.sender, SimulationStage::OnChain)
             .await;
-        let mut failed = false;
 
         if script_config.evm_opts.verbosity > 3 {
             println!("==========================");
@@ -116,41 +122,62 @@ impl ScriptArgs {
                         )
                         .expect("Internal EVM error");
 
-                    // Simulate mining the transaction if the user passes `--slow`.
-                    if self.slow {
-                        runner.executor.env_mut().block.number += U256::one();
+                    // Identify all contracts created during the call.
+                    if result.traces.is_empty() {
+                        eyre::bail!(
+                            "Forge script requires tracing enabled to collect created contracts."
+                        )
                     }
 
-                    // We inflate the gas used by the user specified percentage
-                    tx.gas = Some(U256::from(result.gas * self.gas_estimate_multiplier / 100));
-
-                    if !result.success {
-                        failed = true;
-                    }
-
-                    if script_config.evm_opts.verbosity > 3 {
+                    if !result.success || script_config.evm_opts.verbosity > 3 {
                         for (_kind, trace) in &mut result.traces {
                             decoder.decode(trace).await;
                             println!("{}", trace);
                         }
                     }
 
+                    if !result.success {
+                        eyre::bail!("Simulated execution failed");
+                    }
+
+                    let created_contracts = result
+                        .traces
+                        .iter()
+                        .flat_map(|(_, traces)| {
+                            traces.arena.iter().filter_map(|node| {
+                                if matches!(node.kind(), CallKind::Create | CallKind::Create2) {
+                                    return Some(AdditionalContract {
+                                        opcode: node.kind(),
+                                        address: node.trace.address,
+                                        init_code: node.trace.data.to_raw(),
+                                    })
+                                }
+                                None
+                            })
+                        })
+                        .collect();
+
+                    // Simulate mining the transaction if the user passes `--slow`.
+                    if self.slow {
+                        runner.executor.env_mut().block.number += U256::one();
+                    }
+
+                    // We inflate the gas used by the user specified percentage
+                    tx.gas = Some(U256::from(result.gas_used * self.gas_estimate_multiplier / 100));
+
                     final_txs.push_back(TransactionWithMetadata::new(
                         tx.into(),
                         &result,
                         &address_to_abi,
                         decoder,
+                        created_contracts,
                     )?);
                 }
                 _ => unreachable!(),
             }
         }
 
-        if failed {
-            eyre::bail!("Simulated execution failed")
-        } else {
-            Ok(final_txs)
-        }
+        Ok(final_txs)
     }
 
     /// Creates the Runner that drives script execution

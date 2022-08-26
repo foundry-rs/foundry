@@ -3,6 +3,7 @@
 #![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 pub mod calc;
+pub mod clap_helpers;
 pub mod constants;
 pub mod contracts;
 pub mod errors;

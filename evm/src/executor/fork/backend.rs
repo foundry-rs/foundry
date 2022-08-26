@@ -115,7 +115,7 @@ where
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let hash = self.db.block_hashes().read().get(&number).cloned();
+                let hash = self.db.block_hashes().read().get(&U256::from(number)).cloned();
                 if let Some(hash) = hash {
                     let _ = sender.send(hash);
                 } else {
@@ -321,7 +321,7 @@ where
                             });
 
                             // update the cache
-                            pin.db.block_hashes().write().insert(number, value);
+                            pin.db.block_hashes().write().insert(number.into(), value);
 
                             // notify all listeners
                             if let Some(listeners) = pin.block_requests.remove(&number) {
@@ -572,7 +572,7 @@ mod tests {
 
         let num = U256::from(10u64);
         let hash = backend.block_hash(num);
-        let mem_hash = *db.block_hashes().read().get(&num.as_u64()).unwrap();
+        let mem_hash = *db.block_hashes().read().get(&num).unwrap();
         assert_eq!(hash, mem_hash);
 
         let max_slots = 5;

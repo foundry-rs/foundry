@@ -1,7 +1,8 @@
 use super::{
-    assert_invariants, filters::ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts,
-    InvariantContract, InvariantFuzzError, InvariantFuzzTestResult, InvariantTestOptions,
-    RandomCallGenerator, TargetedContracts,
+    assert_invariants,
+    filters::{ArtifactFilters, SenderFilters},
+    BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract, InvariantFuzzError,
+    InvariantFuzzTestResult, RandomCallGenerator, TargetedContracts,
 };
 use crate::{
     executor::{
@@ -23,6 +24,8 @@ use ethers::{
 };
 use eyre::ContextCompat;
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use foundry_config::InvariantConfig;
+use hashbrown::HashMap;
 use parking_lot::{Mutex, RwLock};
 use proptest::{
     strategy::{BoxedStrategy, Strategy, ValueTree},
@@ -45,6 +48,8 @@ pub struct InvariantExecutor<'a> {
     pub executor: &'a mut Executor,
     /// Proptest runner.
     runner: TestRunner,
+    /// The invariant configuration
+    config: InvariantConfig,
     /// Contracts deployed with `setUp()`
     setup_contracts: &'a ContractsByAddress,
     /// Contracts that are part of the project but have not been deployed yet. We need the bytecode
@@ -59,12 +64,14 @@ impl<'a> InvariantExecutor<'a> {
     pub fn new(
         executor: &'a mut Executor,
         runner: TestRunner,
+        config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
     ) -> Self {
         Self {
             executor,
             runner,
+            config,
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
@@ -76,10 +83,8 @@ impl<'a> InvariantExecutor<'a> {
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract,
-        test_options: InvariantTestOptions,
     ) -> eyre::Result<Option<InvariantFuzzTestResult>> {
-        let (fuzz_state, targeted_contracts, strat) =
-            self.prepare_fuzzing(&invariant_contract, test_options)?;
+        let (fuzz_state, targeted_contracts, strat) = self.prepare_fuzzing(&invariant_contract)?;
 
         // Stores the consumed gas and calldata of every successful fuzz call.
         let fuzz_cases: RefCell<Vec<FuzzedCases>> = RefCell::new(Default::default());
@@ -112,7 +117,7 @@ impl<'a> InvariantExecutor<'a> {
             let _ = self.runner.run(&strat, |mut inputs| {
                 // Scenarios where we want to fail as soon as possible.
                 {
-                    if test_options.fail_on_revert && failures.borrow().reverts == 1 {
+                    if self.config.fail_on_revert && failures.borrow().reverts == 1 {
                         return Err(TestCaseError::fail("Revert occurred."))
                     }
 
@@ -127,12 +132,12 @@ impl<'a> InvariantExecutor<'a> {
                 let mut executor = blank_executor.borrow().clone();
 
                 // Used for stat reports (eg. gas usage).
-                let mut fuzz_runs = vec![];
+                let mut fuzz_runs = Vec::with_capacity(self.config.depth as usize);
 
                 // Created contracts during a run.
                 let mut created_contracts = vec![];
 
-                'fuzz_run: for _ in 0..test_options.depth {
+                'fuzz_run: for _ in 0..self.config.depth {
                     let (sender, (address, calldata)) =
                         inputs.last().expect("to have the next randomly generated input.");
 
@@ -142,13 +147,16 @@ impl<'a> InvariantExecutor<'a> {
                         .expect("could not make raw evm call");
 
                     // Collect data for fuzzing from the state changeset.
-                    let state_changeset =
+                    let mut state_changeset =
                         call_result.state_changeset.to_owned().expect("to have a state changeset.");
 
-                    collect_state_from_call(
-                        &call_result.logs,
-                        &state_changeset,
+                    collect_data(
+                        &mut state_changeset,
+                        sender,
+                        &call_result,
                         fuzz_state.clone(),
+                        self.config.include_storage,
+                        self.config.include_push_bytes,
                     );
 
                     if let Err(error) = collect_created_contracts(
@@ -167,7 +175,7 @@ impl<'a> InvariantExecutor<'a> {
 
                     fuzz_runs.push(FuzzCase {
                         calldata: calldata.clone(),
-                        gas: call_result.gas,
+                        gas: call_result.gas_used,
                         stipend: call_result.stipend,
                     });
 
@@ -177,7 +185,7 @@ impl<'a> InvariantExecutor<'a> {
                         &executor,
                         &inputs,
                         &mut failures.borrow_mut(),
-                        test_options,
+                        self.config.fail_on_revert,
                     ) {
                         break 'fuzz_run
                     }
@@ -206,6 +214,8 @@ impl<'a> InvariantExecutor<'a> {
             });
         }
 
+        tracing::trace!(target: "forge::test::invariant::dictionary", "{:?}", fuzz_state.read().iter().map(hex::encode).collect::<Vec<_>>());
+
         let (reverts, invariants) = failures.into_inner().into_inner();
 
         Ok(Some(InvariantFuzzTestResult { invariants, cases: fuzz_cases.into_inner(), reverts }))
@@ -218,7 +228,6 @@ impl<'a> InvariantExecutor<'a> {
     fn prepare_fuzzing(
         &mut self,
         invariant_contract: &InvariantContract,
-        test_options: InvariantTestOptions,
     ) -> eyre::Result<InvariantPreparation> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address, invariant_contract.abi)?;
@@ -230,7 +239,11 @@ impl<'a> InvariantExecutor<'a> {
         }
 
         // Stores fuzz state for use with [fuzz_calldata_from_state].
-        let fuzz_state: EvmFuzzState = build_initial_state(self.executor.backend().mem_db());
+        let fuzz_state: EvmFuzzState = build_initial_state(
+            self.executor.backend().mem_db(),
+            self.config.include_storage,
+            self.config.include_push_bytes,
+        );
 
         // During execution, any newly created contract is added here and used through the rest of
         // the fuzz run.
@@ -238,15 +251,19 @@ impl<'a> InvariantExecutor<'a> {
             Arc::new(Mutex::new(targeted_contracts));
 
         // Creates the invariant strategy.
-        let strat =
-            invariant_strat(fuzz_state.clone(), targeted_senders, targeted_contracts.clone())
-                .no_shrink()
-                .boxed();
+        let strat = invariant_strat(
+            fuzz_state.clone(),
+            targeted_senders,
+            targeted_contracts.clone(),
+            self.config.dictionary_weight,
+        )
+        .no_shrink()
+        .boxed();
 
         // Allows `override_call_strat` to use the address given by the Fuzzer inspector during
         // EVM execution.
         let mut call_generator = None;
-        if test_options.call_override {
+        if self.config.call_override {
             let target_contract_ref = Arc::new(RwLock::new(Address::zero()));
 
             call_generator = Some(RandomCallGenerator::new(
@@ -274,6 +291,8 @@ impl<'a> InvariantExecutor<'a> {
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
     /// format). They will be used to filter contracts after the `setUp`, and more importantly,
     /// during the runs.
+    ///
+    /// Also excludes any contract without any mutable functions.
     ///
     /// Priority:
     ///
@@ -312,6 +331,24 @@ impl<'a> InvariantExecutor<'a> {
 
             if !self.artifact_filters.excluded.contains(&identifier) {
                 self.artifact_filters.excluded.push(identifier);
+            }
+        }
+
+        // Exclude any artifact without mutable functions.
+        for (artifact, (abi, _)) in self.project_contracts.iter() {
+            if abi
+                .functions()
+                .filter(|func| {
+                    !matches!(
+                        func.state_mutability,
+                        ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
+                    )
+                })
+                .count() ==
+                0 &&
+                !self.artifact_filters.excluded.contains(&artifact.identifier())
+            {
+                self.artifact_filters.excluded.push(artifact.identifier());
             }
         }
 
@@ -359,9 +396,9 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         invariant_address: Address,
         abi: &Abi,
-    ) -> eyre::Result<(Vec<Address>, TargetedContracts)> {
-        let [senders, selected, excluded] =
-            ["targetSenders", "targetContracts", "excludeContracts"]
+    ) -> eyre::Result<(SenderFilters, TargetedContracts)> {
+        let [targeted_senders, excluded_senders, selected, excluded] =
+            ["targetSenders", "excludeSenders", "targetContracts", "excludeContracts"]
                 .map(|method| self.get_list::<Address>(invariant_address, abi, method));
 
         let mut contracts: TargetedContracts = self
@@ -384,7 +421,7 @@ impl<'a> InvariantExecutor<'a> {
 
         self.select_selectors(invariant_address, abi, &mut contracts)?;
 
-        Ok((senders, contracts))
+        Ok((SenderFilters::new(targeted_senders, excluded_senders), contracts))
     }
 
     /// Selects the functions to fuzz based on the contract method `targetSelectors()` and
@@ -479,6 +516,44 @@ impl<'a> InvariantExecutor<'a> {
     }
 }
 
+/// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
+/// before inserting it into the dictionary. Otherwise, we flood the dictionary with
+/// randomly generated addresses.
+fn collect_data(
+    state_changeset: &mut HashMap<Address, revm::Account>,
+    sender: &Address,
+    call_result: &RawCallResult,
+    fuzz_state: EvmFuzzState,
+    include_storage: bool,
+    include_push_bytes: bool,
+) {
+    // Verify it has no code.
+    let mut has_code = false;
+    if let Some(Some(code)) = state_changeset.get(sender).map(|account| account.info.code.as_ref())
+    {
+        has_code = !code.is_empty();
+    }
+
+    // We keep the nonce changes to apply later.
+    let mut sender_changeset = None;
+    if !has_code {
+        sender_changeset = state_changeset.remove(sender);
+    }
+
+    collect_state_from_call(
+        &call_result.logs,
+        &*state_changeset,
+        fuzz_state,
+        include_storage,
+        include_push_bytes,
+    );
+
+    // Re-add changes
+    if let Some(changed) = sender_changeset {
+        state_changeset.insert(*sender, changed);
+    }
+}
+
 /// Verifies that the invariant run execution can continue.
 fn can_continue(
     invariant_contract: &InvariantContract,
@@ -486,7 +561,7 @@ fn can_continue(
     executor: &Executor,
     calldata: &[BasicTxDetails],
     failures: &mut InvariantFailures,
-    test_options: InvariantTestOptions,
+    fail_on_revert: bool,
 ) -> bool {
     if !call_result.reverted {
         if assert_invariants(invariant_contract, executor, calldata, failures).is_err() {
@@ -497,7 +572,7 @@ fn can_continue(
 
         // The user might want to stop all execution if a revert happens to
         // better bound their testing space.
-        if test_options.fail_on_revert {
+        if fail_on_revert {
             let error =
                 InvariantFuzzError::new(invariant_contract, None, calldata, call_result, &[]);
 

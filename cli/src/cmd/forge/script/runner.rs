@@ -72,12 +72,16 @@ impl ScriptRunner {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(CALLER, code.0, 0u32.into(), None).expect("couldn't deploy");
+        } = self
+            .executor
+            .deploy(CALLER, code.0, 0u32.into(), None)
+            .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
+
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        let (success, gas, labeled_addresses, transactions, debug) = if !setup {
+        let (success, gas_used, labeled_addresses, transactions, debug) = if !setup {
             (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect())
         } else {
             match self.executor.setup(Some(self.sender), address) {
@@ -87,7 +91,7 @@ impl ScriptRunner {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas,
+                    gas_used,
                     transactions,
                     ..
                 }) |
@@ -97,7 +101,7 @@ impl ScriptRunner {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas,
+                    gas_used,
                     transactions,
                     ..
                 }) => {
@@ -115,7 +119,7 @@ impl ScriptRunner {
 
                     (
                         !reverted,
-                        gas,
+                        gas_used,
                         labels,
                         transactions,
                         vec![constructor_debug, debug].into_iter().collect(),
@@ -130,7 +134,7 @@ impl ScriptRunner {
             ScriptResult {
                 returned: bytes::Bytes::new(),
                 success,
-                gas,
+                gas_used,
                 labeled_addresses,
                 transactions,
                 logs,
@@ -157,22 +161,32 @@ impl ScriptRunner {
         if let Some(NameOrAddress::Address(to)) = to {
             self.call(from, to, calldata.unwrap_or_default(), value.unwrap_or(U256::zero()), true)
         } else if to.is_none() {
-            let DeployResult { address, gas, logs, traces, debug } = self.executor.deploy(
+            let (address, gas_used, logs, traces, debug) = match self.executor.deploy(
                 from,
                 calldata.expect("No data for create transaction").0,
                 value.unwrap_or(U256::zero()),
                 None,
-            )?;
+            ) {
+                Ok(DeployResult { address, gas_used, logs, traces, debug, .. }) => {
+                    (address, gas_used, logs, traces, debug)
+                }
+                Err(EvmError::Execution { reason, traces, gas_used, logs, debug, .. }) => {
+                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+
+                    (Address::zero(), gas_used, logs, traces, debug)
+                }
+                e => eyre::bail!("Unrecoverable error: {:?}", e),
+            };
 
             Ok(ScriptResult {
                 returned: bytes::Bytes::new(),
-                success: true,
-                gas,
+                success: address != Address::zero(),
+                gas_used,
                 logs,
                 traces: traces
                     .map(|mut traces| {
                         // Manually adjust gas for the trace to add back the stipend/real used gas
-                        traces.arena[0].trace.gas_cost = gas;
+                        traces.arena[0].trace.gas_cost = gas_used;
                         vec![(TraceKind::Execution, traces)]
                     })
                     .unwrap_or_default(),
@@ -201,8 +215,8 @@ impl ScriptRunner {
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
-        let mut gas = res.gas;
-        if matches!(res.status, return_ok!()) {
+        let mut gas_used = res.gas_used;
+        if matches!(res.exit_reason, return_ok!()) {
             // store the current gas limit and reset it later
             let init_gas_limit = self.executor.env_mut().tx.gas_limit;
 
@@ -210,14 +224,14 @@ impl ScriptRunner {
             // this value as gas limit will result in `OutOfGas` so to come up with a
             // better estimate we search over a possible range we pick a higher gas
             // limit 3x of a succeeded call should be safe
-            let mut highest_gas_limit = gas * 3;
-            let mut lowest_gas_limit = gas;
+            let mut highest_gas_limit = gas_used * 3;
+            let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
                 let res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
-                match res.status {
+                match res.exit_reason {
                     Return::Revert |
                     Return::OutOfGas |
                     Return::LackOfFundForGasLimit |
@@ -234,7 +248,7 @@ impl ScriptRunner {
                             1
                         {
                             // update the gas
-                            gas = highest_gas_limit;
+                            gas_used = highest_gas_limit;
                             break
                         }
                         last_highest_gas_limit = highest_gas_limit;
@@ -255,12 +269,12 @@ impl ScriptRunner {
         Ok(ScriptResult {
             returned: result,
             success: !reverted,
-            gas,
+            gas_used,
             logs,
             traces: traces
                 .map(|mut traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
-                    traces.arena[0].trace.gas_cost = gas;
+                    traces.arena[0].trace.gas_cost = gas_used;
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),

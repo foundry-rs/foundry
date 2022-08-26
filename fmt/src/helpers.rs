@@ -40,3 +40,13 @@ pub fn format<W: std::fmt::Write>(
         Formatter::new(writer, parsed.src, parsed.comments, parsed.inline_config, config);
     parsed.pt.visit(&mut formatter)
 }
+
+/// Parse and format a string with default settings
+pub fn fmt(src: &str) -> Result<String, FormatterError> {
+    let parsed = parse(src).map_err(|_| FormatterError::Fmt(std::fmt::Error))?;
+
+    let mut output = String::new();
+    format(&mut output, parsed, FormatterConfig::default())?;
+
+    Ok(output)
+}

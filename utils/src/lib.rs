@@ -17,7 +17,7 @@ use ethers_solc::{
 use eyre::{Result, WrapErr};
 use futures::future::BoxFuture;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     env::VarError,
     fmt::Write,
     path::PathBuf,
@@ -35,7 +35,7 @@ pub struct PostLinkInput<'a, T, U> {
     pub known_contracts: &'a mut BTreeMap<ArtifactId, T>,
     pub id: ArtifactId,
     pub extra: &'a mut U,
-    pub dependencies: Vec<(String, ethers_core::types::Bytes)>,
+    pub dependencies: Vec<(String, Bytes)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -143,7 +143,7 @@ pub fn recurse_link<'a>(
     // fname => Vec<(fname, file, key)>
     dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
     // library deployment vector (file:contract:address, bytecode)
-    deployment: &'a mut Vec<(String, ethers_core::types::Bytes)>,
+    deployment: &'a mut Vec<(String, Bytes)>,
     // deployed library addresses fname => adddress
     deployed_library_addresses: &'a Libraries,
     // nonce to start at
@@ -262,7 +262,24 @@ pub fn to_table(value: serde_json::Value) -> String {
 
 /// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
-    Ok(HumanReadableParser::parse_function(sig)?)
+    Ok(match HumanReadableParser::parse_function(sig) {
+        Ok(func) => func,
+        Err(err) => {
+            if let Ok(constructor) = HumanReadableParser::parse_constructor(sig) {
+                #[allow(deprecated)]
+                Function {
+                    name: "constructor".to_string(),
+                    inputs: constructor.inputs,
+                    outputs: vec![],
+                    constant: None,
+                    state_mutability: Default::default(),
+                }
+            } else {
+                // we return the `Function` parse error as this case is more likely
+                return Err(err.into())
+            }
+        }
+    })
 }
 
 /// Given an event signature string, it tries to parse it as a `Event`
@@ -539,7 +556,7 @@ fn capitalize(s: &str) -> String {
 
 // Returns the function parameter formatted as a string, as well as inserts into the provided
 // `structs` set in order to create type definitions for any Abi Encoder v2 structs.
-fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
+fn format_param(param: &Param, structs: &mut BTreeSet<String>) -> String {
     let kind = get_param_type(&param.kind, &param.name, param.internal_type.as_deref(), structs);
 
     // add `memory` if required (not needed for events, only for functions)
@@ -560,7 +577,7 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
     }
 }
 
-fn format_event_params(param: &EventParam, structs: &mut HashSet<String>) -> String {
+fn format_event_params(param: &EventParam, structs: &mut BTreeSet<String>) -> String {
     let kind = get_param_type(&param.kind, &param.name, None, structs);
 
     if param.name.is_empty() {
@@ -576,12 +593,14 @@ fn get_param_type(
     kind: &ParamType,
     name: &str,
     internal_type: Option<&str>,
-    structs: &mut HashSet<String>,
+    structs: &mut BTreeSet<String>,
 ) -> String {
     let (kind, v2_struct) = match kind {
         // We need to do some extra work to parse ABI Encoder V2 types.
         ParamType::Tuple(ref args) => {
-            let name = internal_type.map(|x| x.to_owned()).unwrap_or_else(|| capitalize(name));
+            let name = internal_type
+                .map(|ty| ty.trim_start_matches("struct ").to_string())
+                .unwrap_or_else(|| capitalize(name));
             let name = if name.contains('.') {
                 name.split('.').nth(1).expect("could not get struct name").to_owned()
             } else {
@@ -632,7 +651,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
     };
 
     // instantiate an array of all ABI Encoder v2 structs
-    let mut structs = HashSet::new();
+    let mut structs = BTreeSet::new();
 
     let events = events_iterator
         .map(|event| {
@@ -684,7 +703,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .collect::<Vec<_>>()
         .join("\n    ");
 
-    Ok(if structs.is_empty() {
+    let sol = if structs.is_empty() {
         match events.is_empty() {
             true => format!(
                 r#"interface {} {{
@@ -727,7 +746,9 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
                 contract_name, events, structs, functions
             ),
         }
-    })
+    };
+
+    forge_fmt::fmt(&sol).map_err(|err| eyre::eyre!(err.to_string()))
 }
 
 /// A type that keeps track of attempts
@@ -1002,31 +1023,34 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity() {
-        let contract_abi: Abi = serde_json::from_slice(
-            &std::fs::read("../testdata/fixtures/SolidityGeneration/InterfaceABI.json").unwrap(),
-        )
+        let contract_abi: Abi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/InterfaceABI.json"
+        ))
         .unwrap();
         assert_eq!(
-            std::str::from_utf8(
-                &std::fs::read(
-                    "../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"
-                )
-                .unwrap()
-            )
-            .unwrap()
-            .to_string(),
+            include_str!("../../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
         assert_eq!(
-            std::str::from_utf8(
-                &std::fs::read(
-                    "../testdata/fixtures/SolidityGeneration/GeneratedUnnamedInterface.sol"
-                )
-                .unwrap()
-            )
-            .unwrap()
-            .to_string(),
+            include_str!(
+                "../../testdata/fixtures/SolidityGeneration/GeneratedUnnamedInterface.sol"
+            ),
             abi_to_solidity(&contract_abi, "").unwrap()
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn abi2solidity_with_structs() {
+        let contract_abi: Abi = serde_json::from_str(include_str!(
+            "../../testdata/fixtures/SolidityGeneration/WithStructs.json"
+        ))
+        .unwrap();
+
+        println!("{}", abi_to_solidity(&contract_abi, "test").unwrap());
+        assert_eq!(
+            include_str!("../../testdata/fixtures/SolidityGeneration/WithStructs.sol").trim(),
+            abi_to_solidity(&contract_abi, "test").unwrap().trim()
         );
     }
 
@@ -1040,18 +1064,18 @@ mod tests {
         let log = RawLog { topics: vec![event.signature(), param0, param2], data: param1.clone() };
         let event = get_indexed_event(event, &log);
 
-        assert!(event.inputs.len() == 3);
+        assert_eq!(event.inputs.len(), 3);
 
         // Only the address fields get indexed since total_params > num_indexed_params
         let parsed = event.parse_log(log).unwrap();
 
-        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 2);
-        assert!(parsed.params[0].name == "param0");
-        assert!(parsed.params[0].value == Token::Address(param0.into()));
-        assert!(parsed.params[1].name == "param1");
-        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
-        assert!(parsed.params[2].name == "param2");
-        assert!(parsed.params[2].value == Token::Address(param2.into()));
+        assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
+        assert_eq!(parsed.params[0].name, "param0");
+        assert_eq!(parsed.params[0].value, Token::Address(param0.into()));
+        assert_eq!(parsed.params[1].name, "param1");
+        assert_eq!(parsed.params[1].value, Token::Uint(U256::from_big_endian(&param1)));
+        assert_eq!(parsed.params[2].name, "param2");
+        assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
     }
 
     #[test]
@@ -1067,17 +1091,17 @@ mod tests {
         };
         let event = get_indexed_event(event, &log);
 
-        assert!(event.inputs.len() == 3);
+        assert_eq!(event.inputs.len(), 3);
 
         // All parameters get indexed since num_indexed_params == total_params
-        assert!(event.inputs.iter().filter(|param| param.indexed).count() == 3);
+        assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
         let parsed = event.parse_log(log).unwrap();
 
-        assert!(parsed.params[0].name == "param0");
-        assert!(parsed.params[0].value == Token::Address(param0.into()));
-        assert!(parsed.params[1].name == "param1");
-        assert!(parsed.params[1].value == Token::Uint(U256::from_big_endian(&param1)));
-        assert!(parsed.params[2].name == "param2");
-        assert!(parsed.params[2].value == Token::Address(param2.into()));
+        assert_eq!(parsed.params[0].name, "param0");
+        assert_eq!(parsed.params[0].value, Token::Address(param0.into()));
+        assert_eq!(parsed.params[1].name, "param1");
+        assert_eq!(parsed.params[1].value, Token::Uint(U256::from_big_endian(&param1)));
+        assert_eq!(parsed.params[2].name, "param2");
+        assert_eq!(parsed.params[2].value, Token::Address(param2.into()));
     }
 }

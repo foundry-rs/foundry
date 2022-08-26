@@ -8,7 +8,8 @@ use ethers::{
     types::{Address, Bytes, Log},
 };
 use foundry_common::{calc, contracts::ContractsByAddress};
-pub use proptest::test_runner::{Config as FuzzConfig, Reason};
+use foundry_config::FuzzConfig;
+pub use proptest::test_runner::Reason;
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
@@ -34,12 +35,19 @@ pub struct FuzzedExecutor<'a> {
     runner: TestRunner,
     /// The account that calls tests
     sender: Address,
+    /// The fuzz configuration
+    config: FuzzConfig,
 }
 
 impl<'a> FuzzedExecutor<'a> {
     /// Instantiates a fuzzed executor given a testrunner
-    pub fn new(executor: &'a Executor, runner: TestRunner, sender: Address) -> Self {
-        Self { executor, runner, sender }
+    pub fn new(
+        executor: &'a Executor,
+        runner: TestRunner,
+        sender: Address,
+        config: FuzzConfig,
+    ) -> Self {
+        Self { executor, runner, sender, config }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -55,23 +63,32 @@ impl<'a> FuzzedExecutor<'a> {
         errors: Option<&Abi>,
     ) -> FuzzTestResult {
         // Stores the consumed gas and calldata of every successful fuzz call
-        let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
+        let cases: RefCell<Vec<FuzzCase>> = RefCell::default();
 
         // Stores the result and calldata of the last failed call, if any.
-        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
+        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::default();
+
+        // stores the last successful call trace
+        let traces: RefCell<Option<CallTraceArena>> = RefCell::default();
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            build_initial_state(fork_db)
+            build_initial_state(
+                fork_db,
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         } else {
-            build_initial_state(self.executor.backend().mem_db())
+            build_initial_state(
+                self.executor.backend().mem_db(),
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            )
         };
 
-        // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
-        // have that, we should add a way to configure strategy weights
         let strat = proptest::strategy::Union::new_weighted(vec![
-            (60, fuzz_calldata(func.clone())),
-            (40, fuzz_calldata_from_state(func.clone(), state.clone())),
+            (100 - self.config.dictionary_weight, fuzz_calldata(func.clone())),
+            (self.config.dictionary_weight, fuzz_calldata_from_state(func.clone(), state.clone())),
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
@@ -83,7 +100,13 @@ impl<'a> FuzzedExecutor<'a> {
                 call.state_changeset.as_ref().expect("We should have a state changeset.");
 
             // Build fuzzer state
-            collect_state_from_call(&call.logs, state_changeset, state.clone());
+            collect_state_from_call(
+                &call.logs,
+                state_changeset,
+                state.clone(),
+                self.config.include_storage,
+                self.config.include_push_bytes,
+            );
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
@@ -100,12 +123,15 @@ impl<'a> FuzzedExecutor<'a> {
             if success {
                 cases.borrow_mut().push(FuzzCase {
                     calldata,
-                    gas: call.gas,
+                    gas: call.gas_used,
                     stipend: call.stipend,
                 });
+
+                traces.replace(call.traces);
+
                 Ok(())
             } else {
-                let status = call.status;
+                let status = call.exit_reason;
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
@@ -124,6 +150,8 @@ impl<'a> FuzzedExecutor<'a> {
             }
         });
 
+        tracing::trace!(target: "forge::test::fuzz::dictionary", "{:?}", state.read().iter().map(hex::encode).collect::<Vec<_>>());
+
         let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {
             cases: FuzzedCases::new(cases.into_inner()),
@@ -131,8 +159,8 @@ impl<'a> FuzzedExecutor<'a> {
             reason: None,
             counterexample: None,
             logs: call.logs,
-            traces: call.traces,
             labeled_addresses: call.labels,
+            traces: if run_result.is_ok() { traces.into_inner() } else { call.traces.clone() },
         };
 
         match run_result {
@@ -152,6 +180,7 @@ impl<'a> FuzzedExecutor<'a> {
                     addr: None,
                     signature: None,
                     contract_name: None,
+                    traces: call.traces,
                     calldata,
                     args,
                 }));
@@ -183,6 +212,8 @@ pub struct BaseCounterExample {
     pub signature: Option<String>,
     /// Contract name if it exists
     pub contract_name: Option<String>,
+    /// Traces
+    pub traces: Option<CallTraceArena>,
     // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
@@ -194,6 +225,7 @@ impl BaseCounterExample {
         addr: Address,
         bytes: &Bytes,
         contracts: &ContractsByAddress,
+        traces: Option<CallTraceArena>,
     ) -> Self {
         let (name, abi) = &contracts.get(&addr).expect("Couldnt call unknown contract");
 
@@ -211,6 +243,7 @@ impl BaseCounterExample {
             calldata: bytes.clone(),
             signature: Some(func.signature()),
             contract_name: Some(name.clone()),
+            traces,
             args,
         }
     }
@@ -264,11 +297,14 @@ pub struct FuzzTestResult {
     /// be printed to the user.
     pub logs: Vec<Log>,
 
-    /// Traces
-    pub traces: Option<CallTraceArena>,
-
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
+
+    /// Exemplary traces for a fuzz run of the test function
+    ///
+    /// **Note** We only store a single trace of a successful fuzz call, otherwise we would get
+    /// `num(fuzz_cases)` traces, one for each run, which is neither helpful nor performant.
+    pub traces: Option<CallTraceArena>,
 }
 
 /// Container type for all successful test cases
@@ -290,6 +326,11 @@ impl FuzzedCases {
 
     pub fn into_cases(self) -> Vec<FuzzCase> {
         self.cases
+    }
+
+    /// Get the last [FuzzCase]
+    pub fn last(&self) -> Option<&FuzzCase> {
+        self.cases.last()
     }
 
     /// Returns the median gas of all test cases

@@ -168,6 +168,24 @@ fn is_git(root: &Path) -> eyre::Result<bool> {
     Ok(is_git.success())
 }
 
+/// Returns the commit hash of the project if it exists
+pub fn get_commit_hash(root: &Path) -> Option<String> {
+    if is_git(root).ok()? {
+        let output = Command::new("git")
+            .args(&["rev-parse", "--short", "HEAD"])
+            .current_dir(&root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()?
+            .wait_with_output()
+            .ok()?;
+
+        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+    None
+}
+
 /// Initialises the `root` as git repository if it's not a git repository yet
 fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
     if !is_git(root)? {

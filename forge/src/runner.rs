@@ -14,9 +14,7 @@ use foundry_common::{
 use foundry_evm::{
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
-        invariant::{
-            InvariantContract, InvariantExecutor, InvariantFuzzTestResult, InvariantTestOptions,
-        },
+        invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
         FuzzedExecutor,
     },
     trace::{load_contracts, TraceKind},
@@ -230,13 +228,15 @@ impl<'a> ContractRunner<'a> {
         let has_invariants =
             self.contract.functions().into_iter().any(|func| func.name.is_invariant_test());
 
+        // Invariant testing requires tracing to figure out what contracts were created.
+        let original_tracing = self.executor.inspector_config().tracing;
         if has_invariants && needs_setup {
-            // invariant testing requires tracing to figure
-            //   out what contracts were created
             self.executor.set_tracing(true);
         }
 
         let setup = self.setup(needs_setup)?;
+        self.executor.set_tracing(original_tracing);
+
         if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok(SuiteResult::new(
@@ -302,7 +302,7 @@ impl<'a> ContractRunner<'a> {
                 .collect();
 
             let results = self.run_invariant_test(
-                test_options.fuzzer(),
+                test_options.invariant_fuzzer(),
                 setup,
                 test_options,
                 functions.clone(),
@@ -362,7 +362,7 @@ impl<'a> ContractRunner<'a> {
             ) {
                 Ok(CallResult {
                     reverted,
-                    gas,
+                    gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
@@ -378,7 +378,7 @@ impl<'a> ContractRunner<'a> {
                 Err(EvmError::Execution {
                     reverted,
                     reason,
-                    gas,
+                    gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
@@ -441,6 +441,7 @@ impl<'a> ContractRunner<'a> {
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
+            test_options.invariant,
             &identified_contracts,
             project_contracts,
         );
@@ -448,14 +449,9 @@ impl<'a> ContractRunner<'a> {
         let invariant_contract =
             InvariantContract { address, invariant_functions: functions, abi: self.contract };
 
-        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) = evm.invariant_fuzz(
-            invariant_contract,
-            InvariantTestOptions {
-                depth: test_options.invariant_depth,
-                fail_on_revert: test_options.invariant_fail_on_revert,
-                call_override: test_options.invariant_call_override,
-            },
-        )? {
+        if let Some(InvariantFuzzTestResult { invariants, cases, reverts }) =
+            evm.invariant_fuzz(invariant_contract)?
+        {
             let results = invariants
                 .iter()
                 .map(|(_, test_error)| {
@@ -508,17 +504,18 @@ impl<'a> ContractRunner<'a> {
 
         // Run fuzz test
         let start = Instant::now();
-        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
-            func,
-            address,
-            should_fail,
-            self.errors,
-        );
+        let mut result = FuzzedExecutor::new(
+            &self.executor,
+            runner,
+            self.sender,
+            Default::default(),
+        )
+        .fuzz(func, address, should_fail, self.errors);
 
         // Record logs, labels and traces
         logs.append(&mut result.logs);
         labeled_addresses.append(&mut result.labeled_addresses);
-        traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
+        traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
 
         // Record test execution time
         tracing::debug!(

@@ -306,7 +306,7 @@ pub struct CallTrace {
     pub label: Option<String>,
     /// caller of this call
     pub caller: Address,
-    /// The destination address of the call
+    /// The destination address of the call or the address from the created contract
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
@@ -330,7 +330,7 @@ pub struct CallTrace {
 impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
-        matches!(self.kind, CallKind::Create)
+        matches!(self.kind, CallKind::Create | CallKind::Create2)
     }
 }
 

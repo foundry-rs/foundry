@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
     db::{CacheDB, DatabaseRef},
-    opcode, spec_opcode_gas, Filth, SpecId,
+    opcode, spec_opcode_gas, SpecId,
 };
 use std::{
     collections::BTreeSet,
@@ -80,21 +80,34 @@ This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issue
 }
 
 /// Builds the initial [EvmFuzzState] from a database.
-pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
+pub fn build_initial_state<DB: DatabaseRef>(
+    db: &CacheDB<DB>,
+    include_storage: bool,
+    include_push_bytes: bool,
+) -> EvmFuzzState {
     let mut state = FuzzDictionary::default();
 
     for (address, account) in db.accounts.iter() {
-        let info = db.basic(*address);
-
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(info.nonce)).into());
 
-        // Insert storage
-        for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+        // Insert push bytes
+        if include_push_bytes {
+            if let Some(code) = &account.info.code {
+                if state.cache.insert(*address) {
+                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                        state.insert(push_byte);
+                    }
+                }
+            }
+        }
+
+        if include_storage {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.insert(utils::u256_to_h256_be(*slot).into());
+                state.insert(utils::u256_to_h256_be(*value).into());
+            }
         }
     }
 
@@ -113,28 +126,32 @@ pub fn collect_state_from_call(
     logs: &[Log],
     state_changeset: &StateChangeset,
     state: EvmFuzzState,
+    include_storage: bool,
+    include_push_bytes: bool,
 ) {
     let mut state = state.write();
 
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
-        state.insert(utils::u256_to_h256_le(account.info.balance).into());
-        state.insert(utils::u256_to_h256_le(U256::from(account.info.nonce)).into());
 
-        // Insert storage
-        for (slot, value) in &account.storage {
-            state.insert(utils::u256_to_h256_le(*slot).into());
-            state.insert(utils::u256_to_h256_le(*value).into());
+        if include_storage {
+            // Insert storage
+            for (slot, value) in &account.storage {
+                state.insert(utils::u256_to_h256_be(*slot).into());
+                state.insert(utils::u256_to_h256_be(value.present_value()).into());
+            }
         }
 
-        // Insert push bytes
-        if let Some(code) = &account.info.code {
-            if !state.cache.contains(address) {
-                state.cache.insert(*address);
+        if include_push_bytes {
+            // Insert push bytes
+            if let Some(code) = &account.info.code {
+                if !state.cache.contains(address) {
+                    state.cache.insert(*address);
 
-                for push_byte in collect_push_bytes(code.bytes().clone()) {
-                    state.insert(push_byte);
+                    for push_byte in collect_push_bytes(code.bytes().clone()) {
+                        state.insert(push_byte);
+                    }
                 }
             }
         }
@@ -183,11 +200,8 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
                 return bytes
             }
 
-            let mut buffer: [u8; 32] = [0; 32];
-            let _ = (&mut buffer[..])
-                .write(&code[push_start..push_end])
-                .expect("push was larger than 32 bytes");
-            bytes.push(buffer);
+            bytes.push(U256::from_big_endian(&code[push_start..push_end]).into());
+
             i += push_size;
         }
         i += 1;
@@ -210,7 +224,7 @@ pub fn collect_created_contracts(
 
     for (address, account) in state_changeset {
         if !setup_contracts.contains_key(address) {
-            if let (Filth::NewlyCreated, Some(code)) = (&account.filth, &account.info.code) {
+            if let (true, Some(code)) = (&account.is_touched, &account.info.code) {
                 if !code.is_empty() {
                     if let Some((artifact, (abi, _))) = project_contracts.find_by_code(code.bytes())
                     {

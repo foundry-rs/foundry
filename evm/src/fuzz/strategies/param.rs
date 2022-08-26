@@ -99,7 +99,11 @@ pub fn fuzz_param_from_state(param: &ParamType, arc_state: EvmFuzzState) -> Boxe
         },
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value
-            .prop_map(move |value| Token::String(String::from_utf8_lossy(&value[..]).to_string()))
+            .prop_map(move |value| {
+                Token::String(
+                    String::from_utf8_lossy(&value[..]).trim().trim_end_matches('\0').to_string(),
+                )
+            })
             .boxed(),
         ParamType::Array(param) => proptest::collection::vec(
             fuzz_param_from_state(param, arc_state.clone()),
@@ -138,7 +142,7 @@ mod tests {
         let func = HumanReadableParser::parse_function(f).unwrap();
 
         let db = CacheDB::new(EmptyDB());
-        let state = build_initial_state(&db);
+        let state = build_initial_state(&db, true, true);
 
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),

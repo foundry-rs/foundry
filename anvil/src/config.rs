@@ -10,6 +10,7 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::TransactionOrder,
     },
+    genesis::Genesis,
     mem,
     mem::in_memory_db::MemDb,
     FeeManager,
@@ -26,7 +27,7 @@ use ethers::{
     types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
-use foundry_common::ProviderBuilder;
+use foundry_common::{ProviderBuilder, REQUEST_TIMEOUT};
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -116,6 +117,12 @@ pub struct NodeConfig {
     pub transaction_order: TransactionOrder,
     /// Filename to write anvil output as json
     pub config_out: Option<String>,
+    /// The genesis to use to initialize the node
+    pub genesis: Option<Genesis>,
+    /// Timeout in for requests sent to remote JSON-RPC server in forking mode
+    pub fork_request_timeout: Duration,
+    /// Number of request retries for spurious networks
+    pub fork_request_retries: u32,
 }
 
 impl NodeConfig {
@@ -322,6 +329,9 @@ impl Default for NodeConfig {
             host: None,
             transaction_order: Default::default(),
             config_out: None,
+            genesis: None,
+            fork_request_timeout: REQUEST_TIMEOUT,
+            fork_request_retries: 5,
         }
     }
 }
@@ -329,7 +339,9 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Returns the base fee to use
     pub fn get_base_fee(&self) -> U256 {
-        self.base_fee.unwrap_or_else(|| INITIAL_BASE_FEE.into())
+        self.base_fee
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas))
+            .unwrap_or_else(|| INITIAL_BASE_FEE.into())
     }
 
     /// Returns the base fee to use
@@ -351,7 +363,9 @@ impl NodeConfig {
 
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
-        self.chain_id.unwrap_or(CHAIN_ID)
+        self.chain_id
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.chain_id()))
+            .unwrap_or(CHAIN_ID)
     }
 
     /// Sets the chain id and updates all wallets
@@ -389,9 +403,18 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the init genesis (genesis.json)
+    #[must_use]
+    pub fn with_genesis(mut self, genesis: Option<Genesis>) -> Self {
+        self.genesis = genesis;
+        self
+    }
+
     /// Returns the genesis timestamp to use
     pub fn get_genesis_timestamp(&self) -> u64 {
-        self.genesis_timestamp.unwrap_or_else(|| duration_since_unix_epoch().as_secs())
+        self.genesis_timestamp
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.timestamp))
+            .unwrap_or_else(|| duration_since_unix_epoch().as_secs())
     }
 
     /// Sets the genesis timestamp
@@ -506,6 +529,24 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the `fork_request_timeout` to use for requests
+    #[must_use]
+    pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
+        if let Some(fork_request_timeout) = fork_request_timeout {
+            self.fork_request_timeout = fork_request_timeout;
+        }
+        self
+    }
+
+    /// Sets the `fork_request_retries` to use for spurious networks
+    #[must_use]
+    pub fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
+        if let Some(fork_request_retries) = fork_request_retries {
+            self.fork_request_retries = fork_request_retries;
+        }
+        self
+    }
+
     /// Sets whether to enable tracing
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
@@ -558,7 +599,7 @@ impl NodeConfig {
         }
         // cache only if block explicitly set
         let block = self.fork_block_number?;
-        let chain_id = self.chain_id.unwrap_or(CHAIN_ID);
+        let chain_id = self.get_chain_id();
 
         Config::foundry_block_cache_file(chain_id, block)
     }
@@ -584,13 +625,14 @@ impl NodeConfig {
             tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
         };
         let fees = FeeManager::new(env.cfg.spec_id, self.get_base_fee(), self.get_gas_price());
-        let mut fork_timestamp = None;
 
         let (db, fork): (Arc<tokio::sync::RwLock<dyn Db>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
                 // TODO make provider agnostic
                 let provider = Arc::new(
                     ProviderBuilder::new(&eth_rpc_url)
+                        .timeout(self.fork_request_timeout)
+                        .timeout_retry(self.fork_request_retries)
                         .max_retry(10)
                         .initial_backoff(1000)
                         .connect()
@@ -631,8 +673,15 @@ impl NodeConfig {
                     panic!("Failed to get block for block number: {}", fork_block_number)
                 };
 
-                env.block.number = fork_block_number.into();
-                fork_timestamp = Some(block.timestamp);
+                env.block = BlockEnv {
+                    number: fork_block_number.into(),
+                    timestamp: block.timestamp,
+                    difficulty: block.difficulty,
+                    gas_limit: block.gas_limit,
+                    // Keep previous `coinbase` and `basefee` value
+                    coinbase: env.block.coinbase,
+                    basefee: env.block.basefee,
+                };
 
                 // if not set explicitly we use the base fee of the latest block
                 if self.base_fee.is_none() {
@@ -699,6 +748,8 @@ impl NodeConfig {
                         override_chain_id,
                         timestamp: block.timestamp.as_u64(),
                         base_fee: block.base_fee_per_gas,
+                        timeout: self.fork_request_timeout,
+                        retries: self.fork_request_retries,
                     },
                     Arc::clone(&db),
                 );
@@ -708,22 +759,21 @@ impl NodeConfig {
                 (Arc::new(tokio::sync::RwLock::new(MemDb::default())), None)
             };
 
+        // if provided use all settings of `genesis.json`
+        if let Some(ref genesis) = self.genesis {
+            genesis.apply(&mut env);
+        }
+
         let genesis = GenesisConfig {
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
+            fork_genesis_account_infos: Arc::new(Default::default()),
+            genesis_init: self.genesis.clone(),
         };
+
         // only memory based backend for now
-
-        let backend =
-            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork).await;
-
-        if let Some(timestamp) = fork_timestamp {
-            backend.time().set_start_timestamp(timestamp.as_u64());
-        } else {
-            backend.time().set_start_timestamp(self.get_genesis_timestamp());
-        }
-        backend
+        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork).await
     }
 }
 
