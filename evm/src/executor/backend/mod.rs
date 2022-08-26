@@ -25,7 +25,9 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -312,9 +314,10 @@ impl Backend {
             let (fork_id, fork, _) =
                 backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
-            backend.active_fork_ids =
-                Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
-            backend.inner.launched_with_fork = Some(fork_id);
+            let fork_ids =
+                backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default());
+            backend.inner.launched_with_fork = Some((fork_id, fork_ids.0, fork_ids.1));
+            backend.active_fork_ids = Some(fork_ids);
         }
 
         backend
@@ -646,10 +649,39 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
+        let launched_with_fork = self.inner.launched_with_fork.is_some();
+
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.journaled_state = journaled_state.clone();
+
+            // if the Backend was launched in forking mode, then we also need to adjust the depth of
+            // the `JournalState` at this point
+            if launched_with_fork {
+                let caller = env.tx.caller;
+                let caller_account =
+                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
+                let target_fork = self.inner.get_fork_mut(idx);
+                if target_fork.journaled_state.depth == 0 {
+                    // depth 0 will be the default value when the fork was created and since we
+                    // launched in forking mode there never is a `depth` that can be set for the
+                    // `fork_init_journaled_state` instead we need to manually bump the depth to the
+                    // current depth of the call _once_
+                    target_fork.journaled_state.depth = journaled_state.depth;
+
+                    // we also need to initialize and touch the caller
+                    if let Some(acc) = caller_account {
+                        target_fork.db.insert_account_info(caller, acc);
+                        with_journaled_account(
+                            &mut target_fork.journaled_state,
+                            &mut target_fork.db,
+                            caller,
+                            |_| (),
+                        );
+                    }
+                }
+            }
         } else {
             // this is the first time a fork is selected. This means up to this point all changes
             // are made in a single `JournaledState`, for example after a `setup` that only created
@@ -926,8 +958,8 @@ pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///
     /// In other words if [`Backend::spawn()`] was called with a `CreateFork` command, to launch
-    /// directly in fork mode, this holds the corresponding `ForkId` of this fork.
-    pub launched_with_fork: Option<ForkId>,
+    /// directly in fork mode, this holds the corresponding fork identifier of this fork.
+    pub launched_with_fork: Option<(ForkId, LocalForkId, ForkLookupIndex)>,
     /// This tracks numeric fork ids and the `ForkId` used by the handler.
     ///
     /// This is necessary, because there can be multiple `Backends` associated with a single
