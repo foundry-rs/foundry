@@ -98,7 +98,7 @@ impl VerifyBundle {
                     compiler_version: Some(version.to_string()),
                     constructor_args: Some(hex::encode(&constructor_args)),
                     num_of_optimizations: self.num_of_optimizations,
-                    chain: self.chain.into(),
+                    chain: self.chain,
                     etherscan_key: self.etherscan_key.clone(),
                     flatten: false,
                     force: false,

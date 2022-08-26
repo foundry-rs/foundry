@@ -1,6 +1,6 @@
 //! script command
 use crate::{
-    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
+    cmd::forge::build::BuildArgs,
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };

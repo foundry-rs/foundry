@@ -1,22 +1,16 @@
 use super::{NestedValue, ScriptResult};
-use crate::cmd::forge::{
-    init::get_commit_hash,
-    script,
-    script::verify::VerifyBundle,
-    verify::{self, VerifyArgs},
-};
+use crate::cmd::forge::{init::get_commit_hash, script::verify::VerifyBundle};
 use cast::{executor::inspector::DEFAULT_CREATE2_DEPLOYER, CallKind};
 use ethers::{
     abi::{Abi, Address},
     prelude::{artifacts::Libraries, ArtifactId, NameOrAddress, TransactionReceipt, TxHash},
-    solc::info::ContractInfo,
     types::transaction::eip2718::TypedTransaction,
 };
 use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
 use foundry_common::fs;
 use foundry_config::Config;
-use semver::Version;
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},

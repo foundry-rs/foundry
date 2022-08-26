@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    cmd::{forge::script::verify::VerifyBundle, get_cached_entry_by_name, unwrap_contracts},
-    compile,
-};
+use crate::{cmd::get_cached_entry_by_name, compile};
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,

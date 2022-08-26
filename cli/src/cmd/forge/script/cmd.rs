@@ -1,15 +1,12 @@
-use crate::cmd::{unwrap_contracts, LoadConfig};
-use std::sync::Arc;
-
-use crate::cmd::forge::script::verify::VerifyBundle;
+use super::{sequence::ScriptSequence, *};
+use crate::cmd::{forge::script::verify::VerifyBundle, unwrap_contracts, LoadConfig};
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
 use foundry_common::get_http_provider;
+use std::sync::Arc;
 use tracing::trace;
-
-use super::{sequence::ScriptSequence, *};
 
 impl ScriptArgs {
     /// Executes the script
