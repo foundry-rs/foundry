@@ -137,9 +137,12 @@ impl Provider for TestArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
+
+        let mut fuzz_dict = Dict::default();
         if let Some(fuzz_seed) = self.fuzz_seed {
-            dict.insert("fuzz_seed".to_string(), fuzz_seed.to_string().into());
+            fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
         }
+        dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         if let Some(ref etherscan_api_key) = self.etherscan_api_key {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
