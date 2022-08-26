@@ -1,6 +1,6 @@
 //! script command
 use crate::{
-    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
+    cmd::forge::build::BuildArgs,
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
@@ -51,6 +51,7 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+mod verify;
 use crate::cmd::retry::RetryArgs;
 pub use sequence::TransactionWithMetadata;
 
@@ -509,51 +510,9 @@ pub struct NestedValue {
 }
 
 pub struct ScriptConfig {
-    pub config: foundry_config::Config,
+    pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub backend: Option<Backend>,
     pub called_function: Option<Function>,
-}
-
-/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
-pub struct VerifyBundle {
-    pub num_of_optimizations: Option<usize>,
-    pub known_contracts: ContractsByArtifact,
-    pub etherscan_key: Option<String>,
-    pub project_paths: ProjectPathsArgs,
-    pub retry: RetryArgs,
-}
-
-impl VerifyBundle {
-    pub fn new(
-        project: &Project,
-        config: &Config,
-        known_contracts: ContractsByArtifact,
-        retry: RetryArgs,
-    ) -> Self {
-        let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
-
-        let config_path = config.get_config_path();
-
-        let project_paths = ProjectPathsArgs {
-            root: Some(project.paths.root.clone()),
-            contracts: Some(project.paths.sources.clone()),
-            remappings: project.paths.remappings.clone(),
-            remappings_env: None,
-            cache_path: Some(project.paths.cache.clone()),
-            lib_paths: project.paths.libraries.clone(),
-            hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
-        };
-
-        VerifyBundle {
-            num_of_optimizations,
-            known_contracts,
-            etherscan_key: config.etherscan_api_key.clone(),
-            project_paths,
-            retry,
-        }
-    }
 }

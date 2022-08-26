@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    cmd::{get_cached_entry_by_name, unwrap_contracts},
-    compile,
-};
+use crate::{cmd::get_cached_entry_by_name, compile};
 use ethers::{
     prelude::{
         artifacts::Libraries, cache::SolFilesCache, ArtifactId, Graph, Project,
@@ -21,20 +18,8 @@ use tracing::warn;
 
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
-    pub fn compile(
-        &mut self,
-        script_config: &ScriptConfig,
-    ) -> eyre::Result<(BuildOutput, VerifyBundle)> {
-        let build_output = self.build(script_config)?;
-
-        let verify = VerifyBundle::new(
-            &build_output.project,
-            &script_config.config,
-            unwrap_contracts(&build_output.highlevel_known_contracts, false),
-            self.retry.clone(),
-        );
-
-        Ok((build_output, verify))
+    pub fn compile(&mut self, script_config: &ScriptConfig) -> eyre::Result<BuildOutput> {
+        self.build(script_config)
     }
 
     /// Compiles the file with auto-detection and compiler params.
