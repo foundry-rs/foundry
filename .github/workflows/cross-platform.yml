@@ -11,7 +11,6 @@ name: cross-platform
 
 env:
   CARGO_TERM_COLOR: always
-  NEXTEST_EXPERIMENTAL_FILTER_EXPR: 1
 
 jobs:
   build-tests:
