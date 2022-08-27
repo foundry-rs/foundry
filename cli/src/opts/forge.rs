@@ -18,7 +18,7 @@ use crate::cmd::forge::{
     install::InstallArgs,
     remappings::RemappingArgs,
     script::ScriptArgs,
-    snapshot, test, tree,
+    snapshot, test, tree, update,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
@@ -74,13 +74,7 @@ pub enum Subcommands {
         about = "Update one or multiple dependencies.",
         long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
     )]
-    Update {
-        #[clap(
-            help = "The path to the dependency you want to update.",
-            value_hint = ValueHint::DirPath
-        )]
-        lib: Option<PathBuf>,
-    },
+    Update(update::UpdateArgs),
 
     #[clap(
         visible_alias = "i",

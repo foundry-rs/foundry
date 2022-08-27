@@ -8,9 +8,7 @@ use foundry_cli::{
     handler,
     opts::forge::{Opts, Subcommands},
     utils,
-    utils::CommandUtils,
 };
-use std::process::Command;
 
 fn main() -> eyre::Result<()> {
     utils::load_dotenv();
@@ -64,19 +62,7 @@ fn main() -> eyre::Result<()> {
         Subcommands::Create(cmd) => {
             utils::block_on(cmd.run())?;
         }
-        Subcommands::Update { lib } => {
-            let mut cmd = Command::new("git");
-
-            cmd.args(&["submodule", "update", "--remote", "--init"]);
-
-            // if a lib is specified, open it
-            if let Some(lib) = lib {
-                cmd.args(&["--", lib.display().to_string().as_str()]);
-            }
-
-            cmd.exec()?;
-        }
-        // TODO: Make it work with updates?
+        Subcommands::Update(cmd) => cmd.run()?,
         Subcommands::Install(cmd) => {
             cmd.run()?;
         }
