@@ -8,10 +8,11 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, ParamType, Token},
-    prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
+    prelude::artifacts::CompactContractBytecode,
     types::*,
 };
 use foundry_common::fs;
+
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
@@ -88,17 +89,18 @@ struct HardhatArtifact {
     bytecode: ethers::types::Bytes,
 }
 
-fn get_code(path: &str) -> Result<Bytes, Bytes> {
+fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
     let path = if path.ends_with(".json") {
-        Path::new(&path).to_path_buf()
+        PathBuf::from(path)
     } else {
         let parts: Vec<&str> = path.split(':').collect();
         let file = parts[0];
         let contract_name =
             if parts.len() == 1 { parts[0].replace(".sol", "") } else { parts[1].to_string() };
-        let out_dir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
-        out_dir.join(format!("{file}/{contract_name}.json"))
+        state.config.paths.artifacts.join(format!("{file}/{contract_name}.json"))
     };
+
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
     let bytecode = serde_json::from_str::<ArtifactBytecode>(&data).map_err(util::encode_error)?;
@@ -150,13 +152,8 @@ fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
     Ok(abi::encode(&[Token::String(root)]).into())
 }
 
-fn full_path(state: &Cheatcodes, path: impl AsRef<Path>) -> PathBuf {
-    state.config.root.join(path)
-}
-
 fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
 
@@ -164,8 +161,7 @@ fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes>
 }
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader = state
@@ -188,18 +184,29 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
     Ok(abi::encode(&[Token::String(line)]).into())
 }
 
-fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, data: &str) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+/// Writes the content to the file
+///
+/// This function will create a file if it does not exist, and will entirely replace its contents if
+/// it does.
+///
+/// Caution: writing files is only allowed if the targeted path is allowed, (inside `<root>/` by
+/// default)
+fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Result<Bytes, Bytes> {
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    // write access to foundry.toml is not allowed
+    state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
-    fs::write(path, data).map_err(util::encode_error)?;
+    fs::write(path, content).map_err(util::encode_error)?;
 
     Ok(Bytes::new())
 }
 
+/// Writes a single line to the file
+///
+/// This will create a file if it does not exist but append the `line` if it does
 fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
     let mut file = std::fs::OpenOptions::new()
         .append(true)
@@ -213,17 +220,21 @@ fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<
 }
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
 
     state.context.opened_read_files.remove(&path);
 
     Ok(Bytes::new())
 }
 
+/// Removes a file from the filesystem.
+///
+/// Only files inside `<root>/` can be removed, `foundry.toml` excluded.
+///
+/// This will return an error if the path points to a directory, or the file does not exist
 fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = full_path(state, &path);
-    state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
     close_file(state, &path)?;
     fs::remove_file(&path).map_err(util::encode_error)?;
@@ -309,7 +320,7 @@ pub fn apply(
                 ffi(state, &inner.0)
             }
         }
-        HEVMCalls::GetCode(inner) => get_code(&inner.0),
+        HEVMCalls::GetCode(inner) => get_code(state, &inner.0),
         HEVMCalls::SetEnv(inner) => set_env(&inner.0, &inner.1),
         HEVMCalls::EnvBool0(inner) => get_env(&inner.0, ParamType::Bool, None),
         HEVMCalls::EnvUint0(inner) => get_env(&inner.0, ParamType::Uint(256), None),
