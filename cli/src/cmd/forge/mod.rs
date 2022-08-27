@@ -58,5 +58,6 @@ pub mod script;
 pub mod snapshot;
 pub mod test;
 pub mod tree;
+pub mod update;
 pub mod verify;
 pub mod watch;
