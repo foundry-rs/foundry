@@ -422,6 +422,7 @@ impl Backend {
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
         );
+
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
             journaled_state,
@@ -581,7 +582,7 @@ impl DatabaseExt for Backend {
     fn revert(
         &mut self,
         id: U256,
-        journaled_state: &JournaledState,
+        current_state: &JournaledState,
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
@@ -593,21 +594,44 @@ impl DatabaseExt for Backend {
             }
 
             // merge additional logs
-            snapshot.merge(journaled_state);
-            let BackendSnapshot { db, journaled_state, env } = snapshot;
+            snapshot.merge(current_state);
+            let BackendSnapshot { db, mut journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
                 }
-                BackendDatabaseSnapshot::Forked(id, fork_id, idx, fork) => {
+                BackendDatabaseSnapshot::Forked(id, fork_id, idx, mut fork) => {
+                    // there might be the case where the snapshot was created during `setUp` with
+                    // another caller, so we need to ensure the caller account is present in the
+                    // journaled state and database
+                    let caller = current.tx.caller;
+                    if !journaled_state.state.contains_key(&caller) {
+                        let caller_account = current_state
+                            .state
+                            .get(&caller)
+                            .map(|acc| acc.info.clone())
+                            .unwrap_or_default();
+
+                        if !fork.db.accounts.contains_key(&caller) {
+                            // update the caller account which is required by the evm
+                            fork.db.insert_account_info(caller, caller_account.clone());
+                            with_journaled_account(
+                                &mut fork.journaled_state,
+                                &mut fork.db,
+                                caller,
+                                |_| (),
+                            );
+                        }
+                        journaled_state.state.insert(caller, caller_account.into());
+                    }
                     self.inner.revert_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
             }
 
             update_current_env_with_fork_env(current, env);
-
             trace!(target: "backend", "Reverted snapshot {}", id);
+
             Some(journaled_state)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -618,11 +642,22 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        _journaled_state: &JournaledState,
+        journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
+
+        // there might be the case where a fork was previously created and selected during `setUp`
+        // not necessarily with the current caller in which case we need to ensure that the init
+        // state also includes the caller
+        if let Some(caller) = self.caller_address() {
+            if !self.fork_init_journaled_state.state.contains_key(&caller) {
+                if let Some(account) = journaled_state.state.get(&caller).cloned() {
+                    self.fork_init_journaled_state.state.insert(caller, account);
+                }
+            }
+        }
 
         let (id, _) =
             self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
@@ -1172,7 +1207,7 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
 fn clone_journaled_state_data(
     addr: Address,
-    active_journaled_state: &mut JournaledState,
+    active_journaled_state: &JournaledState,
     fork_journaled_state: &mut JournaledState,
 ) {
     if let Some(acc) = active_journaled_state.state.get(&addr).cloned() {
