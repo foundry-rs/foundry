@@ -294,7 +294,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
         };
-        println!("Waiting for etherscan to detect contract deployment...");
+        println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier);
         verify.run().await
     }
 
