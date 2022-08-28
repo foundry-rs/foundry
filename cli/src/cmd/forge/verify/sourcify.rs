@@ -42,8 +42,12 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
 
         let mut files = HashMap::with_capacity(2 + entry.imports.len());
 
-        let artifact_path = args.contract.path.map_or(path, PathBuf::from);
-        let artifact: ConfigurableContractArtifact = fs::read_json_file(&artifact_path)?;
+        // the metadata is included in the contract's artifact file
+        let artifact_path = entry
+            .find_artifact_path(&args.contract.name)
+            .ok_or_else(|| eyre::eyre!("No artifact found for contract {}", args.contract.name))?;
+
+        let artifact: ConfigurableContractArtifact = fs::read_json_file(artifact_path)?;
         if let Some(metadata) = artifact.metadata {
             let metadata = serde_json::to_string_pretty(&metadata)?;
             files.insert("metadata.json".to_string(), metadata);
@@ -57,8 +61,9 @@ metadata output can be enabled via `extra_output = ["metadata"]` in `foundry.tom
             )
         }
 
-        let filename = artifact_path.file_name().unwrap().to_string_lossy().to_string();
-        files.insert(filename, fs::read_to_string(&artifact_path)?);
+        let contract_path = args.contract.path.map_or(path, PathBuf::from);
+        let filename = contract_path.file_name().unwrap().to_string_lossy().to_string();
+        files.insert(filename, fs::read_to_string(&contract_path)?);
 
         for import in entry.imports {
             let import_entry = format!("{}", import.display());

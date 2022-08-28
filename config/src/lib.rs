@@ -802,7 +802,8 @@ impl Config {
         // Sourcify verification requires solc metadata output. Since, it doesn't
         // affect the UX & performance of the compiler, output the metadata files
         // by default.
-        // For more info see: https://github.com/foundry-rs/foundry/issues/2795
+        // For more info see: <https://github.com/foundry-rs/foundry/issues/2795>
+        // Metadata is not emitted as separate file because this breaks typechain support: <https://github.com/foundry-rs/foundry/issues/2969>
         if !extra_output.contains(&ContractOutputSelection::Metadata) {
             extra_output.push(ContractOutputSelection::Metadata);
         }

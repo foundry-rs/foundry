@@ -164,7 +164,8 @@ fn verify_flag_on_create_on_chain(
                 .args(info.create_args())
                 .arg("--verify")
                 .arg(contract_path)
-                .arg(format!("--verification-provider {}", verifier));
+                .arg("--verifier")
+                .arg(verifier);
             parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
         }
     }
@@ -237,7 +238,8 @@ forgetest!(
                     ])
                     .arg("--verify")
                     .arg(contract_path)
-                    .arg(format!("--verification-provider {}", verifier));
+                    .arg("--verifier")
+                    .arg(verifier);
 
                 parse_verification_result(&mut cmd, 1).expect("Failed to verify check")
             }
