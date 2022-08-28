@@ -7,7 +7,7 @@ pub mod inline_config;
 mod macros;
 pub mod solang_ext;
 mod string;
-mod visit;
+pub mod visit;
 
 pub use foundry_config::fmt::*;
 

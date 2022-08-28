@@ -1,11 +1,11 @@
-use crate::{
-    cmd::{Cmd},
-};
+use crate::cmd::{Cmd, LoadConfig};
 use clap::{Parser, ValueHint};
-use foundry_config::{impl_figment_convert_basic};
-use std::{
-    path::{PathBuf},
-};
+use foundry_config::impl_figment_convert_basic;
+use rayon::prelude::*;
+use std::path::PathBuf;
+
+mod error;
+mod find;
 
 #[derive(Debug, Clone, Parser)]
 pub struct GeigerArgs {
@@ -50,13 +50,14 @@ impl_figment_convert_basic!(GeigerArgs);
 
 // === impl GeigerArgs ===
 
-impl GeigerArgs {
-}
+impl GeigerArgs {}
 
 impl Cmd for GeigerArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        let config = self.load_config_emit_warnings();
+
         Ok(())
     }
 }
