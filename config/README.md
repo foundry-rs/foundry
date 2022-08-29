@@ -155,8 +155,8 @@ build_info_path = "build-info"
 root = "root"
 # Configres permissions for cheatcodes that touch the filesystem like `vm.writeFile`
 # `permission` restricts the type of access, possible values are
-#    `true` => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
-#    `false` => no access
+#    `true` | "read-write" => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
+#    `false` | "none" => no access
 #    `read` => only read access (`vm.readFile`)
 #    `write` => only write access (`vm.writeFile`)
 # The `allowed_paths` further lists the paths that are considered, e.g. `./` represents the project root directory

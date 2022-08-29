@@ -1476,6 +1476,12 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
     }
 }
 
+impl AsRef<Path> for RootPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
