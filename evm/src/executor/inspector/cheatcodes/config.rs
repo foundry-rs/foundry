@@ -3,7 +3,7 @@ use bytes::Bytes;
 
 use ethers::solc::{utils::canonicalize, ProjectPathsConfig};
 use foundry_common::fs::normalize_path;
-use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
+use foundry_config::{cache::StorageCachingConfig, Config, FsPermissions, ResolvedRpcEndpoints};
 use std::path::{Path, PathBuf};
 use tracing::trace;
 
@@ -19,8 +19,10 @@ pub struct CheatsConfig {
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
     pub rpc_endpoints: ResolvedRpcEndpoints,
-    /// the project's paths as configured
+    /// Project's paths as configured
     pub paths: ProjectPathsConfig,
+    /// Filesystem permissions for cheatcodes like `writeFile`, `readFile`
+    pub fs_access: FsPermissions,
     /// Project root
     pub root: PathBuf,
     /// Paths (directories) where file reading/writing is allowed
