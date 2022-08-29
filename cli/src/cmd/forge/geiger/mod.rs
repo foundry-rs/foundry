@@ -12,6 +12,7 @@ use yansi::Paint;
 
 mod error;
 mod find;
+mod visitor;
 
 #[derive(Debug, Clone, Parser)]
 pub struct GeigerArgs {

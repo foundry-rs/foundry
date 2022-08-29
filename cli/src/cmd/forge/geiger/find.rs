@@ -1,14 +1,10 @@
 //! scan a file for unsafe usage
 
-use crate::cmd::forge::geiger::error::ScanFileError;
-use forge_fmt::{parse, Visitable, Visitor};
+use crate::cmd::forge::geiger::{error::ScanFileError, visitor::CheatcodeVisitor};
+use forge_fmt::{parse, Visitable};
 use foundry_common::fs;
-use solang_parser::{
-    diagnostics::Diagnostic,
-    pt::{ContractDefinition, Expression, FunctionDefinition, Loc, SourceUnit, Statement},
-};
+use solang_parser::{diagnostics::Diagnostic, pt::Loc};
 use std::{
-    convert::Infallible,
     fmt,
     path::{Path, PathBuf},
 };
@@ -27,98 +23,6 @@ pub fn find_cheatcodes_in_string(src: &str) -> Result<CheatcodeCounter, Vec<Diag
     let mut visitor = CheatcodeVisitor::default();
     let _ = parsed.pt.visit(&mut visitor);
     Ok(visitor.cheatcodes)
-}
-
-#[derive(Default)]
-struct CheatcodeVisitor {
-    cheatcodes: CheatcodeCounter,
-}
-
-impl Visitor for CheatcodeVisitor {
-    type Error = Infallible;
-
-    fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> Result<(), Self::Error> {
-        source_unit.0.visit(self)
-    }
-
-    fn visit_contract(&mut self, contract: &mut ContractDefinition) -> Result<(), Self::Error> {
-        contract.parts.visit(self)
-    }
-
-    fn visit_block(
-        &mut self,
-        _loc: Loc,
-        _unchecked: bool,
-        statements: &mut Vec<Statement>,
-    ) -> Result<(), Self::Error> {
-        statements.visit(self)
-    }
-
-    fn visit_expr(&mut self, _loc: Loc, expr: &mut Expression) -> Result<(), Self::Error> {
-        if let Expression::FunctionCall(loc, lhs, _) = expr {
-            // all cheatcodes are accessd via <vm>.cheatcode
-            if let Expression::MemberAccess(_, expr, identifier) = &**lhs {
-                if let Expression::Variable(_) = &**expr {
-                    match identifier.name.as_str() {
-                        "ffi" => self.cheatcodes.ffi.push(*loc),
-                        "readFile" => self.cheatcodes.read_file.push(*loc),
-                        "writeFile" => self.cheatcodes.write_file.push(*loc),
-                        "readLine" => self.cheatcodes.read_line.push(*loc),
-                        "writeLine" => self.cheatcodes.write_line.push(*loc),
-                        "closeFile" => self.cheatcodes.close_file.push(*loc),
-                        "removeFile" => self.cheatcodes.remove_file.push(*loc),
-                        "setEnv" => self.cheatcodes.set_env.push(*loc),
-                        "deriveKey" => self.cheatcodes.derive_key.push(*loc),
-                        _ => {}
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn visit_if(
-        &mut self,
-        _loc: Loc,
-        cond: &mut Expression,
-        if_branch: &mut Box<Statement>,
-        else_branch: &mut Option<Box<Statement>>,
-    ) -> Result<(), Self::Error> {
-        cond.visit(self)?;
-        if_branch.visit(self)?;
-        else_branch.visit(self)
-    }
-
-    fn visit_while(
-        &mut self,
-        _loc: Loc,
-        cond: &mut Expression,
-        body: &mut Statement,
-    ) -> Result<(), Self::Error> {
-        cond.visit(self)?;
-        body.visit(self)
-    }
-
-    fn visit_for(
-        &mut self,
-        _loc: Loc,
-        init: &mut Option<Box<Statement>>,
-        cond: &mut Option<Box<Expression>>,
-        update: &mut Option<Box<Statement>>,
-        body: &mut Option<Box<Statement>>,
-    ) -> Result<(), Self::Error> {
-        init.visit(self)?;
-        cond.visit(self)?;
-        update.visit(self)?;
-        body.visit(self)
-    }
-
-    fn visit_function(&mut self, func: &mut FunctionDefinition) -> Result<(), Self::Error> {
-        if let Some(ref mut body) = func.body {
-            body.visit(self)?;
-        }
-        Ok(())
-    }
 }
 
 /// Scan result for a single `.sol` file.
@@ -243,6 +147,22 @@ mod tests {
             function do_ffi() public {
                 string[] memory inputs = new string[](1);
                 vm.ffi(inputs);
+            }
+        }
+        "#;
+
+        let count = find_cheatcodes_in_string(s).unwrap();
+        assert_eq!(count.ffi.len(), 1);
+        assert!(count.has_unsafe());
+    }
+
+    #[test]
+    fn can_find_call_in_assignment() {
+        let s = r#"
+        contract A is Test {
+            function do_ffi() public {
+                string[] memory inputs = new string[](1);
+                bytes stuff = vm.ffi(inputs);
             }
         }
         "#;
