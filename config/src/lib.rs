@@ -8,6 +8,7 @@ use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
         Libraries, ModelCheckerSettings, ModelCheckerTarget, Optimizer, RevertStrings, Settings,
+        SettingsMetadata,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -294,6 +295,8 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Use only literal content and not URLs
+    pub use_literal_content: Option<bool>,
     /// How to treat revert (and require) reason strings.
     #[serde(with = "serde_helpers::display_from_str_opt")]
     pub revert_strings: Option<RevertStrings>,
@@ -839,7 +842,10 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            metadata: Some(self.bytecode_hash.into()),
+            metadata: Some(SettingsMetadata {
+                bytecode_hash: Some(self.bytecode_hash.clone()),
+                use_literal_content: self.use_literal_content,
+            }),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
                 debug_info: Vec::new(),
@@ -1579,6 +1585,7 @@ impl Default for Config {
             etherscan: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            use_literal_content: None,
             revert_strings: None,
             sparse_mode: false,
             build_info: false,
