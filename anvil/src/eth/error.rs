@@ -137,6 +137,10 @@ pub enum InvalidTransactionError {
     /// Thrown post London if the transaction's fee is less than the base fee of the block
     #[error("max fee per gas less than block base fee")]
     FeeTooLow,
+
+    /// Thrown when a tx was signed with a different chain_id
+    #[error("invalid chain id for signer")]
+    InvalidChainId,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
