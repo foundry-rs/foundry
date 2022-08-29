@@ -7,8 +7,8 @@ import "./Cheats.sol";
 contract FileTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
-    bytes constant FOUNDRY_READ_ERR =  "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
-    bytes constant FOUNDRY_WRITE_ERR =  "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
+    bytes constant FOUNDRY_READ_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
+    bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
