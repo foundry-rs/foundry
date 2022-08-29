@@ -9,6 +9,10 @@ use crate::{
 use ethers::types::U256;
 use revm::{Env, SpecId};
 
+/// The builder that allows to configure an evm [`Executor`] which a stack of optional
+/// [`revm::Inspector`]s, such as [`Cheatcodes`]
+///
+/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`]
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {
     /// The execution environment configuration.
