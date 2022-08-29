@@ -1362,12 +1362,14 @@ impl From<Config> for Figment {
 
         // merge environment variables
         figment = figment
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
+            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES", "FFI"]).global())
             .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE", "FUZZ_RUNS", "DEPTH"]).global())
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
-                Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
+                Env::prefixed("FOUNDRY_")
+                    .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI"])
+                    .global(),
             )
             .select(profile.clone());
 
@@ -2500,6 +2502,19 @@ mod tests {
                 let config = Config::from_provider(figment);
                 assert_eq!(config, Config::default());
             }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn ffi_env_disallowed() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_FFI", "true");
+            jail.set_env("FFI", "true");
+            jail.set_env("DAPP_FFI", "true");
+            let config = Config::load();
+            assert!(!config.ffi);
+
             Ok(())
         });
     }
