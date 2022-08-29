@@ -1684,6 +1684,15 @@ impl TransactionValidator for Backend {
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
+
+        if let Some(tx_chain_id) = tx.chain_id() {
+            let chain_id = self.chain_id();
+            if chain_id != tx_chain_id.into() {
+                warn!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
+                return Err(InvalidTransactionError::InvalidChainId)
+            }
+        }
+
         if tx.gas_limit() > env.block.gas_limit {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)
