@@ -11,8 +11,6 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-
-use ethers::types::Chain;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -870,19 +868,4 @@ async fn test_tx_access_list() {
             ],
         }]),
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn rejects_different_chain_id() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
-
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet)));
-
-    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
-
-    let res = client.send_transaction(tx, None).await;
-    let err = res.unwrap_err();
-    assert!(err.to_string().contains("invalid chain id"));
 }
