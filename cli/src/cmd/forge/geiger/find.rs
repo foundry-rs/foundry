@@ -1,7 +1,7 @@
 //! scan a file for unsafe usage
 
 use crate::cmd::forge::geiger::{error::ScanFileError, visitor::CheatcodeVisitor};
-use forge_fmt::{parse, Visitable};
+use forge_fmt::{offset_to_line_column, parse, Visitable};
 use foundry_common::fs;
 use solang_parser::{diagnostics::Diagnostic, pt::Loc};
 use std::{
@@ -56,7 +56,8 @@ impl<'a, 'b> fmt::Display for SolFileMetricsPrinter<'a, 'b> {
                         let mut iter = metrics.cheatcodes.$field.iter().peekable();
                         while let Some(loc) = iter.next() {
                             let function_call = &metrics.content.as_bytes()[loc.start().. loc.end()];
-                            let pos = format!("  --> {}:{}:{}", file.display(),  loc.start(), loc.end());
+                            let (line, col) = offset_to_line_column(&metrics.content, loc.start(), loc.end());
+                            let pos = format!("  --> {}:{}:{}", file.display(),  line, col);
                             writeln!(f,"{}", Paint::red(pos))?;
                             let content = String::from_utf8_lossy(function_call);
                             let mut lines = content.lines().peekable();
