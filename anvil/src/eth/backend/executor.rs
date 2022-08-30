@@ -251,7 +251,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
 
-        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas_used);
+        trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
         self.gas_used.saturating_add(U256::from(gas_used));
 
