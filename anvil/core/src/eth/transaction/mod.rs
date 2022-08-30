@@ -494,8 +494,8 @@ impl TypedTransaction {
 
     pub fn as_legacy(&self) -> Option<&LegacyTransaction> {
         match self {
-            TypedTransaction::Legacy(tx) => {Some(tx)},
-            _ => None
+            TypedTransaction::Legacy(tx) => Some(tx),
+            _ => None,
         }
     }
 
@@ -715,7 +715,9 @@ impl LegacyTransaction {
     }
 
     /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-    /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where {0,1} is the parity of the y value of the curve point for which r is the x-value in the secp256k1 signing process.
+    /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+    /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+    /// > secp256k1 signing process.
     pub fn meets_eip155(&self, chain_id: u64) -> bool {
         let double_chain_id = chain_id.saturating_mul(2);
         let v = self.signature.v;

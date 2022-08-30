@@ -145,14 +145,6 @@ pub enum InvalidTransactionError {
     /// Thrown when a legacy tx was signed for a different chain
     #[error("Incompatible EIP-155 transaction, signed for another chain")]
     IncompatibleEIP155,
-
-    /// Thrown when the `v` value of the legacy signature is neither 27,28 or >=37
-    ///
-    /// ref <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-    #[error(
-        "Legacy txs need either v = 27/28 or v >= 37 (EIP-155 replay protection), got v = {0}"
-    )]
-    InvalidLegacySignatureV(u64),
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.

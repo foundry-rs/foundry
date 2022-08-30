@@ -1701,13 +1701,6 @@ impl TransactionValidator for Backend {
                     return Err(InvalidTransactionError::InvalidChainId)
                 }
             }
-        } else if let Some(legacy) = tx.as_legacy() {
-            // this branch is only hit if  v < 37, see [`LegacyTransaction::chain_id()`]
-            let v = legacy.signature.v;
-            if v != 27 || v != 28 {
-                warn!(target: "backend", ?v, "invalid v on legacy transaction");
-                return Err(InvalidTransactionError::InvalidLegacySignatureV(v))
-            }
         }
 
         if tx.gas_limit() > env.block.gas_limit {
