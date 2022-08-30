@@ -6,7 +6,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use std::collections::BTreeMap;
 
 /// Configures file system access
 ///
@@ -22,10 +21,8 @@ pub struct FsPermissions {
 
 impl FsPermissions {
     /// Creates anew instance with the given `permissions`
-    pub fn new(
-        permissions: impl IntoIterator<Item = (PathPermission)>,
-    ) -> Self {
-        Self { permissions: permissions.collect() }
+    pub fn new(permissions: impl IntoIterator<Item = PathPermission>) -> Self {
+        Self { permissions: permissions.into_iter().collect() }
     }
 
     /// Returns true if access to the specified path is allowed with the specified.
@@ -42,12 +39,8 @@ impl FsPermissions {
 
     /// Returns the permission for the matching path
     pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
-        self.permissions
-            .iter()
-            .find(|perm| path.starts_with(&perm.path))
-            .map(|perm| perm.access)
+        self.permissions.iter().find(|perm| path.starts_with(&perm.path)).map(|perm| perm.access)
     }
-
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
     pub fn join_all(&mut self, root: impl AsRef<Path>) {
@@ -64,26 +57,47 @@ impl FsPermissions {
     }
 }
 
-
-
 /// Represents an access permission to a single path
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PathPermission {
     /// Permission level to access the `path`
     pub access: FsAccessPermission,
     /// The targeted path guarded by the permission
-    pub path: PathBuf
+    pub path: PathBuf,
 }
 
 // === impl PathPermission ===
 
 impl PathPermission {
+    /// Returns a new permission for the path and the given access
+    pub fn new(path: impl Into<PathBuf>, access: FsAccessPermission) -> Self {
+        Self { path: path.into(), access }
+    }
+
+    /// Returns a new read-only permission for the path
+    pub fn read(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, FsAccessPermission::Read)
+    }
+
+    /// Returns a new read-write permission for the path
+    pub fn read_write(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, FsAccessPermission::ReadWrite)
+    }
+
+    /// Returns a new write-only permission for the path
+    pub fn write(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, FsAccessPermission::Write)
+    }
+
+    /// Returns a non permission for the path
+    pub fn none(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, FsAccessPermission::None)
+    }
 
     /// Returns true if the access is allowed
     pub fn is_granted(&self, kind: FsAccessKind) -> bool {
         self.access.is_granted(kind)
     }
-
 }
 
 /// Represents the operation on the fs
@@ -190,11 +204,8 @@ impl<'de> Deserialize<'de> for FsAccessPermission {
         }
         match Status::deserialize(deserializer)? {
             Status::Bool(enabled) => {
-                let status = if enabled {
-                    FsAccessPermission::ReadWrite
-                } else {
-                    FsAccessPermission::None
-                };
+                let status =
+                    if enabled { FsAccessPermission::ReadWrite } else { FsAccessPermission::None };
                 Ok(status)
             }
             Status::String(val) => val.parse().map_err(serde::de::Error::custom),
@@ -209,6 +220,8 @@ mod tests {
     #[test]
     fn can_parse_permission() {
         assert_eq!(FsAccessPermission::ReadWrite, "true".parse().unwrap());
+        assert_eq!(FsAccessPermission::ReadWrite, "readwrite".parse().unwrap());
+        assert_eq!(FsAccessPermission::ReadWrite, "read-write".parse().unwrap());
         assert_eq!(FsAccessPermission::None, "false".parse().unwrap());
         assert_eq!(FsAccessPermission::None, "none".parse().unwrap());
         assert_eq!(FsAccessPermission::Read, "read".parse().unwrap());

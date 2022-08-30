@@ -2449,7 +2449,7 @@ mod tests {
         cache::{CachedChains, CachedEndpoints},
         endpoints::RpcEndpoint,
         etherscan::ResolvedEtherscanConfigs,
-        fs_permissions::FsAccessPermission,
+        fs_permissions::PathPermission,
     };
     use ethers_core::types::Chain::Moonbeam;
     use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
@@ -3580,33 +3580,25 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [profile.default]
-                fs_permissions = { permission = true, allowed_paths = ["./"]}
+                fs_permissions = [{ access = "read-write", path = "./"}]
             "#,
             )?;
             let loaded = Config::load();
+
             assert_eq!(
                 loaded.fs_permissions,
-                FsPermissions {
-                    permission: FsAccessPermission::Enabled,
-                    allowed_paths: vec!["./".into()]
-                }
+                FsPermissions::new(vec![PathPermission::read_write("./")])
             );
 
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
-                fs_permissions = { permission = false, allowed_paths = ["./"]}
+                fs_permissions = [{ access = "none", path = "./"}]
             "#,
             )?;
             let loaded = Config::load();
-            assert_eq!(
-                loaded.fs_permissions,
-                FsPermissions {
-                    permission: FsAccessPermission::Disabled,
-                    allowed_paths: vec!["./".into()]
-                }
-            );
+            assert_eq!(loaded.fs_permissions, FsPermissions::new(vec![PathPermission::none("./")]));
 
             Ok(())
         });
