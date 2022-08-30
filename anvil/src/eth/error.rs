@@ -141,6 +141,10 @@ pub enum InvalidTransactionError {
     /// Thrown when a tx was signed with a different chain_id
     #[error("invalid chain id for signer")]
     InvalidChainId,
+
+    /// Thrown when a legacy tx was signed for a different chain
+    #[error("Incompatible EIP-155 transaction, signed for another chain")]
+    IncompatibleEIP155,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
