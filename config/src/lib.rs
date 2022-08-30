@@ -1369,6 +1369,16 @@ impl From<Config> for Figment {
             .merge(
                 Env::prefixed("FOUNDRY_")
                     .ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES", "FFI"])
+                    .map(|key| {
+                        let key = key.as_str();
+                        if Config::STANDALONE_SECTIONS.iter().any(|section| {
+                            key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
+                        }) {
+                            key.replacen('_', ".", 1).into()
+                        } else {
+                            key.into()
+                        }
+                    })
                     .global(),
             )
             .select(profile.clone());
@@ -3675,6 +3685,33 @@ mod tests {
                 loaded.invariant,
                 InvariantConfig { runs: 512, depth: 10, ..Default::default() }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_standalone_sections_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                runs = 100
+
+                [invariant]
+                depth = 1
+            "#,
+            )?;
+
+            jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
+            jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
+            jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+
+            let config = Config::load();
+            assert_eq!(config.fmt.line_length, 95);
+            assert_eq!(config.fuzz.dictionary_weight, 99);
+            assert_eq!(config.invariant.depth, 5);
 
             Ok(())
         });
