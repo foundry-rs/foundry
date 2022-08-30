@@ -37,28 +37,28 @@ contract ParseTest is DSTest {
         assertEq(testAddress, cheats.parseAddress(stringAddress));
     }
 
-    function testParseUint256() public {
-        uint256 testUint256 = 420;
+    function testParseUint() public {
+        uint256 testUint = 420;
 
-        string memory stringUint256 = "420";
-        assertEq(testUint256, cheats.parseUint256(stringUint256));
+        string memory stringUint = "420";
+        assertEq(testUint, cheats.parseUint(stringUint));
     }
 
-    function testParseUint256Fuzzed(uint256 testUint256) public {
-        string memory stringUint256 = cheats.toString(testUint256);
-        assertEq(testUint256, cheats.parseUint256(stringUint256));
+    function testParseUintFuzzed(uint256 testUint) public {
+        string memory stringUint = cheats.toString(testUint);
+        assertEq(testUint, cheats.parseUint(stringUint));
     }
 
-    function testParseInt256() public {
-        int256 testInt256 = 420;
+    function testParseInt() public {
+        int256 testInt = 420;
 
-        string memory stringInt256 = "420";
-        assertEq(testInt256, cheats.parseInt256(stringInt256));
+        string memory stringInt = "420";
+        assertEq(testInt, cheats.parseInt(stringInt));
     }
 
-    function testParseInt256Fuzzed(int256 testInt256) public {
-        string memory stringInt256 = cheats.toString(testInt256);
-        assertEq(testInt256, cheats.parseInt256(stringInt256));
+    function testParseIntFuzzed(int256 testInt) public {
+        string memory stringInt = cheats.toString(testInt);
+        assertEq(testInt, cheats.parseInt(stringInt));
     }
 
     function testParseBytes32() public {
