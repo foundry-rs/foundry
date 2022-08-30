@@ -173,7 +173,7 @@ impl Default for CheatsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_config::fs_permissions::FsAccessPermission;
+    use foundry_config::fs_permissions::PathPermission;
 
     fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn test_allowed_paths() {
         let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(FsAccessPermission::Enabled, ["./"]));
+        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn test_is_foundry_toml() {
         let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(FsAccessPermission::Enabled, ["./"]));
+        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         let f = format!("{}foundry.toml", root);
         assert!(config.is_foundry_toml(&f));
