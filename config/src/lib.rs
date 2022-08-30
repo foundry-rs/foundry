@@ -3330,6 +3330,9 @@ mod tests {
 
                 [profile.ci.fuzz]
                 dictionary_weight = 5
+
+                [profile.ci.invariant]
+                runs = 400
             "#,
             )?;
 
@@ -3347,7 +3350,8 @@ mod tests {
 
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let ci_config = Config::load();
-            assert_eq!(ci_config.invariant.runs, 420);
+            assert_eq!(ci_config.fuzz.runs, 1);
+            assert_eq!(ci_config.invariant.runs, 400);
             assert_eq!(ci_config.fuzz.dictionary_weight, 5);
             assert_eq!(ci_config.invariant.dictionary_weight, config.fuzz.dictionary_weight);
 
