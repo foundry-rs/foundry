@@ -12,7 +12,6 @@ use crate::{
 };
 use clap::Parser;
 use ethers::solc::{Project, ProjectCompileOutput};
-
 use foundry_config::{
     figment::{
         self,

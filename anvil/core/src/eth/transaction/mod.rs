@@ -492,6 +492,23 @@ impl TypedTransaction {
         }
     }
 
+    pub fn as_legacy(&self) -> Option<&LegacyTransaction> {
+        match self {
+            TypedTransaction::Legacy(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns true whether this tx is a legacy transaction
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, TypedTransaction::Legacy(_))
+    }
+
+    /// Returns true whether this tx is a EIP1559 transaction
+    pub fn is_eip1559(&self) -> bool {
+        matches!(self, TypedTransaction::EIP1559(_))
+    }
+
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
@@ -695,6 +712,16 @@ impl LegacyTransaction {
         } else {
             None
         }
+    }
+
+    /// See <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+    /// > If you do, then the v of the signature MUST be set to {0,1} + CHAIN_ID * 2 + 35 where
+    /// > {0,1} is the parity of the y value of the curve point for which r is the x-value in the
+    /// > secp256k1 signing process.
+    pub fn meets_eip155(&self, chain_id: u64) -> bool {
+        let double_chain_id = chain_id.saturating_mul(2);
+        let v = self.signature.v;
+        v == double_chain_id + 35 || v == double_chain_id + 36
     }
 }
 

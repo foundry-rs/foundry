@@ -1688,8 +1688,18 @@ impl TransactionValidator for Backend {
         if let Some(tx_chain_id) = tx.chain_id() {
             let chain_id = self.chain_id();
             if chain_id != tx_chain_id.into() {
-                warn!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
-                return Err(InvalidTransactionError::InvalidChainId)
+                if let Some(legacy) = tx.as_legacy() {
+                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        !legacy.meets_eip155(chain_id.as_u64())
+                    {
+                        warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
+                        return Err(InvalidTransactionError::IncompatibleEIP155)
+                    }
+                } else {
+                    warn!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
+                    return Err(InvalidTransactionError::InvalidChainId)
+                }
             }
         }
 

@@ -424,6 +424,33 @@ where
     }
 }
 
+impl<T> Visitable for Box<T>
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        T::visit(self, v)
+    }
+}
+
+impl<T> Visitable for Vec<T>
+where
+    T: Visitable,
+{
+    fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
+    where
+        V: Visitor,
+    {
+        for item in self.iter_mut() {
+            item.visit(v)?;
+        }
+        Ok(())
+    }
+}
+
 impl Visitable for SourceUnitPart {
     fn visit<V>(&mut self, v: &mut V) -> Result<(), V::Error>
     where

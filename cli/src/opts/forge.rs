@@ -13,6 +13,7 @@ use crate::cmd::forge::{
     flatten,
     fmt::FmtArgs,
     fourbyte::UploadSelectorsArgs,
+    geiger,
     init::InitArgs,
     inspect,
     install::InstallArgs,
@@ -162,6 +163,11 @@ pub enum Subcommands {
         about = "Display a tree visualization of the project's dependency graph."
     )]
     Tree(tree::TreeArgs),
+
+    #[clap(
+        about = "Detects usage of unsafe cheat codes in a foundry project and its dependencies."
+    )]
+    Geiger(geiger::GeigerArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

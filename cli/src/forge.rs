@@ -113,6 +113,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Geiger(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())
