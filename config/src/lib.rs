@@ -1374,7 +1374,7 @@ impl From<Config> for Figment {
                         if Config::STANDALONE_SECTIONS.iter().any(|section| {
                             key.starts_with(&format!("{}_", section.to_ascii_uppercase()))
                         }) {
-                            key.replacen("_", ".", 1).into()
+                            key.replacen('_', ".", 1).into()
                         } else {
                             key.into()
                         }
