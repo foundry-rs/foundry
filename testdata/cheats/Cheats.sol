@@ -150,8 +150,8 @@ interface Cheats {
 
     function parseBytes(string memory) external returns (bytes memory);
     function parseAddress(string memory) external returns (address);
-    function parseUint256(string memory) external returns (uint256);
-    function parseInt256(string memory) external returns (int256);
+    function parseUint(string memory) external returns (uint256);
+    function parseInt(string memory) external returns (int256);
     function parseBytes32(string memory) external returns (bytes32);
     function parseBool(string memory) external returns (bool);
 

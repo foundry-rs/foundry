@@ -145,8 +145,8 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::ParseBytes(inner) => value_to_abi(vec![&inner.0], ParamType::Bytes, false),
         HEVMCalls::ParseAddress(inner) => value_to_abi(vec![&inner.0], ParamType::Address, false),
-        HEVMCalls::ParseUint256(inner) => value_to_abi(vec![&inner.0], ParamType::Uint(256), false),
-        HEVMCalls::ParseInt256(inner) => value_to_abi(vec![&inner.0], ParamType::Int(256), false),
+        HEVMCalls::ParseUint(inner) => value_to_abi(vec![&inner.0], ParamType::Uint(256), false),
+        HEVMCalls::ParseInt(inner) => value_to_abi(vec![&inner.0], ParamType::Int(256), false),
         HEVMCalls::ParseBytes32(inner) => {
             value_to_abi(vec![&inner.0], ParamType::FixedBytes(32), false)
         }

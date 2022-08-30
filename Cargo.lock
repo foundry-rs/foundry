@@ -2150,6 +2150,7 @@ dependencies = [
  "ethers-solc",
  "eyre",
  "foundry-config",
+ "once_cell",
  "reqwest",
  "serde",
  "serde_json",

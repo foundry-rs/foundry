@@ -12,6 +12,7 @@ use ethers::{
     },
 };
 
+use ethers::types::Chain;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -779,6 +780,29 @@ async fn can_stream_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
+    /// returns a String representation of the AccessList, with sorted
+    /// keys (address) and storage slots
+    fn access_list_to_sorted_string(a: AccessList) -> String {
+        let mut a = a.0;
+        a.sort_by_key(|v| v.address);
+
+        let a = a
+            .iter_mut()
+            .map(|v| {
+                v.storage_keys.sort();
+                (v.address, std::mem::take(&mut v.storage_keys))
+            })
+            .collect::<Vec<_>>();
+
+        format!("{:?}", a)
+    }
+
+    /// asserts that the two access lists are equal, by comparing their sorted
+    /// string representation
+    fn assert_access_list_eq(a: AccessList, b: AccessList) {
+        assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    }
+
     // We want to test a couple of things:
     //     - When calling a contract with no storage read/write, it shouldn't be in the AL
     //     - When a contract calls a contract, the latter one should be in the AL
@@ -848,25 +872,17 @@ async fn test_tx_access_list() {
     );
 }
 
-/// returns a String representation of the AccessList, with sorted
-/// keys (address) and storage slots
-fn access_list_to_sorted_string(a: AccessList) -> String {
-    let mut a = a.0;
-    a.sort_by_key(|v| v.address);
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_different_chain_id() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
-    let a = a
-        .iter_mut()
-        .map(|v| {
-            v.storage_keys.sort();
-            (v.address, std::mem::take(&mut v.storage_keys))
-        })
-        .collect::<Vec<_>>();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet)));
 
-    format!("{:?}", a)
-}
+    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
 
-/// asserts that the two access lists are equal, by comparing their sorted
-/// string representation
-fn assert_access_list_eq(a: AccessList, b: AccessList) {
-    assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    let res = client.send_transaction(tx, None).await;
+    let err = res.unwrap_err();
+    assert!(err.to_string().contains("invalid chain id"));
 }

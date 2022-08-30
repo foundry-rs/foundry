@@ -121,7 +121,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             None
         };
 
-        for (idx, tx) in self.enumerate() {
+        for tx in self.into_iter() {
             let tx = match tx {
                 TransactionExecutionOutcome::Executed(tx) => {
                     included.push(tx.transaction.clone());
@@ -144,9 +144,11 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             } else {
                 None
             };
+
+            let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
                 transaction_hash: *transaction.hash(),
-                transaction_index: idx as u32,
+                transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
                 contract_address,

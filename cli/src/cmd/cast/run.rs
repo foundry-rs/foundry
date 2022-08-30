@@ -53,6 +53,11 @@ pub struct RunArgs {
 
 impl Cmd for RunArgs {
     type Output = ();
+    /// Executes the transaction by replaying it
+    ///
+    /// This replays the entire block the transaction was mined in unless `quick` is set to true
+    ///
+    /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     fn run(self) -> eyre::Result<Self::Output> {
         RuntimeOrHandle::new().block_on(self.run_tx())
     }
@@ -85,6 +90,8 @@ impl RunArgs {
             let env = evm_opts.evm_env().await;
             let db = Backend::spawn(evm_opts.get_fork(&config, env.clone()));
 
+            // configures a bare version of the evm executor: no cheatcode inspector is enabled,
+            // tracing will be enabled only for the targeted transaction
             let builder = ExecutorBuilder::default()
                 .with_config(env)
                 .with_spec(crate::utils::evm_spec(&config.evm_version));
