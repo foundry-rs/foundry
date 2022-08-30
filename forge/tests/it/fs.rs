@@ -5,13 +5,13 @@ use crate::{
     test_helpers::{filter::Filter, PROJECT},
 };
 use forge::result::SuiteResult;
-use foundry_config::{fs_permissions::FsAccessPermission, Config, FsPermissions};
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_evm::decode::decode_console_logs;
 
 #[test]
 fn test_fs_disabled() {
     let mut config = Config::with_root(PROJECT.root());
-    config.fs_permissions = FsPermissions::new(FsAccessPermission::Disabled, ["./"]);
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::none("./")]);
     let mut runner = runner_with_config(config);
     let suite_result =
         runner.test(&Filter::new(".*", ".*", ".*fs/Disabled"), None, TEST_OPTS).unwrap();

@@ -3,7 +3,7 @@
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
 use foundry_config::{
-    fs_permissions::FsAccessPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
+    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
     RpcEndpoint, RpcEndpoints,
 };
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
@@ -51,7 +51,7 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 /// Builds a non-tracing runner
 pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
-    config.fs_permissions = FsPermissions::new(FsAccessPermission::Enabled, [manifest_root()]);
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
     runner_with_config(config)
 }
 

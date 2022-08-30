@@ -153,7 +153,7 @@ sparse_mode = false
 build_info = true
 build_info_path = "build-info"
 root = "root"
-# Configres permissions for cheatcodes that touch the filesystem like `vm.writeFile`
+# Configures permissions for cheatcodes that touch the filesystem like `vm.writeFile`
 # `access` restricts how the `path` can be accessed via cheatcodes
 #    `read-write` | `true`   => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
 #    `none`| `false` => no access
