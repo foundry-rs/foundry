@@ -29,7 +29,7 @@ use forge::{
     },
 };
 use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
-use foundry_config::Config;
+use foundry_config::{figment, Config};
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -40,6 +40,10 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 mod runner;
 use runner::ScriptRunner;
@@ -56,7 +60,7 @@ use crate::cmd::retry::RetryArgs;
 pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
@@ -484,6 +488,23 @@ impl ScriptArgs {
     }
 }
 
+impl Provider for ScriptArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Script Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert(
+                "etherscan_api_key".to_string(),
+                figment::value::Value::from(etherscan_api_key.to_string()),
+            );
+        }
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
@@ -515,4 +536,22 @@ pub struct ScriptConfig {
     pub sender_nonce: U256,
     pub backend: Option<Backend>,
     pub called_function: Option<Function>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::LoadConfig;
+
+    #[test]
+    fn can_merge_script_config() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "goerli",
+        ]);
+        let config = args.load_config();
+        assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
 }
