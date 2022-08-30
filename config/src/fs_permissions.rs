@@ -6,27 +6,26 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use std::collections::BTreeMap;
 
 /// Configures file system access
 ///
 /// E.g. for cheat codes (`vm.writeFile`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
 pub struct FsPermissions {
     /// what kind of access is allowed
-    pub permission: FsAccessPermission,
-    /// All paths that are allowed to access
-    pub allowed_paths: Vec<PathBuf>,
+    pub permissions: Vec<PathPermission>,
 }
 
 // === impl FsPermissions ===
 
 impl FsPermissions {
-    /// Creates anew instance with the given `permission` and `allowed_paths`
+    /// Creates anew instance with the given `permissions`
     pub fn new(
-        permission: FsAccessPermission,
-        allowed_paths: impl IntoIterator<Item = impl Into<PathBuf>>,
+        permissions: impl IntoIterator<Item = (PathPermission)>,
     ) -> Self {
-        Self { permission, allowed_paths: allowed_paths.into_iter().map(Into::into).collect() }
+        Self { permissions: permissions.collect() }
     }
 
     /// Returns true if access to the specified path is allowed with the specified.
@@ -38,17 +37,23 @@ impl FsPermissions {
     /// Caution: This should be called with normalized paths if the `allowed_paths` are also
     /// normalized.
     pub fn is_path_allowed(&self, path: &Path, kind: FsAccessKind) -> bool {
-        if !self.permission.is_granted(kind) {
-            return false
-        }
-        self.allowed_paths.iter().any(|allowed_path| path.starts_with(allowed_path))
+        self.find_permission(path).map(|perm| perm.is_granted(kind)).unwrap_or_default()
     }
+
+    /// Returns the permission for the matching path
+    pub fn find_permission(&self, path: &Path) -> Option<FsAccessPermission> {
+        self.permissions
+            .iter()
+            .find(|perm| path.starts_with(&perm.path))
+            .map(|perm| perm.access)
+    }
+
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
     pub fn join_all(&mut self, root: impl AsRef<Path>) {
         let root = root.as_ref();
-        self.allowed_paths.iter_mut().for_each(|p| {
-            *p = root.join(&*p);
+        self.permissions.iter_mut().for_each(|perm| {
+            perm.path = root.join(&perm.path);
         })
     }
 
@@ -57,6 +62,28 @@ impl FsPermissions {
         self.join_all(root);
         self
     }
+}
+
+
+
+/// Represents an access permission to a single path
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PathPermission {
+    /// Permission level to access the `path`
+    pub access: FsAccessPermission,
+    /// The targeted path guarded by the permission
+    pub path: PathBuf
+}
+
+// === impl PathPermission ===
+
+impl PathPermission {
+
+    /// Returns true if the access is allowed
+    pub fn is_granted(&self, kind: FsAccessKind) -> bool {
+        self.access.is_granted(kind)
+    }
+
 }
 
 /// Represents the operation on the fs
@@ -80,10 +107,10 @@ impl fmt::Display for FsAccessKind {
 /// Determines the status of file system access
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FsAccessPermission {
-    /// FS access is allowed, this includes `read` + `write`
-    Enabled,
     /// FS access is _not_ allowed
-    Disabled,
+    None,
+    /// FS access is allowed, this includes `read` + `write`
+    ReadWrite,
     /// Only reading is allowed
     Read,
     /// Only writing is allowed
@@ -96,8 +123,8 @@ impl FsAccessPermission {
     /// Returns true if the access is allowed
     pub fn is_granted(&self, kind: FsAccessKind) -> bool {
         match (self, kind) {
-            (FsAccessPermission::Enabled, _) => true,
-            (FsAccessPermission::Disabled, _) => false,
+            (FsAccessPermission::ReadWrite, _) => true,
+            (FsAccessPermission::None, _) => false,
             (FsAccessPermission::Read, FsAccessKind::Read) => true,
             (FsAccessPermission::Write, FsAccessKind::Write) => true,
             _ => false,
@@ -107,7 +134,7 @@ impl FsAccessPermission {
 
 impl Default for FsAccessPermission {
     fn default() -> Self {
-        FsAccessPermission::Disabled
+        FsAccessPermission::None
     }
 }
 
@@ -116,8 +143,8 @@ impl FromStr for FsAccessPermission {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "true" | "read-write" => Ok(FsAccessPermission::Enabled),
-            "false" | "none" => Ok(FsAccessPermission::Disabled),
+            "true" | "read-write" | "readwrite" => Ok(FsAccessPermission::ReadWrite),
+            "false" | "none" => Ok(FsAccessPermission::None),
             "read" => Ok(FsAccessPermission::Read),
             "write" => Ok(FsAccessPermission::Write),
             _ => Err(format!("Unknown variant {}", s)),
@@ -128,8 +155,8 @@ impl FromStr for FsAccessPermission {
 impl fmt::Display for FsAccessPermission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FsAccessPermission::Enabled => f.write_str("true"),
-            FsAccessPermission::Disabled => f.write_str("false"),
+            FsAccessPermission::ReadWrite => f.write_str("read-write"),
+            FsAccessPermission::None => f.write_str("none"),
             FsAccessPermission::Read => f.write_str("read"),
             FsAccessPermission::Write => f.write_str("write"),
         }
@@ -142,8 +169,8 @@ impl Serialize for FsAccessPermission {
         S: Serializer,
     {
         match self {
-            FsAccessPermission::Enabled => serializer.serialize_bool(true),
-            FsAccessPermission::Disabled => serializer.serialize_bool(false),
+            FsAccessPermission::ReadWrite => serializer.serialize_bool(true),
+            FsAccessPermission::None => serializer.serialize_bool(false),
             FsAccessPermission::Read => serializer.serialize_str("read"),
             FsAccessPermission::Write => serializer.serialize_str("write"),
         }
@@ -164,9 +191,9 @@ impl<'de> Deserialize<'de> for FsAccessPermission {
         match Status::deserialize(deserializer)? {
             Status::Bool(enabled) => {
                 let status = if enabled {
-                    FsAccessPermission::Enabled
+                    FsAccessPermission::ReadWrite
                 } else {
-                    FsAccessPermission::Disabled
+                    FsAccessPermission::None
                 };
                 Ok(status)
             }
@@ -181,9 +208,9 @@ mod tests {
 
     #[test]
     fn can_parse_permission() {
-        assert_eq!(FsAccessPermission::Enabled, "true".parse().unwrap());
-        assert_eq!(FsAccessPermission::Disabled, "false".parse().unwrap());
-        assert_eq!(FsAccessPermission::Disabled, "none".parse().unwrap());
+        assert_eq!(FsAccessPermission::ReadWrite, "true".parse().unwrap());
+        assert_eq!(FsAccessPermission::None, "false".parse().unwrap());
+        assert_eq!(FsAccessPermission::None, "none".parse().unwrap());
         assert_eq!(FsAccessPermission::Read, "read".parse().unwrap());
         assert_eq!(FsAccessPermission::Write, "write".parse().unwrap());
     }
