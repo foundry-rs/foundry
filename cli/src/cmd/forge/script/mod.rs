@@ -13,10 +13,11 @@ use ethers::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
         U256,
-    }, signers::LocalWallet,
+    },
 };
 use eyre::ContextCompat;
 use forge::{

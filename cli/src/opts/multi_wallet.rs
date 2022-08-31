@@ -205,10 +205,10 @@ impl MultiWallet {
         let mut unused_wallets = vec![];
 
         let script_wallets_fn = || -> Result<Option<Vec<LocalWallet>>> {
-          if script_wallets.len().gt(&0) {
-              return Ok(Some(script_wallets))
-          }
-          Ok(None)
+            if script_wallets.len().gt(&0) {
+                return Ok(Some(script_wallets))
+            }
+            Ok(None)
         };
 
         get_wallets!(

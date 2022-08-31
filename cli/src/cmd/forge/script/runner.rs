@@ -81,8 +81,16 @@ impl ScriptRunner {
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup {
-            (true, 0, Default::default(), None, vec![constructor_debug].into_iter().collect(), vec![])
+        let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
+        {
+            (
+                true,
+                0,
+                Default::default(),
+                None,
+                vec![constructor_debug].into_iter().collect(),
+                vec![],
+            )
         } else {
             match self.executor.setup(Some(self.sender), address) {
                 Ok(CallResult {
@@ -269,7 +277,17 @@ impl ScriptRunner {
             res = self.executor.call_raw_committing(from, to, calldata.0, value)?;
         }
 
-        let RawCallResult { result, reverted, logs, traces, labels, debug, transactions, script_wallets, .. } = res;
+        let RawCallResult {
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            debug,
+            transactions,
+            script_wallets,
+            ..
+        } = res;
 
         Ok(ScriptResult {
             returned: result,

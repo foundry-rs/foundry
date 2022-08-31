@@ -9,7 +9,8 @@ use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
-    types::{transaction::eip2718::TypedTransaction, Log}, signers::LocalWallet,
+    signers::LocalWallet,
+    types::{transaction::eip2718::TypedTransaction, Log},
 };
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
@@ -496,7 +497,7 @@ impl Executor {
                     labels,
                     state_changeset: None,
                     transactions: None,
-                    script_wallets
+                    script_wallets,
                 })
             }
         };
@@ -605,6 +606,7 @@ impl Executor {
 }
 
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
     #[error("Execution reverted: {reason} (gas: {gas_used})")]

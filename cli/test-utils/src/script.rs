@@ -104,18 +104,15 @@ impl ScriptTester {
     }
 
     pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
-      for address in addresses {
-          let nonce = self
-              .provider
-              .get_transaction_count(
-                  NameOrAddress::Address(address),
-                  None,
-              )
-              .await
-              .unwrap();
-          self.address_nonces.insert(address, nonce);
-      }
-      self
+        for address in addresses {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            self.address_nonces.insert(address, nonce);
+        }
+        self
     }
 
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
@@ -164,21 +161,21 @@ impl ScriptTester {
     }
 
     /// In Vec<(address, expected increment)>
-    pub async fn assert_nonce_increment_addresses(&mut self, address_indexes: Vec<(Address, u32)>) -> &mut Self {
-      for (address, expected_increment) in address_indexes {
-          let nonce = self
-              .provider
-              .get_transaction_count(
-                  NameOrAddress::Address(address),
-                  None,
-              )
-              .await
-              .unwrap();
-          let prev_nonce = self.address_nonces.get(&address).unwrap();
+    pub async fn assert_nonce_increment_addresses(
+        &mut self,
+        address_indexes: Vec<(Address, u32)>,
+    ) -> &mut Self {
+        for (address, expected_increment) in address_indexes {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            let prev_nonce = self.address_nonces.get(&address).unwrap();
 
-          assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
-      }
-      self
+            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
+        }
+        self
     }
 
     pub fn run(&mut self, expected: ScriptOutcome) -> &mut Self {

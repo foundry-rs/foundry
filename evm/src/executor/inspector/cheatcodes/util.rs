@@ -111,7 +111,7 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
 
 fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
     if private_key.is_zero() {
-      return Err("Private key cannot be 0.".to_string().encode().into())
+        return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
     if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {

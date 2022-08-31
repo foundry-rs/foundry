@@ -13,10 +13,11 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
-    }, signers::LocalWallet,
+    },
 };
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
