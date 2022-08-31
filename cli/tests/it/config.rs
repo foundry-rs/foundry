@@ -38,6 +38,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         gas_reports_ignore: vec![],
         solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
         auto_detect_solc: false,
+        auto_detect_remappings: true,
         offline: true,
         optimizer: false,
         optimizer_runs: 1000,
@@ -536,4 +537,20 @@ forgetest!(config_emit_warnings, |prj: TestProject, mut cmd: TestCommand| {
             .count(),
         1
     )
+});
+
+forgetest_init!(can_skip_remappings_auto_detection, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set remapping and libraries
+    let config = Config {
+        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
+        auto_detect_remappings: false,
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    let config = cmd.config();
+
+    // only loads remappings from foundry.toml
+    assert_eq!(config.remappings.len(), 1);
+    assert_eq!("remapping/=lib/remapping/", config.remappings[0].to_string());
 });

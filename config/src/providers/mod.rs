@@ -4,6 +4,8 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 
+pub mod remappings;
+
 /// Generate warnings for unknown sections
 pub struct WarningsProvider<P> {
     provider: P,
