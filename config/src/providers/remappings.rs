@@ -18,6 +18,9 @@ use tracing::trace;
 ///   - `<root>/remappings.txt` file
 ///   - `Remapping::find_many`.
 pub struct RemappingsProvider<'a> {
+    /// Whether to auto detect remappings from the `lib_paths`
+    pub auto_detect_remappings: bool,
+    /// The lib/dependency directories to scan for remappings
     pub lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
     /// `Remapping::find_many` into a relative one.
@@ -79,33 +82,36 @@ impl<'a> RemappingsProvider<'a> {
 
         new_remappings.extend(remappings);
 
-        let mut lib_remappings = HashMap::new();
-        // find all remappings of from libs that use a foundry.toml
-        for r in self.lib_foundry_toml_remappings() {
-            insert_closest(&mut lib_remappings, r.name, r.path.into());
-        }
-        // use auto detection for all libs
-        for r in self
-            .lib_paths
-            .iter()
-            .map(|lib| self.root.join(lib))
-            .inspect(|lib| {
-                trace!("find all remappings in lib path: {:?}", lib);
-            })
-            .flat_map(Remapping::find_many)
-        {
-            // this is an additional safety check for weird auto-detected remappings
-            if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
-                continue
+        // scan all library dirs and autodetect remappings
+        if self.auto_detect_remappings {
+            let mut lib_remappings = HashMap::new();
+            // find all remappings of from libs that use a foundry.toml
+            for r in self.lib_foundry_toml_remappings() {
+                insert_closest(&mut lib_remappings, r.name, r.path.into());
             }
-            insert_closest(&mut lib_remappings, r.name, r.path.into());
-        }
+            // use auto detection for all libs
+            for r in self
+                .lib_paths
+                .iter()
+                .map(|lib| self.root.join(lib))
+                .inspect(|lib| {
+                    trace!("find all remappings in lib path: {:?}", lib);
+                })
+                .flat_map(Remapping::find_many)
+            {
+                // this is an additional safety check for weird auto-detected remappings
+                if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
+                    continue
+                }
+                insert_closest(&mut lib_remappings, r.name, r.path.into());
+            }
 
-        new_remappings.extend(
-            lib_remappings
-                .into_iter()
-                .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
-        );
+            new_remappings.extend(
+                lib_remappings
+                    .into_iter()
+                    .map(|(name, path)| Remapping { name, path: path.to_string_lossy().into() }),
+            );
+        }
 
         // remove duplicates at this point
         new_remappings.sort_by(|a, b| a.name.cmp(&b.name));

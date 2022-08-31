@@ -1389,6 +1389,9 @@ impl From<Config> for Figment {
         // redundant fs lookups to determine the default remappings that are eventually updated by
         // other providers, like the toml file
         let remappings = RemappingsProvider {
+            auto_detect_remappings: figment
+                .extract_inner::<bool>("auto_detect_remappings")
+                .unwrap_or(true),
             lib_paths: figment
                 .extract_inner::<Vec<PathBuf>>("libs")
                 .map(Cow::Owned)
