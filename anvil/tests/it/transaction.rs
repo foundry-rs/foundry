@@ -869,3 +869,27 @@ async fn test_tx_access_list() {
         }]),
     );
 }
+
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn estimates_gas_on_pending_by_default() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
+    client.send_transaction(tx, None).await.unwrap();
+
+    let tx =
+        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
+    api.estimate_gas(tx.into(), None).await.unwrap();
+}
