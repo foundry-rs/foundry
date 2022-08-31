@@ -16,7 +16,7 @@ use ethers::{
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
-    },
+    }, signers::LocalWallet,
 };
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
@@ -73,6 +73,9 @@ pub struct Cheatcodes {
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
+
+    /// Rememebered private keys
+    pub script_wallets: Vec<LocalWallet>,
 
     /// Prank information
     pub prank: Option<Prank>,

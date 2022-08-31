@@ -9,7 +9,7 @@ use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
-    types::{transaction::eip2718::TypedTransaction, Log},
+    types::{transaction::eip2718::TypedTransaction, Log}, signers::LocalWallet,
 };
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
@@ -229,6 +229,7 @@ impl Executor {
             debug,
             transactions,
             state_changeset,
+            script_wallets,
         } = self.call_raw_committing(from, to, calldata, value)?;
         match exit_reason {
             return_ok!() => {
@@ -246,6 +247,7 @@ impl Executor {
                     debug,
                     transactions,
                     state_changeset,
+                    script_wallets,
                 })
             }
             _ => {
@@ -263,6 +265,7 @@ impl Executor {
                     labels,
                     transactions,
                     state_changeset,
+                    script_wallets,
                 })
             }
         }
@@ -286,7 +289,7 @@ impl Executor {
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes, script_wallets } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -325,6 +328,7 @@ impl Executor {
             debug,
             transactions,
             state_changeset: None,
+            script_wallets,
         })
     }
 
@@ -448,7 +452,7 @@ impl Executor {
             (res, evm.env)
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        let InspectorData { logs, labels, traces, debug, cheatcodes, script_wallets, .. } =
             inspector.collect_inspector_states();
 
         let result = match out {
@@ -472,7 +476,8 @@ impl Executor {
                         debug,
                         labels,
                         state_changeset: None,
-                        transactions: None
+                        transactions: None,
+                        script_wallets
                     });
                 }
             }
@@ -491,6 +496,7 @@ impl Executor {
                     labels,
                     state_changeset: None,
                     transactions: None,
+                    script_wallets
                 })
             }
         };
@@ -614,6 +620,7 @@ pub enum EvmError {
         labels: BTreeMap<Address, String>,
         transactions: Option<VecDeque<TypedTransaction>>,
         state_changeset: Option<StateChangeset>,
+        script_wallets: Vec<LocalWallet>,
     },
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
@@ -670,6 +677,8 @@ pub struct CallResult<D: Detokenize> {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
+    /// The wallets added during the call using the `remember` cheatcode
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 /// The result of a raw call.
@@ -704,6 +713,8 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
+    /// The wallets added during the call using the `remember` cheatcode
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 impl Default for RawCallResult {
@@ -722,6 +733,7 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
+            script_wallets: Vec::new(),
         }
     }
 }
@@ -757,7 +769,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, script_wallets } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {
@@ -784,6 +796,7 @@ fn convert_executed_call(
         debug,
         transactions,
         state_changeset: Some(state_changeset),
+        script_wallets,
     })
 }
 
@@ -806,6 +819,7 @@ fn convert_call_result<D: Detokenize>(
         debug,
         transactions,
         state_changeset,
+        script_wallets,
     } = call_result;
 
     match status {
@@ -824,6 +838,7 @@ fn convert_call_result<D: Detokenize>(
                 debug,
                 transactions,
                 state_changeset,
+                script_wallets,
             })
         }
         _ => {
@@ -841,6 +856,7 @@ fn convert_call_result<D: Detokenize>(
                 labels,
                 transactions,
                 state_changeset,
+                script_wallets,
             })
         }
     }

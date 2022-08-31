@@ -65,7 +65,7 @@ impl ScriptArgs {
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
-                self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                self.send_transactions(&mut deployment_sequence, &fork_url, vec![]).await?;
             }
 
             if self.verify {

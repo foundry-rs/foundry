@@ -6,7 +6,7 @@ use crate::{
     trace::CallTraceArena,
 };
 use bytes::Bytes;
-use ethers::types::{Address, Log, H256};
+use ethers::{types::{Address, Log, H256}, signers::LocalWallet};
 use revm::{CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 use std::collections::BTreeMap;
 
@@ -29,6 +29,7 @@ pub struct InspectorData {
     pub debug: Option<DebugArena>,
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -49,14 +50,17 @@ impl InspectorStack {
     pub fn collect_inspector_states(self) -> InspectorData {
         InspectorData {
             logs: self.logs.map(|logs| logs.logs).unwrap_or_default(),
-            labels: self
-                .cheatcodes
+            labels: self.cheatcodes
                 .as_ref()
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),
             coverage: self.coverage.map(|coverage| coverage.maps),
+            script_wallets: self.cheatcodes
+                .as_ref()
+                .map(|cheatcodes| cheatcodes.script_wallets.clone())
+                .unwrap_or_default(),
             cheatcodes: self.cheatcodes,
         }
     }
