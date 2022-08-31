@@ -88,7 +88,7 @@ impl Tracer {
         step.gas_cost = step.gas - gas;
 
         // Error codes only
-        if status as u8 > 0x50 {
+        if status as u8 > Return::OutOfGas as u8 {
             step.error = Some(format!("{:?}", status));
         }
     }
