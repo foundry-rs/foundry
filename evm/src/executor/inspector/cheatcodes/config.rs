@@ -3,7 +3,10 @@ use bytes::Bytes;
 
 use ethers::solc::{utils::canonicalize, ProjectPathsConfig};
 use foundry_common::fs::normalize_path;
-use foundry_config::{cache::StorageCachingConfig, Config, ResolvedRpcEndpoints};
+use foundry_config::{
+    cache::StorageCachingConfig, fs_permissions::FsAccessKind, Config, FsPermissions,
+    ResolvedRpcEndpoints,
+};
 use std::path::{Path, PathBuf};
 use tracing::trace;
 
@@ -19,8 +22,10 @@ pub struct CheatsConfig {
     pub rpc_storage_caching: StorageCachingConfig,
     /// All known endpoints and their aliases
     pub rpc_endpoints: ResolvedRpcEndpoints,
-    /// the project's paths as configured
+    /// Project's paths as configured
     pub paths: ProjectPathsConfig,
+    /// Filesystem permissions for cheatcodes like `writeFile`, `readFile`
+    pub fs_permissions: FsPermissions,
     /// Project root
     pub root: PathBuf,
     /// Paths (directories) where file reading/writing is allowed
@@ -40,11 +45,13 @@ impl CheatsConfig {
 
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
+
         Self {
             ffi: evm_opts.ffi,
             rpc_storage_caching: config.rpc_storage_caching.clone(),
             rpc_endpoints,
             paths: config.project_paths(),
+            fs_permissions: config.fs_permissions.clone().joined(&config.__root),
             root: config.__root.0.clone(),
             allowed_paths,
             evm_opts: evm_opts.clone(),
@@ -65,22 +72,29 @@ impl CheatsConfig {
     /// We only allow paths that are inside  allowed paths. To prevent path traversal
     /// ("../../etc/passwd") we canonicalize/normalize the path first. We always join with the
     /// configured root directory.
-    pub fn is_path_allowed(&self, path: impl AsRef<Path>) -> bool {
-        self.is_normalized_path_allowed(&self.normalized_path(path))
+    pub fn is_path_allowed(&self, path: impl AsRef<Path>, kind: FsAccessKind) -> bool {
+        self.is_normalized_path_allowed(&self.normalized_path(path), kind)
     }
 
-    fn is_normalized_path_allowed(&self, path: &Path) -> bool {
-        self.allowed_paths.iter().any(|allowed_path| path.starts_with(allowed_path))
+    fn is_normalized_path_allowed(&self, path: &Path, kind: FsAccessKind) -> bool {
+        self.fs_permissions.is_path_allowed(path, kind)
     }
 
     /// Returns an error if no access is granted to access `path`, See also [Self::is_path_allowed]
     ///
     /// Returns the normalized version of `path`, see [`Self::normalized_path`]
-    pub fn ensure_path_allowed(&self, path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    pub fn ensure_path_allowed(
+        &self,
+        path: impl AsRef<Path>,
+        kind: FsAccessKind,
+    ) -> Result<PathBuf, String> {
         let path = path.as_ref();
         let normalized = self.normalized_path(path);
-        if !self.is_normalized_path_allowed(&normalized) {
-            return Err(format!("Path {:?} is not allowed.", path))
+        if !self.is_normalized_path_allowed(&normalized, kind) {
+            return Err(format!(
+                "The path {:?} is not allowed to be accessed for {} operations.",
+                path, kind
+            ))
         }
 
         Ok(normalized)
@@ -148,6 +162,7 @@ impl Default for CheatsConfig {
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             paths: ProjectPathsConfig::builder().build_with_root("./"),
+            fs_permissions: Default::default(),
             root: Default::default(),
             allowed_paths: vec![],
             evm_opts: Default::default(),
@@ -158,10 +173,11 @@ impl Default for CheatsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_config::fs_permissions::PathPermission;
 
-    fn config(root: &str) -> CheatsConfig {
+    fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
-            &Config { __root: PathBuf::from(root).into(), ..Default::default() },
+            &Config { __root: PathBuf::from(root).into(), fs_permissions, ..Default::default() },
             &Default::default(),
         )
     }
@@ -169,17 +185,20 @@ mod tests {
     #[test]
     fn test_allowed_paths() {
         let root = "/my/project/root/";
-        let config = config(root);
+        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        assert!(config.ensure_path_allowed("./t.txt").is_ok());
-        assert!(config.ensure_path_allowed("../root/t.txt").is_ok());
-        assert!(config.ensure_path_allowed("../../root/t.txt").is_err());
+        assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
+        assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
+        assert!(config.ensure_path_allowed("../root/t.txt", FsAccessKind::Read).is_ok());
+        assert!(config.ensure_path_allowed("../root/t.txt", FsAccessKind::Write).is_ok());
+        assert!(config.ensure_path_allowed("../../root/t.txt", FsAccessKind::Read).is_err());
+        assert!(config.ensure_path_allowed("../../root/t.txt", FsAccessKind::Write).is_err());
     }
 
     #[test]
     fn test_is_foundry_toml() {
         let root = "/my/project/root/";
-        let config = config(root);
+        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         let f = format!("{}foundry.toml", root);
         assert!(config.is_foundry_toml(&f));

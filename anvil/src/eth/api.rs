@@ -865,6 +865,7 @@ impl EthApi {
     }
 
     /// Estimate gas needed for execution of given contract.
+    /// If no block parameter is given, it will use the pending block by default
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
@@ -873,7 +874,8 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(request, block_number).await
+        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockNumber::Pending.into())))
+            .await
     }
 
     /// Get transaction by its hash.

@@ -13,6 +13,7 @@ use ethers::{
 };
 use foundry_common::fs;
 
+use foundry_config::fs_permissions::FsAccessKind;
 use hex::FromHex;
 use jsonpath_rust::JsonPathFinder;
 use serde::Deserialize;
@@ -100,7 +101,8 @@ fn get_code(state: &Cheatcodes, path: &str) -> Result<Bytes, Bytes> {
         state.config.paths.artifacts.join(format!("{file}/{contract_name}.json"))
     };
 
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(util::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
     let bytecode = serde_json::from_str::<ArtifactBytecode>(&data).map_err(util::encode_error)?;
@@ -153,7 +155,8 @@ fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {
 }
 
 fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(util::encode_error)?;
 
     let data = fs::read_to_string(path).map_err(util::encode_error)?;
 
@@ -161,7 +164,8 @@ fn read_file(state: &Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes>
 }
 
 fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(util::encode_error)?;
 
     // Get reader for previously opened file to continue reading OR initialize new reader
     let reader = state
@@ -192,7 +196,8 @@ fn read_line(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, By
 /// Caution: writing files is only allowed if the targeted path is allowed, (inside `<root>/` by
 /// default)
 fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Write).map_err(util::encode_error)?;
     // write access to foundry.toml is not allowed
     state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
@@ -205,7 +210,8 @@ fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Resu
 ///
 /// This will create a file if it does not exist but append the `line` if it does
 fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Write).map_err(util::encode_error)?;
     state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
     let mut file = std::fs::OpenOptions::new()
@@ -220,7 +226,8 @@ fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<
 }
 
 fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Read).map_err(util::encode_error)?;
 
     state.context.opened_read_files.remove(&path);
 
@@ -233,10 +240,13 @@ fn close_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, B
 ///
 /// This will return an error if the path points to a directory, or the file does not exist
 fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, Bytes> {
-    let path = state.config.ensure_path_allowed(&path).map_err(util::encode_error)?;
+    let path =
+        state.config.ensure_path_allowed(&path, FsAccessKind::Write).map_err(util::encode_error)?;
     state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
-    close_file(state, &path)?;
+    // also remove from the set if opened previously
+    state.context.opened_read_files.remove(&path);
+
     fs::remove_file(&path).map_err(util::encode_error)?;
 
     Ok(Bytes::new())
