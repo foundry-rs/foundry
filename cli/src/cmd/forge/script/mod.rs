@@ -1,6 +1,6 @@
 //! script command
 use crate::{
-    cmd::forge::build::{BuildArgs, ProjectPathsArgs},
+    cmd::forge::build::BuildArgs,
     opts::MultiWallet,
     utils::{get_contract_name, parse_ether_value},
 };
@@ -29,7 +29,7 @@ use forge::{
     },
 };
 use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
-use foundry_config::Config;
+use foundry_config::{figment, Config};
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -40,6 +40,10 @@ use yansi::Paint;
 
 mod build;
 use build::{filter_sources_and_artifacts, BuildOutput};
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 mod runner;
 use runner::ScriptRunner;
@@ -51,11 +55,12 @@ mod cmd;
 mod executor;
 mod receipts;
 mod sequence;
+mod verify;
 use crate::cmd::retry::RetryArgs;
 pub use sequence::TransactionWithMetadata;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(ScriptArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(ScriptArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct ScriptArgs {
@@ -483,6 +488,23 @@ impl ScriptArgs {
     }
 }
 
+impl Provider for ScriptArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Script Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert(
+                "etherscan_api_key".to_string(),
+                figment::value::Value::from(etherscan_api_key.to_string()),
+            );
+        }
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
 pub struct ScriptResult {
     pub success: bool,
     pub logs: Vec<Log>,
@@ -509,51 +531,27 @@ pub struct NestedValue {
 }
 
 pub struct ScriptConfig {
-    pub config: foundry_config::Config,
+    pub config: Config,
     pub evm_opts: EvmOpts,
     pub sender_nonce: U256,
     pub backend: Option<Backend>,
     pub called_function: Option<Function>,
 }
 
-/// Data struct to help `ScriptSequence` verify contracts on `etherscan`.
-pub struct VerifyBundle {
-    pub num_of_optimizations: Option<usize>,
-    pub known_contracts: ContractsByArtifact,
-    pub etherscan_key: Option<String>,
-    pub project_paths: ProjectPathsArgs,
-    pub retry: RetryArgs,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cmd::LoadConfig;
 
-impl VerifyBundle {
-    pub fn new(
-        project: &Project,
-        config: &Config,
-        known_contracts: ContractsByArtifact,
-        retry: RetryArgs,
-    ) -> Self {
-        let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
-
-        let config_path = config.get_config_path();
-
-        let project_paths = ProjectPathsArgs {
-            root: Some(project.paths.root.clone()),
-            contracts: Some(project.paths.sources.clone()),
-            remappings: project.paths.remappings.clone(),
-            remappings_env: None,
-            cache_path: Some(project.paths.cache.clone()),
-            lib_paths: project.paths.libraries.clone(),
-            hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
-        };
-
-        VerifyBundle {
-            num_of_optimizations,
-            known_contracts,
-            etherscan_key: config.etherscan_api_key.clone(),
-            project_paths,
-            retry,
-        }
+    #[test]
+    fn can_merge_script_config() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "goerli",
+        ]);
+        let config = args.load_config();
+        assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
     }
 }

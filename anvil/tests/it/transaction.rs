@@ -11,7 +11,6 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -424,16 +423,17 @@ async fn get_blocktimestamp_works() {
     assert_eq!(timestamp, latest_block.timestamp);
 
     // mock timestamp
-    api.evm_set_next_block_timestamp(1337).unwrap();
+    let next_timestamp = timestamp.as_u64() + 1337;
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 
     // repeat call same result
     let timestamp =
         contract.get_current_block_timestamp().block(BlockNumber::Pending).call().await.unwrap();
-    assert_eq!(timestamp, 1337u64.into());
+    assert_eq!(timestamp, next_timestamp.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -778,6 +778,29 @@ async fn can_stream_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
+    /// returns a String representation of the AccessList, with sorted
+    /// keys (address) and storage slots
+    fn access_list_to_sorted_string(a: AccessList) -> String {
+        let mut a = a.0;
+        a.sort_by_key(|v| v.address);
+
+        let a = a
+            .iter_mut()
+            .map(|v| {
+                v.storage_keys.sort();
+                (v.address, std::mem::take(&mut v.storage_keys))
+            })
+            .collect::<Vec<_>>();
+
+        format!("{:?}", a)
+    }
+
+    /// asserts that the two access lists are equal, by comparing their sorted
+    /// string representation
+    fn assert_access_list_eq(a: AccessList, b: AccessList) {
+        assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    }
+
     // We want to test a couple of things:
     //     - When calling a contract with no storage read/write, it shouldn't be in the AL
     //     - When a contract calls a contract, the latter one should be in the AL
@@ -845,27 +868,4 @@ async fn test_tx_access_list() {
             ],
         }]),
     );
-}
-
-/// returns a String representation of the AccessList, with sorted
-/// keys (address) and storage slots
-fn access_list_to_sorted_string(a: AccessList) -> String {
-    let mut a = a.0;
-    a.sort_by_key(|v| v.address);
-
-    let a = a
-        .iter_mut()
-        .map(|v| {
-            v.storage_keys.sort();
-            (v.address, std::mem::take(&mut v.storage_keys))
-        })
-        .collect::<Vec<_>>();
-
-    format!("{:?}", a)
-}
-
-/// asserts that the two access lists are equal, by comparing their sorted
-/// string representation
-fn assert_access_list_eq(a: AccessList, b: AccessList) {
-    assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
 }

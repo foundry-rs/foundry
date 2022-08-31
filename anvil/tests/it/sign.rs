@@ -1,5 +1,9 @@
 use anvil::{spawn, NodeConfig};
-use ethers::types::transaction::eip712::TypedData;
+use ethers::{
+    prelude::{Middleware, SignerMiddleware},
+    signers::Signer,
+    types::{transaction::eip712::TypedData, Address, Chain, TransactionRequest},
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_sign_typed_data() {
@@ -274,4 +278,30 @@ async fn can_sign_typed_data_os() {
       signature,
       "0xedb0fa55ac67e3ca52b6bd6ee3576b193731adc2aff42151f67826932fa9f6191261ebdecc2c650204ff7625752b033293fb67ef5cfca78e16de359200040b761b".to_string()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_different_chain_id() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = SignerMiddleware::new(provider, wallet.with_chain_id(Chain::Mainnet));
+
+    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
+
+    let res = client.send_transaction(tx, None).await;
+    let err = res.unwrap_err();
+    assert!(err.to_string().contains("signed for another chain"));
+}
+
+#[tokio::test]
+async fn rejects_invalid_chain_id() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap().with_chain_id(99u64);
+    let provider = handle.http_provider();
+    let client = SignerMiddleware::new(provider, wallet);
+    let tx = TransactionRequest::new().to(Address::random()).value(100u64);
+    let res = client.send_transaction(tx, None).await;
+    let _err = res.unwrap_err();
 }

@@ -137,9 +137,12 @@ impl Provider for TestArgs {
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::default();
+
+        let mut fuzz_dict = Dict::default();
         if let Some(fuzz_seed) = self.fuzz_seed {
-            dict.insert("fuzz_seed".to_string(), fuzz_seed.to_string().into());
+            fuzz_dict.insert("seed".to_string(), fuzz_seed.to_string().into());
         }
+        dict.insert("fuzz".to_string(), fuzz_dict.into());
 
         if let Some(ref etherscan_api_key) = self.etherscan_api_key {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
@@ -311,16 +314,7 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
 
-    let test_options = TestOptions {
-        fuzz_runs: config.fuzz_runs,
-        fuzz_max_local_rejects: config.fuzz_max_local_rejects,
-        fuzz_max_global_rejects: config.fuzz_max_global_rejects,
-        fuzz_seed: config.fuzz_seed,
-        invariant_runs: config.invariant_runs,
-        invariant_depth: config.invariant_depth,
-        invariant_fail_on_revert: config.invariant_fail_on_revert,
-        invariant_call_override: config.invariant_call_override,
-    };
+    let test_options = TestOptions { fuzz: config.fuzz, invariant: config.invariant };
 
     let mut filter = args.filter(&config);
 
@@ -490,6 +484,8 @@ fn test(
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
+        let sig_identifier = SignaturesIdentifier::new(Config::foundry_cache_dir())?;
+
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
@@ -523,9 +519,10 @@ fn test(
                         .with_events(local_identifier.events())
                         .build();
 
-                    decoder.add_signature_identifier(SignaturesIdentifier::new(
-                        Config::foundry_cache_dir(),
-                    )?);
+                    // Signatures are of no value for gas reports
+                    if !gas_reporting {
+                        decoder.add_signature_identifier(sig_identifier.clone());
+                    }
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();

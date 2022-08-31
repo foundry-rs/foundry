@@ -6,7 +6,6 @@ use crate::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
         snapshot::Snapshots,
     },
-    CALLER,
 };
 use ethers::{
     prelude::{H160, H256, U256},
@@ -26,7 +25,9 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
+use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -42,8 +43,7 @@ pub type LocalForkId = U256;
 type ForkLookupIndex = usize;
 
 /// All accounts that will have persistent storage across fork swaps. See also [`clone_data()`]
-const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 3] =
-    [CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
+const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 2] = [CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER];
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
@@ -314,9 +314,10 @@ impl Backend {
             let (fork_id, fork, _) =
                 backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
-            backend.active_fork_ids =
-                Some(backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default()));
-            backend.inner.launched_with_fork = Some(fork_id);
+            let fork_ids =
+                backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default());
+            backend.inner.launched_with_fork = Some((fork_id, fork_ids.0, fork_ids.1));
+            backend.active_fork_ids = Some(fork_ids);
         }
 
         backend
@@ -363,19 +364,8 @@ impl Backend {
     }
 
     /// Sets the caller address
-    ///
-    /// This will also mark the caller as persistent and remove the persistent status from the
-    /// previous caller
     pub fn set_caller(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting caller account");
-        // toggle the previous sender
-        if let Some(current) = self.inner.caller.take() {
-            if current != CALLER {
-                self.remove_persistent_account(&current);
-            }
-        }
-
-        self.add_persistent_account(acc);
         self.inner.caller = Some(acc);
         self
     }
@@ -432,6 +422,7 @@ impl Backend {
             self.inner.test_contract_address.is_some(),
             "Test contract address must be set"
         );
+
         self.update_fork_db_contracts(
             self.inner.persistent_accounts.iter().copied(),
             journaled_state,
@@ -538,6 +529,40 @@ impl Backend {
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
     }
+
+    /// Ths will clean up already loaded accounts that would be initialized without the correct data
+    /// from the fork
+    ///
+    /// It can happen that an account is loaded before the first fork is selected, like
+    /// `getNonce(addr)`, which will load an empty account by default.
+    ///
+    /// This account data then would not match the account data of a fork if it exists.
+    /// So when the first fork is initialized we replace these accounts with the actual account as
+    /// it exists on the fork.
+    fn prepare_init_journal_state(&mut self) {
+        let loaded_accounts = self
+            .fork_init_journaled_state
+            .state
+            .iter()
+            .filter(|(addr, acc)| {
+                !acc.is_existing_precompile && acc.is_touched && !self.is_persistent(addr)
+            })
+            .map(|(addr, _)| addr)
+            .copied()
+            .collect::<Vec<_>>();
+
+        for fork in self.inner.forks_iter_mut() {
+            let mut journaled_state = self.fork_init_journaled_state.clone();
+            for loaded_account in loaded_accounts.iter().copied() {
+                trace!(?loaded_account, "replacing account on init");
+                let fork_account = fork.db.basic(loaded_account);
+                let init_account =
+                    journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
+                init_account.info = fork_account;
+            }
+            fork.journaled_state = journaled_state;
+        }
+    }
 }
 
 // === impl a bunch of `revm::Database` adjacent implementations ===
@@ -557,7 +582,7 @@ impl DatabaseExt for Backend {
     fn revert(
         &mut self,
         id: U256,
-        journaled_state: &JournaledState,
+        current_state: &JournaledState,
         current: &mut Env,
     ) -> Option<JournaledState> {
         trace!(?id, "revert snapshot");
@@ -569,21 +594,44 @@ impl DatabaseExt for Backend {
             }
 
             // merge additional logs
-            snapshot.merge(journaled_state);
-            let BackendSnapshot { db, journaled_state, env } = snapshot;
+            snapshot.merge(current_state);
+            let BackendSnapshot { db, mut journaled_state, env } = snapshot;
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
                 }
-                BackendDatabaseSnapshot::Forked(id, fork_id, idx, fork) => {
+                BackendDatabaseSnapshot::Forked(id, fork_id, idx, mut fork) => {
+                    // there might be the case where the snapshot was created during `setUp` with
+                    // another caller, so we need to ensure the caller account is present in the
+                    // journaled state and database
+                    let caller = current.tx.caller;
+                    if !journaled_state.state.contains_key(&caller) {
+                        let caller_account = current_state
+                            .state
+                            .get(&caller)
+                            .map(|acc| acc.info.clone())
+                            .unwrap_or_default();
+
+                        if !fork.db.accounts.contains_key(&caller) {
+                            // update the caller account which is required by the evm
+                            fork.db.insert_account_info(caller, caller_account.clone());
+                            with_journaled_account(
+                                &mut fork.journaled_state,
+                                &mut fork.db,
+                                caller,
+                                |_| (),
+                            );
+                        }
+                        journaled_state.state.insert(caller, caller_account.into());
+                    }
                     self.inner.revert_snapshot(id, fork_id, idx, *fork);
                     self.active_fork_ids = Some((id, idx))
                 }
             }
 
             update_current_env_with_fork_env(current, env);
-
             trace!(target: "backend", "Reverted snapshot {}", id);
+
             Some(journaled_state)
         } else {
             warn!(target: "backend", "No snapshot to revert for {}", id);
@@ -594,11 +642,22 @@ impl DatabaseExt for Backend {
     fn create_fork(
         &mut self,
         fork: CreateFork,
-        _journaled_state: &JournaledState,
+        journaled_state: &JournaledState,
     ) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let (fork_id, fork, _) = self.forks.create_fork(fork)?;
         let fork_db = ForkDB::new(fork);
+
+        // there might be the case where a fork was previously created and selected during `setUp`
+        // not necessarily with the current caller in which case we need to ensure that the init
+        // state also includes the caller
+        if let Some(caller) = self.caller_address() {
+            if !self.fork_init_journaled_state.state.contains_key(&caller) {
+                if let Some(account) = journaled_state.state.get(&caller).cloned() {
+                    self.fork_init_journaled_state.state.insert(caller, account);
+                }
+            }
+        }
 
         let (id, _) =
             self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
@@ -625,10 +684,39 @@ impl DatabaseExt for Backend {
             .get_env(fork_id)?
             .ok_or_else(|| eyre::eyre!("Requested fork `{}` does not exit", id))?;
 
+        let launched_with_fork = self.inner.launched_with_fork.is_some();
+
         // If we're currently in forking mode we need to update the journaled_state to this point,
         // this ensures the changes performed while the fork was active are recorded
         if let Some(active) = self.active_fork_mut() {
             active.journaled_state = journaled_state.clone();
+
+            // if the Backend was launched in forking mode, then we also need to adjust the depth of
+            // the `JournalState` at this point
+            if launched_with_fork {
+                let caller = env.tx.caller;
+                let caller_account =
+                    active.journaled_state.state.get(&env.tx.caller).map(|acc| acc.info.clone());
+                let target_fork = self.inner.get_fork_mut(idx);
+                if target_fork.journaled_state.depth == 0 {
+                    // depth 0 will be the default value when the fork was created and since we
+                    // launched in forking mode there never is a `depth` that can be set for the
+                    // `fork_init_journaled_state` instead we need to manually bump the depth to the
+                    // current depth of the call _once_
+                    target_fork.journaled_state.depth = journaled_state.depth;
+
+                    // we also need to initialize and touch the caller
+                    if let Some(acc) = caller_account {
+                        target_fork.db.insert_account_info(caller, acc);
+                        with_journaled_account(
+                            &mut target_fork.journaled_state,
+                            &mut target_fork.db,
+                            caller,
+                            |_| (),
+                        );
+                    }
+                }
+            }
         } else {
             // this is the first time a fork is selected. This means up to this point all changes
             // are made in a single `JournaledState`, for example after a `setup` that only created
@@ -637,9 +725,7 @@ impl DatabaseExt for Backend {
             // for all future forks
             trace!("recording fork init journaled_state");
             self.fork_init_journaled_state = journaled_state.clone();
-            for fork in self.inner.forks_iter_mut() {
-                fork.journaled_state = self.fork_init_journaled_state.clone();
-            }
+            self.prepare_init_journal_state();
         }
 
         // update the shared state and track
@@ -907,8 +993,8 @@ pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///
     /// In other words if [`Backend::spawn()`] was called with a `CreateFork` command, to launch
-    /// directly in fork mode, this holds the corresponding `ForkId` of this fork.
-    pub launched_with_fork: Option<ForkId>,
+    /// directly in fork mode, this holds the corresponding fork identifier of this fork.
+    pub launched_with_fork: Option<(ForkId, LocalForkId, ForkLookupIndex)>,
     /// This tracks numeric fork ids and the `ForkId` used by the handler.
     ///
     /// This is necessary, because there can be multiple `Backends` associated with a single
@@ -1121,7 +1207,7 @@ pub(crate) fn clone_data<ExtDB: DatabaseRef>(
 /// Clones the account data from the `active_journaled_state`  into the `fork_journaled_state`
 fn clone_journaled_state_data(
     addr: Address,
-    active_journaled_state: &mut JournaledState,
+    active_journaled_state: &JournaledState,
     fork_journaled_state: &mut JournaledState,
 ) {
     if let Some(acc) = active_journaled_state.state.get(&addr).cloned() {

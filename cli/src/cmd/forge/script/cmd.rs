@@ -1,14 +1,12 @@
-use crate::cmd::{unwrap_contracts, LoadConfig};
-use std::sync::Arc;
-
+use super::{sequence::ScriptSequence, *};
+use crate::cmd::{forge::script::verify::VerifyBundle, unwrap_contracts, LoadConfig};
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
 use foundry_common::get_http_provider;
+use std::sync::Arc;
 use tracing::trace;
-
-use super::{sequence::ScriptSequence, *};
 
 impl ScriptArgs {
     /// Executes the script
@@ -26,9 +24,8 @@ impl ScriptArgs {
         };
 
         self.maybe_load_private_key(&mut script_config)?;
-        self.maybe_load_etherscan_api_key(&mut script_config)?;
 
-        if let Some(fork_url) = script_config.evm_opts.fork_url.as_ref() {
+        if let Some(ref fork_url) = script_config.evm_opts.fork_url {
             // when forking, override the sender's nonce to the onchain value
             script_config.sender_nonce =
                 foundry_utils::next_nonce(script_config.evm_opts.sender, fork_url, None).await?
@@ -37,18 +34,26 @@ impl ScriptArgs {
             script_config.config.libraries = Default::default();
         }
 
-        let (build_output, mut verify) = self.compile(&script_config)?;
+        let build_output = self.compile(&script_config)?;
+
+        let mut verify = VerifyBundle::new(
+            &build_output.project,
+            &script_config.config,
+            unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
+        );
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
                 .evm_opts
                 .fork_url
-                .as_ref()
-                .expect("You must provide an RPC URL (see --fork-url).")
-                .clone();
+                .clone()
+                .ok_or_else(|| eyre::eyre!("You must provide an RPC URL (see --fork-url)."))?;
 
             let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
+
+            verify.set_chain(&script_config.config, chain.into());
 
             let mut deployment_sequence = ScriptSequence::load(
                 &script_config.config,
@@ -228,16 +233,6 @@ impl ScriptArgs {
             if wallets.len() == 1 {
                 script_config.evm_opts.sender = wallets.get(0).unwrap().address()
             }
-        }
-        Ok(())
-    }
-
-    fn maybe_load_etherscan_api_key(
-        &mut self,
-        script_config: &mut ScriptConfig,
-    ) -> eyre::Result<()> {
-        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
-            script_config.config.etherscan_api_key = Some(etherscan_api_key.clone());
         }
         Ok(())
     }

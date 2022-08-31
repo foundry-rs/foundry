@@ -41,12 +41,14 @@ impl DiskStateCache {
 
     /// Stores the snapshot for the given hash
     pub fn write(&mut self, hash: H256, state: &StateSnapshot) {
-        self.with_cache_file(hash, |file| match foundry_common::fs::write_json_file(file, state) {
-            Ok(_) => {
-                trace!(target: "backend", ?hash, "wrote state json file");
-            }
-            Err(err) => {
-                error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
+        self.with_cache_file(hash, |file| {
+            match foundry_common::fs::write_json_file(&file, state) {
+                Ok(_) => {
+                    trace!(target: "backend", ?hash, "wrote state json file");
+                }
+                Err(err) => {
+                    error!(target: "backend", ?err, ?hash, "Failed to load state snapshot");
+                }
             }
         });
     }
@@ -56,7 +58,7 @@ impl DiskStateCache {
     /// Returns None if it doesn't exist or deserialization failed
     pub fn read(&mut self, hash: H256) -> Option<StateSnapshot> {
         self.with_cache_file(hash, |file| {
-            match foundry_common::fs::read_json_file::<StateSnapshot>(file) {
+            match foundry_common::fs::read_json_file::<StateSnapshot>(&file) {
                 Ok(state) => {
                     trace!(target: "backend", ?hash,"loaded cached state");
                     Some(state)

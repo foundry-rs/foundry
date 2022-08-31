@@ -1,4 +1,58 @@
+//! error handling and solc error codes
+use figment::providers::{Format, Toml};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{collections::HashSet, error::Error, fmt};
+
+/// Represents a failed attempt to extract `Config` from a `Figment`
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtractConfigError {
+    /// error thrown when extracting the `Config`
+    pub(crate) error: figment::Error,
+}
+
+impl fmt::Display for ExtractConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut unique_errors = Vec::with_capacity(self.error.count());
+        let mut unique = HashSet::with_capacity(self.error.count());
+        for err in self.error.clone().into_iter() {
+            let err = if err
+                .metadata
+                .as_ref()
+                .map(|meta| meta.name.contains(Toml::NAME))
+                .unwrap_or_default()
+            {
+                FoundryConfigError::Toml(err)
+            } else {
+                FoundryConfigError::Other(err)
+            };
+
+            if unique.insert(err.to_string()) {
+                unique_errors.push(err);
+            }
+        }
+        for err in unique_errors {
+            writeln!(f, "{}", err)?;
+        }
+        f.write_str("failed to extract foundry config")
+    }
+}
+
+impl Error for ExtractConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Error::source(&self.error)
+    }
+}
+
+/// Represents an error that can occur when constructing the `Config`
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum FoundryConfigError {
+    /// An error thrown during toml parsing
+    #[error("foundry.toml error: {0}")]
+    Toml(figment::Error),
+    /// Any other error thrown when constructing the config's figment
+    #[error("foundry config error: {0}")]
+    Other(figment::Error),
+}
 
 /// A non-exhaustive list of solidity error codes
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

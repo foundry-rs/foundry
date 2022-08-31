@@ -1,20 +1,28 @@
 use ethers::abi::{Event, Function};
 use foundry_utils::{decode_selector, get_event, get_func, selectors::SelectorType};
+use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io::BufWriter, path::PathBuf};
+use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};
+use tokio::sync::RwLock;
 use tracing::warn;
+
+pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
 /// An identifier that tries to identify functions and events using signatures found at
 /// `sig.eth.samczsun.com`.
 #[derive(Debug, Default)]
 pub struct SignaturesIdentifier {
+    // Cached selectors for functions and events
     cached: CachedSignatures,
+    // Location where to save `CachedSignatures`
     cached_path: Option<PathBuf>,
+    // Selectors that were unavailable during the session.
+    unavailable: HashSet<Vec<u8>>,
 }
 
 impl SignaturesIdentifier {
-    pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<Self> {
-        if let Some(cache_path) = cache_path {
+    pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<SingleSignaturesIdentifier> {
+        let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
             let cached = if path.is_file() {
                 serde_json::from_reader(std::fs::File::open(&path)?)?
@@ -24,9 +32,12 @@ impl SignaturesIdentifier {
                 }
                 CachedSignatures::default()
             };
-            return Ok(Self { cached, cached_path: Some(path) })
-        }
-        Ok(Self::default())
+            Self { cached, cached_path: Some(path), unavailable: HashSet::new() }
+        } else {
+            Self::default()
+        };
+
+        Ok(Arc::new(RwLock::new(identifier)))
     }
 
     pub fn save(&self) {
@@ -49,24 +60,32 @@ impl SignaturesIdentifier {
         identifier: &[u8],
         get_type: fn(&str) -> eyre::Result<T>,
     ) -> Option<T> {
+        // Exit early if we have unsuccessfully queried it before.
+        if self.unavailable.contains(&identifier.to_vec()) {
+            return None
+        }
+
         let map = match selector_type {
             SelectorType::Function => &mut self.cached.functions,
             SelectorType::Event => &mut self.cached.events,
         };
 
-        let identifier = format!("0x{}", hex::encode(identifier));
+        let hex_identifier = format!("0x{}", hex::encode(identifier));
 
-        if !map.contains_key(&identifier) {
-            if let Ok(signatures) = decode_selector(&identifier, selector_type).await {
+        if !map.contains_key(&hex_identifier) {
+            if let Ok(signatures) = decode_selector(&hex_identifier, selector_type).await {
                 if let Some(signature) = signatures.into_iter().next() {
-                    map.insert(identifier.to_string(), signature);
+                    map.insert(hex_identifier.clone(), signature);
                 }
             }
         }
 
-        if let Some(signature) = map.get(&identifier) {
+        if let Some(signature) = map.get(&hex_identifier) {
             return get_type(signature).ok()
         }
+
+        self.unavailable.insert(identifier.to_vec());
+
         None
     }
 
@@ -101,13 +120,15 @@ mod tests {
     async fn can_query_signatures() {
         let tmp = tempfile::tempdir().unwrap();
         {
-            let mut sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
+            let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
 
-            assert!(sigs.cached.events.is_empty());
-            assert!(sigs.cached.functions.is_empty());
+            assert!(sigs.read().await.cached.events.is_empty());
+            assert!(sigs.read().await.cached.functions.is_empty());
 
-            let func = sigs.identify_function(&[35, 184, 114, 221]).await.unwrap();
+            let func = sigs.write().await.identify_function(&[35, 184, 114, 221]).await.unwrap();
             let event = sigs
+                .write()
+                .await
                 .identify_event(&[
                     39, 119, 42, 220, 99, 219, 7, 170, 231, 101, 183, 30, 178, 181, 51, 6, 79, 167,
                     129, 189, 87, 69, 126, 27, 19, 133, 146, 216, 25, 141, 9, 89,
@@ -122,7 +143,7 @@ mod tests {
         }
 
         let sigs = SignaturesIdentifier::new(Some(tmp.path().into())).unwrap();
-        assert!(sigs.cached.events.len() == 1);
-        assert!(sigs.cached.functions.len() == 1);
+        assert!(sigs.read().await.cached.events.len() == 1);
+        assert!(sigs.read().await.cached.functions.len() == 1);
     }
 }

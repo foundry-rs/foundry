@@ -32,7 +32,7 @@ pub use fuzzer::Fuzzer;
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
     /// The cheatcode inspector and its state, if cheatcodes are enabled.
-    /// Whether or not cheatcodes are enabled
+    /// Whether cheatcodes are enabled
     pub cheatcodes: Option<Cheatcodes>,
     /// The block environment
     ///
@@ -44,17 +44,20 @@ pub struct InspectorStackConfig {
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
     /// in the execution environment.
     pub gas_price: U256,
-    /// Whether or not tracing is enabled
+    /// Whether tracing is enabled
     pub tracing: bool,
-    /// Whether or not the debugger is enabled
+    /// Whether the debugger is enabled
     pub debugger: bool,
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
-    /// Whether or not coverage info should be collected
+    /// Whether coverage info should be collected
     pub coverage: bool,
 }
 
 impl InspectorStackConfig {
+    /// Returns the stack of inspectors to use when transacting/committing on the EVM
+    ///
+    /// See also [`revm::Evm::inspect_ref`] and  [`revm::Evm::commit_ref`]
     pub fn stack(&self) -> InspectorStack {
         let mut stack =
             InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
@@ -79,6 +82,9 @@ impl InspectorStackConfig {
         stack
     }
 
+    /// Configures the cheatcode inspector with a new and empty context
+    ///
+    /// Returns `None` if no cheatcodes inspector is set
     fn create_cheatcodes(&self) -> Option<Cheatcodes> {
         let cheatcodes = self.cheatcodes.clone();
 

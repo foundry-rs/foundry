@@ -3,7 +3,10 @@ use super::{
     *,
 };
 use crate::{
-    cmd::{forge::script::receipts::wait_for_receipts, has_batch_support, has_different_gas_calc},
+    cmd::{
+        forge::script::{receipts::wait_for_receipts, verify::VerifyBundle},
+        has_batch_support, has_different_gas_calc,
+    },
     init_progress,
     opts::WalletType,
     update_progress,
@@ -203,7 +206,7 @@ impl ScriptArgs {
         libraries: Libraries,
         decoder: &mut CallTraceDecoder,
         mut script_config: ScriptConfig,
-        verify: VerifyBundle,
+        mut verify: VerifyBundle,
     ) -> eyre::Result<()> {
         if let Some(txs) = result.transactions {
             if let Some(fork_url) = script_config.evm_opts.fork_url.clone() {
@@ -227,6 +230,8 @@ impl ScriptArgs {
 
                 let provider = Arc::new(get_http_provider(&fork_url));
                 let chain = provider.get_chainid().await?.as_u64();
+
+                verify.set_chain(&script_config.config, chain.into());
 
                 let returns = self.get_returns(&script_config, &result.returned)?;
 

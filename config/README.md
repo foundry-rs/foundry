@@ -109,11 +109,6 @@ match_contract = "Foo"
 no_match_contract = "Bar"
 match_path = "*/Foo*"
 no_match_path = "*/Bar*"
-fuzz_runs = 256
-invariant_runs = 256
-invariant_depth = 15
-invariant_fail_on_revert = false
-invariant_call_override = false
 ffi = false
 sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
@@ -132,9 +127,6 @@ block_gas_limit = 30000000
 memory_limit = 33554432
 extra_output = ["metadata"]
 extra_output_files = []
-fuzz_max_local_rejects = 1024
-fuzz_max_global_rejects = 65536
-fuzz_seed = '0x3e8'
 names = false
 sizes = false
 via_ir = false
@@ -160,8 +152,30 @@ revert_strings = "default"
 sparse_mode = false
 build_info = true
 build_info_path = "build-info"
-fmt = { line_length = 100, tab_width = 2, bracket_spacing = true }
 root = "root"
+
+[fuzz]
+runs = 256
+max_local_rejects = 1024
+max_global_rejects = 65536
+seed = '0x3e8'
+dictionary_weight = 40
+include_storage = true
+include_push_bytes = true
+
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+
+[fmt]
+line_length = 100
+tab_width = 2
+bracket_spacing = true
 ```
 
 #### Additional Optimizer settings

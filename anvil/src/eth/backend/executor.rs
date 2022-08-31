@@ -121,7 +121,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             None
         };
 
-        for (idx, tx) in self.enumerate() {
+        for tx in self.into_iter() {
             let tx = match tx {
                 TransactionExecutionOutcome::Executed(tx) => {
                     included.push(tx.transaction.clone());
@@ -144,9 +144,11 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
             } else {
                 None
             };
+
+            let transaction_index = transaction_infos.len() as u32;
             let info = TransactionInfo {
                 transaction_hash: *transaction.hash(),
-                transaction_index: idx as u32,
+                transaction_index,
                 from: *transaction.pending_transaction.sender(),
                 to: transaction.pending_transaction.transaction.to().copied(),
                 contract_address,
@@ -249,7 +251,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
         }
 
-        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas_used);
+        trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", transaction.hash(), out);
 
         self.gas_used.saturating_add(U256::from(gas_used));
 

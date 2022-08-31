@@ -6,13 +6,14 @@ import "./Cheats.sol";
 
 contract FileTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
+    bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
 
         assertEq(cheats.readFile(path), "hello readable world\nthis is the second line!");
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.readFile("/etc/hosts");
     }
 
@@ -23,7 +24,7 @@ contract FileTest is DSTest {
         assertEq(cheats.readLine(path), "this is the second line!");
         assertEq(cheats.readLine(path), "");
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.readLine("/etc/hosts");
     }
 
@@ -36,7 +37,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.writeFile("/etc/hosts", "malicious stuff");
     }
 
@@ -53,7 +54,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.writeLine("/etc/hosts", "malicious stuff");
     }
 
@@ -78,7 +79,45 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path is not allowed.");
+        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
         cheats.removeFile("/etc/hosts");
+    }
+
+    function testWriteLineFoundrytoml() public {
+        string memory root = cheats.projectRoot();
+        string memory foundryToml = string.concat(root, "/", "foundry.toml");
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeLine(foundryToml, "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeLine("foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeLine("./foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeLine("./Foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeLine("./../foundry.toml", "\nffi = true\n");
+    }
+
+    function testWriteFoundrytoml() public {
+        string memory root = cheats.projectRoot();
+        string memory foundryToml = string.concat(root, "/", "foundry.toml");
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeFile(foundryToml, "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeFile("foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeFile("./foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeFile("./Foundry.toml", "\nffi = true\n");
+
+        cheats.expectRevert(FOUNDRY_TOML_ACCESS_ERR);
+        cheats.writeFile("./../foundry.toml", "\nffi = true\n");
     }
 }
