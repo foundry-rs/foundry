@@ -153,7 +153,17 @@ sparse_mode = false
 build_info = true
 build_info_path = "build-info"
 root = "root"
-
+# Configures permissions for cheatcodes that touch the filesystem like `vm.writeFile`
+# `access` restricts how the `path` can be accessed via cheatcodes
+#    `read-write` | `true`   => `read` + `write` access allowed (`vm.readFile` + `vm.writeFile`)
+#    `none`| `false` => no access
+#    `read` => only read access (`vm.readFile`)
+#    `write` => only write access (`vm.writeFile`)
+# The `allowed_paths` further lists the paths that are considered, e.g. `./` represents the project root directory
+# By default _no_ fs access permission is granted, and _no_ paths are allowed
+# following example enables read access for the project dir _only_:
+#       `fs_permissions = [{ access = "read", path = "./"}]`
+fs_permissions = []
 [fuzz]
 runs = 256
 max_local_rejects = 1024

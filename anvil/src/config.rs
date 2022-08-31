@@ -13,7 +13,7 @@ use crate::{
     genesis::Genesis,
     mem,
     mem::in_memory_db::MemDb,
-    FeeManager,
+    FeeManager, Hardfork,
 };
 use anvil_server::ServerConfig;
 use ethers::{
@@ -37,8 +37,8 @@ use foundry_evm::{
 use parking_lot::RwLock;
 use serde_json::{json, to_writer, Value};
 use std::{
-    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf,
-    str::FromStr, sync::Arc, time::Duration,
+    collections::HashMap, fmt::Write as FmtWrite, fs::File, net::IpAddr, path::PathBuf, sync::Arc,
+    time::Duration,
 };
 use yansi::Paint;
 
@@ -777,98 +777,6 @@ impl NodeConfig {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Hardfork {
-    Frontier,
-    Homestead,
-    Tangerine,
-    SpuriousDragon,
-    Byzantium,
-    Constantinople,
-    Petersburg,
-    Istanbul,
-    Muirglacier,
-    Berlin,
-    London,
-    ArrowGlacier,
-    Latest,
-}
-
-impl FromStr for Hardfork {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.to_lowercase();
-        let hardfork = match s.as_str() {
-            "frontier" | "1" => Hardfork::Frontier,
-            "homestead" | "2" => Hardfork::Homestead,
-            "tangerine" | "3" => Hardfork::Tangerine,
-            "spuriousdragon" | "4" => Hardfork::SpuriousDragon,
-            "byzantium" | "5" => Hardfork::Byzantium,
-            "constantinople" | "6" => Hardfork::Constantinople,
-            "petersburg" | "7" => Hardfork::Petersburg,
-            "istanbul" | "8" => Hardfork::Istanbul,
-            "muirglacier" | "9" => Hardfork::Muirglacier,
-            "berlin" | "10" => Hardfork::Berlin,
-            "london" | "11" => Hardfork::London,
-            "arrowglacier" => Hardfork::ArrowGlacier,
-            "latest" | "12" => Hardfork::Latest,
-            _ => return Err(format!("Unknown hardfork {}", s)),
-        };
-        Ok(hardfork)
-    }
-}
-
-impl Default for Hardfork {
-    fn default() -> Self {
-        Hardfork::Latest
-    }
-}
-
-impl From<Hardfork> for SpecId {
-    fn from(fork: Hardfork) -> Self {
-        match fork {
-            Hardfork::Frontier => SpecId::FRONTIER,
-            Hardfork::Homestead => SpecId::HOMESTEAD,
-            Hardfork::Tangerine => SpecId::TANGERINE,
-            Hardfork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-            Hardfork::Byzantium => SpecId::BYZANTIUM,
-            Hardfork::Constantinople => SpecId::CONSTANTINOPLE,
-            Hardfork::Petersburg => SpecId::PETERSBURG,
-            Hardfork::Istanbul => SpecId::ISTANBUL,
-            Hardfork::Muirglacier => SpecId::MUIRGLACIER,
-            Hardfork::Berlin => SpecId::BERLIN,
-            Hardfork::London => SpecId::LONDON,
-            Hardfork::ArrowGlacier | Hardfork::Latest => SpecId::LATEST,
-        }
-    }
-}
-
-impl<T: Into<BlockNumber>> From<T> for Hardfork {
-    fn from(block: T) -> Hardfork {
-        let num = match block.into() {
-            BlockNumber::Pending | BlockNumber::Latest => u64::MAX,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Number(num) => num.as_u64(),
-        };
-
-        match num {
-            _i if num < 1_150_000 => Hardfork::Frontier,
-            _i if num < 2_463_000 => Hardfork::Homestead,
-            _i if num < 2_675_000 => Hardfork::Tangerine,
-            _i if num < 4_370_000 => Hardfork::SpuriousDragon,
-            _i if num < 7_280_000 => Hardfork::Byzantium,
-            _i if num < 9_069_000 => Hardfork::Constantinople,
-            _i if num < 9_200_000 => Hardfork::Istanbul,
-            _i if num < 12_244_000 => Hardfork::Muirglacier,
-            _i if num < 12_965_000 => Hardfork::Berlin,
-            _i if num < 13_773_000 => Hardfork::London,
-
-            _ => Hardfork::Latest,
-        }
-    }
-}
-
 /// Can create dev accounts
 #[derive(Debug, Clone)]
 pub struct AccountGenerator {
@@ -960,21 +868,4 @@ async fn find_latest_fork_block<M: Middleware>(provider: M) -> Result<u64, M::Er
     }
 
     Ok(num)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hardfork_blocks() {
-        let hf: Hardfork = 12_965_000u64.into();
-        assert_eq!(hf, Hardfork::London);
-
-        let hf: Hardfork = 4370000u64.into();
-        assert_eq!(hf, Hardfork::Byzantium);
-
-        let hf: Hardfork = 12244000u64.into();
-        assert_eq!(hf, Hardfork::Berlin);
-    }
 }

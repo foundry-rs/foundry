@@ -56,6 +56,9 @@ pub use chain::Chain;
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
+pub mod fs_permissions;
+pub use crate::fs_permissions::FsPermissions;
+
 pub mod error;
 pub use error::SolidityErrorCode;
 
@@ -315,6 +318,10 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configures the permissions of cheat codes that touch the file system.
+    ///
+    /// This includes what operations can be executed (read, write)
+    pub fs_permissions: FsPermissions,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -489,6 +496,8 @@ impl Config {
         self.allow_paths = self.allow_paths.into_iter().map(|allow| p(&root, &allow)).collect();
 
         self.include_paths = self.include_paths.into_iter().map(|allow| p(&root, &allow)).collect();
+
+        self.fs_permissions.join_all(&root);
 
         if let Some(ref mut model_checker) = self.model_checker {
             model_checker.contracts = std::mem::take(&mut model_checker.contracts)
@@ -1482,6 +1491,12 @@ impl<P: Into<PathBuf>> From<P> for RootPath {
     }
 }
 
+impl AsRef<Path> for RootPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Parses a config profile
 ///
 /// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
@@ -1600,6 +1615,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            fs_permissions: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -2261,6 +2277,7 @@ mod tests {
         cache::{CachedChains, CachedEndpoints},
         endpoints::RpcEndpoint,
         etherscan::ResolvedEtherscanConfigs,
+        fs_permissions::PathPermission,
     };
     use ethers_core::types::Chain::Moonbeam;
     use ethers_solc::artifacts::{ModelCheckerEngine, YulDetails};
@@ -3379,6 +3396,37 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let other = Config::load();
             assert_eq!(default, other);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fs_permissions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                fs_permissions = [{ access = "read-write", path = "./"}]
+            "#,
+            )?;
+            let loaded = Config::load();
+
+            assert_eq!(
+                loaded.fs_permissions,
+                FsPermissions::new(vec![PathPermission::read_write("./")])
+            );
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                fs_permissions = [{ access = "none", path = "./"}]
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(loaded.fs_permissions, FsPermissions::new(vec![PathPermission::none("./")]));
 
             Ok(())
         });

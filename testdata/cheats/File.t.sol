@@ -7,13 +7,15 @@ import "./Cheats.sol";
 contract FileTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
     bytes constant FOUNDRY_TOML_ACCESS_ERR = "Access to foundry.toml is not allowed.";
+    bytes constant FOUNDRY_READ_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for read operations.";
+    bytes constant FOUNDRY_WRITE_ERR = "The path \"/etc/hosts\" is not allowed to be accessed for write operations.";
 
     function testReadFile() public {
         string memory path = "../testdata/fixtures/File/read.txt";
 
         assertEq(cheats.readFile(path), "hello readable world\nthis is the second line!");
 
-        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
+        cheats.expectRevert(FOUNDRY_READ_ERR);
         cheats.readFile("/etc/hosts");
     }
 
@@ -24,7 +26,7 @@ contract FileTest is DSTest {
         assertEq(cheats.readLine(path), "this is the second line!");
         assertEq(cheats.readLine(path), "");
 
-        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
+        cheats.expectRevert(FOUNDRY_READ_ERR);
         cheats.readLine("/etc/hosts");
     }
 
@@ -37,7 +39,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
+        cheats.expectRevert(FOUNDRY_WRITE_ERR);
         cheats.writeFile("/etc/hosts", "malicious stuff");
     }
 
@@ -54,7 +56,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
+        cheats.expectRevert(FOUNDRY_WRITE_ERR);
         cheats.writeLine("/etc/hosts", "malicious stuff");
     }
 
@@ -79,7 +81,7 @@ contract FileTest is DSTest {
 
         cheats.removeFile(path);
 
-        cheats.expectRevert("Path \"/etc/hosts\" is not allowed.");
+        cheats.expectRevert(FOUNDRY_WRITE_ERR);
         cheats.removeFile("/etc/hosts");
     }
 

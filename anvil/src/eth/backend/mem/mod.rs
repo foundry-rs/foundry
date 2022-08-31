@@ -1052,7 +1052,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork(number) {
+                return Ok(fork.block_by_number(number).await?)
+            }
         }
 
         Ok(None)
@@ -1068,7 +1071,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork(number) {
+                return Ok(fork.block_by_number_full(number).await?)
+            }
         }
 
         Ok(None)
@@ -1506,8 +1512,8 @@ impl Backend {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
-        let number = self.convert_block_number(Some(number));
         if let Some(fork) = self.get_fork() {
+            let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
                 return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
