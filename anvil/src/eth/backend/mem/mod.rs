@@ -1053,7 +1053,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
-            if fork.predates_fork(number) {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork.block_by_number(number).await?)
             }
         }
@@ -1072,7 +1072,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
-            if fork.predates_fork(number) {
+            if fork.predates_fork_inclusive(number) {
                 return Ok(fork.block_by_number_full(number).await?)
             }
         }
