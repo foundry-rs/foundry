@@ -200,6 +200,29 @@ pub trait DatabaseExt: Database {
             self.add_persistent_account(acc);
         }
     }
+
+    /// Grants cheatcode access for the given `account`
+    ///
+    /// Returns true if the `account` already has access
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Revokes cheatcode access for the given account
+    ///
+    /// Returns true if the `account` was previously allowed cheatcode access
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Returns `true` if the given account is allowed to execute cheatcodes
+    fn has_cheatcode_access(&self, account: Address) -> bool;
+
+    /// Ensures that `account` is allowed to execute cheatcodes
+    ///
+    /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
+    fn ensure_cheatcode_access(&self, account: Address) -> eyre::Result<()> {
+        if !self.has_cheatcode_access(account) {
+            eyre::bail!("No cheatcode access: {:?}", account)
+        }
+        Ok(())
+    }
 }
 
 /// Provides the underlying `revm::Database` implementation.
@@ -351,14 +374,18 @@ impl Backend {
     ///
     /// This will also mark the caller as persistent and remove the persistent status from the
     /// previous test contract address
+    ///
+    /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
         // toggle the previous sender
         if let Some(current) = self.inner.test_contract_address.take() {
             self.remove_persistent_account(&current);
+            self.revoke_cheatcode_access(acc);
         }
 
         self.add_persistent_account(acc);
+        self.allow_cheatcode_access(acc);
         self.inner.test_contract_address = Some(acc);
         self
     }
@@ -843,6 +870,18 @@ impl DatabaseExt for Backend {
         trace!(?account, "add persistent account");
         self.inner.persistent_accounts.insert(account)
     }
+
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        self.inner.cheatcode_access_accounts.insert(account)
+    }
+
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        self.inner.cheatcode_access_accounts.remove(&account)
+    }
+
+    fn has_cheatcode_access(&self, account: Address) -> bool {
+        self.inner.cheatcode_access_accounts.contains(&account)
+    }
 }
 
 impl DatabaseRef for Backend {
@@ -988,7 +1027,7 @@ impl Fork {
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///
@@ -1040,6 +1079,8 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
+    /// All accounts that are allowed to execute cheatcodes
+    pub cheatcode_access_accounts: HashSet<Address>,
 }
 
 // === impl BackendInner ===
@@ -1179,6 +1220,25 @@ impl BackendInner {
     /// Returns true if no forks are issued
     pub fn is_empty(&self) -> bool {
         self.issued_local_fork_ids.is_empty()
+    }
+}
+
+impl Default for BackendInner {
+    fn default() -> Self {
+        Self {
+            launched_with_fork: None,
+            issued_local_fork_ids: Default::default(),
+            created_forks: Default::default(),
+            forks: vec![],
+            snapshots: Default::default(),
+            has_failure_snapshot: false,
+            test_contract_address: None,
+            caller: None,
+            next_fork_id: Default::default(),
+            persistent_accounts: Default::default(),
+            // grant the cheatcode address access to execute cheatcodes itself
+            cheatcode_access_accounts: HashSet::from([CHEATCODE_ADDRESS]),
+        }
     }
 }
 
