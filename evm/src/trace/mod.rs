@@ -90,10 +90,9 @@ impl CallTraceArena {
     }
 
     pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
-        self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
+        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
             acc.failed |= !trace.trace.success;
             acc.gas += trace.trace.gas_cost;
-            // acc.return_value // TODO
 
             acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
                 let mut log: StructLog = step.into();
@@ -112,7 +111,13 @@ impl CallTraceArena {
             }));
 
             acc
-        })
+        });
+
+        if let Some(last_trace) = self.arena.first() {
+            trace.return_value = last_trace.trace.output.to_raw().into();
+        }
+
+        trace
     }
 }
 
