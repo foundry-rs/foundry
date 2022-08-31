@@ -95,7 +95,11 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = format!("{}{}", path, index);
+    let derivation_path = if path.ends_with('/') {
+        format!("{}{}", path, index)
+    } else {
+        format!("{}/{}", path, index)
+    };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
