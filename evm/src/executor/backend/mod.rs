@@ -26,12 +26,12 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
-use crate::executor::{
-    backend::error::DatabaseError, inspector::cheatcodes::util::with_journaled_account,
-};
+use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
+pub use error::{DatabaseError, DatabaseResult};
+
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
