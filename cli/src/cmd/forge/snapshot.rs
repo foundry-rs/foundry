@@ -31,7 +31,7 @@ use yansi::Paint;
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))|(runs:\s*(?P<invruns>\d+),\s*calls:\s*(?P<calls>\d+),\s*reverts:\s*(?P<reverts>\d+)))\)").unwrap()
 });
 
 #[derive(Debug, Clone, Parser)]
@@ -46,7 +46,7 @@ pub struct SnapshotArgs {
 
     /// Output a diff against a pre-existing snapshot.
     ///
-    /// By default the comparison is done with .gas-snapshot.
+    /// By default, the comparison is done with .gas-snapshot.
     #[clap(
         conflicts_with = "snap",
         long,
@@ -200,7 +200,10 @@ impl SnapshotConfig {
 
 /// A general entry in a snapshot file
 ///
-/// Has the form `<signature>(gas:? 40181)`
+/// Has the form:
+///   `<signature>(gas:? 40181)` for normal tests
+///   `<signature>(runs: 256, μ: 40181, ~: 40181)` for fuzz tests
+///   `<signature>(runs: 256, calls: 40181, reverts: 40181)` for invariant tests
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
     pub contract_name: String,
@@ -225,12 +228,9 @@ impl FromStr for SnapshotEntry {
                                     gas: gas.as_str().parse().unwrap(),
                                 },
                             })
-                        } else {
-                            cap.name("runs")
-                                .and_then(|runs| {
-                                    cap.name("avg")
-                                        .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                })
+                        } else if let Some(runs) = cap.name("runs") {
+                            cap.name("avg")
+                                .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
                                 .map(|(runs, avg, med)| SnapshotEntry {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
@@ -238,6 +238,22 @@ impl FromStr for SnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         median_gas: med.as_str().parse().unwrap(),
                                         mean_gas: avg.as_str().parse().unwrap(),
+                                    },
+                                })
+                        } else {
+                            cap.name("invruns")
+                                .and_then(|runs| {
+                                    cap.name("calls").and_then(|avg| {
+                                        cap.name("reverts").map(|med| (runs, avg, med))
+                                    })
+                                })
+                                .map(|(runs, calls, reverts)| SnapshotEntry {
+                                    contract_name: file.as_str().to_string(),
+                                    signature: sig.as_str().to_string(),
+                                    gas_used: TestKindReport::Invariant {
+                                        runs: runs.as_str().parse().unwrap(),
+                                        calls: calls.as_str().parse().unwrap(),
+                                        reverts: reverts.as_str().parse().unwrap(),
                                     },
                                 })
                         }
@@ -436,6 +452,20 @@ mod tests {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindReport::Fuzz { runs: 256, median_gas: 200, mean_gas: 100 }
+            }
+        );
+    }
+
+    #[test]
+    fn can_parse_invariant_snapshot_entry() {
+        let s = "Test:deposit() (runs: 256, calls: 100, reverts: 200)";
+        let entry = SnapshotEntry::from_str(s).unwrap();
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                contract_name: "Test".to_string(),
+                signature: "deposit()".to_string(),
+                gas_used: TestKindReport::Invariant { runs: 256, calls: 100, reverts: 200 }
             }
         );
     }

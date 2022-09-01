@@ -1052,7 +1052,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.block_by_number(number).await?)
+            }
         }
 
         Ok(None)
@@ -1068,7 +1071,10 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?)
+            let number = self.convert_block_number(Some(number));
+            if fork.predates_fork_inclusive(number) {
+                return Ok(fork.block_by_number_full(number).await?)
+            }
         }
 
         Ok(None)
@@ -1506,8 +1512,8 @@ impl Backend {
             return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
         }
 
-        let number = self.convert_block_number(Some(number));
         if let Some(fork) = self.get_fork() {
+            let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
                 return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
@@ -1684,6 +1690,25 @@ impl TransactionValidator for Backend {
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         let tx = &pending.transaction;
+
+        if let Some(tx_chain_id) = tx.chain_id() {
+            let chain_id = self.chain_id();
+            if chain_id != tx_chain_id.into() {
+                if let Some(legacy) = tx.as_legacy() {
+                    // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
+                    if env.cfg.spec_id >= SpecId::SPURIOUS_DRAGON &&
+                        !legacy.meets_eip155(chain_id.as_u64())
+                    {
+                        warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
+                        return Err(InvalidTransactionError::IncompatibleEIP155)
+                    }
+                } else {
+                    warn!(target: "backend", ?chain_id, ?tx_chain_id, "invalid chain id");
+                    return Err(InvalidTransactionError::InvalidChainId)
+                }
+            }
+        }
+
         if tx.gas_limit() > env.block.gas_limit {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)

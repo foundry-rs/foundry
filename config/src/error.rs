@@ -80,6 +80,8 @@ pub enum SolidityErrorCode {
     ShadowsExistingDeclaration,
     /// This declaration has the same name as another declaration.
     DeclarationSameNameAsAnother,
+    /// Unnamed return variable can remain unassigned
+    UnnamedReturnVariable,
     /// All other error codes
     Other(u64),
 }
@@ -97,6 +99,7 @@ impl From<SolidityErrorCode> for u64 {
             SolidityErrorCode::PayableNoReceiveEther => 3628,
             SolidityErrorCode::ShadowsExistingDeclaration => 2519,
             SolidityErrorCode::DeclarationSameNameAsAnother => 8760,
+            SolidityErrorCode::UnnamedReturnVariable => 6321,
             SolidityErrorCode::Other(code) => code,
         }
     }
@@ -115,6 +118,7 @@ impl From<u64> for SolidityErrorCode {
             3628 => SolidityErrorCode::PayableNoReceiveEther,
             2519 => SolidityErrorCode::ShadowsExistingDeclaration,
             8760 => SolidityErrorCode::DeclarationSameNameAsAnother,
+            6321 => SolidityErrorCode::UnnamedReturnVariable,
             other => SolidityErrorCode::Other(other),
         }
     }

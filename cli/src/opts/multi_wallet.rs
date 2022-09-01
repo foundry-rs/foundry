@@ -253,7 +253,7 @@ impl MultiWallet {
         if let Some(private_keys) = &self.private_keys {
             let mut wallets = vec![];
             for private_key in private_keys.iter() {
-                wallets.push(self.get_from_private_key(private_key)?);
+                wallets.push(self.get_from_private_key(private_key.trim())?);
             }
             return Ok(Some(wallets))
         }

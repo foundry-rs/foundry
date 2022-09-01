@@ -4,15 +4,14 @@ use crate::cmd::retry::RetryArgs;
 use async_trait::async_trait;
 use clap::{Parser, ValueHint};
 use ethers::{abi::Address, solc::info::ContractInfo};
+use etherscan::EtherscanVerificationProvider;
 use foundry_config::{impl_figment_convert_basic, Chain};
+use sourcify::SourcifyVerificationProvider;
 use std::{
     fmt::{Display, Formatter},
     path::PathBuf,
     str::FromStr,
 };
-
-use etherscan::EtherscanVerificationProvider;
-use sourcify::SourcifyVerificationProvider;
 
 mod etherscan;
 mod sourcify;

@@ -11,7 +11,6 @@ use ethers::{
         Address, BlockNumber, Transaction, TransactionReceipt, H256, U256,
     },
 };
-
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -779,6 +778,29 @@ async fn can_stream_pending_transactions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tx_access_list() {
+    /// returns a String representation of the AccessList, with sorted
+    /// keys (address) and storage slots
+    fn access_list_to_sorted_string(a: AccessList) -> String {
+        let mut a = a.0;
+        a.sort_by_key(|v| v.address);
+
+        let a = a
+            .iter_mut()
+            .map(|v| {
+                v.storage_keys.sort();
+                (v.address, std::mem::take(&mut v.storage_keys))
+            })
+            .collect::<Vec<_>>();
+
+        format!("{:?}", a)
+    }
+
+    /// asserts that the two access lists are equal, by comparing their sorted
+    /// string representation
+    fn assert_access_list_eq(a: AccessList, b: AccessList) {
+        assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    }
+
     // We want to test a couple of things:
     //     - When calling a contract with no storage read/write, it shouldn't be in the AL
     //     - When a contract calls a contract, the latter one should be in the AL
@@ -848,25 +870,26 @@ async fn test_tx_access_list() {
     );
 }
 
-/// returns a String representation of the AccessList, with sorted
-/// keys (address) and storage slots
-fn access_list_to_sorted_string(a: AccessList) -> String {
-    let mut a = a.0;
-    a.sort_by_key(|v| v.address);
+// ensures that the gas estimate is running on pending block by default
+#[tokio::test(flavor = "multi_thread")]
+async fn estimates_gas_on_pending_by_default() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
 
-    let a = a
-        .iter_mut()
-        .map(|v| {
-            v.storage_keys.sort();
-            (v.address, std::mem::take(&mut v.storage_keys))
-        })
-        .collect::<Vec<_>>();
+    // disable auto mine
+    api.anvil_set_auto_mine(false).await.unwrap();
 
-    format!("{:?}", a)
-}
+    let provider = handle.http_provider();
 
-/// asserts that the two access lists are equal, by comparing their sorted
-/// string representation
-fn assert_access_list_eq(a: AccessList, b: AccessList) {
-    assert_eq!(access_list_to_sorted_string(a), access_list_to_sorted_string(b))
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let tx = TransactionRequest::new().from(sender).to(recipient).value(1e18 as u64);
+    client.send_transaction(tx, None).await.unwrap();
+
+    let tx =
+        TransactionRequest::new().from(recipient).to(sender).value(1e10 as u64).data(vec![0x42]);
+    api.estimate_gas(tx.into(), None).await.unwrap();
 }

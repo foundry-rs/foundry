@@ -5,7 +5,7 @@ mod etherscan;
 pub use etherscan::EtherscanIdentifier;
 
 mod signatures;
-pub use signatures::SignaturesIdentifier;
+pub use signatures::{SignaturesIdentifier, SingleSignaturesIdentifier};
 
 use ethers::{
     abi::{Abi, Address},

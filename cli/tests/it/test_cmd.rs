@@ -3,9 +3,9 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_init,
     util::{OutputExt, TestCommand, TestProject},
 };
-use foundry_config::Config;
+use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
 use foundry_utils::rpc;
-use std::{path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf, str::FromStr};
 
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
@@ -293,13 +293,28 @@ contract ContractTest is DSTest {
 
 // checks that we can test forge std successfully
 // `forgetest_init!` will install with `forge-std` under `lib/forge-std`
-forgetest_init!(can_test_forge_std, |prj: TestProject, mut cmd: TestCommand| {
-    let forge_std_dir = prj.root().join("lib/forge-std");
-    cmd.cmd().current_dir(forge_std_dir);
-    cmd.args(["test", "--root", "."]);
+forgetest_init!(
+    #[serial_test::serial]
+    can_test_forge_std,
+    |prj: TestProject, mut cmd: TestCommand| {
+        let forge_std_dir = prj.root().join("lib/forge-std");
+        // explicitly allow fs access
+        let config = Config {
+            fs_permissions: FsPermissions::new(vec![PathPermission::read_write(
+                forge_std_dir.clone(),
+            )]),
+            ..Default::default()
+        };
 
-    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
-});
+        fs::write(&forge_std_dir.join(Config::FILE_NAME), config.to_string_pretty().unwrap())
+            .unwrap();
+
+        cmd.cmd().current_dir(forge_std_dir);
+        cmd.args(["test", "--root", "."]);
+
+        cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+    }
+);
 
 // tests that libraries are handled correctly in multiforking mode
 forgetest_init!(can_use_libs_in_multi_fork, |prj: TestProject, mut cmd: TestCommand| {
