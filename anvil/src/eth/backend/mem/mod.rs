@@ -196,8 +196,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for address in self.genesis.accounts.iter().copied() {
-                let mut info =
-                    db.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+                let mut info = db.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -835,8 +834,7 @@ impl Backend {
         let to = if let Some(to) = request.to {
             to
         } else {
-            let nonce =
-                state.basic(from)?.ok_or(DatabaseError::MissingAccount(from))?.nonce;
+            let nonce = state.basic(from)?.ok_or(DatabaseError::MissingAccount(from))?.nonce;
             get_contract_address(from, nonce)
         };
 
@@ -1312,8 +1310,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account =
-            state.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let account = state.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1360,11 +1357,7 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db
-                .basic(address)?
-                .ok_or(DatabaseError::MissingAccount(address))?
-                .nonce
-                .into())
+            Ok(db.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?.nonce.into())
         })
         .await?
     }

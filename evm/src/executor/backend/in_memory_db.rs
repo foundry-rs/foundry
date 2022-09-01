@@ -5,9 +5,12 @@ use ethers::{
     types::Address,
 };
 use hashbrown::HashMap as Map;
-use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit, InMemoryDB};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
+use revm::db::{CacheDB, EmptyDB};
 
 use crate::executor::snapshot::Snapshots;
+
+pub type InMemoryDB = CacheDB<EmptyDBWrapper>;
 
 /// In memory Database for anvil
 ///
@@ -20,50 +23,74 @@ pub struct MemDb {
 
 impl Default for MemDb {
     fn default() -> Self {
-        Self { inner: InMemoryDB::default(), snapshots: Default::default() }
+        Self { inner: CacheDB::new(Default::default()), snapshots: Default::default() }
     }
 }
 
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(DatabaseRef::basic(&self.inner, address)?)
+        DatabaseRef::basic(&self.inner, address)
     }
 
     fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
-        Ok(DatabaseRef::code_by_hash(&self.inner, code_hash)?)
+        DatabaseRef::code_by_hash(&self.inner, code_hash)
     }
 
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(DatabaseRef::storage(&self.inner, address, index)?)
+        DatabaseRef::storage(&self.inner, address, index)
     }
 
     fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
-        Ok(DatabaseRef::block_hash(&self.inner, number)?)
+        DatabaseRef::block_hash(&self.inner, number)
     }
 }
 
 impl Database for MemDb {
     type Error = DatabaseError;
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(Database::basic(&mut self.inner, address)?)
+        Database::basic(&mut self.inner, address)
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
-        Ok(Database::code_by_hash(&mut self.inner, code_hash)?)
+        Database::code_by_hash(&mut self.inner, code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(Database::storage(&mut self.inner, address, index)?)
+        Database::storage(&mut self.inner, address, index)
     }
 
     fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
-        Ok(Database::block_hash(&mut self.inner, number)?)
+        Database::block_hash(&mut self.inner, number)
     }
 }
 
 impl DatabaseCommit for MemDb {
     fn commit(&mut self, changes: Map<Address, Account>) {
         DatabaseCommit::commit(&mut self.inner, changes)
+    }
+}
+
+
+/// An empty database that always returns default values when queried.
+///
+/// This is just a simple wrapper for `revm::EmptyDB` but implements `DatabaseError` instead, this way we can unify all different `Database` impls
+#[derive(Debug, Default, Clone)]
+pub struct EmptyDBWrapper(EmptyDB);
+
+impl DatabaseRef for EmptyDBWrapper {
+    type Error = DatabaseError;
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.0.basic(address)?)
+    }
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
+        Ok(self.0.code_by_hash(code_hash)?)
+    }
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        Ok(self.0.storage(address, index)?)
+    }
+
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
+        Ok(self.0.block_hash(number)?)
     }
 }

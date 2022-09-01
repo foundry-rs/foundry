@@ -1,6 +1,5 @@
 //! Support for generating the state root for memdb storage
 
-
 use crate::eth::{backend::db::AsHashDB, error::BlockchainError};
 use anvil_core::eth::{state::StateOverride, trie::RefSecTrieDBMut};
 use bytes::Bytes;

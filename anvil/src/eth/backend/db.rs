@@ -22,7 +22,6 @@ use foundry_evm::{
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
 
-
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
 
@@ -77,8 +76,7 @@ pub trait Db:
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
-        let mut info =
-            self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
         info.nonce = nonce;
         self.insert_account(address, info);
         Ok(())
@@ -86,8 +84,7 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut info =
-            self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
         info.balance = balance;
         self.insert_account(address, info);
         Ok(())
@@ -95,8 +92,7 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        let mut info =
-            self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {

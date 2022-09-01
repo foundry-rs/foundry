@@ -19,8 +19,7 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address)?
-            .ok_or(DatabaseError::MissingAccount(address))?;
+        let _ = Database::basic(self, address)?.ok_or(DatabaseError::MissingAccount(address))?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 
