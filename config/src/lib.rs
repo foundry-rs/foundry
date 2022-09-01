@@ -2772,6 +2772,36 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_etherscan_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                etherscan_api_key = "optimism"
+
+                [etherscan]
+                optimism = { key = "https://etherscan-optimism.com/" }
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+            "#,
+            )?;
+
+            let mut config = Config::load();
+
+            let optimism = config.get_etherscan_api_key(Some(ethers_core::types::Chain::Optimism));
+            assert_eq!(optimism, Some("https://etherscan-optimism.com/".to_string()));
+
+            config.etherscan_api_key = Some("mumbai".to_string());
+
+            let mumbai =
+                config.get_etherscan_api_key(Some(ethers_core::types::Chain::PolygonMumbai));
+            assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_toml_file() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
