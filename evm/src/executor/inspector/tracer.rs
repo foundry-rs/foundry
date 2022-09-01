@@ -79,8 +79,17 @@ impl Tracer {
     }
 
     pub fn fill_step(&mut self, gas: u64, status: Return) {
-        let trace = &mut self.traces.arena
-            [*self.trace_stack.last().expect("can't fill step without starting a trace first")];
+        let last_trace_idx =
+            *self.trace_stack.last().expect("can't fill step without starting a trace first");
+        let trace_idx = if !self.traces.arena[last_trace_idx].trace.step_stack.is_empty() {
+            last_trace_idx
+        } else {
+            // Special case when we started new trace between start_step() and fill_step(), so we
+            // need to take the penultimate trace from the stack instead of the last
+            self.trace_stack[self.trace_stack.len() - 2]
+        };
+        let trace = &mut self.traces.arena[trace_idx];
+
         let step_idx =
             trace.trace.step_stack.pop().expect("can't fill step without starting a step first");
         let step = &mut trace.trace.steps[step_idx];
