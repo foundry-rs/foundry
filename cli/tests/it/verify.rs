@@ -369,7 +369,8 @@ forgetest_async!(
         assert_eq!(5, stdout.matches("✅").count(), "{}", err);
 
         // ensure verified all deployments
-        // Note: the 5th tx creates contracts internally, which are little flaky at times
+        // Note: the 5th tx creates contracts internally, which are little flaky at times because
+        // the goerli etherscan indexer can take a long time to index these contracts
         assert!(stdout.matches("Contract successfully verified").count() >= 4, "{}", err);
     }
 );
