@@ -439,4 +439,18 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn can_parse_invariant_snapshot_entry() {
+        let s = "Test:deposit() (runs: 256, calls: 100, reverts:200)";
+        let entry = SnapshotEntry::from_str(s).unwrap();
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                contract_name: "Test".to_string(),
+                signature: "deposit()".to_string(),
+                gas_used: TestKindReport::Invariant { runs: 256, calls: 100, reverts: 200 }
+            }
+        );
+    }
 }
