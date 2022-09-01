@@ -53,7 +53,10 @@ use ethers::{
 };
 use forge::{executor::DatabaseRef, revm::BlockEnv};
 use foundry_common::ProviderBuilder;
-use foundry_evm::revm::{return_ok, return_revert, Return};
+use foundry_evm::{
+    executor::backend::DatabaseError,
+    revm::{return_ok, return_revert, Return},
+};
 use futures::channel::mpsc::Receiver;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
@@ -749,7 +752,7 @@ impl EthApi {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await;
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
         let from = *pending_transaction.sender();
         let nonce = *pending_transaction.transaction.nonce();
         let requires = required_marker(nonce, on_chain_nonce, from);
@@ -784,7 +787,7 @@ impl EthApi {
                 if fork.predates_fork(number.as_u64()) {
                     if overrides.is_some() {
                         return Err(BlockchainError::StateOverrideError(
-                            "not available on past forked blocks".into(),
+                            "not available on past forked blocks".to_string(),
                         ))
                     }
                     return Ok(fork.call(&request, Some(number.into())).await?)
@@ -1235,7 +1238,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_impersonateAccount");
-        self.backend.impersonate(address).await;
+        self.backend.impersonate(address).await?;
         Ok(())
     }
 
@@ -1244,7 +1247,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
         node_info!("anvil_stopImpersonatingAccount");
-        self.backend.stop_impersonating(address).await;
+        self.backend.stop_impersonating(address).await?;
         Ok(())
     }
 
@@ -1720,7 +1723,7 @@ impl EthApi {
         block_env: BlockEnv,
     ) -> Result<U256>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         // call takes at least this amount
         const MIN_GAS: U256 = U256([21_000, 0, 0, 0]);
