@@ -1,5 +1,5 @@
 //! The in memory DB
-use crate::executor::{backend::error::DatabaseError, fork::database::DbResult};
+use crate::executor::backend::error::DatabaseError;
 use ethers::{
     prelude::{H256, U256},
     types::Address,
@@ -27,38 +27,38 @@ impl Default for MemDb {
 impl DatabaseRef for MemDb {
     type Error = DatabaseError;
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(DatabaseRef::basic(&self.inner, address).unwrap())
+        Ok(DatabaseRef::basic(&self.inner, address)?)
     }
 
     fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
-        Ok(DatabaseRef::code_by_hash(&self.inner, code_hash).unwrap())
+        Ok(DatabaseRef::code_by_hash(&self.inner, code_hash)?)
     }
 
     fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(DatabaseRef::storage(&self.inner, address, index).unwrap())
+        Ok(DatabaseRef::storage(&self.inner, address, index)?)
     }
 
     fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
-        Ok(DatabaseRef::block_hash(&self.inner, number).unwrap())
+        Ok(DatabaseRef::block_hash(&self.inner, number)?)
     }
 }
 
 impl Database for MemDb {
     type Error = DatabaseError;
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(Database::basic(&mut self.inner, address).unwrap())
+        Ok(Database::basic(&mut self.inner, address)?)
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
-        Ok(Database::code_by_hash(&mut self.inner, code_hash).unwrap())
+        Ok(Database::code_by_hash(&mut self.inner, code_hash)?)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(Database::storage(&mut self.inner, address, index).unwrap())
+        Ok(Database::storage(&mut self.inner, address, index)?)
     }
 
     fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
-        Ok(Database::block_hash(&mut self.inner, number).unwrap())
+        Ok(Database::block_hash(&mut self.inner, number)?)
     }
 }
 

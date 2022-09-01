@@ -18,8 +18,6 @@ use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCo
 use std::sync::Arc;
 use tracing::{trace, warn};
 
-pub type DbResult<T> = Result<T, &'static str>;
-
 /// a [revm::Database] that's forked off another client
 ///
 /// The `backend` is used to retrieve (missing) data, which is then fetched from the remote

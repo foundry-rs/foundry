@@ -1,6 +1,7 @@
 use crate::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
     executor::{
+        backend::DatabaseExt,
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
@@ -9,8 +10,8 @@ use crate::{
 use bytes::Bytes;
 use ethers::types::Address;
 use revm::{
-    opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
-    Interpreter, Memory, Return,
+    opcode, spec_opcode_gas, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter,
+    Memory, Return,
 };
 
 /// An inspector that collects debug nodes on every step of the interpreter.
@@ -59,32 +60,8 @@ impl Debugger {
 
 impl<DB> Inspector<DB> for Debugger
 where
-    DB: Database,
+    DB: DatabaseExt,
 {
-    fn call(
-        &mut self,
-        data: &mut EVMData<'_, DB>,
-        call: &mut CallInputs,
-        _: bool,
-    ) -> (Return, Gas, Bytes) {
-        self.enter(
-            data.journaled_state.depth() as usize,
-            call.context.code_address,
-            call.context.scheme.into(),
-        );
-        if call.contract == CHEATCODE_ADDRESS {
-            self.arena.arena[self.head].steps.push(DebugStep {
-                memory: Memory::new(),
-                instruction: Instruction::Cheatcode(
-                    call.input[0..4].try_into().expect("malformed cheatcode call"),
-                ),
-                ..Default::default()
-            });
-        }
-
-        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-    }
-
     fn initialize_interp(
         &mut self,
         interp: &mut Interpreter,
@@ -144,6 +121,30 @@ where
         Return::Continue
     }
 
+    fn call(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &mut CallInputs,
+        _: bool,
+    ) -> (Return, Gas, Bytes) {
+        self.enter(
+            data.journaled_state.depth() as usize,
+            call.context.code_address,
+            call.context.scheme.into(),
+        );
+        if call.contract == CHEATCODE_ADDRESS {
+            self.arena.arena[self.head].steps.push(DebugStep {
+                memory: Memory::new(),
+                instruction: Instruction::Cheatcode(
+                    call.input[0..4].try_into().expect("malformed cheatcode call"),
+                ),
+                ..Default::default()
+            });
+        }
+
+        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+    }
+
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
@@ -164,7 +165,10 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.journaled_state.load_account(call.caller, data.db);
+        if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
+            return (Return::Revert, None, Gas::new(call.gas_limit), err.string_encoded())
+        }
+
         let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.enter(
             data.journaled_state.depth() as usize,

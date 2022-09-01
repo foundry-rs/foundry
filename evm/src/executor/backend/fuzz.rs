@@ -3,7 +3,7 @@ use crate::{
         backend::{
             diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
         },
-        fork::{database::DbResult, CreateFork, ForkId},
+        fork::{CreateFork, ForkId},
     },
     Address,
 };

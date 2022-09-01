@@ -17,7 +17,7 @@ use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
     Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, InMemoryDB,
-    Inspector, JournaledState, Log, TransactTo, KECCAK_EMPTY,
+    Inspector, JournaledState, Log, SpecId, TransactTo, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -27,8 +27,7 @@ pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
 use crate::executor::{
-    backend::error::DatabaseError, fork::database::DbResult,
-    inspector::cheatcodes::util::with_journaled_account,
+    backend::error::DatabaseError, inspector::cheatcodes::util::with_journaled_account,
 };
 pub use diagnostic::RevertDiagnostic;
 
@@ -52,7 +51,7 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [H160; 2] = [CHEATCODE_ADDRESS, DEFAULT_CREAT
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut, Box)]
-pub trait DatabaseExt: Database {
+pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Creates a new snapshot at the current point of execution.
     ///
     /// A snapshot is associated with a new unique id that's created for the snapshot.
@@ -380,10 +379,10 @@ impl Backend {
         self
     }
 
-    /// Sets the caller address
-    pub fn set_precompiles(&mut self, precompiles: Precompiles) -> &mut Self {
-        trace!("setting precompiles");
-        self.inner.precompiles = precompiles;
+    /// Sets the current spec id
+    pub fn set_spec_id(&mut self, spec_id: SpecId) -> &mut Self {
+        trace!("setting precompile id");
+        self.inner.precompile_id = spec_id.to_precompile_id();
         self
     }
 
@@ -538,7 +537,7 @@ impl Backend {
         INSP: Inspector<Self>,
     {
         self.set_caller(env.tx.caller);
-        self.set_precompiles(Precompiles::new(env.cfg.spec_id.to_precompile_id()).clone());
+        self.set_spec_id(env.cfg.spec_id);
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.set_test_contract(to);
         }
@@ -547,7 +546,7 @@ impl Backend {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        self.inner.precompiles.contains(addr)
+        self.inner.precompiles().contains(addr)
     }
 
     /// Ths will clean up already loaded accounts that would be initialized without the correct data
@@ -565,7 +564,7 @@ impl Backend {
             .state
             .iter()
             .filter(|(addr, acc)| {
-                !self.is_existing_precompile(*addr) && acc.is_touched && !self.is_persistent(addr)
+                !self.is_existing_precompile(addr) && acc.is_touched && !self.is_persistent(addr)
             })
             .map(|(addr, _)| addr)
             .copied()
@@ -578,7 +577,7 @@ impl Backend {
                 let fork_account = fork
                     .db
                     .basic(loaded_account)?
-                    .ok_or_else(|| DatabaseError: MissingAccount(loaded_account))?;
+                    .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
                 init_account.info = fork_account;
@@ -639,7 +638,7 @@ impl DatabaseExt for Backend {
                         if !fork.db.accounts.contains_key(&caller) {
                             // update the caller account which is required by the evm
                             fork.db.insert_account_info(caller, caller_account.clone());
-                            with_journaled_account(
+                            let _ = with_journaled_account(
                                 &mut fork.journaled_state,
                                 &mut fork.db,
                                 caller,
@@ -732,7 +731,7 @@ impl DatabaseExt for Backend {
                     // we also need to initialize and touch the caller
                     if let Some(acc) = caller_account {
                         target_fork.db.insert_account_info(caller, acc);
-                        with_journaled_account(
+                        let _ = with_journaled_account(
                             &mut target_fork.journaled_state,
                             &mut target_fork.db,
                             caller,
@@ -876,7 +875,7 @@ impl DatabaseRef for Backend {
         if let Some(db) = self.active_fork_db() {
             db.basic(address)
         } else {
-            self.mem_db.basic(address)
+            Ok(self.mem_db.basic(address)?)
         }
     }
 
@@ -884,7 +883,7 @@ impl DatabaseRef for Backend {
         if let Some(db) = self.active_fork_db() {
             db.code_by_hash(code_hash)
         } else {
-            self.mem_db.code_by_hash(code_hash)
+            Ok(self.mem_db.code_by_hash(code_hash)?)
         }
     }
 
@@ -892,7 +891,7 @@ impl DatabaseRef for Backend {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
-            DatabaseRef::storage(&self.mem_db, address, index)
+            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
         }
     }
 
@@ -900,7 +899,7 @@ impl DatabaseRef for Backend {
         if let Some(db) = self.active_fork_db() {
             db.block_hash(number)
         } else {
-            self.mem_db.block_hash(number)
+            Ok(self.mem_db.block_hash(number)?)
         }
     }
 }
@@ -911,7 +910,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::basic(db, address)
         } else {
-            DatabaseRef::basic(&self.mem_db, address)
+            Ok(DatabaseRef::basic(&self.mem_db, address)?)
         }
     }
 
@@ -919,7 +918,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::code_by_hash(db, code_hash)
         } else {
-            DatabaseRef::code_by_hash(&self.mem_db, code_hash)
+            Ok(DatabaseRef::code_by_hash(&self.mem_db, code_hash)?)
         }
     }
 
@@ -927,7 +926,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
-            DatabaseRef::storage(&self.mem_db, address, index)
+            Ok(DatabaseRef::storage(&self.mem_db, address, index)?)
         }
     }
 
@@ -935,7 +934,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::block_hash(db, number)
         } else {
-            DatabaseRef::block_hash(&self.mem_db, number)
+            Ok(DatabaseRef::block_hash(&self.mem_db, number)?)
         }
     }
 }
@@ -956,7 +955,7 @@ impl Database for Backend {
         if let Some(db) = self.active_fork_db_mut() {
             db.basic(address)
         } else {
-            self.mem_db.basic(address)
+            Ok(self.mem_db.basic(address)?)
         }
     }
 
@@ -964,7 +963,7 @@ impl Database for Backend {
         if let Some(db) = self.active_fork_db_mut() {
             db.code_by_hash(code_hash)
         } else {
-            self.mem_db.code_by_hash(code_hash)
+            Ok(self.mem_db.code_by_hash(code_hash)?)
         }
     }
 
@@ -972,7 +971,7 @@ impl Database for Backend {
         if let Some(db) = self.active_fork_db_mut() {
             Database::storage(db, address, index)
         } else {
-            Database::storage(&mut self.mem_db, address, index)
+            Ok(Database::storage(&mut self.mem_db, address, index)?)
         }
     }
 
@@ -980,7 +979,7 @@ impl Database for Backend {
         if let Some(db) = self.active_fork_db_mut() {
             db.block_hash(number)
         } else {
-            self.mem_db.block_hash(number)
+            Ok(self.mem_db.block_hash(number)?)
         }
     }
 }
@@ -1006,17 +1005,21 @@ pub struct Fork {
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
-        self.db.basic(acc).code_hash != KECCAK_EMPTY ||
-            self.journaled_state
-                .state
-                .get(&acc)
-                .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-                .unwrap_or_default()
+        if let Ok(Some(acc)) = self.db.basic(acc) {
+            if acc.code_hash != KECCAK_EMPTY {
+                return true
+            }
+        }
+        self.journaled_state
+            .state
+            .get(&acc)
+            .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
+            .unwrap_or_default()
     }
 }
 
 /// Container type for various Backend related data
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BackendInner {
     /// Stores the `ForkId` of the fork the `Backend` launched with from the start.
     ///
@@ -1068,8 +1071,8 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
-    /// The configured precompiles
-    pub precompiles: Precompiles,
+    /// The configured precompile spec id
+    pub precompile_id: revm::precompiles::SpecId,
 }
 
 // === impl BackendInner ===
@@ -1211,15 +1214,30 @@ impl BackendInner {
         self.issued_local_fork_ids.is_empty()
     }
 
+    pub fn precompiles(&self) -> &'static Precompiles {
+        Precompiles::new(self.precompile_id)
+    }
+
     /// Returns a new, empty, `JournaledState` with set precompiles
     pub fn new_journaled_state(&self) -> JournaledState {
-        JournaledState {
-            state: Default::default(),
-            logs: vec![],
-            depth: 0,
-            journal: vec![],
-            is_before_spurious_dragon: false,
-            num_of_precompiles: self.precompiles.len(),
+        JournaledState::new(self.precompiles().len())
+    }
+}
+
+impl Default for BackendInner {
+    fn default() -> Self {
+        Self {
+            launched_with_fork: None,
+            issued_local_fork_ids: Default::default(),
+            created_forks: Default::default(),
+            forks: vec![],
+            snapshots: Default::default(),
+            has_failure_snapshot: false,
+            test_contract_address: None,
+            caller: None,
+            next_fork_id: Default::default(),
+            persistent_accounts: Default::default(),
+            precompile_id: revm::precompiles::SpecId::LATEST,
         }
     }
 }
