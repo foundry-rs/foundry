@@ -2,7 +2,7 @@
 
 use crate::{
     executor::{
-        backend::snapshot::StateSnapshot,
+        backend::{error::DatabaseError, snapshot::StateSnapshot},
         fork::{BlockchainDb, SharedBackend},
         snapshot::Snapshots,
     },
@@ -151,37 +151,41 @@ impl ForkedDatabase {
 }
 
 impl Database for ForkedDatabase {
-    fn basic(&mut self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         Database::basic(&mut self.cache_db, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         Database::storage(&mut self.cache_db, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> DbResult<H256> {
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         Database::block_hash(&mut self.cache_db, number)
     }
 }
 
 impl DatabaseRef for ForkedDatabase {
-    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         self.cache_db.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(&self.cache_db, address, index)
     }
 
-    fn block_hash(&self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         self.cache_db.block_hash(number)
     }
 }
@@ -213,7 +217,9 @@ impl ForkDbSnapshot {
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
 impl DatabaseRef for ForkDbSnapshot {
-    fn basic(&self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         match self.local.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
@@ -227,11 +233,11 @@ impl DatabaseRef for ForkDbSnapshot {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         self.local.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         match self.local.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
@@ -247,7 +253,7 @@ impl DatabaseRef for ForkDbSnapshot {
         }
     }
 
-    fn block_hash(&self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         match self.snapshot.block_hashes.get(&number).copied() {
             None => self.local.block_hash(number),
             Some(block_hash) => Ok(block_hash),

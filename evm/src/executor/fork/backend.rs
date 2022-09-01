@@ -1,5 +1,8 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use crate::executor::fork::{cache::FlushJsonBlockCacheDB, database::DbResult, BlockchainDb};
+use crate::executor::{
+    backend::error::DatabaseError,
+    fork::{cache::FlushJsonBlockCacheDB, database::DbResult, BlockchainDb},
+};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -491,7 +494,9 @@ impl SharedBackend {
 }
 
 impl DatabaseRef for SharedBackend {
-    fn basic(&self, address: H160) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: H160) -> Result<Option<AccountInfo>, Self::Error> {
         trace!( target: "sharedbackend", "request basic {:?}", address);
         self.do_get_basic(address).map(Some).map_err(|err| {
             error!(target: "sharedbackend",  ?err, ?address,  "Failed to send/recv `basic`");
@@ -499,11 +504,11 @@ impl DatabaseRef for SharedBackend {
         })
     }
 
-    fn code_by_hash(&self, _address: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, _address: H256) -> Result<Bytecode, Self::Error> {
         Err("Should not be called. Code is already loaded.")
     }
 
-    fn storage(&self, address: H160, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: H160, index: U256) -> Result<U256, Self::Error> {
         trace!( target: "sharedbackend", "request storage {:?} at {:?}", address, index);
         self.do_get_storage(address, index).map_err(|err| {
             error!( target: "sharedbackend", ?err, ?address, ?index, "Failed to send/recv `storage`");
@@ -511,7 +516,7 @@ impl DatabaseRef for SharedBackend {
         })
     }
 
-    fn block_hash(&self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if number > U256::from(u64::MAX) {
             return Ok(KECCAK_EMPTY)
         }

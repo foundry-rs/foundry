@@ -1,6 +1,8 @@
 use crate::{
     executor::{
-        backend::{diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId},
+        backend::{
+            diagnostic::RevertDiagnostic, error::DatabaseError, Backend, DatabaseExt, LocalForkId,
+        },
         fork::{database::DbResult, CreateFork, ForkId},
     },
     Address,
@@ -138,35 +140,39 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {
-    fn basic(& self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self.backend.as_ref(), address)
     }
 
-    fn code_by_hash(& self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self.backend.as_ref(), code_hash)
     }
 
-    fn storage(& self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self.backend.as_ref(), address, index)
     }
 
-    fn block_hash(& self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         DatabaseRef::block_hash(self.backend.as_ref(), number)
     }
 }
 
 impl<'a> Database for FuzzBackendWrapper<'a> {
-    fn basic(&mut self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         DatabaseRef::basic(self, address)
     }
-    fn code_by_hash(&mut self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         DatabaseRef::code_by_hash(self, code_hash)
     }
-    fn storage(&mut self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         DatabaseRef::storage(self, address, index)
     }
 
-    fn block_hash(&mut self, number: U256) -> DbResult<H256> {
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         DatabaseRef::block_hash(self, number)
     }
 }

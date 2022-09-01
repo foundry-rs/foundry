@@ -15,6 +15,7 @@ use hashbrown::HashMap as Map;
 pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
+    precompiles::Precompiles,
     Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, InMemoryDB,
     Inspector, JournaledState, Log, TransactTo, KECCAK_EMPTY,
 };
@@ -25,10 +26,13 @@ mod fuzz;
 pub mod snapshot;
 pub use fuzz::FuzzBackendWrapper;
 mod diagnostic;
-use crate::executor::inspector::cheatcodes::util::with_journaled_account;
-use crate::executor::fork::database::DbResult;
+use crate::executor::{
+    backend::error::DatabaseError, fork::database::DbResult,
+    inspector::cheatcodes::util::with_journaled_account,
+};
 pub use diagnostic::RevertDiagnostic;
 
+pub mod error;
 mod in_memory_db;
 
 // A `revm::Database` that is used in forking mode
@@ -300,23 +304,28 @@ impl Backend {
     /// database
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
         // Note: this will take of registering the `fork`
+        let inner = BackendInner {
+            persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
+            ..Default::default()
+        };
+
         let mut backend = Self {
             forks,
             mem_db: InMemoryDB::default(),
-            fork_init_journaled_state: new_journaled_state(),
+            fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
-            inner: BackendInner {
-                persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
-                ..Default::default()
-            },
+            inner,
         };
 
         if let Some(fork) = fork {
             let (fork_id, fork, _) =
                 backend.forks.create_fork(fork).expect("Unable to create fork");
             let fork_db = ForkDB::new(fork);
-            let fork_ids =
-                backend.inner.insert_new_fork(fork_id.clone(), fork_db, Default::default());
+            let fork_ids = backend.inner.insert_new_fork(
+                fork_id.clone(),
+                fork_db,
+                backend.inner.new_journaled_state(),
+            );
             backend.inner.launched_with_fork = Some((fork_id, fork_ids.0, fork_ids.1));
             backend.active_fork_ids = Some(fork_ids);
         }
@@ -329,7 +338,7 @@ impl Backend {
         Self {
             forks: self.forks.clone(),
             mem_db: InMemoryDB::default(),
-            fork_init_journaled_state: Default::default(),
+            fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
         }
@@ -371,6 +380,13 @@ impl Backend {
         self
     }
 
+    /// Sets the caller address
+    pub fn set_precompiles(&mut self, precompiles: Precompiles) -> &mut Self {
+        trace!("setting precompiles");
+        self.inner.precompiles = precompiles;
+        self
+    }
+
     /// Returns the address of the set `DSTest` contract
     pub fn test_contract_address(&self) -> Option<Address> {
         self.inner.test_contract_address
@@ -403,9 +419,7 @@ impl Backend {
             bool private _failed;
          }
         */
-        self.storage(address, U256::zero()).map(|value| {
-            value.byte(1) != 0
-        }).unwrap_or_default()
+        self.storage(address, U256::zero()).map(|value| value.byte(1) != 0).unwrap_or_default()
     }
 
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
@@ -413,7 +427,7 @@ impl Backend {
     /// See <https://github.com/dapphub/ds-test/blob/9310e879db8ba3ea6d5c6489a579118fd264a3f5/src/test.sol#L66-L72>
     pub fn is_global_failure(&self) -> bool {
         let index = U256::from(&b"failed"[..]);
-         self.storage(CHEATCODE_ADDRESS, index).map(|value| value == U256::one()).unwrap_or_default()
+        self.storage(CHEATCODE_ADDRESS, index).map(|value| value == U256::one()).unwrap_or_default()
     }
 
     /// when creating or switching forks, we update the AccountInfo of the contract
@@ -524,10 +538,16 @@ impl Backend {
         INSP: Inspector<Self>,
     {
         self.set_caller(env.tx.caller);
+        self.set_precompiles(Precompiles::new(env.cfg.spec_id.to_precompile_id()).clone());
         if let TransactTo::Call(to) = env.tx.transact_to {
             self.set_test_contract(to);
         }
         revm::evm_inner::<Self, true>(&mut env, self, &mut inspector).transact()
+    }
+
+    /// Returns true if the address is a precompile
+    pub fn is_existing_precompile(&self, addr: &Address) -> bool {
+        self.inner.precompiles.contains(addr)
     }
 
     /// Ths will clean up already loaded accounts that would be initialized without the correct data
@@ -539,13 +559,13 @@ impl Backend {
     /// This account data then would not match the account data of a fork if it exists.
     /// So when the first fork is initialized we replace these accounts with the actual account as
     /// it exists on the fork.
-    fn prepare_init_journal_state(&mut self) {
+    fn prepare_init_journal_state(&mut self) -> Result<(), DatabaseError> {
         let loaded_accounts = self
             .fork_init_journaled_state
             .state
             .iter()
             .filter(|(addr, acc)| {
-                !acc.is_existing_precompile && acc.is_touched && !self.is_persistent(addr)
+                !self.is_existing_precompile(*addr) && acc.is_touched && !self.is_persistent(addr)
             })
             .map(|(addr, _)| addr)
             .copied()
@@ -555,13 +575,17 @@ impl Backend {
             let mut journaled_state = self.fork_init_journaled_state.clone();
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
-                let fork_account = fork.db.basic(loaded_account);
+                let fork_account = fork
+                    .db
+                    .basic(loaded_account)?
+                    .ok_or_else(|| DatabaseError: MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");
                 init_account.info = fork_account;
             }
             fork.journaled_state = journaled_state;
         }
+        Ok(())
     }
 }
 
@@ -725,7 +749,7 @@ impl DatabaseExt for Backend {
             // for all future forks
             trace!("recording fork init journaled_state");
             self.fork_init_journaled_state = journaled_state.clone();
-            self.prepare_init_journal_state();
+            self.prepare_init_journal_state()?;
         }
 
         // update the shared state and track
@@ -846,7 +870,9 @@ impl DatabaseExt for Backend {
 }
 
 impl DatabaseRef for Backend {
-    fn basic(& self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.basic(address)
         } else {
@@ -854,7 +880,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn code_by_hash(& self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.code_by_hash(code_hash)
         } else {
@@ -862,7 +888,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn storage(& self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -870,7 +896,7 @@ impl DatabaseRef for Backend {
         }
     }
 
-    fn block_hash(& self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             db.block_hash(number)
         } else {
@@ -880,7 +906,8 @@ impl DatabaseRef for Backend {
 }
 
 impl<'a> DatabaseRef for &'a mut Backend {
-    fn basic(& self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::basic(db, address)
         } else {
@@ -888,7 +915,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn code_by_hash(& self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::code_by_hash(db, code_hash)
         } else {
@@ -896,7 +923,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn storage(& self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::storage(db, address, index)
         } else {
@@ -904,7 +931,7 @@ impl<'a> DatabaseRef for &'a mut Backend {
         }
     }
 
-    fn block_hash(& self, number: U256) -> DbResult<H256> {
+    fn block_hash(&self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db() {
             DatabaseRef::block_hash(db, number)
         } else {
@@ -924,7 +951,8 @@ impl DatabaseCommit for Backend {
 }
 
 impl Database for Backend {
-    fn basic(&mut self, address: Address) -> DbResult<Option<AccountInfo>> {
+    type Error = DatabaseError;
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.basic(address)
         } else {
@@ -932,7 +960,7 @@ impl Database for Backend {
         }
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> DbResult<Bytecode> {
+    fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.code_by_hash(code_hash)
         } else {
@@ -940,7 +968,7 @@ impl Database for Backend {
         }
     }
 
-    fn storage(&mut self, address: Address, index: U256) -> DbResult<U256> {
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             Database::storage(db, address, index)
         } else {
@@ -948,7 +976,7 @@ impl Database for Backend {
         }
     }
 
-    fn block_hash(&mut self, number: U256) -> DbResult<H256> {
+    fn block_hash(&mut self, number: U256) -> Result<H256, Self::Error> {
         if let Some(db) = self.active_fork_db_mut() {
             db.block_hash(number)
         } else {
@@ -1040,6 +1068,8 @@ pub struct BackendInner {
     ///
     /// See also [`clone_data()`]
     pub persistent_accounts: HashSet<Address>,
+    /// The configured precompiles
+    pub precompiles: Precompiles,
 }
 
 // === impl BackendInner ===
@@ -1180,6 +1210,18 @@ impl BackendInner {
     pub fn is_empty(&self) -> bool {
         self.issued_local_fork_ids.is_empty()
     }
+
+    /// Returns a new, empty, `JournaledState` with set precompiles
+    pub fn new_journaled_state(&self) -> JournaledState {
+        JournaledState {
+            state: Default::default(),
+            logs: vec![],
+            depth: 0,
+            journal: vec![],
+            is_before_spurious_dragon: false,
+            num_of_precompiles: self.precompiles.len(),
+        }
+    }
 }
 
 /// This updates the currently used env with the fork's environment
@@ -1228,16 +1270,4 @@ fn clone_db_account_data<ExtDB: DatabaseRef>(
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
     fork_db.accounts.insert(addr, acc);
-}
-
-
-fn new_journaled_state () -> JournaledState {
-    JournaledState {
-        state: Default::default(),
-        logs: vec![],
-        depth: 0,
-        journal: vec![],
-        is_before_spurious_dragon: false,
-        num_of_precompiles: 0
-    }
 }
