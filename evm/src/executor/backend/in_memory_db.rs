@@ -5,8 +5,10 @@ use ethers::{
     types::Address,
 };
 use hashbrown::HashMap as Map;
-use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
-use revm::db::{CacheDB, EmptyDB};
+use revm::{
+    db::{CacheDB, DatabaseRef, EmptyDB},
+    Account, AccountInfo, Bytecode, Database, DatabaseCommit,
+};
 
 use crate::executor::snapshot::Snapshots;
 
@@ -48,6 +50,7 @@ impl DatabaseRef for MemDb {
 
 impl Database for MemDb {
     type Error = DatabaseError;
+    #[track_caller]
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         Database::basic(&mut self.inner, address)
     }
@@ -71,10 +74,10 @@ impl DatabaseCommit for MemDb {
     }
 }
 
-
 /// An empty database that always returns default values when queried.
 ///
-/// This is just a simple wrapper for `revm::EmptyDB` but implements `DatabaseError` instead, this way we can unify all different `Database` impls
+/// This is just a simple wrapper for `revm::EmptyDB` but implements `DatabaseError` instead, this
+/// way we can unify all different `Database` impls
 #[derive(Debug, Default, Clone)]
 pub struct EmptyDBWrapper(EmptyDB);
 

@@ -55,15 +55,19 @@ async fn can_set_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
+    crate::init_tracing();
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let impersonate = Address::random();
     let to = Address::random();
     let val = 1337u64;
-
+    let funding = U256::from(1e18 as u64);
     // fund the impersonated account
-    api.anvil_set_balance(impersonate, U256::from(1e18 as u64)).await.unwrap();
+    api.anvil_set_balance(impersonate, funding).await.unwrap();
+
+    let balance = api.balance(impersonate, None).await.unwrap();
+    assert_eq!(balance, funding);
 
     let tx = TransactionRequest::new().from(impersonate).to(to).value(val);
 

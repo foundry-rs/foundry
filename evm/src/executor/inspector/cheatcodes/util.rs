@@ -26,8 +26,6 @@ const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-pub const MISSING_CREATE2_DEPLOYER: &str =
-    "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]";
 
 // keccak(Error(string))
 pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];

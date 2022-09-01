@@ -23,7 +23,7 @@ impl Db for MemDb {
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
-        Ok(self.inner.insert_account_storage(address, slot, val)?)
+        self.inner.insert_account_storage(address, slot, val)
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: H256) {

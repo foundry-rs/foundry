@@ -1339,7 +1339,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
-        self.backend.set_balance(address, balance).await;
+        self.backend.set_balance(address, balance).await?;
         Ok(())
     }
 
@@ -1348,7 +1348,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
-        self.backend.set_code(address, code).await;
+        self.backend.set_code(address, code).await?;
         Ok(())
     }
 
@@ -1357,7 +1357,7 @@ impl EthApi {
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
-        self.backend.set_nonce(address, nonce).await;
+        self.backend.set_nonce(address, nonce).await?;
         Ok(())
     }
 
@@ -1371,7 +1371,7 @@ impl EthApi {
         val: H256,
     ) -> Result<bool> {
         node_info!("anvil_setStorageAt");
-        self.backend.set_storage_at(address, slot, val).await;
+        self.backend.set_storage_at(address, slot, val).await?;
         Ok(true)
     }
 

@@ -47,7 +47,7 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
+pub use util::DEFAULT_CREATE2_DEPLOYER;
 
 mod config;
 use crate::executor::backend::RevertDiagnostic;

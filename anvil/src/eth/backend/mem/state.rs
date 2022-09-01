@@ -119,8 +119,7 @@ where
 {
     let mut cache_db = CacheDB::new(state);
     for (account, account_overrides) in overrides.iter() {
-        let mut account_info =
-            cache_db.basic(*account)?.ok_or(DatabaseError::MissingAccount(*account))?;
+        let mut account_info = cache_db.basic(*account)?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
             account_info.nonce = nonce;

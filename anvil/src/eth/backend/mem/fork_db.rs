@@ -7,7 +7,7 @@ use ethers::prelude::H256;
 use forge::revm::Database;
 pub use foundry_evm::executor::fork::database::ForkedDatabase;
 use foundry_evm::executor::{
-    backend::{snapshot::StateSnapshot, DatabaseError, DatabaseResult},
+    backend::{snapshot::StateSnapshot, DatabaseResult},
     fork::database::ForkDbSnapshot,
 };
 
@@ -19,7 +19,7 @@ impl Db for ForkedDatabase {
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) -> DatabaseResult<()> {
         // this ensures the account is loaded first
-        let _ = Database::basic(self, address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let _ = Database::basic(self, address)?;
         self.database_mut().set_storage_at(address, slot, val)
     }
 

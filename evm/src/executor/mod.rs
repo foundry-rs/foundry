@@ -157,8 +157,7 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account =
-            self.backend_mut().basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.balance = amount;
 
         self.backend_mut().insert_account_info(address, account);
@@ -167,13 +166,12 @@ impl Executor {
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
-        Ok(self.backend().basic(address)?.ok_or(DatabaseError::MissingAccount(address))?.balance)
+        Ok(self.backend().basic(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
-        let mut account =
-            self.backend_mut().basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend_mut().insert_account_info(address, account);
@@ -561,10 +559,7 @@ impl Executor {
     ) -> Result<bool, DatabaseError> {
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_account_info(
-            address,
-            self.backend().basic(address)?.ok_or(DatabaseError::MissingAccount(address))?,
-        );
+        backend.insert_account_info(address, self.backend().basic(address)?.unwrap_or_default());
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);

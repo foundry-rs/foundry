@@ -574,9 +574,8 @@ impl Backend {
             let mut journaled_state = self.fork_init_journaled_state.clone();
             for loaded_account in loaded_accounts.iter().copied() {
                 trace!(?loaded_account, "replacing account on init");
-                let fork_account = fork
-                    .db
-                    .basic(loaded_account)?
+                // TODO(mattsse) check
+                let fork_account = Database::basic(&mut fork.db, loaded_account)?
                     .ok_or(DatabaseError::MissingAccount(loaded_account))?;
                 let init_account =
                     journaled_state.state.get_mut(&loaded_account).expect("exists; qed");

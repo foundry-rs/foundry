@@ -177,7 +177,8 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
         };
 
-        backend.apply_genesis().await;
+        // Note: this can only fail in forking mode, in which case we can't recover
+        backend.apply_genesis().await.expect("Failed to create genesis");
         backend
     }
 
@@ -196,7 +197,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for address in self.genesis.accounts.iter().copied() {
-                let mut info = db.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+                let mut info = db.basic(address)?.unwrap_or_default();
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -210,7 +211,7 @@ impl Backend {
         }
 
         // apply the genesis.json alloc
-        self.genesis.apply_genesis_json_alloc(db);
+        self.genesis.apply_genesis_json_alloc(db)?;
         Ok(())
     }
 
@@ -241,7 +242,7 @@ impl Backend {
     pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
         if let Some((Some(code_hash), code)) = self.cheats.stop_impersonating(&addr) {
             let mut db = self.db.write().await;
-            let mut account = db.basic(addr)?.ok_or(DatabaseError::MissingAccount(addr))?;
+            let mut account = db.basic(addr)?.unwrap_or_default();
             account.code_hash = code_hash;
             account.code = code;
             db.insert_account(addr, account)
@@ -261,7 +262,7 @@ impl Backend {
 
     /// Returns the `AccountInfo` from the database
     pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
-        self.db.read().await.basic(address)?.ok_or(DatabaseError::MissingAccount(address))
+        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -320,7 +321,7 @@ impl Backend {
             }
 
             // reset the genesis.json alloc
-            self.genesis.apply_genesis_json_alloc(db);
+            self.genesis.apply_genesis_json_alloc(db)?;
 
             Ok(())
         } else {
@@ -406,8 +407,13 @@ impl Backend {
     }
 
     /// Sets the value for the given slot of the given address
-    pub async fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
-        self.db.write().await.set_storage_at(address, slot, val.into_uint());
+    pub async fn set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        val: H256,
+    ) -> DatabaseResult<()> {
+        self.db.write().await.set_storage_at(address, slot, val.into_uint())
     }
 
     /// Returns true for post London
@@ -834,7 +840,7 @@ impl Backend {
         let to = if let Some(to) = request.to {
             to
         } else {
-            let nonce = state.basic(from)?.ok_or(DatabaseError::MissingAccount(from))?.nonce;
+            let nonce = state.basic(from)?.unwrap_or_default().nonce;
             get_contract_address(from, nonce)
         };
 
@@ -1310,7 +1316,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let account = state.basic(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1344,7 +1350,7 @@ impl Backend {
         D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?.balance)
+        Ok(state.basic(address)?.unwrap_or_default().balance)
     }
 
     /// Returns the nonce of the address
@@ -1357,7 +1363,7 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?.nonce.into())
+            Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
         .await?
     }

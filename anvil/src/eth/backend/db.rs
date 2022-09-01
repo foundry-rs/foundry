@@ -21,6 +21,7 @@ use foundry_evm::{
 };
 use hash_db::HashDB;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Type alias for the `HashDB` representation of the Database
 pub type AsHashDB = Box<dyn HashDB<KeccakHasher, Vec<u8>>>;
@@ -68,6 +69,7 @@ pub trait Db:
     + Database<Error = DatabaseError>
     + DatabaseCommit
     + MaybeHashDatabase
+    + fmt::Debug
     + Send
     + Sync
 {
@@ -76,7 +78,7 @@ pub trait Db:
 
     /// Sets the nonce of the given address
     fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.unwrap_or_default();
         info.nonce = nonce;
         self.insert_account(address, info);
         Ok(())
@@ -84,7 +86,7 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_balance(&mut self, address: Address, balance: U256) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.unwrap_or_default();
         info.balance = balance;
         self.insert_account(address, info);
         Ok(())
@@ -92,7 +94,7 @@ pub trait Db:
 
     /// Sets the balance of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
-        let mut info = self.basic(address)?.ok_or(DatabaseError::MissingAccount(address))?;
+        let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
             KECCAK_EMPTY
         } else {
@@ -137,7 +139,7 @@ pub trait Db:
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
 /// [Backend::pending_block()](crate::eth::backend::mem::Backend::pending_block())
-impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone> Db for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> Db for CacheDB<T> {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
         self.insert_account_info(address, account)
     }
