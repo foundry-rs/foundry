@@ -2,7 +2,7 @@
 
 use crate::{
     eth::macros::node_info,
-    revm::{CreateInputs, Database},
+    revm::{CreateInputs, Database, Interpreter},
 };
 use bytes::Bytes;
 use ethers::types::{Address, Log, H256};
@@ -106,6 +106,31 @@ impl<DB: Database> revm::Inspector<DB> for Inspector {
             tracer.create_end(data, inputs, status, address, gas, retdata.clone());
         }
         (status, address, gas, retdata)
+    }
+
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> Return {
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.step(interp, data, is_static);
+        }
+        Return::Continue
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+        eval: Return,
+    ) -> Return {
+        if let Some(tracer) = self.tracer.as_mut() {
+            tracer.step_end(interp, data, is_static, eval);
+        }
+        eval
     }
 }
 

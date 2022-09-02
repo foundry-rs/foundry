@@ -1,7 +1,8 @@
 use crate::{
+    debug::Instruction::OpCode,
     executor::inspector::utils::{gas_used, get_create_address},
     trace::{
-        CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+        CallTrace, CallTraceArena, CallTraceStep, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
     CallKind,
@@ -12,7 +13,8 @@ use ethers::{
     types::{Address, H256, U256},
 };
 use revm::{
-    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector, Return,
+    return_ok, CallInputs, CallScheme, CreateInputs, Database, EVMData, Gas, Inspector,
+    Interpreter, Return,
 };
 
 /// An inspector that collects call traces.
@@ -20,6 +22,7 @@ use revm::{
 pub struct Tracer {
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
+    pub step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
 }
 
 impl Tracer {
@@ -65,6 +68,28 @@ impl Tracer {
 
         if let Some(address) = address {
             trace.address = address;
+        }
+    }
+
+    pub fn start_step(&mut self, step: CallTraceStep) {
+        let trace_idx =
+            *self.trace_stack.last().expect("can't start step without starting a trace first");
+        let trace = &mut self.traces.arena[trace_idx];
+
+        self.step_stack.push((trace_idx, trace.trace.steps.len()));
+        trace.trace.steps.push(step);
+    }
+
+    pub fn fill_step(&mut self, gas: u64, status: Return) {
+        let (trace_idx, step_idx) =
+            self.step_stack.pop().expect("can't fill step without starting a step first");
+        let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
+
+        step.gas_cost = step.gas - gas;
+
+        // Error codes only
+        if status as u8 > Return::OutOfGas as u8 {
+            step.error = Some(format!("{:?}", status));
         }
     }
 }
@@ -171,5 +196,48 @@ where
         );
 
         (status, address, gas, retdata)
+    }
+
+    fn step(
+        &mut self,
+        interp: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        let depth = data.journaled_state.depth();
+        let pc = interp.program_counter();
+        let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
+        let stack = interp.stack.clone();
+        let memory = interp.memory.clone();
+        let state = data.journaled_state.state.clone();
+        let gas = interp.gas.remaining();
+        let gas_refund_counter = interp.gas.refunded() as u64;
+
+        self.start_step(CallTraceStep {
+            depth,
+            pc,
+            op,
+            stack,
+            memory,
+            state,
+            gas,
+            gas_refund_counter,
+            gas_cost: 0,
+            error: None,
+        });
+
+        Return::Continue
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        status: Return,
+    ) -> Return {
+        self.fill_step(interp.gas.remaining(), status);
+
+        status
     }
 }
