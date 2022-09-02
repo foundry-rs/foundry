@@ -1,5 +1,5 @@
 //! The in memory DB
-use crate::executor::backend::{error::DatabaseError, DatabaseResult};
+use crate::executor::backend::error::DatabaseError;
 use ethers::{
     prelude::{H256, U256},
     types::Address,
@@ -12,31 +12,18 @@ use revm::{
 
 use crate::executor::snapshot::Snapshots;
 
-pub type InMemoryDB = CacheDB<EmptyDBWrapper>;
+/// Type alias for an in memory database
+///
+/// See `EmptyDBWrapper`
+pub type FoundryEvmInMemoryDB = CacheDB<EmptyDBWrapper>;
 
 /// In memory Database for anvil
 ///
 /// This acts like a wrapper type for [InMemoryDB] but is capable of applying snapshots
 #[derive(Debug)]
 pub struct MemDb {
-    pub inner: InMemoryDB,
-    pub snapshots: Snapshots<InMemoryDB>,
-}
-
-impl MemDb {
-    /// the [`Database`](revm::Database) implementation for `CacheDB` manages an `AccountState` for the `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet. This is because there's a distinction between "non-existing" and "empty", See <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>
-    /// If an account is `NotExisting`, `Database(Ref)::basic` will always return `None` for the
-    /// requested `AccountInfo`. To prevent
-    ///
-    /// This will ensure that a missing account is never marked as `NotExisting`
-    fn ensure_loaded(&mut self, address: Address) -> DatabaseResult<AccountInfo> {
-        if let Some(acc) = DatabaseRef::basic(self, address)? {
-            Ok(acc)
-        } else {
-            self.inner.insert_account_info(address, Default::default());
-            Ok(Default::default())
-        }
-    }
+    pub inner: FoundryEvmInMemoryDB,
+    pub snapshots: Snapshots<FoundryEvmInMemoryDB>,
 }
 
 impl Default for MemDb {
@@ -68,7 +55,8 @@ impl Database for MemDb {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.ensure_loaded(address).map(Some)
+        // Note: this will always return `Some(AccountInfo)`, See `EmptyDBWrapper`
+        Database::basic(&mut self.inner, address)
     }
 
     fn code_by_hash(&mut self, code_hash: H256) -> Result<Bytecode, Self::Error> {
@@ -76,7 +64,6 @@ impl Database for MemDb {
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.ensure_loaded(address)?;
         Database::storage(&mut self.inner, address, index)
     }
 
@@ -95,13 +82,23 @@ impl DatabaseCommit for MemDb {
 ///
 /// This is just a simple wrapper for `revm::EmptyDB` but implements `DatabaseError` instead, this
 /// way we can unify all different `Database` impls
+///
+/// This will also _always_ return `Some(AccountInfo)`:
+///
+/// The [`Database`](revm::Database) implementation for `CacheDB` manages an `AccountState` for the `DbAccount`, this will be set to `AccountState::NotExisting` if the account does not exist yet. This is because there's a distinction between "non-existing" and "empty", See <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L81-L83>
+/// If an account is `NotExisting`, `Database(Ref)::basic` will always return `None` for the
+/// requested `AccountInfo`. To prevent
+///
+/// This will ensure that a missing account is never marked as `NotExisting`
 #[derive(Debug, Default, Clone)]
 pub struct EmptyDBWrapper(EmptyDB);
 
 impl DatabaseRef for EmptyDBWrapper {
     type Error = DatabaseError;
+
     fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(self.0.basic(address)?)
+        // Note: this will always return `Some(AccountInfo)`, for the reason explained above
+        Ok(Some(self.0.basic(address)?.unwrap_or_default()))
     }
     fn code_by_hash(&self, code_hash: H256) -> Result<Bytecode, Self::Error> {
         Ok(self.0.code_by_hash(code_hash)?)
@@ -124,7 +121,7 @@ mod tests {
     /// Demonstrates how calling `Database::basic` works if an account does not exist
     #[test]
     fn cache_db_insert_basic_non_existing() {
-        let mut db = CacheDB::new(EmptyDBWrapper::default());
+        let mut db = CacheDB::new(EmptyDB::default());
         let address = Address::random();
 
         // call `basic` on a non-existing account
@@ -144,7 +141,7 @@ mod tests {
     /// Demonstrates how to insert a new account but not mark it as non-existing
     #[test]
     fn cache_db_insert_basic_default() {
-        let mut db = CacheDB::new(EmptyDBWrapper::default());
+        let mut db = CacheDB::new(EmptyDB::default());
         let address = Address::random();
 
         let info = DatabaseRef::basic(&db, address).unwrap();

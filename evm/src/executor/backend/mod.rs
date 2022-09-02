@@ -16,8 +16,8 @@ pub use in_memory_db::MemDb;
 use revm::{
     db::{CacheDB, DatabaseRef},
     precompiles::Precompiles,
-    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, InMemoryDB,
-    Inspector, JournaledState, Log, SpecId, TransactTo, KECCAK_EMPTY,
+    Account, AccountInfo, Bytecode, Database, DatabaseCommit, Env, ExecutionResult, Inspector,
+    JournaledState, Log, SpecId, TransactTo, KECCAK_EMPTY,
 };
 use std::collections::{HashMap, HashSet};
 use tracing::{trace, warn};
@@ -30,6 +30,7 @@ use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
+use crate::executor::backend::in_memory_db::FoundryEvmInMemoryDB;
 pub use error::{DatabaseError, DatabaseResult};
 
 mod in_memory_db;
@@ -263,7 +264,7 @@ pub struct Backend {
     /// The access point for managing forks
     forks: MultiFork,
     // The default in memory db
-    mem_db: InMemoryDB,
+    mem_db: FoundryEvmInMemoryDB,
     /// The journaled_state to use to initialize new forks with
     ///
     /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
@@ -310,7 +311,7 @@ impl Backend {
 
         let mut backend = Self {
             forks,
-            mem_db: InMemoryDB::default(),
+            mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
             inner,
@@ -336,7 +337,7 @@ impl Backend {
     pub fn clone_empty(&self) -> Self {
         Self {
             forks: self.forks.clone(),
-            mem_db: InMemoryDB::default(),
+            mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
@@ -459,7 +460,7 @@ impl Backend {
     }
 
     /// Returns the memory db used if not in forking mode
-    pub fn mem_db(&self) -> &InMemoryDB {
+    pub fn mem_db(&self) -> &FoundryEvmInMemoryDB {
         &self.mem_db
     }
 
@@ -987,7 +988,7 @@ impl Database for Backend {
 #[derive(Debug, Clone)]
 pub enum BackendDatabaseSnapshot {
     /// Simple in-memory [revm::Database]
-    InMemory(InMemoryDB),
+    InMemory(FoundryEvmInMemoryDB),
     /// Contains the entire forking mode database
     Forked(LocalForkId, ForkId, ForkLookupIndex, Box<Fork>),
 }
