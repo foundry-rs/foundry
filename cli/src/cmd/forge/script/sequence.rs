@@ -8,7 +8,7 @@ use ethers::{
 };
 use eyre::ContextCompat;
 use forge::trace::CallTraceDecoder;
-use foundry_common::fs;
+use foundry_common::{fs, SELECTOR_LEN};
 use foundry_config::Config;
 
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,7 @@ impl ScriptSequence {
         })
     }
 
-    /// Loads The sequence for the correspondng json file
+    /// Loads The sequence for the corresponding json file
     pub fn load(
         config: &Config,
         sig: &str,
@@ -127,6 +127,7 @@ impl ScriptSequence {
     }
 
     /// Saves to ./broadcast/contract_filename/sig[-timestamp].json
+
     pub fn get_path(
         out: &Path,
         sig: &str,
@@ -134,14 +135,15 @@ impl ScriptSequence {
         chain_id: u64,
     ) -> eyre::Result<PathBuf> {
         let mut out = out.to_path_buf();
-
         let target_fname = target.source.file_name().wrap_err("No filename.")?;
         out.push(target_fname);
         out.push(chain_id.to_string());
 
         fs::create_dir_all(&out)?;
 
-        let filename = sig.split_once('(').wrap_err("Sig is invalid.")?.0.to_owned();
+        // TODO: ideally we want the name of the function here if sig is calldata
+        let filename = sig_to_file_name(sig);
+
         out.push(format!("{filename}-latest.json"));
         Ok(out)
     }
@@ -410,5 +412,41 @@ impl TransactionWithMetadata {
 
     pub fn is_create2(&self) -> bool {
         self.opcode == CallKind::Create2
+    }
+}
+
+/// Converts the `sig` argument into the corresponding file path.
+///
+/// This accepts either the signature of the function or the raw calldata
+
+fn sig_to_file_name(sig: &str) -> String {
+    if let Some((name, _)) = sig.split_once('(') {
+        // strip until call argument parenthesis
+        return name.to_string()
+    }
+    // assume calldata if `sig` is hex
+    if let Ok(calldata) = hex::decode(sig) {
+        // in which case we return the function signature
+        return hex::encode(&calldata[..SELECTOR_LEN])
+    }
+
+    // return sig as is
+    sig.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_convert_sig() {
+        assert_eq!(sig_to_file_name("run()").as_str(), "run");
+        assert_eq!(
+            sig_to_file_name(
+                "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
+            )
+            .as_str(),
+            "522bb704"
+        );
     }
 }
