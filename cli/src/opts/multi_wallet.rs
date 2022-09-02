@@ -120,12 +120,13 @@ pub struct MultiWallet {
     pub private_key: Option<String>,
 
     #[clap(
-        long = "mnemonic-paths",
+        long = "mnemonics",
+        alias = "mnemonic-paths",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic files at the specified paths.",
+        help = "Use the mnemonic phrases or mnemonic files at the specified paths.",
         value_name = "PATHS"
     )]
-    pub mnemonic_paths: Option<Vec<String>>,
+    pub mnemonics: Option<Vec<String>>,
 
     #[clap(
         long = "mnemonic-passphrases",
@@ -299,30 +300,30 @@ impl MultiWallet {
     }
 
     pub fn mnemonics(&self) -> Result<Option<Vec<LocalWallet>>> {
-        if let Some(mnemonic_paths) = self.mnemonic_paths.as_ref() {
+        if let Some(ref mnemonics) = self.mnemonics {
             let mut wallets = vec![];
             let hd_paths: Vec<_> = if let Some(ref hd_paths) = self.hd_paths {
-                hd_paths.iter().map(String::as_str).map(Some).collect()
+                hd_paths.iter().map(Some).collect()
             } else {
-                repeat(None).take(mnemonic_paths.len()).collect()
+                repeat(None).take(mnemonics.len()).collect()
             };
             let mnemonic_passphrases: Vec<_> =
                 if let Some(ref mnemonic_passphrases) = self.mnemonic_passphrases {
-                    mnemonic_passphrases.iter().map(String::as_str).map(Some).collect()
+                    mnemonic_passphrases.iter().map(Some).collect()
                 } else {
-                    repeat(None).take(mnemonic_paths.len()).collect()
+                    repeat(None).take(mnemonics.len()).collect()
                 };
             let mnemonic_indexes: Vec<_> = if let Some(ref mnemonic_indexes) = self.mnemonic_indexes
             {
                 mnemonic_indexes.to_vec()
             } else {
-                repeat(0).take(mnemonic_paths.len()).collect()
+                repeat(0).take(mnemonics.len()).collect()
             };
-            for (path, mnemonic_passphrase, hd_path, mnemonic_index) in
-                izip!(mnemonic_paths, mnemonic_passphrases, hd_paths, mnemonic_indexes)
+            for (mnemonic, mnemonic_passphrase, hd_path, mnemonic_index) in
+                izip!(mnemonics, mnemonic_passphrases, hd_paths, mnemonic_indexes)
             {
                 wallets.push(self.get_from_mnemonic(
-                    path,
+                    mnemonic,
                     mnemonic_passphrase,
                     hd_path,
                     mnemonic_index,
