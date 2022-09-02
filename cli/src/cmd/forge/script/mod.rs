@@ -8,7 +8,7 @@ use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
-    abi::{Abi, Function},
+    abi::{Abi, Function, HumanReadableParser},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
@@ -30,7 +30,7 @@ use forge::{
 };
 use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
 use foundry_config::{figment, Config};
-use foundry_utils::{encode_args, format_token, IntoFunction};
+use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -403,36 +403,40 @@ impl ScriptArgs {
         }
     }
 
+    /// Returns the Function and calldata based on the signature
+    ///
+    /// If the `sig` is a valid human-readable function we find the corresponding function in the
+    /// `abi` If the `sig` is valid hex, we assume it's calldata and try to find the
+    /// corresponding function by matching the selector, first 4 bytes in the calldata.
+    ///
+    /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
-        let (func, data) = match self.sig.strip_prefix("0x") {
-            Some(calldata) => {
-                let decoded = hex::decode(calldata).wrap_err("Invalid hex calldata")?;
-                let selector = &decoded[..SELECTOR_LEN];
-                (
-                    abi.functions()
-                        .find(|&func| selector == &func.short_signature()[..])
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "Function selector `{}` not found in the ABI",
-                                hex::encode(selector)
-                            )
-                        })?,
-                    decoded.into(),
-                )
-            }
-            _ => {
-                let func = IntoFunction::into(self.sig.clone());
-                (
-                    abi.functions()
-                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .wrap_err(format!(
-                            "Function `{}` is not implemented in your script.",
-                            self.sig
-                        ))?,
-                    encode_args(&func, &self.args)?.into(),
-                )
-            }
+        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+            (
+                abi.functions()
+                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                    .wrap_err(format!(
+                        "Function `{}` is not implemented in your script.",
+                        self.sig
+                    ))?,
+                encode_args(&func, &self.args)?.into(),
+            )
+        } else {
+            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+            let selector = &decoded[..SELECTOR_LEN];
+            (
+                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                    || {
+                        eyre::eyre!(
+                            "Function selector `{}` not found in the ABI",
+                            hex::encode(selector)
+                        )
+                    },
+                )?,
+                decoded.into(),
+            )
         };
+
         Ok((func.clone(), data))
     }
 
