@@ -227,9 +227,7 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let sender = *transaction.pending_transaction.sender();
         let account = match self.db.basic(sender).map(|acc| acc.unwrap_or_default()) {
             Ok(account) => account,
-            Err(err) => {
-                return { Some(TransactionExecutionOutcome::DatabaseError(transaction, err)) }
-            }
+            Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
         };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
