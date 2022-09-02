@@ -152,6 +152,9 @@ impl Database for ForkedDatabase {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        // Note: this will always return Some, since the `SharedBackend` will always load the
+        // account, this differs from `<CacheDB as Database>::basic`, See also
+        // [MemDb::ensure_loaded](crate::executor::backend::MemDb::ensure_loaded)
         Database::basic(&mut self.cache_db, address)
     }
 
@@ -256,5 +259,44 @@ impl DatabaseRef for ForkDbSnapshot {
             None => self.local.block_hash(number),
             Some(block_hash) => Ok(block_hash),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::fork::BlockchainDbMeta;
+    use foundry_common::get_http_provider;
+    use std::collections::BTreeSet;
+
+    /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
+    /// `AccountInfo`
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_db_insert_basic_default() {
+        let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(rpc.clone());
+        let meta = BlockchainDbMeta {
+            cfg_env: Default::default(),
+            block_env: Default::default(),
+            hosts: BTreeSet::from([rpc]),
+        };
+        let db = BlockchainDb::new(meta, None);
+
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;
+
+        let mut db = ForkedDatabase::new(backend, db);
+        let address = Address::random();
+
+        let info = Database::basic(&mut db, address).unwrap();
+        assert!(info.is_some());
+        let mut info = info.unwrap();
+        info.balance = 500u64.into();
+
+        // insert the modified account info
+        db.database_mut().insert_account_info(address, info.clone());
+
+        let loaded = Database::basic(&mut db, address).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap(), info);
     }
 }
