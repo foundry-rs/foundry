@@ -20,9 +20,10 @@ use ethers_core::{
 use fastrlp::{length_of_length, Header, RlpDecodable, RlpEncodable};
 use foundry_evm::{
     revm::{CreateScheme, Return, TransactTo, TxEnv},
-    trace::node::CallTraceNode,
+    trace::CallTraceArena,
 };
 use serde::{Deserialize, Serialize};
+
 mod ethers_compat;
 
 /// Container type for various Ethereum transaction requests
@@ -1081,7 +1082,7 @@ pub struct TransactionInfo {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
-    pub traces: Vec<CallTraceNode>,
+    pub traces: CallTraceArena,
     pub exit: Return,
     pub out: Option<Bytes>,
 }
@@ -1103,11 +1104,11 @@ impl TransactionInfo {
             return vec![]
         }
         let mut graph = vec![];
-        let mut node = &self.traces[idx];
+        let mut node = &self.traces.arena[idx];
         while let Some(parent) = node.parent {
             // the index of the child call in the arena
             let child_idx = node.idx;
-            node = &self.traces[parent];
+            node = &self.traces.arena[parent];
             // find the index of the child call in the parent node
             let call_idx = node
                 .children

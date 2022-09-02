@@ -7,15 +7,19 @@ mod decoder;
 pub mod node;
 mod utils;
 
-use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
+use crate::{
+    abi::CHEATCODE_ADDRESS, debug::Instruction, trace::identifier::LocalTraceIdentifier, CallKind,
+    H160,
+};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 use ethers::{
-    abi::{Address, RawLog},
-    types::U256,
+    abi::{ethereum_types::BigEndianHash, Address, RawLog},
+    types::{GethDebugTracingOptions, GethTrace, StructLog, H256, U256},
 };
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
+use hashbrown::HashMap;
 use node::CallTraceNode;
-use revm::{CallContext, Return};
+use revm::{Account, CallContext, Memory, Return, Stack};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -24,7 +28,7 @@ use std::{
 use yansi::{Color, Paint};
 
 /// An arena of [CallTraceNode]s
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
@@ -83,6 +87,37 @@ impl CallTraceArena {
                 (&node.trace.address, None)
             })
             .collect()
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        let mut trace = self.arena.iter().fold(GethTrace::default(), |mut acc, trace| {
+            acc.failed |= !trace.trace.success;
+            acc.gas += trace.trace.gas_cost;
+
+            acc.struct_logs.extend(trace.trace.steps.iter().map(|step| {
+                let mut log: StructLog = step.into();
+
+                if opts.disable_storage.unwrap_or_default() {
+                    log.storage = None;
+                }
+                if opts.disable_stack.unwrap_or_default() {
+                    log.stack = None;
+                }
+                if !opts.enable_memory.unwrap_or_default() {
+                    log.memory = None;
+                }
+
+                log
+            }));
+
+            acc
+        });
+
+        if let Some(last_trace) = self.arena.first() {
+            trace.return_value = last_trace.trace.output.to_raw().into();
+        }
+
+        trace
     }
 }
 
@@ -287,6 +322,62 @@ impl fmt::Display for RawOrDecodedReturnData {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CallTraceStep {
+    pub depth: u64,
+    /// Program counter before step execution
+    pub pc: usize,
+    /// Opcode to be executed
+    pub op: Instruction,
+    /// Stack before step execution
+    pub stack: Stack,
+    /// Memory before step execution
+    pub memory: Memory,
+    /// State before step execution
+    pub state: HashMap<H160, Account>,
+    /// Remaining gas before step execution
+    pub gas: u64,
+    /// Gas cost of step execution
+    pub gas_cost: u64,
+    /// Gas refund counter before step execution
+    pub gas_refund_counter: u64,
+    /// Error (if any) after after step execution
+    pub error: Option<String>,
+}
+
+impl From<&CallTraceStep> for StructLog {
+    fn from(step: &CallTraceStep) -> Self {
+        StructLog {
+            depth: step.depth,
+            error: step.error.clone(),
+            gas: step.gas,
+            gas_cost: step.gas_cost,
+            memory: Some(step.memory.data().clone()),
+            op: step.op.to_string(),
+            pc: U256::from(step.pc),
+            refund_counter: Some(step.gas_refund_counter),
+            stack: Some(step.stack.data().clone()),
+            storage: Some(
+                step.state
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            *key,
+                            value
+                                .storage
+                                .iter()
+                                .map(|(key, value)| {
+                                    (H256::from_uint(key), H256::from_uint(&value.present_value()))
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
 /// A trace of a call.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CallTrace {
@@ -323,6 +414,8 @@ pub struct CallTrace {
     pub status: Return,
     /// call context of the runtime
     pub call_context: Option<CallContext>,
+    /// Opcode-level execution steps
+    pub steps: Vec<CallTraceStep>,
 }
 
 // === impl CallTrace ===
@@ -350,6 +443,7 @@ impl Default for CallTrace {
             gas_cost: Default::default(),
             status: Return::Continue,
             call_context: Default::default(),
+            steps: Default::default(),
         }
     }
 }

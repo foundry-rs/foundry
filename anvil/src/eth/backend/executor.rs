@@ -22,7 +22,7 @@ use foundry_evm::{
     executor::backend::DatabaseError,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
-    trace::node::CallTraceNode,
+    trace::{node::CallTraceNode, CallTraceArena},
 };
 use std::sync::Arc;
 use tracing::{trace, warn};
@@ -161,7 +161,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                 contract_address,
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
-                traces,
+                traces: CallTraceArena { arena: traces },
                 exit,
                 out: match out {
                     TransactOut::Call(b) => Some(b.into()),
