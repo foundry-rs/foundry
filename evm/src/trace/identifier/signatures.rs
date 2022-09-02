@@ -42,7 +42,7 @@ impl SignaturesIdentifier {
 
     pub fn save(&self) {
         if let Some(cached_path) = &self.cached_path {
-            if let Ok(file) = std::fs::File::create(&cached_path) {
+            if let Ok(file) = std::fs::File::create(cached_path) {
                 if serde_json::to_writer(BufWriter::new(file), &self.cached).is_err() {
                     warn!(target: "signaturesidentifier", "could not serialize SignaturesIdentifier");
                 }

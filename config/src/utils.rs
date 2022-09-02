@@ -29,7 +29,7 @@ pub fn load_config_with_root(root: Option<PathBuf>) -> Config {
 /// tree, an error is returned.
 pub fn find_git_root_path(relative_to: impl AsRef<Path>) -> eyre::Result<PathBuf> {
     let path = std::process::Command::new("git")
-        .args(&["rev-parse", "--show-toplevel"])
+        .args(["rev-parse", "--show-toplevel"])
         .current_dir(relative_to.as_ref())
         .output()?
         .stdout;

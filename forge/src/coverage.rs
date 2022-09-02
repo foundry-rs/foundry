@@ -18,7 +18,7 @@ pub struct SummaryReporter {
 impl Default for SummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
-        table.set_header(&["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
+        table.set_header(["File", "% Lines", "% Statements", "% Branches", "% Funcs"]);
 
         Self { table, total: CoverageSummary::default() }
     }

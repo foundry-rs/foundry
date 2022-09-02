@@ -1,5 +1,7 @@
+use itertools::izip;
 use std::{
     collections::{HashMap, HashSet},
+    iter::repeat,
     sync::Arc,
 };
 
@@ -126,7 +128,17 @@ pub struct MultiWallet {
     pub mnemonic_paths: Option<Vec<String>>,
 
     #[clap(
+        long = "mnemonic-derivation-paths",
+        alias = "hd-paths",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
+        value_name = "PATHS"
+    )]
+    pub hd_paths: Option<Vec<String>>,
+
+    #[clap(
         long = "mnemonic-indexes",
+        conflicts_with = "hd-paths",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-paths.",
         default_value = "0",
@@ -167,14 +179,6 @@ pub struct MultiWallet {
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
-
-    #[clap(
-        long = "hd-paths",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets.",
-        value_name = "PATHS"
-    )]
-    pub hd_paths: Option<Vec<String>>,
 
     #[clap(
         env = "ETH_FROM",
@@ -287,12 +291,22 @@ impl MultiWallet {
     }
 
     pub fn mnemonics(&self) -> Result<Option<Vec<LocalWallet>>> {
-        if let (Some(mnemonic_paths), Some(mnemonic_indexes)) =
-            (self.mnemonic_paths.as_ref(), self.mnemonic_indexes.as_ref())
-        {
+        if let Some(mnemonic_paths) = self.mnemonic_paths.as_ref() {
             let mut wallets = vec![];
-            for (path, mnemonic_index) in mnemonic_paths.iter().zip(mnemonic_indexes) {
-                wallets.push(self.get_from_mnemonic(path, *mnemonic_index)?)
+            let hd_paths: Vec<_> = if let Some(ref hd_paths) = self.hd_paths {
+                hd_paths.into_iter().map(String::as_str).map(Some).collect()
+            } else {
+                repeat(None).take(mnemonic_paths.len()).collect()
+            };
+            let mnemonic_indexes: Vec<_> = if let Some(ref mnemonic_indexes) = self.mnemonic_indexes
+            {
+                mnemonic_indexes.into_iter().copied().collect()
+            } else {
+                repeat(0).take(mnemonic_paths.len()).collect()
+            };
+            for (path, hd_path, mnemonic_index) in izip!(mnemonic_paths, hd_paths, mnemonic_indexes)
+            {
+                wallets.push(self.get_from_mnemonic(path, hd_path, mnemonic_index)?)
             }
             return Ok(Some(wallets))
         }

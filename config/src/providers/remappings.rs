@@ -183,7 +183,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
         // turn the absolute remapping into a relative one by stripping the `root`
         let remappings = remappings
             .into_iter()
-            .map(|r| RelativeRemapping::new(r, &self.root).to_string())
+            .map(|r| RelativeRemapping::new(r, self.root).to_string())
             .collect::<Vec<_>>();
 
         Ok(Map::from([(

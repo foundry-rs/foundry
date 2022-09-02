@@ -79,7 +79,7 @@ impl Cmd for BuildArgs {
         // try to auto install missing submodules in the default install dir but only if git is
         // installed
         if which::which("git").is_ok() &&
-            install::has_missing_dependencies(&project.root(), &config.install_lib_dir())
+            install::has_missing_dependencies(project.root(), &config.install_lib_dir())
         {
             // The extra newline is needed, otherwise the compiler output will overwrite the
             // message
