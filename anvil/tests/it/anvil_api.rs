@@ -55,7 +55,6 @@ async fn can_set_storage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_impersonate_account() {
-    crate::init_tracing();
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
