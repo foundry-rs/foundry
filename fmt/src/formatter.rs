@@ -756,7 +756,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                     .strip_suffix("*/")
                     .unwrap()
                     .trim();
-                let lines = content.lines().map(|line| line.trim_start()).peekable();
+                let lines = content.lines().map(|line| line.trim_start());
                 writeln!(self.buf(), "/**")?;
                 for line in lines {
                     let line = line.trim().trim_start_matches('*').trim_start();
@@ -1469,7 +1469,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         // get source if we preserve underscores
         let (value, fractional, exponent) = if matches!(config, NumberUnderscore::Preserve) {
             let source = &self.source[loc.start()..loc.end()];
-            let (val, exp) = source.split_once(&['e', 'E']).unwrap_or((source, ""));
+            let (val, exp) = source.split_once(['e', 'E']).unwrap_or((source, ""));
             let (val, fract) =
                 val.split_once('.').map(|(val, fract)| (val, Some(fract))).unwrap_or((val, None));
             (
@@ -3175,7 +3175,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             return Ok(())
         }
 
-        let mut chunks = chunks.iter_mut().peekable();
+        let mut chunks = chunks.iter_mut();
         let mut prev_multiline = false;
 
         // write try chunk first
