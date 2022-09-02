@@ -3096,6 +3096,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    #[allow(clippy::unused_peekable)]
     fn visit_try(
         &mut self,
         loc: Loc,
@@ -3175,7 +3176,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             return Ok(())
         }
 
-        let mut chunks = chunks.iter_mut();
+        let mut chunks = chunks.iter_mut().peekable();
         let mut prev_multiline = false;
 
         // write try chunk first
