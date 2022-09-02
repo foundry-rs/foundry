@@ -18,7 +18,7 @@ use ethers::{
         U256,
     },
 };
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -28,7 +28,7 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
 use foundry_config::{figment, Config};
 use foundry_utils::{encode_args, format_token, IntoFunction};
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,13 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
+    #[clap(
+        long,
+        short,
+        default_value = "run()",
+        value_name = "SIGNATURE",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+    )]
     pub sig: String,
 
     #[clap(
@@ -399,14 +405,21 @@ impl ScriptArgs {
 
     pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
         let (func, data) = match self.sig.strip_prefix("0x") {
-            Some(calldata) => (
-                abi.functions()
-                    .find(|&func| {
-                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
-                    })
-                    .expect("Function selector not found in the ABI"),
-                hex::decode(calldata).unwrap().into(),
-            ),
+            Some(calldata) => {
+                let decoded = hex::decode(calldata).wrap_err("Invalid hex calldata")?;
+                let selector = &decoded[..SELECTOR_LEN];
+                (
+                    abi.functions()
+                        .find(|&func| selector == &func.short_signature()[..])
+                        .ok_or_else(|| {
+                            eyre::eyre!(
+                                "Function selector `{}` not found in the ABI",
+                                hex::encode(selector)
+                            )
+                        })?,
+                    decoded.into(),
+                )
+            }
             _ => {
                 let func = IntoFunction::into(self.sig.clone());
                 (
@@ -542,6 +555,20 @@ pub struct ScriptConfig {
 mod tests {
     use super::*;
     use crate::cmd::LoadConfig;
+
+    #[test]
+    fn can_parse_sig() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sig",
+            "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266",
+        ]);
+        assert_eq!(
+            args.sig,
+            "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
+        );
+    }
 
     #[test]
     fn can_merge_script_config() {
