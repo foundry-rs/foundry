@@ -220,7 +220,7 @@ impl fmt::Display for RawOrDecodedLog {
                         f,
                         "{:>13}: {}",
                         if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                        Paint::cyan(format!("0x{}", hex::encode(&topic)))
+                        Paint::cyan(format!("0x{}", hex::encode(topic)))
                     )?;
                 }
 
@@ -314,7 +314,7 @@ impl fmt::Display for RawOrDecodedReturnData {
                 if bytes.is_empty() {
                     write!(f, "()")
                 } else {
-                    write!(f, "0x{}", hex::encode(&bytes))
+                    write!(f, "0x{}", hex::encode(bytes))
                 }
             }
             RawOrDecodedReturnData::Decoded(decoded) => write!(f, "{}", decoded.clone()),

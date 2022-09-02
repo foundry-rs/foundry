@@ -100,7 +100,7 @@ impl Cmd for FmtArgs {
             .par_iter()
             .map(|input| {
                 let source = match input {
-                    Input::Path(path) => fs::read_to_string(&path)?,
+                    Input::Path(path) => fs::read_to_string(path)?,
                     Input::Stdin(source) => source.to_string()
                 };
 
