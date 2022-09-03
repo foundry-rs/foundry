@@ -145,7 +145,7 @@ pub fn apply<DB: Database>(
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
-        HEVMCalls::Remember(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())

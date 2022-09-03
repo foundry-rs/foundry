@@ -679,7 +679,7 @@ pub struct CallResult<D: Detokenize> {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `remember` cheatcode
+    /// The wallets added during the call using the `rememberKey` cheatcode
     pub script_wallets: Vec<LocalWallet>,
 }
 
@@ -715,7 +715,7 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
-    /// The wallets added during the call using the `remember` cheatcode
+    /// The wallets added during the call using the `rememberKey` cheatcode
     pub script_wallets: Vec<LocalWallet>,
 }
 

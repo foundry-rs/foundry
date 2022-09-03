@@ -330,7 +330,7 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
         .await;
 });
 
-forgetest_async!(can_deploy_script_remember, |prj: TestProject, cmd: TestCommand| async move {
+forgetest_async!(can_deploy_script_remember_key, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
@@ -339,7 +339,7 @@ forgetest_async!(can_deploy_script_remember, |prj: TestProject, cmd: TestCommand
             Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
         ])
         .await
-        .add_sig("BroadcastTest", "deployRemember()")
+        .add_sig("BroadcastTest", "deployRememberKey()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(vec![(
