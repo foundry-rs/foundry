@@ -129,6 +129,8 @@ impl CoverageArgs {
             }
 
             if let Some(ast) = source_file.ast.take() {
+                let path = project_paths.root.join(path).to_string_lossy().to_string();
+
                 versioned_asts
                     .entry(version.clone())
                     .or_default()
