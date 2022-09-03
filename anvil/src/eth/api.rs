@@ -33,21 +33,21 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
+    types::{EvmMineOptions, Forking, Index, Work},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
-    prelude::TxpoolInspect,
+    prelude::{GethTrace, TxpoolInspect},
     providers::ProviderError,
     types::{
         transaction::{
             eip2930::{AccessList, AccessListWithGasUsed},
             eip712::TypedData,
         },
-        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams, Log,
-        Trace, Transaction, TransactionReceipt, TxHash, TxpoolContent, TxpoolInspectSummary,
-        TxpoolStatus, TxpoolTransaction, H256, U256, U64,
+        Address, Block, BlockId, BlockNumber, Bytes, FeeHistory, Filter, FilteredParams,
+        GethDebugTracingOptions, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        TxpoolContent, TxpoolInspectSummary, TxpoolStatus, TxpoolTransaction, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -865,6 +865,7 @@ impl EthApi {
     }
 
     /// Estimate gas needed for execution of given contract.
+    /// If no block parameter is given, it will use the pending block by default
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub async fn estimate_gas(
@@ -873,7 +874,8 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(request, block_number).await
+        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockNumber::Pending.into())))
+            .await
     }
 
     /// Get transaction by its hash.
@@ -1200,12 +1202,15 @@ impl EthApi {
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn debug_trace_transaction(
         &self,
-        _tx_hash: H256,
-        _opts: GethDebugTracingOptions,
-    ) -> Result<Vec<Trace>> {
+        tx_hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
-        // return `MethodNotFound` until implemented <https://github.com/foundry-rs/foundry/issues/1737>
-        Err(RpcError::method_not_found().into())
+        if opts.tracer.is_some() {
+            return Err(RpcError::invalid_params("non-default tracer not supported yet").into())
+        }
+
+        self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

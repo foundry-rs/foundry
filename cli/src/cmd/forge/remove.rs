@@ -35,7 +35,7 @@ impl Cmd for RemoveArgs {
         let libs_relative = libs
             .strip_prefix(prj_root)
             .wrap_err("Dependencies are not relative to project root")?;
-        let git_mod_libs = git_root.join(".git/modules").join(&libs_relative);
+        let git_mod_libs = git_root.join(".git/modules").join(libs_relative);
 
         self.dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
             let target_dir: PathBuf =
@@ -46,9 +46,9 @@ impl Cmd for RemoveArgs {
             // handle relative paths that start with the install dir, so we convert `lib/forge-std`
             // to `forge-std`
             if !dep_path.exists() {
-                if let Ok(rel_target) = target_dir.strip_prefix(&libs_relative) {
-                    dep_path = libs.join(&rel_target);
-                    git_mod_path = git_mod_libs.join(&rel_target);
+                if let Ok(rel_target) = target_dir.strip_prefix(libs_relative) {
+                    dep_path = libs.join(rel_target);
+                    git_mod_path = git_mod_libs.join(rel_target);
                 }
             }
 
@@ -63,19 +63,19 @@ impl Cmd for RemoveArgs {
 
             // remove submodule entry from .git/config
             Command::new("git")
-                .args(&["submodule", "deinit", "-f", &dep_path.display().to_string()])
+                .args(["submodule", "deinit", "-f", &dep_path.display().to_string()])
                 .current_dir(&git_root)
                 .exec()?;
 
             // remove the submodule repository from .git/modules directory
             Command::new("rm")
-                .args(&["-rf", &git_mod_path.display().to_string()])
+                .args(["-rf", &git_mod_path.display().to_string()])
                 .current_dir(&git_root)
                 .exec()?;
 
             // remove the leftover submodule directory
             Command::new("git")
-                .args(&["rm", "-f", &dep_path.display().to_string()])
+                .args(["rm", "-f", &dep_path.display().to_string()])
                 .current_dir(&git_root)
                 .exec()?;
 

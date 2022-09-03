@@ -89,7 +89,25 @@ pub struct Wallet {
     pub mnemonic_path: Option<String>,
 
     #[clap(
+        long = "mnemonic-passphrase",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use a BIP39 passphrase for the mnemonic.",
+        value_name = "PASSPHRASE"
+    )]
+    pub mnemonic_passphrase: Option<String>,
+
+    #[clap(
+        long = "mnemonic-derivation-path",
+        alias = "hd-path",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
+        value_name = "PATH"
+    )]
+    pub hd_path: Option<String>,
+
+    #[clap(
         long = "mnemonic-index",
+        conflicts_with = "hd-path",
         help_heading = "WALLET OPTIONS - RAW",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0",
@@ -132,14 +150,6 @@ pub struct Wallet {
     pub trezor: bool,
 
     #[clap(
-        long = "hd-path",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
-        help = "The derivation path to use with hardware wallets.",
-        value_name = "PATH"
-    )]
-    pub hd_path: Option<String>,
-
-    #[clap(
         env = "ETH_FROM",
         short,
         long = "from",
@@ -169,7 +179,12 @@ impl Wallet {
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref path) = self.mnemonic_path {
-            Some(self.get_from_mnemonic(path, self.mnemonic_index)?)
+            Some(self.get_from_mnemonic(
+                path,
+                self.mnemonic_passphrase.as_deref(),
+                self.hd_path.as_deref(),
+                self.mnemonic_index,
+            )?)
         } else {
             None
         })
@@ -192,9 +207,23 @@ pub trait WalletTrait {
             .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))
     }
 
-    fn get_from_mnemonic(&self, path: &str, index: u32) -> Result<LocalWallet> {
+    fn get_from_mnemonic(
+        &self,
+        path: &str,
+        passphrase: Option<&str>,
+        derivation_path: Option<&str>,
+        index: u32,
+    ) -> Result<LocalWallet> {
         let mnemonic = fs::read_to_string(path)?.replace('\n', "");
-        Ok(MnemonicBuilder::<English>::default().phrase(mnemonic.as_str()).index(index)?.build()?)
+        let builder = MnemonicBuilder::<English>::default().phrase(mnemonic.as_str());
+        let builder =
+            if let Some(passphrase) = passphrase { builder.password(passphrase) } else { builder };
+        let builder = if let Some(hd_path) = derivation_path {
+            builder.derivation_path(hd_path)?
+        } else {
+            builder.index(index)?
+        };
+        Ok(builder.build()?)
     }
 
     fn get_from_keystore(
@@ -227,6 +256,7 @@ mod tests {
             keystore_path: None,
             keystore_password: None,
             mnemonic_path: None,
+            mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
             hd_path: None,

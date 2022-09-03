@@ -391,7 +391,7 @@ To skip this solc dry, pass `--force`.
             .libraries
             .libs
             .into_iter()
-            .map(|(f, libs)| (f.strip_prefix(&project.root()).unwrap_or(&f).to_path_buf(), libs))
+            .map(|(f, libs)| (f.strip_prefix(project.root()).unwrap_or(&f).to_path_buf(), libs))
             .collect();
 
         let source =

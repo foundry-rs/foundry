@@ -1397,7 +1397,7 @@ impl SimpleCast {
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let formatted = format_bytes32_string(s)?;
-        Ok(format!("0x{}", hex::encode(&formatted)))
+        Ok(format!("0x{}", hex::encode(formatted)))
     }
 
     /// Decodes string from bytes32 value
@@ -1407,7 +1407,7 @@ impl SimpleCast {
             eyre::bail!("string not 32 bytes");
         }
 
-        let bytes = hex::decode(&s)?;
+        let bytes = hex::decode(s)?;
         let mut buffer = [0u8; 32];
         buffer.copy_from_slice(&bytes);
 
