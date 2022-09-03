@@ -294,13 +294,13 @@ impl MultiWallet {
         if let Some(mnemonic_paths) = self.mnemonic_paths.as_ref() {
             let mut wallets = vec![];
             let hd_paths: Vec<_> = if let Some(ref hd_paths) = self.hd_paths {
-                hd_paths.into_iter().map(String::as_str).map(Some).collect()
+                hd_paths.iter().map(String::as_str).map(Some).collect()
             } else {
                 repeat(None).take(mnemonic_paths.len()).collect()
             };
             let mnemonic_indexes: Vec<_> = if let Some(ref mnemonic_indexes) = self.mnemonic_indexes
             {
-                mnemonic_indexes.into_iter().copied().collect()
+                mnemonic_indexes.to_vec()
             } else {
                 repeat(0).take(mnemonic_paths.len()).collect()
             };
