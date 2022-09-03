@@ -128,6 +128,14 @@ pub struct MultiWallet {
     pub mnemonic_paths: Option<Vec<String>>,
 
     #[clap(
+        long = "mnemonic-passphrases",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use a BIP39 passphrases for the mnemonic.",
+        value_name = "PASSPHRASE"
+    )]
+    pub mnemonic_passphrases: Option<Vec<String>>,
+
+    #[clap(
         long = "mnemonic-derivation-paths",
         alias = "hd-paths",
         help_heading = "WALLET OPTIONS - RAW",
@@ -294,19 +302,31 @@ impl MultiWallet {
         if let Some(mnemonic_paths) = self.mnemonic_paths.as_ref() {
             let mut wallets = vec![];
             let hd_paths: Vec<_> = if let Some(ref hd_paths) = self.hd_paths {
-                hd_paths.into_iter().map(String::as_str).map(Some).collect()
+                hd_paths.iter().map(String::as_str).map(Some).collect()
             } else {
                 repeat(None).take(mnemonic_paths.len()).collect()
             };
+            let mnemonic_passphrases: Vec<_> =
+                if let Some(ref mnemonic_passphrases) = self.mnemonic_passphrases {
+                    mnemonic_passphrases.iter().map(String::as_str).map(Some).collect()
+                } else {
+                    repeat(None).take(mnemonic_paths.len()).collect()
+                };
             let mnemonic_indexes: Vec<_> = if let Some(ref mnemonic_indexes) = self.mnemonic_indexes
             {
-                mnemonic_indexes.into_iter().copied().collect()
+                mnemonic_indexes.to_vec()
             } else {
                 repeat(0).take(mnemonic_paths.len()).collect()
             };
-            for (path, hd_path, mnemonic_index) in izip!(mnemonic_paths, hd_paths, mnemonic_indexes)
+            for (path, mnemonic_passphrase, hd_path, mnemonic_index) in
+                izip!(mnemonic_paths, mnemonic_passphrases, hd_paths, mnemonic_indexes)
             {
-                wallets.push(self.get_from_mnemonic(path, hd_path, mnemonic_index)?)
+                wallets.push(self.get_from_mnemonic(
+                    path,
+                    mnemonic_passphrase,
+                    hd_path,
+                    mnemonic_index,
+                )?)
             }
             return Ok(Some(wallets))
         }
