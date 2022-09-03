@@ -36,6 +36,17 @@ impl Inspector {
         self.tracer = Some(Default::default());
         self
     }
+
+    /// Enables steps recording for `Tracer`
+    /// If `Tracer` wasn't configured before, configures it automatically
+    pub fn with_steps_tracing(mut self) -> Self {
+        if self.tracer.is_none() {
+            self = self.with_tracing()
+        }
+        self.tracer = self.tracer.map(|tracer| tracer.with_steps_recording());
+
+        self
+    }
 }
 
 impl<DB: Database> revm::Inspector<DB> for Inspector {

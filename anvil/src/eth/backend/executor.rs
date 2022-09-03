@@ -237,8 +237,8 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         evm.env = env;
         evm.database(&mut self.db);
 
-        // records all call traces
-        let mut inspector = Inspector::default().with_tracing();
+        // records all call and step traces
+        let mut inspector = Inspector::default().with_tracing().with_steps_tracing();
 
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
