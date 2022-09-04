@@ -2,6 +2,7 @@ use crate::cmd::{read_constructor_args_file, retry::RETRY_CHECK_ON_VERIFY, LoadC
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
+    abi::Function,
     etherscan::{
         contract::{CodeFormat, VerifyContract},
         utils::lookup_compiler_version,
@@ -9,17 +10,18 @@ use ethers::{
     },
     prelude::artifacts::StandardJsonCompilerInput,
     solc::{
-        artifacts::{BytecodeHash, Source},
+        artifacts::{BytecodeHash, CompactContract, Source},
         cache::CacheEntry,
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
 use eyre::{eyre, Context};
 use foundry_config::{Chain, Config, SolcReq};
-use foundry_utils::Retry;
+use foundry_utils::{encode_args, Retry};
 use futures::FutureExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use rustc_hex::ToHex;
 use semver::{BuildMetadata, Version};
 use std::{
     collections::BTreeMap,
@@ -175,19 +177,29 @@ impl EtherscanVerificationProvider {
 
         let project = config.project()?;
 
-        if args.contract.path.is_none() && !config.cache {
-            eyre::bail!(
-                "If cache is disabled, contract info must be provided in the format <path>:<name>"
-            );
+        if !config.cache {
+            if args.contract.path.is_none() {
+                eyre::bail!(
+                    "If cache is disabled, contract info must be provided in the format <path>:<name>"
+                );
+            } else if args.constructor_args_path.is_some() {
+                eyre::bail!(
+                    "Cache must be enabled in order to use the `--constructor-args-path` option"
+                );
+            }
         }
 
         let should_read_cache = args.contract.path.is_none() ||
-            (args.compiler_version.is_none() && config.solc.is_none());
-        let cached_entry = if config.cache && should_read_cache {
+            (args.compiler_version.is_none() && config.solc.is_none()) ||
+            args.constructor_args_path.is_some();
+        let (cached_entry, contract) = if config.cache && should_read_cache {
             let cache = project.read_cache_file()?;
-            Some(crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?)
+            let cached_entry = crate::cmd::get_cached_entry_by_name(&cache, &args.contract.name)?;
+            let contract: CompactContract =
+                cache.read_artifact(cached_entry.0.clone(), &args.contract.name)?;
+            (Some(cached_entry), Some(contract))
         } else {
-            None
+            (None, None)
         };
 
         let contract_path = if let Some(ref path) = args.contract.path {
@@ -218,7 +230,24 @@ impl EtherscanVerificationProvider {
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
         let compiler_version = format!("v{}", compiler_version);
         let constructor_args = if let Some(ref constructor_args_path) = args.constructor_args_path {
-            Some(read_constructor_args_file(constructor_args_path.to_path_buf())?.join(" "))
+            let abi = contract.unwrap().abi.ok_or(eyre!("Can't find ABI in cached artifact."))?;
+            let constructor = abi
+                .constructor()
+                .ok_or(eyre!("Can't retrieve constructor info from artifact ABI."))?;
+            #[allow(deprecated)]
+            let func = Function {
+                name: "constructor".to_string(),
+                inputs: constructor.inputs.clone(),
+                outputs: vec![],
+                constant: None,
+                state_mutability: Default::default(),
+            };
+            let encoded_args = encode_args(
+                &func,
+                &read_constructor_args_file(constructor_args_path.to_path_buf())?,
+            )?
+            .to_hex::<String>();
+            Some(encoded_args[8..].into())
         } else {
             args.constructor_args.clone()
         };
