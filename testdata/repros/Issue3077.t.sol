@@ -5,16 +5,32 @@ import "ds-test/test.sol";
 import "../cheats/Cheats.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3077
-contract Issue3077Test is DSTest {
+abstract contract ZeroState is DSTest {
     Cheats constant vm = Cheats(HEVM_ADDRESS);
 
-    function testRollFork() public {
-        uint256 fork = vm.createFork("rpcAlias", 10);
-        vm.selectFork(fork);
+    // deployer and users
+    address public deployer = vm.addr(1);
 
-        assertEq(block.number, 10);
-        assertEq(block.timestamp, 1438270128);
+    uint256 public mainnetFork;
 
-        vm.rollFork(15471120);
+    function setUp() public virtual {
+        vm.startPrank(deployer);
+        mainnetFork = vm.createFork("rpcAlias");
+        vm.selectFork(mainnetFork);
+        vm.stopPrank();
+    }
+}
+
+abstract contract rollfork is ZeroState {
+    function setUp() public virtual override {
+        super.setUp();
+        emit log_uint(15471105);
+        vm.rollFork(block.number - 15);
+    }
+}
+
+contract testing is rollfork {
+    function testFork() public {
+        assert(true);
     }
 }
