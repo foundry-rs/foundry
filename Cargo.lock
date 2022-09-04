@@ -1619,7 +1619,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "ethers-addressbook 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph)",
  "ethers-contract 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph)",
@@ -1634,7 +1634,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1656,7 +1656,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "ethers-contract-abigen 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph)",
  "ethers-contract-derive 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph)",
@@ -1692,7 +1692,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1738,7 +1738,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "ethers-contract-abigen 0.17.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph)",
  "ethers-core",
@@ -1766,7 +1766,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1797,7 +1797,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.6",
@@ -1813,7 +1813,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1838,7 +1838,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "async-trait",
  "auto_impl 1.0.1",
@@ -1874,7 +1874,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1897,7 +1897,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.17.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#e98e9d68011bfc5588aaf9086789b2f70eacf85b"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/par-iter-graph#af02dc84a0ba79b9fcd8da4279ce7662417d3adf"
 dependencies = [
  "cfg-if 1.0.0",
  "dunce",
