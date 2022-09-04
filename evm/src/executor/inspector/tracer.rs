@@ -20,12 +20,20 @@ use revm::{
 /// An inspector that collects call traces.
 #[derive(Default, Debug, Clone)]
 pub struct Tracer {
+    pub record_steps: bool,
+
     pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
     pub step_stack: Vec<(usize, usize)>, // (trace_idx, step_idx)
 }
 
 impl Tracer {
+    pub fn with_steps_recording(mut self) -> Self {
+        self.record_steps = true;
+
+        self
+    }
+
     pub fn start_trace(
         &mut self,
         depth: usize,
@@ -204,6 +212,10 @@ where
         data: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
         let depth = data.journaled_state.depth();
         let pc = interp.program_counter();
         let op = OpCode(interp.contract.bytecode.bytecode()[pc]);
@@ -236,6 +248,10 @@ where
         _is_static: bool,
         status: Return,
     ) -> Return {
+        if !self.record_steps {
+            return Return::Continue
+        }
+
         self.fill_step(interp.gas.remaining(), status);
 
         status
