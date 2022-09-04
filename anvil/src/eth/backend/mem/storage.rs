@@ -12,8 +12,8 @@ use anvil_core::eth::{
     transaction::TransactionInfo,
 };
 use ethers::{
-    prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64},
-    types::{ActionType, U256},
+    prelude::{BlockId, BlockNumber, GethTrace, Trace, H256, H256 as TxHash, U64},
+    types::{ActionType, GethDebugTracingOptions, U256},
 };
 use forge::revm::{Env, Return};
 use parking_lot::RwLock;
@@ -254,8 +254,8 @@ pub struct MinedTransaction {
 impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<Trace> {
-        let mut traces = Vec::with_capacity(self.info.traces.len());
-        for (idx, node) in self.info.traces.iter().cloned().enumerate() {
+        let mut traces = Vec::with_capacity(self.info.traces.arena.len());
+        for (idx, node) in self.info.traces.arena.iter().cloned().enumerate() {
             let action = node.parity_action();
             let result = node.parity_result();
 
@@ -281,6 +281,10 @@ impl MinedTransaction {
         }
 
         traces
+    }
+
+    pub fn geth_trace(&self, opts: GethDebugTracingOptions) -> GethTrace {
+        self.info.traces.geth_trace(opts)
     }
 }
 

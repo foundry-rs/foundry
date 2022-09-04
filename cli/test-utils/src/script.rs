@@ -104,7 +104,7 @@ impl ScriptTester {
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
         self.cmd.args([
             "--sender",
-            &format!("0x{}", hex::encode(&self.accounts_pub[index as usize].as_bytes())),
+            &format!("0x{}", hex::encode(self.accounts_pub[index as usize].as_bytes())),
         ]);
         self
     }

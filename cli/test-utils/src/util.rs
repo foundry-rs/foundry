@@ -152,7 +152,7 @@ pub fn try_setup_forge_remote(
 ) -> eyre::Result<(TestProject, TestCommand)> {
     let config = config.into();
     let mut tmp = TempProject::checkout(&config.id).wrap_err("failed to checkout project")?;
-    tmp.project_mut().paths = config.path_style.paths(&tmp.root())?;
+    tmp.project_mut().paths = config.path_style.paths(tmp.root())?;
 
     let prj = TestProject::with_project(tmp);
     if config.run_build {
@@ -356,7 +356,7 @@ impl TestProject {
     /// Creates a new command that is set to use the cast executable for this project
     pub fn cast_command(&self) -> TestCommand {
         let mut cmd = self.cast_bin();
-        cmd.current_dir(&self.inner.root());
+        cmd.current_dir(self.inner.root());
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),

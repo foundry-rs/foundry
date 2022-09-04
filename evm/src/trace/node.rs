@@ -169,7 +169,7 @@ impl CallTraceNode {
                 precompile_fn.name.clone(),
                 precompile_fn.signature(),
                 precompile_fn.decode_input(bytes).map_or_else(
-                    |_| vec![hex::encode(&bytes)],
+                    |_| vec![hex::encode(bytes)],
                     |tokens| tokens.iter().map(|token| utils::label(token, labels)).collect(),
                 ),
             );

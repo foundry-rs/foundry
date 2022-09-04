@@ -80,7 +80,7 @@ impl Cmd for InitArgs {
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
-                .args(&["clone", "--recursive", &template, &root.display().to_string()])
+                .args(["clone", "--recursive", &template, &root.display().to_string()])
                 .exec()?;
         } else {
             // check if target is empty
@@ -158,8 +158,8 @@ impl Cmd for InitArgs {
 /// Returns `true` if `root` is already in an existing git repository
 fn is_git(root: &Path) -> eyre::Result<bool> {
     let is_git = Command::new("git")
-        .args(&["rev-parse", "--is-inside-work-tree"])
-        .current_dir(&root)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?
@@ -172,8 +172,8 @@ fn is_git(root: &Path) -> eyre::Result<bool> {
 pub fn get_commit_hash(root: &Path) -> Option<String> {
     if is_git(root).ok()? {
         let output = Command::new("git")
-            .args(&["rev-parse", "--short", "HEAD"])
-            .current_dir(&root)
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -193,7 +193,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
 
         // git init
-        Command::new("git").arg("init").current_dir(&root).exec()?;
+        Command::new("git").arg("init").current_dir(root).exec()?;
 
         // create github workflow
         let gh = root.join(".github").join("workflows");
@@ -202,10 +202,10 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
 
         if !no_commit {
-            Command::new("git").args(&["add", "."]).current_dir(&root).exec()?;
+            Command::new("git").args(["add", "."]).current_dir(root).exec()?;
             Command::new("git")
-                .args(&["commit", "-m", "chore: forge init"])
-                .current_dir(&root)
+                .args(["commit", "-m", "chore: forge init"])
+                .current_dir(root)
                 .exec()?;
         }
     }

@@ -7,7 +7,8 @@ use ethers::{
     providers::{Middleware, ProviderError},
     types::{
         transaction::eip2930::AccessListWithGasUsed, Address, Block, BlockId, Bytes, FeeHistory,
-        Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, H256, U256,
+        Filter, GethDebugTracingOptions, GethTrace, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256,
     },
 };
 use foundry_common::{ProviderBuilder, RetryProvider};
@@ -296,6 +297,22 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, ProviderError> {
+        if let Some(traces) = self.storage_read().geth_transaction_traces.get(&hash).cloned() {
+            return Ok(traces)
+        }
+
+        let trace = self.provider().debug_trace_transaction(hash, opts).await?;
+        let mut storage = self.storage_write();
+        storage.geth_transaction_traces.insert(hash, trace.clone());
+
+        Ok(trace)
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces)
@@ -524,6 +541,7 @@ pub struct ForkedStorage {
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub geth_transaction_traces: HashMap<H256, GethTrace>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

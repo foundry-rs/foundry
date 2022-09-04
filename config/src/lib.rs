@@ -687,7 +687,7 @@ impl Config {
             .remappings(self.get_all_remappings());
 
         if let Some(build_info_path) = &self.build_info_path {
-            builder = builder.build_infos(&build_info_path);
+            builder = builder.build_infos(build_info_path);
         }
 
         builder.build_with_root(&self.__root.0)

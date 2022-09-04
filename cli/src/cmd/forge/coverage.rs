@@ -135,7 +135,7 @@ impl CoverageArgs {
                     .insert(source_file.id as usize, ast);
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(&path)
+                    fs::read_to_string(project_paths.root.join(&path))
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);

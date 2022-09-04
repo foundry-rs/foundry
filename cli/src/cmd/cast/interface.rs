@@ -83,7 +83,7 @@ impl Cmd for InterfaceArgs {
 
             // print or write to file
             if let Some(loc) = output_location {
-                fs::create_dir_all(&loc.parent().unwrap())?;
+                fs::create_dir_all(loc.parent().unwrap())?;
                 fs::write(&loc, res)?;
                 println!("Saved interface at {}", loc.display());
             } else {
