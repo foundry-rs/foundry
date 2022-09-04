@@ -60,6 +60,16 @@ pub struct VerifyArgs {
 
     #[clap(
         long,
+        help = "The path to a file containing the constructor arguments.",
+        value_hint = ValueHint::FilePath,
+        name = "constructor_args_path",
+        conflicts_with = "constructor_args",
+        value_name = "FILE"
+    )]
+    pub constructor_args_path: Option<PathBuf>,
+
+    #[clap(
+        long,
         help = "The compiler version used to build the smart contract.",
         value_name = "VERSION"
     )]

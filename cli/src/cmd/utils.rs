@@ -7,11 +7,12 @@ use ethers::{
         artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
         info::ContractInfo,
+        utils::read_json_file,
         Artifact, ProjectCompileOutput,
     },
 };
 use forge::executor::opts::EvmOpts;
-use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_common::{fs, ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
@@ -93,7 +94,7 @@ pub fn get_cached_entry_by_name(
     }
 
     if let Some(entry) = cached_entry {
-        return Ok(entry)
+        return Ok(entry);
     }
 
     let mut err = format!("could not find artifact: `{}`", name);
@@ -160,7 +161,7 @@ pub fn unwrap_contracts(
                 };
 
                 if let Some(bytecode) = bytecode {
-                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())))
+                    return Some((id.clone(), (c.abi.clone(), bytecode.to_vec())));
                 }
                 None
             })
@@ -196,7 +197,7 @@ macro_rules! update_progress {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain: u64) -> bool {
     if let ConfigChain::Named(chain) = ConfigChain::from(chain) {
-        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet)
+        return matches!(chain, Chain::Arbitrum | Chain::ArbitrumTestnet);
     }
     false
 }
@@ -207,7 +208,7 @@ pub fn has_batch_support(chain: u64) -> bool {
         return !matches!(
             chain,
             Chain::Arbitrum | Chain::ArbitrumTestnet | Chain::Optimism | Chain::OptimismKovan
-        )
+        );
     }
     true
 }
@@ -268,4 +269,25 @@ where
         config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
         config
     }
+}
+
+pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Result<Vec<String>> {
+    if !constructor_args_path.exists() {
+        eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
+    }
+    let args = if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
+        read_json_file(&constructor_args_path).map_err(|e| {
+            eyre::eyre!(
+                "Constructor args file \"{}\" must encode a json array: \"{}\"",
+                constructor_args_path.display(),
+                e
+            )
+        })?
+    } else {
+        fs::read_to_string(constructor_args_path)?
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<String>>()
+    };
+    Ok(args)
 }
