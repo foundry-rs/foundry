@@ -11,6 +11,7 @@ use ethers::{
         Artifact, ProjectCompileOutput,
     },
 };
+use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
 use foundry_common::{fs, ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
@@ -271,23 +272,18 @@ where
     }
 }
 
+/// Read contract constructor arguments from the given file.
 pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Result<Vec<String>> {
     if !constructor_args_path.exists() {
         eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
     }
     let args = if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
-        read_json_file(&constructor_args_path).map_err(|e| {
-            eyre::eyre!(
-                "Constructor args file \"{}\" must encode a json array: \"{}\"",
-                constructor_args_path.display(),
-                e
-            )
-        })?
+        read_json_file(&constructor_args_path).wrap_err(format!(
+            "Constructor args file \"{}\" must encode a json array",
+            constructor_args_path.display(),
+        ))?
     } else {
-        fs::read_to_string(constructor_args_path)?
-            .split_whitespace()
-            .map(str::to_string)
-            .collect::<Vec<String>>()
+        fs::read_to_string(constructor_args_path)?.split_whitespace().map(str::to_string).collect()
     };
     Ok(args)
 }
