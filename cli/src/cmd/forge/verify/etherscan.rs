@@ -1,4 +1,4 @@
-use crate::cmd::{retry::RETRY_CHECK_ON_VERIFY, LoadConfig};
+use crate::cmd::{read_constructor_args_file, retry::RETRY_CHECK_ON_VERIFY, LoadConfig};
 use async_trait::async_trait;
 use cast::SimpleCast;
 use ethers::{
@@ -217,9 +217,14 @@ impl EtherscanVerificationProvider {
 
         let compiler_version = ensure_solc_build_metadata(compiler_version).await?;
         let compiler_version = format!("v{}", compiler_version);
+        let constructor_args = if let Some(ref constructor_args_path) = args.constructor_args_path {
+            Some(read_constructor_args_file(constructor_args_path.to_path_buf())?.join(" "))
+        } else {
+            args.constructor_args.clone()
+        };
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
-                .constructor_arguments(args.constructor_args.clone())
+                .constructor_arguments(constructor_args)
                 .code_format(code_format);
 
         if code_format == CodeFormat::SingleFile {
