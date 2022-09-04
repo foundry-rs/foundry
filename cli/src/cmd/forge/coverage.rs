@@ -129,15 +129,13 @@ impl CoverageArgs {
             }
 
             if let Some(ast) = source_file.ast.take() {
-                let path = project_paths.root.join(path).to_string_lossy().to_string();
-
                 versioned_asts
                     .entry(version.clone())
                     .or_default()
                     .insert(source_file.id as usize, ast);
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(&path)
+                    fs::read_to_string(project_paths.root.join(&path))
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);
