@@ -559,6 +559,8 @@ pub struct ScriptConfig {
 mod tests {
     use super::*;
     use crate::cmd::LoadConfig;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use std::fs;
 
     #[test]
     fn can_parse_sig() {
@@ -584,5 +586,34 @@ mod tests {
         ]);
         let config = args.load_config();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_etherscan_key() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+                etherscan_api_key = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config();
+        let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
+        assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 }
