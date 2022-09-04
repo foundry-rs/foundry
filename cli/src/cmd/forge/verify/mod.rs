@@ -55,7 +55,13 @@ pub struct VerifyArgs {
     )]
     pub contract: ContractInfo,
 
-    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
+    #[clap(
+        long,
+        help = "The ABI-encoded constructor arguments.",
+        name = "constructor_args",
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS"
+    )]
     pub constructor_args: Option<String>,
 
     #[clap(
