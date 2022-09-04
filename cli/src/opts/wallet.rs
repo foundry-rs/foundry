@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 
 use clap::Parser;
 use ethers::{
@@ -81,12 +81,13 @@ pub struct Wallet {
     pub private_key: Option<String>,
 
     #[clap(
-        long = "mnemonic-path",
+        long = "mnemonic",
+        alias = "mnemonic-path",
         help_heading = "WALLET OPTIONS - RAW",
-        help = "Use the mnemonic file at the specified path.",
+        help = "Use the mnemonic phrase of mnemonic file at the specified path.",
         value_name = "PATH"
     )]
-    pub mnemonic_path: Option<String>,
+    pub mnemonic: Option<String>,
 
     #[clap(
         long = "mnemonic-passphrase",
@@ -178,11 +179,11 @@ impl Wallet {
     }
 
     pub fn mnemonic(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref path) = self.mnemonic_path {
+        Ok(if let Some(ref mnemonic) = self.mnemonic {
             Some(self.get_from_mnemonic(
-                path,
-                self.mnemonic_passphrase.as_deref(),
-                self.hd_path.as_deref(),
+                mnemonic,
+                self.mnemonic_passphrase.as_ref(),
+                self.hd_path.as_ref(),
                 self.mnemonic_index,
             )?)
         } else {
@@ -209,17 +210,24 @@ pub trait WalletTrait {
 
     fn get_from_mnemonic(
         &self,
-        path: &str,
-        passphrase: Option<&str>,
-        derivation_path: Option<&str>,
+        mnemonic: &String,
+        passphrase: Option<&String>,
+        derivation_path: Option<&String>,
         index: u32,
     ) -> Result<LocalWallet> {
-        let mnemonic = fs::read_to_string(path)?.replace('\n', "");
+        let mnemonic = if Path::new(mnemonic).is_file() {
+            fs::read_to_string(mnemonic)?.replace('\n', "")
+        } else {
+            mnemonic.to_owned()
+        };
         let builder = MnemonicBuilder::<English>::default().phrase(mnemonic.as_str());
-        let builder =
-            if let Some(passphrase) = passphrase { builder.password(passphrase) } else { builder };
+        let builder = if let Some(passphrase) = passphrase {
+            builder.password(passphrase.as_str())
+        } else {
+            builder
+        };
         let builder = if let Some(hd_path) = derivation_path {
-            builder.derivation_path(hd_path)?
+            builder.derivation_path(hd_path.as_str())?
         } else {
             builder.index(index)?
         };
@@ -255,7 +263,7 @@ mod tests {
             private_key: Some("123".to_string()),
             keystore_path: None,
             keystore_password: None,
-            mnemonic_path: None,
+            mnemonic: None,
             mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
