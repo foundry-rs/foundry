@@ -268,6 +268,8 @@ impl ScriptRunner {
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 
+        // if we changed `fs_commit` during gas limit search, re-execute the call with original
+        // value
         if fs_commit_changed {
             if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
