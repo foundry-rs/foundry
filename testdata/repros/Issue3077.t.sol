@@ -10,13 +10,16 @@ abstract contract ZeroState is DSTest {
 
     // deployer and users
     address public deployer = vm.addr(1);
-
+    Token aaveToken;
     uint256 public mainnetFork;
 
     function setUp() public virtual {
         vm.startPrank(deployer);
         mainnetFork = vm.createFork("rpcAlias");
         vm.selectFork(mainnetFork);
+        vm.rollFork(block.number - 20);
+        // deploy tokens
+        aaveToken = new Token();
         vm.stopPrank();
     }
 }
@@ -24,13 +27,20 @@ abstract contract ZeroState is DSTest {
 abstract contract rollfork is ZeroState {
     function setUp() public virtual override {
         super.setUp();
-        emit log_uint(15471105);
-        vm.rollFork(block.number - 15);
+        vm.rollFork(block.number + 1);
+        aaveToken.balanceOf(deployer);
     }
 }
 
 contract testing is rollfork {
     function testFork() public {
         assert(true);
+    }
+}
+
+contract Token {
+    mapping(address => uint256) private _balances;
+    function balanceOf(address account) public view returns (uint256) {
+        return _balances[account];
     }
 }
