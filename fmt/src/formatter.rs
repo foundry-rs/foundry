@@ -8,6 +8,7 @@ use solang_parser::pt::*;
 use thiserror::Error;
 
 use crate::{
+    chunk::*,
     comments::{CommentState, CommentStringExt, CommentWithMetadata, Comments},
     macros::*,
     solang_ext::*,
@@ -392,28 +393,6 @@ impl<W: Write> Write for FormatBuffer<W> {
         }
 
         Ok(())
-    }
-}
-
-/// Holds information about a non-whitespace-splittable string, and the surrounding comments
-#[derive(Clone, Debug, Default)]
-struct Chunk {
-    postfixes_before: Vec<CommentWithMetadata>,
-    prefixes: Vec<CommentWithMetadata>,
-    content: String,
-    postfixes: Vec<CommentWithMetadata>,
-    needs_space: Option<bool>,
-}
-
-impl From<String> for Chunk {
-    fn from(string: String) -> Self {
-        Chunk { content: string, ..Default::default() }
-    }
-}
-
-impl From<&str> for Chunk {
-    fn from(string: &str) -> Self {
-        Chunk { content: string.to_owned(), ..Default::default() }
     }
 }
 
@@ -895,22 +874,22 @@ impl<'a, W: Write> Formatter<'a, W> {
         })? {
             if chunks.chars().next().is_some() {
                 // TODO:
-                // println!(
-                //     "will? - {}. len - {}. last_indent - {}. curr - {}. total - {}. chunks - {}",
-                //     self.will_it_fit(format_string.replacen("{}", &chunks, 1)),
-                //     chunks.len(),
-                //     self.last_indent_len(),
-                //     self.current_line_len(),
-                //     self.last_indent_len().saturating_add(self.current_line_len()).
-                // saturating_add(         chunks.len() +
-                //             if self.next_char_needs_space(chunks.chars().next().unwrap()) {
-                //                 1
-                //             } else {
-                //                 0
-                //             }
-                //     ),
-                //     chunks
-                // );
+                println!(
+                    "will? - {}. len - {}. last_indent - {}. curr - {}. total - {}. chunks - {}",
+                    self.will_it_fit(format_string.replacen("{}", &chunks, 1)),
+                    chunks.len(),
+                    self.last_indent_len(),
+                    self.current_line_len(),
+                    self.last_indent_len().saturating_add(self.current_line_len()).saturating_add(
+                        chunks.len() +
+                            if self.next_char_needs_space(chunks.chars().next().unwrap()) {
+                                1
+                            } else {
+                                0
+                            }
+                    ),
+                    chunks
+                );
             }
             Ok(!self.will_it_fit(format_string.replacen("{}", &chunks, 1)))
         } else {
@@ -1126,65 +1105,28 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// receives `true` in the latter case
     fn surrounded(
         &mut self,
-        byte_offset: usize,
-        first_chunk: impl std::fmt::Display,
-        last_chunk: impl std::fmt::Display,
-        next_byte_end: Option<usize>,
+        first: SurroundingChunk,
+        last: SurroundingChunk,
         mut fun: impl FnMut(&mut Self, bool) -> Result<()>,
     ) -> Result<()> {
-        // self.write_postfix_comments_before(byte_offset)?; // TODO: remove?
-
-        write_chunk!(self, byte_offset, "{first_chunk}")?;
+        write_chunk!(self, first.loc_before(), first.loc_next(), "{}", first.content)?;
 
         let multiline = !self.try_on_single_line(|fmt| {
             fun(fmt, false)?;
-            write_chunk!(fmt, byte_offset, "{last_chunk}")?;
-            // fmt.write_postfix_comments_before(next_byte_end.unwrap_or_default())?;
+            write_chunk!(fmt, last.loc_before(), last.loc_next(), "{}", last.content)?;
             Ok(())
         })?;
 
         if multiline {
             self.indented(1, |fmt| {
-                let stringified = fmt
-                    .with_temp_buf(|fmt| {
-                        fmt.set_last_indent_group_skipped(false);
-                        fmt.set_current_line_len(fmt.config.line_length);
-                        fun(fmt, true)
-                    })?
-                    .w;
-
-                if stringified.chars().next().map(|ch| ch != '\n').unwrap_or(false) {
-                    fmt.write_whitespace_separator(true)?;
-                }
-
-                write_chunk!(fmt, "{stringified}")
+                fmt.write_whitespace_separator(true)?;
+                let stringified = fmt.with_temp_buf(|fmt| fun(fmt, true))?.w;
+                write_chunk!(fmt, "{}", stringified.trim_start())
             })?;
-            // self.indented(1, |fmt| {
-            // let contents = fmt
-            //     .with_temp_buf(|fmt| {
-            //         fmt.set_current_line_len(0);
-            //         fmt.write_whitespace_separator(true)?;
-            //         fun(fmt, true)
-            //     })?
-            //     .w;
-
-            // fun(fmt, true)
-
-            // if contents.chars().next().map(|ch| ch != '\n').unwrap_or(false) {
-            //     fmt.write_whitespace_separator(true)?;
-            // }
-            // write_chunk!(fmt, "{contents}")
-            // })?;
-            if let Some(next_byte_end) = next_byte_end {
-                self.write_postfix_comments_before(next_byte_end)?;
-            }
-            let last_chunk = last_chunk.to_string();
-            if !last_chunk.trim_start().is_empty() {
+            if !last.content.trim_start().is_empty() {
                 self.write_whitespace_separator(true)?;
             }
-            write_chunk!(self, byte_offset, "{last_chunk}")?;
-        } else if let Some(next_byte_end) = next_byte_end {
-            self.write_postfix_comments_before(next_byte_end)?;
+            write_chunk!(self, last.loc_before(), last.loc_next(), "{}", last.content)?;
         }
 
         Ok(())
@@ -1369,51 +1311,35 @@ impl<'a, W: Write> Formatter<'a, W> {
     {
         write_chunk!(self, "{}", prefix)?;
         let whitespace = if !prefix.is_empty() { " " } else { "" };
+        let next_after_start_offset = items.first().map(|item| item.loc().start());
+        let first_surrounding = SurroundingChunk::new("", start_offset, next_after_start_offset);
+        let last_surronding = SurroundingChunk::new(")", None, end_offset);
         if items.is_empty() {
             if paren_required {
                 write!(self.buf(), "{whitespace}(")?;
                 // if let Some(end_offset) = end_offset {
-                self.surrounded(
-                    start_offset.unwrap_or_default(),
-                    "",
-                    ")",
-                    end_offset,
-                    |fmt, _| {
-                        // write comments before the list end
-                        let comments =
-                            fmt.comments.remove_postfixes_before(end_offset.unwrap_or_default());
-                        println!("list postfixes >>> {:?}", comments);
-                        fmt.write_comments(&comments)?;
-                        let comments =
-                            fmt.comments.remove_prefixes_before(end_offset.unwrap_or_default());
-                        println!("list prefixes >>> {:?}", comments);
-                        fmt.write_comments(&comments)?;
-                        // write_chunk!(fmt, end_offset.unwrap_or_default(), "")?;
-                        Ok(())
-                    },
-                )?;
+                self.surrounded(first_surrounding, last_surronding, |fmt, _| {
+                    // write comments before the list end
+                    // fmt.write_postfix_comments_before(end_offset.unwrap_or_default())
+                    write_chunk!(fmt, end_offset.unwrap_or_default(), "")?; // TODO: remove
+                    Ok(())
+                })?;
                 // } else {
                 //     write_chunk!(self, end_offset.unwrap_or_default(), ")")?;
                 // }
             }
         } else {
             write!(self.buf(), "{whitespace}(")?;
-            self.surrounded(
-                start_offset.unwrap_or_default(),
-                "",
-                ")",
-                end_offset,
-                |fmt, multiline| {
-                    let args = fmt.items_to_chunks(
-                        end_offset,
-                        items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
-                    )?;
-                    let multiline =
-                        multiline && fmt.are_chunks_separated_multiline("{}", &args, ",")?;
-                    fmt.write_chunks_separated(&args, ",", multiline)?;
-                    Ok(())
-                },
-            )?;
+            self.surrounded(first_surrounding, last_surronding, |fmt, multiline| {
+                let args = fmt.items_to_chunks(
+                    end_offset,
+                    items.iter_mut().map(|arg| Ok((arg.loc(), arg))),
+                )?;
+                let multiline =
+                    multiline && fmt.are_chunks_separated_multiline("{}", &args, ",")?;
+                fmt.write_chunks_separated(&args, ",", multiline)?;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -1866,35 +1792,40 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         write_chunk!(self, loc.start(), imports_start, "import")?;
 
-        self.surrounded(imports_start, "{", "}", Some(from.loc.start()), |fmt, _multiline| {
-            let mut imports = imports.iter_mut().peekable();
-            let mut import_chunks = Vec::new();
-            while let Some((ident, alias)) = imports.next() {
-                import_chunks.push(fmt.chunked(
-                    ident.loc.start(),
-                    imports.peek().map(|(ident, _)| ident.loc.start()),
-                    |fmt| {
-                        fmt.grouped(|fmt| {
-                            ident.visit(fmt)?;
-                            if let Some(alias) = alias {
-                                write_chunk!(fmt, ident.loc.end(), alias.loc.start(), "as")?;
-                                alias.visit(fmt)?;
-                            }
+        self.surrounded(
+            SurroundingChunk::new("{", Some(imports_start), None),
+            SurroundingChunk::new("}", None, Some(from.loc.start())),
+            // imports_start, "{", "}", Some(from.loc.start()),
+            |fmt, _multiline| {
+                let mut imports = imports.iter_mut().peekable();
+                let mut import_chunks = Vec::new();
+                while let Some((ident, alias)) = imports.next() {
+                    import_chunks.push(fmt.chunked(
+                        ident.loc.start(),
+                        imports.peek().map(|(ident, _)| ident.loc.start()),
+                        |fmt| {
+                            fmt.grouped(|fmt| {
+                                ident.visit(fmt)?;
+                                if let Some(alias) = alias {
+                                    write_chunk!(fmt, ident.loc.end(), alias.loc.start(), "as")?;
+                                    alias.visit(fmt)?;
+                                }
+                                Ok(())
+                            })?;
                             Ok(())
-                        })?;
-                        Ok(())
-                    },
-                )?);
-            }
+                        },
+                    )?);
+                }
 
-            let multiline = fmt.are_chunks_separated_multiline(
-                &format!("{{}} }} from \"{}\";", from.string),
-                &import_chunks,
-                ",",
-            )?;
-            fmt.write_chunks_separated(&import_chunks, ",", multiline)?;
-            Ok(())
-        })?;
+                let multiline = fmt.are_chunks_separated_multiline(
+                    &format!("{{}} }} from \"{}\";", from.string),
+                    &import_chunks,
+                    ",",
+                )?;
+                fmt.write_chunks_separated(&import_chunks, ",", multiline)?;
+                Ok(())
+            },
+        )?;
 
         self.grouped(|fmt| {
             write_chunk!(fmt, imports_start, from.loc.start(), "from")?;
@@ -1921,10 +1852,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_empty_brackets()?;
         } else {
             self.surrounded(
-                enumeration.values.first().unwrap().loc.start(),
-                "{",
-                "}",
-                Some(enumeration.loc.end()),
+                SurroundingChunk::new(
+                    "{",
+                    Some(enumeration.values.first().unwrap().loc.start()),
+                    None,
+                ),
+                SurroundingChunk::new("}", None, Some(enumeration.loc.end())),
+                // enumeration.values.first().unwrap().loc.start(),
+                // "{",
+                // "}",
+                // Some(enumeration.loc.end()),
                 |fmt, _multiline| {
                     let values = fmt.items_to_chunks(
                         Some(enumeration.loc.end()),
@@ -2014,7 +1951,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write_chunk!(self, loc.start(), loc.end(), "this")?;
             }
             Expression::Parenthesis(loc, expr) => {
-                self.surrounded(loc.start(), "(", ")", Some(loc.end()), |fmt, _| expr.visit(fmt))?;
+                self.surrounded(
+                    SurroundingChunk::new("(", Some(loc.start()), None),
+                    SurroundingChunk::new(")", None, Some(loc.end())),
+                    // loc.start(),
+                    // "(",
+                    // ")",
+                    // Some(loc.end()),
+                    |fmt, _| expr.visit(fmt),
+                )?;
             }
             Expression::ArraySubscript(_, ty_exp, size_exp) => {
                 ty_exp.visit(self)?;
@@ -2193,11 +2138,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 })?;
             }
             Expression::List(loc, items) => {
+                // TODO: items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start())
                 self.surrounded(
-                    items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start()),
-                    "(",
-                    ")",
-                    Some(loc.end()),
+                    SurroundingChunk::new(
+                        "(",
+                        Some(loc.start()),
+                        items.first().map(|item| item.0.start()),
+                    ),
+                    SurroundingChunk::new(")", None, Some(loc.end())), // TODO: check
+                    // items.first().map(|item| item.0.start()).unwrap_or_else(|| loc.start()),
+                    // "(",
+                    // ")",
+                    // Some(loc.end()),
                     |fmt, _| {
                         let items = fmt.items_to_chunks(
                             Some(loc.end()),
@@ -2335,7 +2287,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let returns_loc = func.returns.first().map(|param| param.0);
             let body_loc = func.body.as_ref().map(LineOfCode::loc);
 
-            let params_end = attrs_loc
+            let params_next_offset = attrs_loc
                 .as_ref()
                 .or(returns_loc.as_ref())
                 .or(body_loc.as_ref())
@@ -2356,14 +2308,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 params_multiline = chunk.content.contains('\n');
                 fmt.write_chunk(&chunk)?;
             } else {
-                fmt.surrounded(
-                    func.loc.start(),
+                let first_surrounding = SurroundingChunk::new(
                     format!("{func_name}("),
-                    ")",
-                    params_end,
+                    Some(func.loc.start()),
+                    Some(
+                        func.params
+                            .first()
+                            .map(|param| param.0.start())
+                            .unwrap_or(params_loc.end()),
+                    ),
+                );
+                fmt.surrounded(
+                    first_surrounding,
+                    SurroundingChunk::new(")", None, params_next_offset),
                     |fmt, multiline| {
                         let params = fmt.items_to_chunks(
-                            params_end,
+                            params_next_offset,
                             func.params
                                 .iter_mut()
                                 .map(|(loc, param)| Ok((*loc, param.as_mut().unwrap()))),
@@ -2434,10 +2394,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         fmt.write_whitespace_separator(multiline)?;
                         fmt.indented(1, |fmt| {
                             fmt.surrounded(
-                                returns_loc.start(),
-                                "returns (",
-                                ")",
-                                returns_end,
+                                SurroundingChunk::new("returns (", Some(returns_loc.start()), None),
+                                SurroundingChunk::new(")", None, returns_end),
+                                // returns_loc.start(),
+                                // "returns (",
+                                // ")",
+                                // returns_end,
                                 |fmt, multiline_hint| {
                                     fmt.write_chunks_separated(&returns, ",", multiline_hint)?;
                                     Ok(())
@@ -2552,10 +2514,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let multiline = !self.will_it_fit(&formatted_name);
 
         self.surrounded(
-            args_start,
-            &formatted_name,
-            ")",
-            Some(base.loc.end()),
+            SurroundingChunk::new(&formatted_name, Some(args_start), None),
+            SurroundingChunk::new(")", None, Some(base.loc.end())),
+            // args_start,
+            // &formatted_name,
+            // ")",
+            // Some(base.loc.end()),
             |fmt, multiline_hint| {
                 let args = fmt.items_to_chunks(
                     Some(base.loc.end()),
@@ -2598,10 +2562,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(fmt.buf(), " {{")?;
             fmt.surrounded(
-                structure.name.loc.end(),
-                "",
-                "}",
-                Some(structure.loc.end()),
+                SurroundingChunk::new("", Some(structure.name.loc.end()), None),
+                SurroundingChunk::new("}", None, Some(structure.loc.end())),
+                // structure.name.loc.end(),
+                // "",
+                // "}",
+                // Some(structure.loc.end()),
                 |fmt, _multiline| {
                     let chunks = fmt.items_to_chunks(
                         Some(structure.loc.end()),
@@ -2682,10 +2648,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let byte_offset = event.fields.first().unwrap().loc.start();
             let first_chunk = self.chunk_to_string(&name)?;
             self.surrounded(
-                byte_offset,
-                first_chunk,
-                last_chunk,
-                Some(event.loc.end()),
+                SurroundingChunk::new(&first_chunk, Some(byte_offset), None),
+                SurroundingChunk::new(&last_chunk, None, Some(event.loc.end())),
+                // byte_offset,
+                // first_chunk,
+                // last_chunk,
+                // Some(event.loc.end()),
                 |fmt, multiline| {
                     let params = fmt.items_to_chunks(
                         None,
@@ -2819,10 +2787,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         } else {
             self.surrounded(
-                using.loc.start(),
-                "{",
-                "}",
-                Some(ty_start.or(global_start).unwrap_or(loc_end)),
+                SurroundingChunk::new("{", Some(using.loc.start()), None),
+                SurroundingChunk::new(
+                    "}",
+                    None,
+                    Some(ty_start.or(global_start).unwrap_or(loc_end)),
+                ),
+                // using.loc.start(),
+                // "{",
+                // "}",
+                // Some(ty_start.or(global_start).unwrap_or(loc_end)),
                 |fmt, _multiline| {
                     let multiline = fmt.are_chunks_separated_multiline(
                         &format!("{{ {{}} }} {simulated_for_def};"),
@@ -2936,48 +2910,60 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         return_source_if_disabled!(self, loc);
 
         let next_byte_end = update.as_ref().map(|u| u.loc().end());
-        self.surrounded(loc.start(), "for (", ") ", next_byte_end, |fmt, _| {
-            let mut write_for_loop_header = |fmt: &mut Self, multiline: bool| -> Result<()> {
-                init.as_mut()
-                    .map(|stmt| {
-                        match **stmt {
-                            Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
-                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+        self.surrounded(
+            SurroundingChunk::new("for (", Some(loc.start()), None),
+            SurroundingChunk::new(")", None, next_byte_end),
+            // loc.start(),
+            // "for (",
+            // ") ",
+            // next_byte_end,
+            |fmt, _| {
+                let mut write_for_loop_header = |fmt: &mut Self, multiline: bool| -> Result<()> {
+                    init.as_mut()
+                        .map(|stmt| {
+                            match **stmt {
+                                Statement::VariableDefinition(loc, ref mut decl, ref mut expr) => {
+                                    fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                                }
+                                Statement::Expression(loc, ref mut expr) => {
+                                    fmt.visit_expr(loc, expr)
+                                }
+                                _ => stmt.visit(fmt), // unreachable
                             }
-                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
-                            _ => stmt.visit(fmt), // unreachable
-                        }
-                    })
-                    .transpose()?;
-                fmt.write_semicolon()?;
-                if multiline {
-                    fmt.write_whitespace_separator(true)?;
-                }
-                cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
-                fmt.write_semicolon()?;
-                if multiline {
-                    fmt.write_whitespace_separator(true)?;
-                }
-                update
-                    .as_mut()
-                    .map(|stmt| {
-                        match **stmt {
-                            Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
-                                fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                        })
+                        .transpose()?;
+                    fmt.write_semicolon()?;
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    cond.as_mut().map(|expr| expr.visit(fmt)).transpose()?;
+                    fmt.write_semicolon()?;
+                    if multiline {
+                        fmt.write_whitespace_separator(true)?;
+                    }
+                    update
+                        .as_mut()
+                        .map(|stmt| {
+                            match **stmt {
+                                Statement::VariableDefinition(_, ref mut decl, ref mut expr) => {
+                                    fmt.visit_var_definition_stmt(loc, decl, expr, false)
+                                }
+                                Statement::Expression(loc, ref mut expr) => {
+                                    fmt.visit_expr(loc, expr)
+                                }
+                                _ => stmt.visit(fmt), // unreachable
                             }
-                            Statement::Expression(loc, ref mut expr) => fmt.visit_expr(loc, expr),
-                            _ => stmt.visit(fmt), // unreachable
-                        }
-                    })
-                    .transpose()?;
+                        })
+                        .transpose()?;
+                    Ok(())
+                };
+                let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;
+                if multiline {
+                    write_for_loop_header(fmt, true)?;
+                }
                 Ok(())
-            };
-            let multiline = !fmt.try_on_single_line(|fmt| write_for_loop_header(fmt, false))?;
-            if multiline {
-                write_for_loop_header(fmt, true)?;
-            }
-            Ok(())
-        })?;
+            },
+        )?;
         match body {
             Some(body) => self.visit_stmt_as_block(body),
             None => self.write_empty_brackets(),
@@ -2991,9 +2977,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         body: &mut Statement,
     ) -> Result<(), Self::Error> {
         return_source_if_disabled!(self, loc);
-        self.surrounded(loc.start(), "while (", ") ", Some(cond.loc().end()), |fmt, _| {
-            cond.visit(fmt)
-        })?;
+        self.surrounded(
+            SurroundingChunk::new("while (", Some(loc.start()), None),
+            SurroundingChunk::new(")", None, Some(cond.loc().end())),
+            // loc.start(), "while (", ") ",
+            // Some(cond.loc().end()),
+            |fmt, _| cond.visit(fmt),
+        )?;
         self.visit_stmt_as_block(body)
     }
 
@@ -3007,9 +2997,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write_chunk!(self, loc.start(), "do ")?;
         self.visit_stmt_as_block(body)?;
         visit_source_if_disabled_else!(self, loc.with_start(body.loc().end()), {
-            self.surrounded(cond.loc().start(), "while (", ");", Some(loc.end()), |fmt, _| {
-                cond.visit(fmt)
-            })?;
+            self.surrounded(
+                SurroundingChunk::new("while (", Some(cond.loc().start()), None),
+                SurroundingChunk::new(");", None, Some(loc.end())),
+                |fmt, _| cond.visit(fmt),
+            )?;
         });
         Ok(())
     }
@@ -3024,9 +3016,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         return_source_if_disabled!(self, loc);
 
         visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
-            self.surrounded(loc.start(), "if (", ")", Some(if_branch.loc().start()), |fmt, _| {
-                cond.visit(fmt)
-            })?;
+            self.surrounded(
+                SurroundingChunk::new("if (", Some(loc.start()), None),
+                SurroundingChunk::new(")", Some(if_branch.loc().start()), None),
+                // loc.start(), "if (", ")", Some(if_branch.loc().start()),
+                |fmt, _| {
+                    cond.visit(fmt)?;
+                    fmt.write_postfix_comments_before(if_branch.loc().start())
+                },
+            )?;
         });
         self.visit_stmt_as_block(if_branch)?;
         if let Some(else_branch) = else_branch {
@@ -3196,10 +3194,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if let Some((params, stmt)) = returns {
                 let byte_offset = params.first().map_or(stmt.loc().start(), |p| p.0.start());
                 fmt.surrounded(
-                    byte_offset,
-                    "returns (",
-                    ")",
-                    params.last().map(|p| p.0.end()),
+                    SurroundingChunk::new("returns (", Some(byte_offset), None),
+                    SurroundingChunk::new(")", None, params.last().map(|p| p.0.end())),
+                    // byte_offset,
+                    // "returns (",
+                    // ")",
+                    // params.last().map(|p| p.0.end()),
                     |fmt, _| {
                         let chunks = fmt.items_to_chunks(
                             Some(stmt.loc().start()),
@@ -3235,10 +3235,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if let Some(param) = param.as_mut() {
                     write_chunk_spaced!(fmt, param.loc.start(), Some(ident.is_none()), "(")?;
                     fmt.surrounded(
-                        param.loc.start(),
-                        "",
-                        ")",
-                        Some(stmt.loc().start()),
+                        SurroundingChunk::new("", Some(param.loc.start()), None),
+                        SurroundingChunk::new(")", None, Some(stmt.loc().start())),
+                        // param.loc.start(),
+                        // "",
+                        // ")",
+                        // Some(stmt.loc().start()),
                         |fmt, _| param.visit(fmt),
                     )?;
                 }
@@ -3304,19 +3306,29 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if let Some(flags) = flags {
             if !flags.is_empty() {
                 let loc_start = flags.first().unwrap().loc.start();
-                self.surrounded(loc_start, "(", ")", Some(block.loc.start()), |fmt, _| {
-                    let mut flags = flags.iter_mut().peekable();
-                    let mut chunks = vec![];
-                    while let Some(flag) = flags.next() {
-                        let next_byte_offset = flags.peek().map(|next_flag| next_flag.loc.start());
-                        chunks.push(fmt.chunked(flag.loc.start(), next_byte_offset, |fmt| {
-                            write!(fmt.buf(), "\"{}\"", flag.string)?;
-                            Ok(())
-                        })?);
-                    }
-                    fmt.write_chunks_separated(&chunks, ",", false)?;
-                    Ok(())
-                })?;
+                self.surrounded(
+                    // loc_start, "(", ")", Some(block.loc.start()),
+                    SurroundingChunk::new("(", Some(loc_start), None),
+                    SurroundingChunk::new(")", None, Some(block.loc.start())),
+                    |fmt, _| {
+                        let mut flags = flags.iter_mut().peekable();
+                        let mut chunks = vec![];
+                        while let Some(flag) = flags.next() {
+                            let next_byte_offset =
+                                flags.peek().map(|next_flag| next_flag.loc.start());
+                            chunks.push(fmt.chunked(
+                                flag.loc.start(),
+                                next_byte_offset,
+                                |fmt| {
+                                    write!(fmt.buf(), "\"{}\"", flag.string)?;
+                                    Ok(())
+                                },
+                            )?);
+                        }
+                        fmt.write_chunks_separated(&chunks, ",", false)?;
+                        Ok(())
+                    },
+                )?;
             }
         }
 
@@ -3681,14 +3693,13 @@ mod tests {
     }
 
     // test_directory! { ConstructorDefinition }
-    test_directory! { ContractDefinition }
+    // test_directory! { ContractDefinition }
     // test_directory! { DocComments }
     // test_directory! { EnumDefinition }
     // test_directory! { ErrorDefinition }
     // test_directory! { EventDefinition }
-    // TODO:
     test_directory! { FunctionDefinition }
-    // test_directory! { FunctionType } // TODO:
+    test_directory! { FunctionType }
     // test_directory! { ImportDirective }
     // test_directory! { ModifierDefinition }
     // test_directory! { StatementBlock }
@@ -3696,14 +3707,14 @@ mod tests {
     // test_directory! { TypeDefinition }
     // test_directory! { UsingDirective }
     // test_directory! { VariableDefinition }
-    // test_directory! { OperatorExpressions }
+    test_directory! { OperatorExpressions }
     // test_directory! { WhileStatement }
     // test_directory! { DoWhileStatement }
     // test_directory! { ForStatement }
-    // test_directory! { IfStatement }
+    test_directory! { IfStatement }
     // test_directory! { VariableAssignment }
     // test_directory! { FunctionCallArgsStatement }
-    test_directory! { RevertStatement }
+    // test_directory! { RevertStatement }
     // test_directory! { RevertNamedArgsStatement }
     // test_directory! { ReturnStatement }
     // test_directory! { TryStatement }
