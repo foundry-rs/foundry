@@ -66,6 +66,19 @@ contract BroadcastTest is DSTest {
         Test test = new Test();
     }
 
+    function deployRememberKeyResume() public {
+        cheats.broadcast(ACCOUNT_A);
+        Test test = new Test();
+
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        address thisAddress = cheats.rememberKey(privateKey);
+
+        cheats.broadcast(thisAddress);
+        Test test2 = new Test();
+    }
+
     function deployOther() public {
         cheats.startBroadcast(ACCOUNT_A);
         Test tmptest = new Test();
