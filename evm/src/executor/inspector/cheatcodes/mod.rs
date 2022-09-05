@@ -113,6 +113,8 @@ pub struct Cheatcodes {
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
 
+    // Commit FS changes such as file creations, writes and deletes.
+    // Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 }
 
