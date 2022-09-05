@@ -821,7 +821,11 @@ impl DatabaseExt for Backend {
             }
 
             return if available_on.is_empty() {
-                Some(RevertDiagnostic::ContractDoesNotExist { contract: callee, active: active_id })
+                Some(RevertDiagnostic::ContractDoesNotExist {
+                    contract: callee,
+                    active: active_id,
+                    persistent: self.is_persistent(&callee),
+                })
             } else {
                 // likely user error: called a contract that's not available on active fork but is
                 // present other forks
