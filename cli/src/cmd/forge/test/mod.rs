@@ -337,7 +337,7 @@ pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
         evm_opts.verbosity = 3;
     }
 
-    let env = evm_opts.evm_env_blocking();
+    let env = evm_opts.evm_env_blocking()?;
 
     // Prepare the test builder
     let evm_spec = utils::evm_spec(&config.evm_version);
