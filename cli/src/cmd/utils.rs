@@ -7,11 +7,13 @@ use ethers::{
         artifacts::{CompactBytecode, CompactDeployedBytecode, ContractBytecodeSome},
         cache::{CacheEntry, SolFilesCache},
         info::ContractInfo,
+        utils::read_json_file,
         Artifact, ProjectCompileOutput,
     },
 };
+use eyre::WrapErr;
 use forge::executor::opts::EvmOpts;
-use foundry_common::{ContractsByArtifact, TestFunctionExt};
+use foundry_common::{fs, ContractsByArtifact, TestFunctionExt};
 use foundry_config::{figment::Figment, Chain as ConfigChain, Config};
 use std::{collections::BTreeMap, path::PathBuf};
 use yansi::Paint;
@@ -268,4 +270,20 @@ where
         config.__warnings.iter().for_each(|w| cli_warn!("{w}"));
         config
     }
+}
+
+/// Read contract constructor arguments from the given file.
+pub fn read_constructor_args_file(constructor_args_path: PathBuf) -> eyre::Result<Vec<String>> {
+    if !constructor_args_path.exists() {
+        eyre::bail!("Constructor args file \"{}\" not found", constructor_args_path.display());
+    }
+    let args = if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
+        read_json_file(&constructor_args_path).wrap_err(format!(
+            "Constructor args file \"{}\" must encode a json array",
+            constructor_args_path.display(),
+        ))?
+    } else {
+        fs::read_to_string(constructor_args_path)?.split_whitespace().map(str::to_string).collect()
+    };
+    Ok(args)
 }
