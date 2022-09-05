@@ -55,8 +55,24 @@ pub struct VerifyArgs {
     )]
     pub contract: ContractInfo,
 
-    #[clap(long, help = "the encoded constructor arguments", value_name = "ARGS")]
+    #[clap(
+        long,
+        help = "The ABI-encoded constructor arguments.",
+        name = "constructor_args",
+        conflicts_with = "constructor_args_path",
+        value_name = "ARGS"
+    )]
     pub constructor_args: Option<String>,
+
+    #[clap(
+        long,
+        help = "The path to a file containing the constructor arguments.",
+        value_hint = ValueHint::FilePath,
+        name = "constructor_args_path",
+        conflicts_with = "constructor_args",
+        value_name = "FILE"
+    )]
+    pub constructor_args_path: Option<PathBuf>,
 
     #[clap(
         long,
