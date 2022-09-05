@@ -2156,6 +2156,7 @@ dependencies = [
  "solang-parser",
  "strsim",
  "strum",
+ "svm-rs",
  "thiserror",
  "tokio",
  "toml",
