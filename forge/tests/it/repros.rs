@@ -139,7 +139,6 @@ fn test_issue_2984() {
 // <https://github.com/foundry-rs/foundry/issues/3077>
 #[test]
 fn test_issue_3077() {
-    foundry_utils::init_tracing_subscriber();
     let mut runner = runner();
     let suite_result =
         runner.test(&Filter::new(".*", ".*", ".*repros/Issue3077"), None, TEST_OPTS).unwrap();

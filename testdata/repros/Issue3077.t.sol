@@ -20,6 +20,7 @@ abstract contract ZeroState is DSTest {
         vm.rollFork(block.number - 20);
         // deploy tokens
         aaveToken = new Token();
+        vm.makePersistent(address(aaveToken));
         vm.stopPrank();
     }
 }
@@ -34,12 +35,13 @@ abstract contract rollfork is ZeroState {
 
 contract testing is rollfork {
     function testFork() public {
-        assert(true);
+        emit log_uint(block.number);
     }
 }
 
 contract Token {
     mapping(address => uint256) private _balances;
+
     function balanceOf(address account) public view returns (uint256) {
         return _balances[account];
     }
