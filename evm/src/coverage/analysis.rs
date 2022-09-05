@@ -171,7 +171,22 @@ impl<'a> ContractVisitor<'a> {
                 // branch ID as we do
                 self.branch_id += 1;
 
-                self.push_branches(&node.src, branch_id);
+                // The relevant source range for the branch is the `if(...)` statement itself and
+                // the true body of the if statement. The false body of the statement (if any) is
+                // processed as its own thing. If this source range is not processed like this, it
+                // is virtually impossible to correctly map instructions back to branches that
+                // include more complex logic like conditional logic.
+                self.push_branches(
+                    &ethers::solc::artifacts::ast::SourceLocation {
+                        start: node.src.start,
+                        length: true_body
+                            .src
+                            .length
+                            .map(|length| true_body.src.start - node.src.start + length),
+                        index: node.src.index,
+                    },
+                    branch_id,
+                );
 
                 // Process the true branch
                 self.visit_block_or_statement(true_body)?;
