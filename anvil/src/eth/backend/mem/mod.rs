@@ -55,6 +55,7 @@ use forge::{
 };
 use foundry_evm::{
     decode::decode_revert,
+    executor::backend::{DatabaseError, DatabaseResult},
     revm,
     revm::{
         db::CacheDB, Account, CreateScheme, Env, SpecId, TransactOut, TransactTo, TxEnv,
@@ -177,14 +178,15 @@ impl Backend {
             active_snapshots: Arc::new(Mutex::new(Default::default())),
         };
 
-        backend.apply_genesis().await;
+        // Note: this can only fail in forking mode, in which case we can't recover
+        backend.apply_genesis().await.expect("Failed to create genesis");
         backend
     }
 
     /// Applies the configured genesis settings
     ///
     /// This will fund, create the genesis accounts
-    async fn apply_genesis(&self) {
+    async fn apply_genesis(&self) -> DatabaseResult<()> {
         trace!(target: "backend", "setting genesis balances");
         let mut db = self.db.write().await;
 
@@ -196,7 +198,7 @@ impl Backend {
             fork_genesis_infos.clear();
 
             for address in self.genesis.accounts.iter().copied() {
-                let mut info = db.basic(address);
+                let mut info = db.basic(address)?.unwrap_or_default();
                 info.balance = self.genesis.balance;
                 db.insert_account(address, info.clone());
 
@@ -210,20 +212,21 @@ impl Backend {
         }
 
         // apply the genesis.json alloc
-        self.genesis.apply_genesis_json_alloc(db);
+        self.genesis.apply_genesis_json_alloc(db)?;
+        Ok(())
     }
 
     /// Sets the account to impersonate
     ///
     /// Returns `true` if the account is already impersonated
-    pub async fn impersonate(&self, addr: Address) -> bool {
+    pub async fn impersonate(&self, addr: Address) -> DatabaseResult<bool> {
         if self.cheats.is_impersonated(addr) {
-            return true
+            return Ok(true)
         }
         // need to bypass EIP-3607: Reject transactions from senders with deployed code by setting
         // the code hash to `KECCAK_EMPTY` temporarily and also remove the code itself and add back
         // when we stop impersonating
-        let mut account = self.db.read().await.basic(addr);
+        let mut account = self.get_account(addr).await?;
         let mut code_hash = None;
         let mut code = None;
         if account.code_hash != KECCAK_EMPTY {
@@ -231,20 +234,21 @@ impl Backend {
             code = account.code.take();
             self.db.write().await.insert_account(addr, account);
         }
-        self.cheats.impersonate(addr, code_hash, code)
+        Ok(self.cheats.impersonate(addr, code_hash, code))
     }
 
     /// Removes the account that from the impersonated set
     ///
     /// If the impersonated `addr` is a contract then we also reset the code here
-    pub async fn stop_impersonating(&self, addr: Address) {
+    pub async fn stop_impersonating(&self, addr: Address) -> DatabaseResult<()> {
         if let Some((Some(code_hash), code)) = self.cheats.stop_impersonating(&addr) {
             let mut db = self.db.write().await;
-            let mut account = db.basic(addr);
+            let mut account = db.basic(addr)?.unwrap_or_default();
             account.code_hash = code_hash;
             account.code = code;
             db.insert_account(addr, account)
         }
+        Ok(())
     }
 
     /// Returns the configured fork, if any
@@ -255,6 +259,11 @@ impl Backend {
     /// Returns the database
     pub fn get_db(&self) -> &Arc<AsyncRwLock<dyn Db>> {
         &self.db
+    }
+
+    /// Returns the `AccountInfo` from the database
+    pub async fn get_account(&self, address: Address) -> DatabaseResult<AccountInfo> {
+        Ok(self.db.read().await.basic(address)?.unwrap_or_default())
     }
 
     /// Whether we're forked off some remote client
@@ -313,7 +322,7 @@ impl Backend {
             }
 
             // reset the genesis.json alloc
-            self.genesis.apply_genesis_json_alloc(db);
+            self.genesis.apply_genesis_json_alloc(db)?;
 
             Ok(())
         } else {
@@ -369,13 +378,13 @@ impl Backend {
     }
 
     /// Returns balance of the given account.
-    pub async fn current_balance(&self, address: Address) -> U256 {
-        self.db.read().await.basic(address).balance
+    pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.get_account(address).await?.balance)
     }
 
     /// Returns balance of the given account.
-    pub async fn current_nonce(&self, address: Address) -> U256 {
-        self.db.read().await.basic(address).nonce.into()
+    pub async fn current_nonce(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.get_account(address).await?.nonce.into())
     }
 
     /// Sets the coinbase address
@@ -384,23 +393,28 @@ impl Backend {
     }
 
     /// Sets the nonce of the given address
-    pub async fn set_nonce(&self, address: Address, nonce: U256) {
-        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX));
+    pub async fn set_nonce(&self, address: Address, nonce: U256) -> DatabaseResult<()> {
+        self.db.write().await.set_nonce(address, nonce.try_into().unwrap_or(u64::MAX))
     }
 
     /// Sets the balance of the given address
-    pub async fn set_balance(&self, address: Address, balance: U256) {
-        self.db.write().await.set_balance(address, balance);
+    pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
+        self.db.write().await.set_balance(address, balance)
     }
 
     /// Sets the code of the given address
-    pub async fn set_code(&self, address: Address, code: Bytes) {
-        self.db.write().await.set_code(address, code);
+    pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
+        self.db.write().await.set_code(address, code)
     }
 
     /// Sets the value for the given slot of the given address
-    pub async fn set_storage_at(&self, address: Address, slot: U256, val: H256) {
-        self.db.write().await.set_storage_at(address, slot, val.into_uint());
+    pub async fn set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        val: H256,
+    ) -> DatabaseResult<()> {
+        self.db.write().await.set_storage_at(address, slot, val.into_uint())
     }
 
     /// Returns true for post London
@@ -492,7 +506,7 @@ impl Backend {
         self.db
             .read()
             .await
-            .dump_state()
+            .dump_state()?
             .map(|s| serde_json::to_vec(&s).unwrap_or_default().into())
             .ok_or_else(|| {
                 RpcError::invalid_params(
@@ -507,7 +521,7 @@ impl Backend {
         let state: SerializableState =
             serde_json::from_slice(&buf.0).map_err(|_| BlockchainError::FailedToDecodeStateDump)?;
 
-        if !self.db.write().await.load_state(state) {
+        if !self.db.write().await.load_state(state)? {
             Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
@@ -801,7 +815,7 @@ impl Backend {
         block_env: BlockEnv,
     ) -> Result<(Return, TransactOut, u64, State), BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         let mut inspector = Inspector::default();
         let mut evm = revm::EVM::new();
@@ -821,13 +835,15 @@ impl Backend {
         block_env: BlockEnv,
     ) -> Result<(Return, TransactOut, u64, AccessList), BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         let from = request.from.unwrap_or_default();
-        let to = request.to.unwrap_or_else(|| {
-            let nonce = state.basic(from).nonce;
+        let to = if let Some(to) = request.to {
+            to
+        } else {
+            let nonce = state.basic(from)?.unwrap_or_default().nonce;
             get_contract_address(from, nonce)
-        });
+        };
 
         let mut tracer = AccessListTracer::new(
             AccessList(request.access_list.clone().unwrap_or_default()),
@@ -1274,7 +1290,7 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
-            let val = db.storage(address, index);
+            let val = db.storage(address, index)?;
             Ok(u256_to_h256_be(val))
         })
         .await?
@@ -1298,10 +1314,10 @@ impl Backend {
         address: Address,
     ) -> Result<Bytes, BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get code for {:?}", address);
-        let account = state.basic(address);
+        let account = state.basic(address)?.unwrap_or_default();
         if account.code_hash == KECCAK_EMPTY {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default())
@@ -1309,7 +1325,7 @@ impl Backend {
         let code = if let Some(code) = account.code {
             code
         } else {
-            state.code_by_hash(account.code_hash)
+            state.code_by_hash(account.code_hash)?
         };
         Ok(code.bytes()[..code.len()].to_vec().into())
     }
@@ -1332,10 +1348,10 @@ impl Backend {
         address: Address,
     ) -> Result<U256, BlockchainError>
     where
-        D: DatabaseRef,
+        D: DatabaseRef<Error = DatabaseError>,
     {
         trace!(target: "backend", "get balance for {:?}", address);
-        Ok(state.basic(address).balance)
+        Ok(state.basic(address)?.unwrap_or_default().balance)
     }
 
     /// Returns the nonce of the address
@@ -1348,7 +1364,7 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         self.with_database_at(block_request, |db, _| {
             trace!(target: "backend", "get nonce for {:?}", address);
-            Ok(db.basic(address).nonce.into())
+            Ok(db.basic(address)?.unwrap_or_default().nonce.into())
         })
         .await?
     }
@@ -1703,10 +1719,11 @@ impl TransactionValidator for Backend {
     async fn validate_pool_transaction(
         &self,
         tx: &PendingTransaction,
-    ) -> Result<(), InvalidTransactionError> {
-        let account = self.db.read().await.basic(*tx.sender());
+    ) -> Result<(), BlockchainError> {
+        let address = *tx.sender();
+        let account = self.get_account(address).await?;
         let env = self.next_env();
-        self.validate_pool_transaction_for(tx, &account, &env)
+        Ok(self.validate_pool_transaction_for(tx, &account, &env)?)
     }
 
     fn validate_pool_transaction_for(

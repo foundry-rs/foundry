@@ -41,7 +41,10 @@ pub mod snapshot;
 use crate::{
     coverage::HitMaps,
     executor::{
-        backend::DatabaseExt,
+        backend::{
+            error::{DatabaseError, DatabaseResult},
+            DatabaseExt,
+        },
         inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
     },
 };
@@ -127,7 +130,10 @@ impl Executor {
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        let create2_deployer_account = self.backend_mut().basic(DEFAULT_CREATE2_DEPLOYER);
+        let create2_deployer_account = self
+            .backend_mut()
+            .basic(DEFAULT_CREATE2_DEPLOYER)?
+            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -135,42 +141,42 @@ impl Executor {
             let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
 
             // Probably 0, but just in case.
-            let initial_balance = self.get_balance(creator);
+            let initial_balance = self.get_balance(creator)?;
 
-            self.set_balance(creator, U256::MAX);
+            self.set_balance(creator, U256::MAX)?;
             self.deploy(
                 creator,
                 hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
                 U256::zero(),
                 None
             )?;
-            self.set_balance(creator, initial_balance);
+            self.set_balance(creator, initial_balance)?;
         }
         Ok(())
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend_mut().basic(address);
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.balance = amount;
 
         self.backend_mut().insert_account_info(address, account);
-        self
+        Ok(self)
     }
 
     /// Gets the balance of an account
-    pub fn get_balance(&self, address: Address) -> U256 {
-        self.backend().basic(address).balance
+    pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.backend().basic(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> &mut Self {
-        let mut account = self.backend_mut().basic(address);
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend_mut().insert_account_info(address, account);
-        self
+        Ok(self)
     }
 
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
@@ -548,9 +554,19 @@ impl Executor {
         state_changeset: StateChangeset,
         should_fail: bool,
     ) -> bool {
+        self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
+    }
+
+    fn ensure_success(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: StateChangeset,
+        should_fail: bool,
+    ) -> Result<bool, DatabaseError> {
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_account_info(address, self.backend().basic(address));
+        backend.insert_account_info(address, self.backend().basic(address)?.unwrap_or_default());
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
@@ -566,7 +582,7 @@ impl Executor {
             }
         }
 
-        should_fail ^ success
+        Ok(should_fail ^ success)
     }
 
     /// Creates the environment to use when executing a transaction in a test context

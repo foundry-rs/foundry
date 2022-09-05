@@ -19,6 +19,7 @@ use ethers::{
 };
 use forge::revm::ExecutionResult;
 use foundry_evm::{
+    executor::backend::DatabaseError,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, SpecId, TransactOut},
     trace::{node::CallTraceNode, CallTraceArena},
@@ -132,6 +133,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
                     invalid.push(tx);
                     continue
                 }
+                TransactionExecutionOutcome::DatabaseError(_, err) => {
+                    // Note: this is only possible in forking mode, if for example a rpc request
+                    // failed
+                    trace!(target: "backend", ?err,  "Failed to execute transaction due to database error");
+                    continue
+                }
             };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
@@ -206,6 +213,8 @@ pub enum TransactionExecutionOutcome {
     Invalid(Arc<PoolTransaction>, InvalidTransactionError),
     /// Execution skipped because could exceed gas limit
     Exhausted(Arc<PoolTransaction>),
+    /// When an error occurred during execution
+    DatabaseError(Arc<PoolTransaction>, DatabaseError),
 }
 
 impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
@@ -215,7 +224,11 @@ impl<'a, 'b, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
 
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
-        let account = self.db.basic(*transaction.pending_transaction.sender());
+        let sender = *transaction.pending_transaction.sender();
+        let account = match self.db.basic(sender).map(|acc| acc.unwrap_or_default()) {
+            Ok(account) => account,
+            Err(err) => return Some(TransactionExecutionOutcome::DatabaseError(transaction, err)),
+        };
         let env = self.env_for(&transaction.pending_transaction);
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));

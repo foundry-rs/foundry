@@ -12,7 +12,7 @@ use ethers::{
     types::{Bytes, SignatureError, U256},
 };
 use foundry_common::SELECTOR_LEN;
-use foundry_evm::revm::Return;
+use foundry_evm::{executor::backend::DatabaseError, revm::Return};
 use serde::Serialize;
 use tracing::error;
 
@@ -70,6 +70,8 @@ pub enum BlockchainError {
     StateOverrideError(String),
     #[error("Timestamp error: {0}")]
     TimestampError(String),
+    #[error(transparent)]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -267,6 +269,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::TimestampError(_) => {
                     RpcError::invalid_params(err.to_string())
+                }
+                BlockchainError::DatabaseError(err) => {
+                    RpcError::internal_error_with(err.to_string())
                 }
             }
             .into(),

@@ -38,7 +38,7 @@ impl ScriptRunner {
         if !is_broadcast {
             if self.sender == Config::DEFAULT_SENDER {
                 // We max out their balance so that they can deploy and make calls.
-                self.executor.set_balance(self.sender, U256::MAX);
+                self.executor.set_balance(self.sender, U256::MAX)?;
             }
 
             if need_create2_deployer {
@@ -46,10 +46,10 @@ impl ScriptRunner {
             }
         }
 
-        self.executor.set_nonce(self.sender, sender_nonce.as_u64());
+        self.executor.set_nonce(self.sender, sender_nonce.as_u64())?;
 
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(CALLER, U256::MAX);
+        self.executor.set_balance(CALLER, U256::MAX)?;
 
         // Deploy libraries
         let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
@@ -78,7 +78,7 @@ impl ScriptRunner {
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
-        self.executor.set_balance(address, self.initial_balance);
+        self.executor.set_balance(address, self.initial_balance)?;
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions, debug, script_wallets) = if !setup
@@ -123,8 +123,10 @@ impl ScriptRunner {
                     // any broadcasts, then the EVM cheatcode module hasn't corrected the nonce.
                     // So we have to
                     if transactions.is_none() || transactions.as_ref().unwrap().is_empty() {
-                        self.executor
-                            .set_nonce(self.sender, sender_nonce.as_u64() + libraries.len() as u64);
+                        self.executor.set_nonce(
+                            self.sender,
+                            sender_nonce.as_u64() + libraries.len() as u64,
+                        )?;
                     }
 
                     (
