@@ -380,10 +380,19 @@ impl Backend {
         self.inner.caller
     }
 
+    /// Failures occurred in snapshots are tracked when the snapshot is reverted
+    ///
+    /// If an error occurs in a restored snapshot, the test is considered failed.
+    ///
+    /// This returns whether there was a reverted snapshot that recorded an error
+    pub fn has_snapshot_failure(&self) -> bool {
+        self.inner.has_snapshot_failure
+    }
+
     /// Checks if the test contract associated with this backend failed, See
     /// [Self::is_failed_test_contract]
     pub fn is_failed(&self) -> bool {
-        self.inner.has_failure_snapshot ||
+        self.has_snapshot_failure() ||
             self.test_contract_address()
                 .map(|addr| self.is_failed_test_contract(addr))
                 .unwrap_or_default()
@@ -403,8 +412,27 @@ impl Backend {
          }
         */
         let value = self.storage(address, U256::zero());
-
         value.byte(1) != 0
+    }
+
+    /// Checks if the given test function failed by looking at the present value of the test
+    /// contract's `JournaledState`
+    ///
+    /// See [`Self::is_failed_test_contract()]`
+    ///
+    /// Note: we assume the test contract is either `forge-std/Test` or `DSTest`
+    pub fn is_failed_test_contract_state(
+        &self,
+        address: Address,
+        current_state: &JournaledState,
+    ) -> bool {
+        if let Some(account) = current_state.state.get(&address) {
+            let value =
+                account.storage.get(&U256::zero()).cloned().unwrap_or_default().present_value();
+            return value.byte(1) != 0
+        }
+
+        false
     }
 
     /// In addition to the `_failed` variable, `DSTest::fail()` stores a failure
@@ -589,8 +617,12 @@ impl DatabaseExt for Backend {
         if let Some(mut snapshot) = self.inner.snapshots.remove(id) {
             // need to check whether DSTest's `failed` variable is set to `true` which means an
             // error occurred either during the snapshot or even before
-            if self.is_failed() {
-                self.inner.has_failure_snapshot = true;
+            if self
+                .test_contract_address()
+                .map(|addr| self.is_failed_test_contract_state(addr, current_state))
+                .unwrap_or_default()
+            {
+                self.inner.has_snapshot_failure = true;
             }
 
             // merge additional logs
@@ -1024,7 +1056,7 @@ pub struct BackendInner {
     /// reverted we get the _current_ `revm::JournaledState` which contains the state that we can
     /// check if the `_failed` variable is set,
     /// additionally
-    pub has_failure_snapshot: bool,
+    pub has_snapshot_failure: bool,
     /// Tracks the address of a Test contract
     ///
     /// This address can be used to inspect the state of the contract when a test is being

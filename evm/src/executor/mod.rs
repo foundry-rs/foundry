@@ -541,6 +541,11 @@ impl Executor {
         state_changeset: StateChangeset,
         should_fail: bool,
     ) -> bool {
+        if self.backend().has_snapshot_failure() {
+            // a failure occurred in a reverted snapshot, which is considered a failed test
+            return should_fail
+        }
+
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
         backend.insert_account_info(address, self.backend().basic(address));
