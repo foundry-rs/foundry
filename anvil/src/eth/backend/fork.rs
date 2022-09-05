@@ -490,6 +490,8 @@ pub struct ClientForkConfig {
     pub timeout: Duration,
     /// request retries for spurious networks
     pub retries: u32,
+    /// request retries for spurious networks
+    pub backoff: Duration,
 }
 
 // === impl ClientForkConfig ===
@@ -507,7 +509,7 @@ impl ClientForkConfig {
                 .timeout(self.timeout)
                 .timeout_retry(self.retries)
                 .max_retry(10)
-                .initial_backoff(1000)
+                .initial_backoff(self.backoff.as_millis() as u64)
                 .build()
                 .map_err(|_| BlockchainError::InvalidUrl(url.clone()))?
                 .interval(interval),

@@ -148,6 +148,7 @@ impl NodeArgs {
             )
             .fork_request_timeout(self.evm_opts.fork_request_timeout.map(Duration::from_millis))
             .fork_request_retries(self.evm_opts.fork_request_retries)
+            .fork_retry_backoff(self.evm_opts.fork_retry_backoff.map(Duration::from_millis))
             .with_eth_rpc_url(self.evm_opts.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm_opts.block_base_fee_per_gas)
             .with_storage_caching(self.evm_opts.no_storage_caching)

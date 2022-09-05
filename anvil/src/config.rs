@@ -123,6 +123,8 @@ pub struct NodeConfig {
     pub fork_request_timeout: Duration,
     /// Number of request retries for spurious networks
     pub fork_request_retries: u32,
+    /// The initial retry backoff
+    pub fork_retry_backoff: Duration,
 }
 
 impl NodeConfig {
@@ -332,6 +334,7 @@ impl Default for NodeConfig {
             genesis: None,
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_request_retries: 5,
+            fork_retry_backoff: Duration::from_millis(1_000),
         }
     }
 }
@@ -547,6 +550,15 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the initial `fork_retry_backoff` for rate limits
+    #[must_use]
+    pub fn fork_retry_backoff(mut self, fork_retry_backoff: Option<Duration>) -> Self {
+        if let Some(fork_retry_backoff) = fork_retry_backoff {
+            self.fork_retry_backoff = fork_retry_backoff;
+        }
+        self
+    }
+
     /// Sets whether to enable tracing
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
@@ -633,6 +645,7 @@ impl NodeConfig {
                     ProviderBuilder::new(&eth_rpc_url)
                         .timeout(self.fork_request_timeout)
                         .timeout_retry(self.fork_request_retries)
+                        .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                         .max_retry(10)
                         .initial_backoff(1000)
                         .connect()
@@ -750,6 +763,7 @@ impl NodeConfig {
                         base_fee: block.base_fee_per_gas,
                         timeout: self.fork_request_timeout,
                         retries: self.fork_request_retries,
+                        backoff: self.fork_retry_backoff,
                     },
                     Arc::clone(&db),
                 );
