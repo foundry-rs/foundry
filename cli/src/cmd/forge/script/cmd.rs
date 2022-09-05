@@ -44,19 +44,20 @@ impl ScriptArgs {
         );
 
         let BuildOutput {
-          project,
-          target,
-          contract,
-          mut highlevel_known_contracts,
-          predeploy_libraries,
-          known_contracts: default_known_contracts,
-          sources,
-          mut libraries,
+            project,
+            target,
+            contract,
+            mut highlevel_known_contracts,
+            predeploy_libraries,
+            known_contracts: default_known_contracts,
+            sources,
+            mut libraries,
         } = build_output;
 
         // Execute once with default sender.
         let sender = script_config.evm_opts.sender;
-        let mut result = self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
+        let mut result =
+            self.execute(&mut script_config, contract, sender, &predeploy_libraries).await?;
 
         if self.resume || (self.verify && !self.broadcast) {
             let fork_url = self
@@ -70,17 +71,14 @@ impl ScriptArgs {
 
             verify.set_chain(&script_config.config, chain.into());
 
-            let mut deployment_sequence = ScriptSequence::load(
-                &script_config.config,
-                &self.sig,
-                &target,
-                chain,
-            )?;
+            let mut deployment_sequence =
+                ScriptSequence::load(&script_config.config, &self.sig, &target, chain)?;
 
             receipts::wait_for_pending(provider, &mut deployment_sequence).await?;
 
             if self.resume {
-                self.send_transactions(&mut deployment_sequence, &fork_url, result.script_wallets).await?;
+                self.send_transactions(&mut deployment_sequence, &fork_url, result.script_wallets)
+                    .await?;
             }
 
             if self.verify {
