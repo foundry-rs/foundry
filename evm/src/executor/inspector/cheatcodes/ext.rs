@@ -201,7 +201,9 @@ fn write_file(state: &Cheatcodes, path: impl AsRef<Path>, content: &str) -> Resu
     // write access to foundry.toml is not allowed
     state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
-    fs::write(path, content).map_err(util::encode_error)?;
+    if state.fs_commit {
+        fs::write(path, content).map_err(util::encode_error)?;
+    }
 
     Ok(Bytes::new())
 }
@@ -214,13 +216,15 @@ fn write_line(state: &Cheatcodes, path: impl AsRef<Path>, line: &str) -> Result<
         state.config.ensure_path_allowed(&path, FsAccessKind::Write).map_err(util::encode_error)?;
     state.config.ensure_not_foundry_toml(&path).map_err(util::encode_error)?;
 
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .map_err(util::encode_error)?;
+    if state.fs_commit {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .map_err(util::encode_error)?;
 
-    writeln!(file, "{line}").map_err(util::encode_error)?;
+        writeln!(file, "{line}").map_err(util::encode_error)?;
+    }
 
     Ok(Bytes::new())
 }
@@ -247,7 +251,9 @@ fn remove_file(state: &mut Cheatcodes, path: impl AsRef<Path>) -> Result<Bytes, 
     // also remove from the set if opened previously
     state.context.opened_read_files.remove(&path);
 
-    fs::remove_file(&path).map_err(util::encode_error)?;
+    if state.fs_commit {
+        fs::remove_file(&path).map_err(util::encode_error)?;
+    }
 
     Ok(Bytes::new())
 }

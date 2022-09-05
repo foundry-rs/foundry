@@ -214,6 +214,15 @@ impl ScriptRunner {
         value: U256,
         commit: bool,
     ) -> eyre::Result<ScriptResult> {
+        let fs_commit_changed =
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                let original_fs_commit = cheatcodes.fs_commit;
+                cheatcodes.fs_commit = false;
+                original_fs_commit != cheatcodes.fs_commit
+            } else {
+                false
+            };
+
         let mut res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
         let mut gas_used = res.gas_used;
         if matches!(res.exit_reason, return_ok!()) {
@@ -257,6 +266,16 @@ impl ScriptRunner {
             }
             // reset gas limit in the
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
+        }
+
+        // if we changed `fs_commit` during gas limit search, re-execute the call with original
+        // value
+        if fs_commit_changed {
+            if let Some(ref mut cheatcodes) = self.executor.inspector_config_mut().cheatcodes {
+                cheatcodes.fs_commit = !cheatcodes.fs_commit;
+            }
+
+            res = self.executor.call_raw(from, to, calldata.0.clone(), value)?;
         }
 
         if commit {
