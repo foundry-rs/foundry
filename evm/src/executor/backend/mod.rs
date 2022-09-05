@@ -768,6 +768,7 @@ impl DatabaseExt for Backend {
                 let persitent_addrs = self.inner.persistent_accounts.clone();
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
+                active.journaled_state.depth = journaled_state.depth;
                 for addr in persitent_addrs {
                     clone_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
@@ -810,6 +811,7 @@ impl DatabaseExt for Backend {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
+                trace!(?id, address=?callee, "checking if account exists");
                 if fork.is_contract(callee) {
                     available_on.push(id);
                 }
