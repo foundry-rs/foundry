@@ -31,6 +31,7 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 mod filter;
 pub use filter::Filter;
+use foundry_common::shell;
 use foundry_config::figment::{
     value::{Dict, Map},
     Metadata, Profile, Provider,
@@ -157,6 +158,7 @@ impl Cmd for TestArgs {
 
     fn run(self) -> eyre::Result<Self::Output> {
         trace!(target: "forge::test", "executing test command");
+        shell::set_shell(shell::Shell::from_args(self.opts.silent, self.json))?;
         custom_run(self)
     }
 }
@@ -232,6 +234,11 @@ impl TestOutcome {
         let failures = self.failures().count();
         if self.allow_failure || failures == 0 {
             return Ok(())
+        }
+
+        if !shell::verbosity().is_normal() {
+            // skip printing and exit early
+            std::process::exit(1);
         }
 
         println!();
