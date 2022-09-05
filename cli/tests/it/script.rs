@@ -330,6 +330,54 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
         .await;
 });
 
+forgetest_async!(can_deploy_script_remember_key, |prj: TestProject, cmd: TestCommand| async move {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_addresses(vec![
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+        ])
+        .await
+        .add_sig("BroadcastTest", "deployRememberKey()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment_addresses(vec![(
+            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            2,
+        )])
+        .await;
+});
+
+forgetest_async!(
+    can_deploy_script_remember_key_and_resume,
+    |prj: TestProject, cmd: TestCommand| async move {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+        tester
+            .add_deployer(0)
+            .load_addresses(vec![
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()
+            ])
+            .await
+            .add_sig("BroadcastTest", "deployRememberKeyResume()")
+            .simulate(ScriptOutcome::OkSimulation)
+            .resume(ScriptOutcome::MissingWallet)
+            // load missing wallet
+            .load_private_keys(vec![0])
+            .await
+            .run(ScriptOutcome::OkBroadcast)
+            .assert_nonce_increment_addresses(vec![(
+                Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+                2,
+            )])
+            .await
+            .assert_nonce_increment(vec![(0, 1)])
+            .await;
+    }
+);
+
 forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());

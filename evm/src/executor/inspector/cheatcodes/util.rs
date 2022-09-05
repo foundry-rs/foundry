@@ -95,7 +95,11 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = format!("{}{}", path, index);
+    let derivation_path = if path.ends_with('/') {
+        format!("{}{}", path, index)
+    } else {
+        format!("{}/{}", path, index)
+    };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
@@ -107,6 +111,26 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
+}
+
+fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
+    if private_key.is_zero() {
+        return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    }
+
+    let mut bytes: [u8; 32] = [0; 32];
+    private_key.to_big_endian(&mut bytes);
+
+    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+
+    state.script_wallets.push(wallet.clone());
+
+    Ok(wallet.address().encode().into())
 }
 
 pub fn apply<DB: Database>(
@@ -121,6 +145,7 @@ pub fn apply<DB: Database>(
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())

@@ -13,6 +13,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
@@ -73,6 +74,9 @@ pub struct Cheatcodes {
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
+
+    /// Rememebered private keys
+    pub script_wallets: Vec<LocalWallet>,
 
     /// Prank information
     pub prank: Option<Prank>,
