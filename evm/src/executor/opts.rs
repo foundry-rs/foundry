@@ -1,14 +1,14 @@
+use crate::executor::fork::CreateFork;
 use ethers::{
     providers::{Middleware, Provider},
     solc::utils::RuntimeOrHandle,
     types::{Address, Chain, U256},
 };
-use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
-use serde::{Deserialize, Deserializer, Serialize};
-
-use crate::executor::fork::CreateFork;
+use eyre::WrapErr;
 use foundry_common::{self, try_get_http_provider};
 use foundry_config::Config;
+use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;
 
@@ -53,7 +53,7 @@ impl EvmOpts {
     /// id, )
     pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
+            self.fork_evm_env(fork_url).await.expect("Could not instantiate forked environment")
         } else {
             self.local_evm_env()
         }
@@ -62,19 +62,20 @@ impl EvmOpts {
     /// Convenience implementation to configure a `revm::Env` from non async code
     ///
     /// This only attaches are creates a temporary tokio runtime if `fork_url` is set
-    pub fn evm_env_blocking(&self) -> revm::Env {
+    ///
+    /// Returns an error if a RPC request failed, or the fork url is not a valid url
+    pub fn evm_env_blocking(&self) -> eyre::Result<revm::Env> {
         if let Some(ref fork_url) = self.fork_url {
-            RuntimeOrHandle::new().block_on(async {
-                self.fork_evm_env(fork_url).await.expect("could not instantiate forked environment")
-            })
+            RuntimeOrHandle::new().block_on(async { self.fork_evm_env(fork_url).await })
         } else {
-            self.local_evm_env()
+            Ok(self.local_evm_env())
         }
     }
 
     /// Returns the `revm::Env` configured with settings retrieved from the endpoints
     pub async fn fork_evm_env(&self, fork_url: impl AsRef<str>) -> eyre::Result<revm::Env> {
-        let provider = try_get_http_provider(fork_url.as_ref())?;
+        let fork_url = fork_url.as_ref();
+        let provider = try_get_http_provider(fork_url)?;
         environment(
             &provider,
             self.memory_limit,
@@ -84,6 +85,9 @@ impl EvmOpts {
             self.sender,
         )
         .await
+        .wrap_err_with(|| {
+            format!("Could not instantiate forked environment with fork url: {}", fork_url)
+        })
     }
 
     /// Returns the `revm::Env` configured with only local settings
