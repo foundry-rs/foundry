@@ -298,6 +298,7 @@ impl Backend {
     /// if `fork` is `Some` this will launch with a `fork` database, otherwise with an in-memory
     /// database
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
+        trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let mut backend = Self {
             forks,
@@ -319,6 +320,8 @@ impl Backend {
             backend.inner.launched_with_fork = Some((fork_id, fork_ids.0, fork_ids.1));
             backend.active_fork_ids = Some(fork_ids);
         }
+
+        trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
 
         backend
     }
