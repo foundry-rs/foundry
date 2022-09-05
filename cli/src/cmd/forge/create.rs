@@ -1,7 +1,10 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE, utils, LoadConfig},
+    cmd::{
+        forge::build::CoreBuildArgs, read_constructor_args_file, remove_contract,
+        retry::RETRY_VERIFY_ON_CREATE, LoadConfig,
+    },
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
 };
@@ -10,14 +13,11 @@ use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Middleware},
-    solc::{
-        info::ContractInfo,
-        utils::{canonicalized, read_json_file},
-    },
+    solc::{info::ContractInfo, utils::canonicalized},
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::{fs, get_http_provider};
+use foundry_common::get_http_provider;
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
@@ -99,7 +99,7 @@ impl CreateArgs {
             *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
         }
 
-        let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
+        let (abi, bin, _) = remove_contract(&mut output, &self.contract)?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -125,25 +125,7 @@ impl CreateArgs {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        if !constructor_args_path.exists() {
-                            eyre::bail!(
-                                "Constructor args file \"{}\" not found",
-                                constructor_args_path.display()
-                            );
-                        }
-                        if constructor_args_path.extension() == Some(std::ffi::OsStr::new("json")) {
-                            match read_json_file(constructor_args_path) {
-                                Ok(args) => args,
-                                Err(err) => eyre::bail!(
-                                    "Constructor args file \"{}\" must encode a json array: \"{}\"",
-                                    constructor_args_path.display(),
-                                    err
-                                ),
-                            }
-                        } else {
-                            let file = fs::read_to_string(constructor_args_path)?;
-                            file.split_whitespace().map(str::to_string).collect::<Vec<String>>()
-                        }
+                        read_constructor_args_file(constructor_args_path.to_path_buf())?
                     } else {
                         self.constructor_args.clone()
                     };
@@ -283,6 +265,7 @@ impl CreateArgs {
             contract: self.contract,
             compiler_version: None,
             constructor_args,
+            constructor_args_path: None,
             num_of_optimizations,
             chain: chain.into(),
             etherscan_key: self.eth.etherscan_api_key,
