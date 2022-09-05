@@ -314,7 +314,7 @@ mod tests {
 
         let loaded = storage.get(&one).unwrap();
 
-        let acc = loaded.basic(addr);
+        let acc = loaded.basic(addr).unwrap().unwrap();
         assert_eq!(acc.balance, 1337u64.into());
     }
 }

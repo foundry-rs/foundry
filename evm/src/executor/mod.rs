@@ -9,6 +9,7 @@ use bytes::Bytes;
 use ethers::{
     abi::{Abi, Contract, Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data, Address, U256},
+    signers::LocalWallet,
     types::{transaction::eip2718::TypedTransaction, Log},
 };
 use foundry_utils::IntoFunction;
@@ -40,7 +41,10 @@ pub mod snapshot;
 use crate::{
     coverage::HitMaps,
     executor::{
-        backend::DatabaseExt,
+        backend::{
+            error::{DatabaseError, DatabaseResult},
+            DatabaseExt,
+        },
         inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
     },
 };
@@ -126,7 +130,10 @@ impl Executor {
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
     pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        let create2_deployer_account = self.backend_mut().basic(DEFAULT_CREATE2_DEPLOYER);
+        let create2_deployer_account = self
+            .backend_mut()
+            .basic(DEFAULT_CREATE2_DEPLOYER)?
+            .ok_or(DatabaseError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
 
         if create2_deployer_account.code.is_none() ||
             create2_deployer_account.code.as_ref().unwrap().is_empty()
@@ -134,42 +141,42 @@ impl Executor {
             let creator = "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse().unwrap();
 
             // Probably 0, but just in case.
-            let initial_balance = self.get_balance(creator);
+            let initial_balance = self.get_balance(creator)?;
 
-            self.set_balance(creator, U256::MAX);
+            self.set_balance(creator, U256::MAX)?;
             self.deploy(
                 creator,
                 hex::decode("604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into(),
                 U256::zero(),
                 None
             )?;
-            self.set_balance(creator, initial_balance);
+            self.set_balance(creator, initial_balance)?;
         }
         Ok(())
     }
 
     /// Set the balance of an account.
-    pub fn set_balance(&mut self, address: Address, amount: U256) -> &mut Self {
+    pub fn set_balance(&mut self, address: Address, amount: U256) -> DatabaseResult<&mut Self> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend_mut().basic(address);
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.balance = amount;
 
         self.backend_mut().insert_account_info(address, account);
-        self
+        Ok(self)
     }
 
     /// Gets the balance of an account
-    pub fn get_balance(&self, address: Address) -> U256 {
-        self.backend().basic(address).balance
+    pub fn get_balance(&self, address: Address) -> DatabaseResult<U256> {
+        Ok(self.backend().basic(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
     /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> &mut Self {
-        let mut account = self.backend_mut().basic(address);
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> DatabaseResult<&mut Self> {
+        let mut account = self.backend_mut().basic(address)?.unwrap_or_default();
         account.nonce = nonce;
 
         self.backend_mut().insert_account_info(address, account);
-        self
+        Ok(self)
     }
 
     pub fn set_tracing(&mut self, tracing: bool) -> &mut Self {
@@ -229,6 +236,7 @@ impl Executor {
             debug,
             transactions,
             state_changeset,
+            script_wallets,
         } = self.call_raw_committing(from, to, calldata, value)?;
         match exit_reason {
             return_ok!() => {
@@ -246,6 +254,7 @@ impl Executor {
                     debug,
                     transactions,
                     state_changeset,
+                    script_wallets,
                 })
             }
             _ => {
@@ -263,6 +272,7 @@ impl Executor {
                     labels,
                     transactions,
                     state_changeset,
+                    script_wallets,
                 })
             }
         }
@@ -286,7 +296,7 @@ impl Executor {
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes } =
+        let InspectorData { logs, labels, traces, coverage, debug, mut cheatcodes, script_wallets } =
             inspector.collect_inspector_states();
 
         // Persist the changed block environment
@@ -325,6 +335,7 @@ impl Executor {
             debug,
             transactions,
             state_changeset: None,
+            script_wallets,
         })
     }
 
@@ -448,7 +459,7 @@ impl Executor {
             (res, evm.env)
         };
 
-        let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
+        let InspectorData { logs, labels, traces, debug, cheatcodes, script_wallets, .. } =
             inspector.collect_inspector_states();
 
         let result = match out {
@@ -472,7 +483,8 @@ impl Executor {
                         debug,
                         labels,
                         state_changeset: None,
-                        transactions: None
+                        transactions: None,
+                        script_wallets
                     });
                 }
             }
@@ -491,6 +503,7 @@ impl Executor {
                     labels,
                     state_changeset: None,
                     transactions: None,
+                    script_wallets,
                 })
             }
         };
@@ -541,14 +554,23 @@ impl Executor {
         state_changeset: StateChangeset,
         should_fail: bool,
     ) -> bool {
+        self.ensure_success(address, reverted, state_changeset, should_fail).unwrap_or_default()
+    }
+
+    fn ensure_success(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: StateChangeset,
+        should_fail: bool,
+    ) -> Result<bool, DatabaseError> {
         if self.backend().has_snapshot_failure() {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail
+            return Ok(should_fail)
         }
-
         // Construct a new VM with the state changeset
         let mut backend = self.backend().clone_empty();
-        backend.insert_account_info(address, self.backend().basic(address));
+        backend.insert_account_info(address, self.backend().basic(address)?.unwrap_or_default());
         backend.commit(state_changeset);
         let executor =
             Executor::new(backend, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
@@ -564,7 +586,7 @@ impl Executor {
             }
         }
 
-        should_fail ^ success
+        Ok(should_fail ^ success)
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -604,6 +626,7 @@ impl Executor {
 }
 
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
     #[error("Execution reverted: {reason} (gas: {gas_used})")]
@@ -619,6 +642,7 @@ pub enum EvmError {
         labels: BTreeMap<Address, String>,
         transactions: Option<VecDeque<TypedTransaction>>,
         state_changeset: Option<StateChangeset>,
+        script_wallets: Vec<LocalWallet>,
     },
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
@@ -675,6 +699,8 @@ pub struct CallResult<D: Detokenize> {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
+    /// The wallets added during the call using the `rememberKey` cheatcode
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 /// The result of a raw call.
@@ -709,6 +735,8 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<StateChangeset>,
+    /// The wallets added during the call using the `rememberKey` cheatcode
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 impl Default for RawCallResult {
@@ -727,6 +755,7 @@ impl Default for RawCallResult {
             debug: None,
             transactions: None,
             state_changeset: None,
+            script_wallets: Vec::new(),
         }
     }
 }
@@ -762,7 +791,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes, script_wallets } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {
@@ -789,6 +818,7 @@ fn convert_executed_call(
         debug,
         transactions,
         state_changeset: Some(state_changeset),
+        script_wallets,
     })
 }
 
@@ -811,6 +841,7 @@ fn convert_call_result<D: Detokenize>(
         debug,
         transactions,
         state_changeset,
+        script_wallets,
     } = call_result;
 
     match status {
@@ -829,6 +860,7 @@ fn convert_call_result<D: Detokenize>(
                 debug,
                 transactions,
                 state_changeset,
+                script_wallets,
             })
         }
         _ => {
@@ -846,6 +878,7 @@ fn convert_call_result<D: Detokenize>(
                 labels,
                 transactions,
                 state_changeset,
+                script_wallets,
             })
         }
     }

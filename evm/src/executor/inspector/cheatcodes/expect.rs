@@ -1,14 +1,17 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::inspector::cheatcodes::util::{ERROR_PREFIX, REVERT_PREFIX},
+    executor::{
+        backend::DatabaseExt,
+        inspector::cheatcodes::util::{ERROR_PREFIX, REVERT_PREFIX},
+    },
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
     types::{Address, H160, U256},
 };
-use revm::{return_ok, Bytecode, Database, EVMData, Return};
+use revm::{return_ok, Bytecode, EVMData, Return};
 use std::cmp::Ordering;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
@@ -212,7 +215,7 @@ impl PartialOrd for MockCallDataContext {
     }
 }
 
-pub fn apply<DB: Database>(
+pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     call: &HEVMCalls,
@@ -262,7 +265,9 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(inner.0, data.db);
+            if let Err(err) = data.journaled_state.load_account(inner.0, data.db) {
+                return Some(Err(err.string_encoded()))
+            }
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
             // check Solidity might perform.

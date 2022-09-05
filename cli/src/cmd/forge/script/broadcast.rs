@@ -30,6 +30,7 @@ impl ScriptArgs {
         &self,
         deployment_sequence: &mut ScriptSequence,
         fork_url: &str,
+        script_wallets: Vec<LocalWallet>,
     ) -> eyre::Result<()> {
         let provider = Arc::new(get_http_provider(fork_url));
         let already_broadcasted = deployment_sequence.receipts.len();
@@ -42,7 +43,8 @@ impl ScriptArgs {
                 .map(|tx| *tx.from().expect("No sender for onchain transaction!"))
                 .collect();
 
-            let local_wallets = self.wallets.find_all(provider.clone(), required_addresses).await?;
+            let local_wallets =
+                self.wallets.find_all(provider.clone(), required_addresses, script_wallets).await?;
             let chain = local_wallets.values().last().wrap_err("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")?.chain_id();
 
             // We only wait for a transaction receipt before sending the next transaction, if there
@@ -247,7 +249,12 @@ impl ScriptArgs {
                 deployment_sequence.add_libraries(libraries);
 
                 if self.broadcast {
-                    self.send_transactions(&mut deployment_sequence, &fork_url).await?;
+                    self.send_transactions(
+                        &mut deployment_sequence,
+                        &fork_url,
+                        result.script_wallets,
+                    )
+                    .await?;
                     if self.verify {
                         deployment_sequence.verify_contracts(verify, chain).await?;
                     }

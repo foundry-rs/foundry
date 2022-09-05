@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::Cheatcodes;
-use crate::{abi::HEVMCalls, executor::inspector::cheatcodes::util::with_journaled_account};
+use crate::{
+    abi::HEVMCalls,
+    executor::{backend::DatabaseExt, inspector::cheatcodes::util::with_journaled_account},
+};
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
@@ -18,7 +21,7 @@ pub struct Broadcast {
     pub original_caller: Address,
     /// Depth of the broadcast
     pub depth: u64,
-    /// Whether or not the prank stops by itself after the next call
+    /// Whether the prank stops by itself after the next call
     pub single_call: bool,
 }
 
@@ -34,7 +37,7 @@ pub struct Prank {
     pub new_origin: Option<Address>,
     /// The depth at which the prank was called
     pub depth: u64,
-    /// Whether or not the prank stops by itself after the next call
+    /// Whether the prank stops by itself after the next call
     pub single_call: bool,
 }
 
@@ -71,11 +74,11 @@ fn prank(
     let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
 
     if state.prank.is_some() {
-        return Err("You have an active prank already.".to_string().encode().into())
+        return Err("You have an active prank already.".encode().into())
     }
 
     if state.broadcast.is_some() {
-        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".to_string().encode().into());
+        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".encode().into());
     }
 
     state.prank = Some(prank);
@@ -134,52 +137,63 @@ fn get_recorded_logs(state: &mut Cheatcodes) -> Bytes {
     }
 }
 
-pub fn apply<DB: Database>(
+pub fn apply<DB: DatabaseExt>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
     caller: Address,
     call: &HEVMCalls,
-) -> Option<Result<Bytes, Bytes>> {
-    Some(match call {
+) -> Result<Option<Bytes>, Bytes> {
+    let res = match call {
         HEVMCalls::Warp(inner) => {
             data.env.block.timestamp = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Difficulty(inner) => {
             data.env.block.difficulty = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Roll(inner) => {
             data.env.block.number = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Fee(inner) => {
             data.env.block.basefee = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Coinbase(inner) => {
             data.env.block.coinbase = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Store(inner) => {
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(inner.0, data.db);
-            data.journaled_state.sstore(inner.0, inner.1.into(), inner.2.into(), data.db);
-            Ok(Bytes::new())
+            data.journaled_state
+                .load_account(inner.0, data.db)
+                .map_err(|err| err.string_encoded())?;
+            data.journaled_state
+                .sstore(inner.0, inner.1.into(), inner.2.into(), data.db)
+                .map_err(|err| err.string_encoded())?;
+            Bytes::new()
         }
         HEVMCalls::Load(inner) => {
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(inner.0, data.db);
-            let (val, _) = data.journaled_state.sload(inner.0, inner.1.into(), data.db);
-            Ok(val.encode().into())
+            data.journaled_state
+                .load_account(inner.0, data.db)
+                .map_err(|err| err.string_encoded())?;
+            let (val, _) = data
+                .journaled_state
+                .sload(inner.0, inner.1.into(), data.db)
+                .map_err(|err| err.string_encoded())?;
+            val.encode().into()
         }
         HEVMCalls::Etch(inner) => {
             let code = inner.1.clone();
 
             // TODO: Does this increase gas usage?
-            data.journaled_state.load_account(inner.0, data.db);
+            data.journaled_state
+                .load_account(inner.0, data.db)
+                .map_err(|err| err.string_encoded())?;
             data.journaled_state.set_code(inner.0, Bytecode::new_raw(code.0).to_checked());
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Deal(inner) => {
             let who = inner.0;
@@ -188,8 +202,9 @@ pub fn apply<DB: Database>(
 
             with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
                 account.info.balance = value;
-            });
-            Ok(Bytes::new())
+            })
+            .map_err(|err| err.string_encoded())?;
+            Bytes::new()
         }
         HEVMCalls::Prank0(inner) => prank(
             state,
@@ -199,7 +214,7 @@ pub fn apply<DB: Database>(
             None,
             data.journaled_state.depth(),
             true,
-        ),
+        )?,
         HEVMCalls::Prank1(inner) => prank(
             state,
             caller,
@@ -208,7 +223,7 @@ pub fn apply<DB: Database>(
             Some(inner.1),
             data.journaled_state.depth(),
             true,
-        ),
+        )?,
         HEVMCalls::StartPrank0(inner) => prank(
             state,
             caller,
@@ -217,7 +232,7 @@ pub fn apply<DB: Database>(
             None,
             data.journaled_state.depth(),
             false,
-        ),
+        )?,
         HEVMCalls::StartPrank1(inner) => prank(
             state,
             caller,
@@ -226,23 +241,23 @@ pub fn apply<DB: Database>(
             Some(inner.1),
             data.journaled_state.depth(),
             false,
-        ),
+        )?,
         HEVMCalls::StopPrank(_) => {
             state.prank = None;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Record(_) => {
             start_record(state);
-            Ok(Bytes::new())
+            Bytes::new()
         }
-        HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::Accesses(inner) => accesses(state, inner.0),
         HEVMCalls::RecordLogs(_) => {
             start_record_logs(state);
-            Ok(Bytes::new())
+            Bytes::new()
         }
-        HEVMCalls::GetRecordedLogs(_) => Ok(get_recorded_logs(state)),
+        HEVMCalls::GetRecordedLogs(_) => get_recorded_logs(state),
         HEVMCalls::SetNonce(inner) => {
-            with_journaled_account(&mut data.journaled_state, data.db, inner.0, |account| {
+            with_journaled_account(&mut data.journaled_state, data.db, inner.0, |account| -> Result<Bytes, Bytes>{
                 // nonce must increment only
                 if account.info.nonce < inner.1 {
                     account.info.nonce = inner.1;
@@ -250,7 +265,7 @@ pub fn apply<DB: Database>(
                 } else {
                     Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
                 }
-            })
+            }).map_err(|err| err.string_encoded())??
         }
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
@@ -258,19 +273,22 @@ pub fn apply<DB: Database>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            );
+            )
+            .map_err(|err| err.string_encoded())?;
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
-            data.journaled_state.load_account(inner.0, data.db);
+            data.journaled_state
+                .load_account(inner.0, data.db)
+                .map_err(|err| err.string_encoded())?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0).unwrap();
-            Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
+            abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
         HEVMCalls::ChainId(inner) => {
             data.env.cfg.chain_id = inner.0;
-            Ok(Bytes::new())
+            Bytes::new()
         }
         HEVMCalls::Broadcast0(_) => {
             correct_sender_nonce(
@@ -278,8 +296,9 @@ pub fn apply<DB: Database>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            );
-            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)?
         }
         HEVMCalls::Broadcast1(inner) => {
             correct_sender_nonce(
@@ -287,8 +306,9 @@ pub fn apply<DB: Database>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            );
-            broadcast(state, inner.0, caller, data.journaled_state.depth(), true)
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast(state, inner.0, caller, data.journaled_state.depth(), true)?
         }
         HEVMCalls::StartBroadcast0(_) => {
             correct_sender_nonce(
@@ -296,8 +316,9 @@ pub fn apply<DB: Database>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            );
-            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)?
         }
         HEVMCalls::StartBroadcast1(inner) => {
             correct_sender_nonce(
@@ -305,15 +326,18 @@ pub fn apply<DB: Database>(
                 &mut data.journaled_state,
                 &mut data.db,
                 state,
-            );
-            broadcast(state, inner.0, caller, data.journaled_state.depth(), false)
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast(state, inner.0, caller, data.journaled_state.depth(), false)?
         }
         HEVMCalls::StopBroadcast(_) => {
             state.broadcast = None;
-            Ok(Bytes::new())
+            Bytes::new()
         }
-        _ => return None,
-    })
+        _ => return Ok(None),
+    };
+
+    Ok(Some(res))
 }
 
 /// When using `forge script`, the script method is called using the address from `--sender`.
@@ -324,11 +348,12 @@ fn correct_sender_nonce<DB: Database>(
     journaled_state: &mut revm::JournaledState,
     db: &mut DB,
     state: &mut Cheatcodes,
-) {
+) -> Result<(), DB::Error> {
     if !state.corrected_nonce {
         with_journaled_account(journaled_state, db, sender, |account| {
             account.info.nonce = account.info.nonce.saturating_sub(1);
             state.corrected_nonce = true;
-        });
+        })?;
     }
+    Ok(())
 }

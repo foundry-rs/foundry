@@ -65,7 +65,7 @@ pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),
-            EVM_OPTS.evm_env_blocking(),
+            EVM_OPTS.evm_env_blocking().unwrap(),
             EVM_OPTS.clone(),
         )
         .unwrap()
@@ -76,7 +76,7 @@ pub fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking().unwrap(), opts)
         .unwrap()
 }
 
@@ -87,7 +87,7 @@ pub fn forked_runner(rpc: &str) -> MultiContractRunner {
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
 
-    let env = opts.evm_env_blocking();
+    let env = opts.evm_env_blocking().unwrap();
     let fork = opts.get_fork(&Default::default(), env.clone());
 
     base_runner()

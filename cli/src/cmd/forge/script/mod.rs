@@ -13,6 +13,7 @@ use ethers::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
         U256,
@@ -532,6 +533,7 @@ pub struct ScriptResult {
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 #[derive(Serialize, Deserialize)]

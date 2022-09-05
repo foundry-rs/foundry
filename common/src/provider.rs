@@ -6,6 +6,7 @@ use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
     RetryClientBuilder, DEFAULT_LOCAL_POLL_INTERVAL,
 };
+use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
 use std::time::Duration;
 
@@ -39,7 +40,7 @@ pub fn try_get_http_provider(builder: impl Into<ProviderBuilder>) -> eyre::Resul
 /// Helper type to construct a `RetryProvider`
 #[derive(Debug)]
 pub struct ProviderBuilder {
-    // Note: this is a result so we can easily chain builder calls
+    // Note: this is a result, so we can easily chain builder calls
     url: reqwest::Result<Url>,
     chain: Chain,
     max_retry: u32,
@@ -53,6 +54,13 @@ pub struct ProviderBuilder {
 impl ProviderBuilder {
     /// Creates a new builder instance
     pub fn new(url: impl IntoUrl) -> Self {
+        let url_str = url.as_str();
+        if url_str.starts_with("localhost:") {
+            // invalid url: non-prefixed URL scheme is not allowed, so we prepend the default http
+            // prefix
+            return Self::new(format!("http://{}", url_str))
+        }
+
         Self {
             url: url.into_url(),
             chain: Chain::Mainnet,
@@ -123,7 +131,7 @@ impl ProviderBuilder {
     pub fn build(self) -> eyre::Result<RetryProvider> {
         let ProviderBuilder { url, chain, max_retry, timeout_retry, initial_backoff, timeout } =
             self;
-        let url = url?;
+        let url = url.wrap_err("Invalid provider url")?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
         let is_local = is_local_endpoint(url.as_str());
@@ -162,5 +170,19 @@ impl<'a> From<&'a String> for ProviderBuilder {
 impl From<String> for ProviderBuilder {
     fn from(url: String) -> Self {
         url.as_str().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_auto_correct_missing_prefix() {
+        let builder = ProviderBuilder::new("localhost:8545");
+        assert!(builder.url.is_ok());
+
+        let url = builder.url.unwrap();
+        assert_eq!(url, Url::parse("http://localhost:8545").unwrap());
     }
 }

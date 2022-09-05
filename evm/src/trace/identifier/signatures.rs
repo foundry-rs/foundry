@@ -1,10 +1,11 @@
 use ethers::abi::{Event, Function};
+use foundry_common::fs;
 use foundry_utils::{decode_selector, get_event, get_func, selectors::SelectorType};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::BufWriter, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::warn;
+use tracing::{trace, warn};
 
 pub type SingleSignaturesIdentifier = Arc<RwLock<SignaturesIdentifier>>;
 
@@ -21,14 +22,18 @@ pub struct SignaturesIdentifier {
 }
 
 impl SignaturesIdentifier {
+    #[tracing::instrument(name = "signaturescache")]
     pub fn new(cache_path: Option<PathBuf>) -> eyre::Result<SingleSignaturesIdentifier> {
         let identifier = if let Some(cache_path) = cache_path {
             let path = cache_path.join("signatures");
+            trace!(?path, "reading signature cache");
             let cached = if path.is_file() {
-                serde_json::from_reader(std::fs::File::open(&path)?)?
+                fs::read_json_file(&path)
+                    .map_err(|err| warn!(?path, ?err, "failed to read cache file"))
+                    .unwrap_or_default()
             } else {
                 if let Err(err) = std::fs::create_dir_all(cache_path) {
-                    warn!(target: "signaturesidentifier", "could not create signatures cache dir: {:?}", err);
+                    warn!("could not create signatures cache dir: {:?}", err);
                 }
                 CachedSignatures::default()
             };
@@ -44,10 +49,10 @@ impl SignaturesIdentifier {
         if let Some(cached_path) = &self.cached_path {
             if let Ok(file) = std::fs::File::create(cached_path) {
                 if serde_json::to_writer(BufWriter::new(file), &self.cached).is_err() {
-                    warn!(target: "signaturesidentifier", "could not serialize SignaturesIdentifier");
+                    warn!("could not serialize SignaturesIdentifier");
                 }
             } else {
-                warn!(target: "signaturesidentifier", "could not open {}", cached_path.to_string_lossy());
+                warn!(?cached_path, "could not open cache file");
             }
         }
     }

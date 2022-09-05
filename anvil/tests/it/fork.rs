@@ -327,10 +327,10 @@ async fn can_reset_properly() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_timestamp() {
+    let start = std::time::Instant::now();
+
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
-
-    let start = std::time::Instant::now();
 
     let block = provider.get_block(BLOCK_NUMBER).await.unwrap().unwrap();
     assert_eq!(block.timestamp.as_u64(), BLOCK_TIMESTAMP);
@@ -339,14 +339,16 @@ async fn test_fork_timestamp() {
     let from = accounts[0].address();
 
     let tx = TransactionRequest::new().to(Address::random()).value(1337u64).from(from);
-    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.status, Some(1u64.into()));
+
+    let elapsed = start.elapsed().as_secs();
 
     let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
 
     // ensure the diff between the new mined block and the original block is within the elapsed time
-    let elapsed = start.elapsed().as_secs() + 1;
     let diff = block.timestamp - BLOCK_TIMESTAMP;
-    assert!(diff <= elapsed.into());
+    assert!(diff <= elapsed.into(), "diff={}, elapsed={}", diff, elapsed);
 
     let start = std::time::Instant::now();
     // reset to check timestamp works after resetting
@@ -579,12 +581,15 @@ async fn test_reset_fork_on_new_blocks() {
     let provider = Provider::try_from(endpoint).unwrap();
 
     let mut stream = provider.watch_blocks().await.unwrap();
+    // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
+    // cases where the stream immediately returns a block
+    tokio::time::sleep(Chain::Mainnet.average_blocktime_hint().unwrap()).await;
     stream.next().await.unwrap();
     stream.next().await.unwrap();
 
     let next_block = anvil_provider.get_block_number().await.unwrap();
 
-    assert!(next_block > current_block)
+    assert!(next_block > current_block, "nextblock={} currentblock={}", next_block, current_block)
 }
 
 #[tokio::test(flavor = "multi_thread")]

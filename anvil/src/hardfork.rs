@@ -132,7 +132,7 @@ impl From<Hardfork> for SpecId {
             Hardfork::Constantinople => SpecId::CONSTANTINOPLE,
             Hardfork::Petersburg => SpecId::PETERSBURG,
             Hardfork::Istanbul => SpecId::ISTANBUL,
-            Hardfork::Muirglacier => SpecId::MUIRGLACIER,
+            Hardfork::Muirglacier => SpecId::MUIR_GLACIER,
             Hardfork::Berlin => SpecId::BERLIN,
             Hardfork::London => SpecId::LONDON,
             Hardfork::ArrowGlacier => SpecId::LONDON,

@@ -3,20 +3,14 @@ use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
 use revm::{Account, AccountInfo, DatabaseCommit, KECCAK_EMPTY};
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    io::BufWriter,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, fs, io::BufWriter, path::PathBuf, sync::Arc};
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
 use url::Url;
 
 use crate::HashMap as Map;
 
-pub type StorageInfo = BTreeMap<U256, U256>;
+pub type StorageInfo = Map<U256, U256>;
 
 /// A shareable Block database
 #[derive(Clone, Debug)]
@@ -62,12 +56,12 @@ impl BlockchainDb {
     }
 
     /// Returns the map that holds the account related info
-    pub fn accounts(&self) -> &RwLock<BTreeMap<Address, AccountInfo>> {
+    pub fn accounts(&self) -> &RwLock<Map<Address, AccountInfo>> {
         &self.db.accounts
     }
 
     /// Returns the map that holds the storage related info
-    pub fn storage(&self) -> &RwLock<BTreeMap<Address, StorageInfo>> {
+    pub fn storage(&self) -> &RwLock<Map<Address, StorageInfo>> {
         &self.db.storage
     }
 
@@ -164,9 +158,9 @@ impl<'de> Deserialize<'de> for BlockchainDbMeta {
 #[derive(Debug, Default)]
 pub struct MemDb {
     /// Account related data
-    pub accounts: RwLock<BTreeMap<Address, AccountInfo>>,
+    pub accounts: RwLock<Map<Address, AccountInfo>>,
     /// Storage related data
-    pub storage: RwLock<BTreeMap<Address, StorageInfo>>,
+    pub storage: RwLock<Map<Address, StorageInfo>>,
     /// All retrieved block hashes
     pub block_hashes: RwLock<Map<U256, H256>>,
 }
@@ -351,8 +345,8 @@ impl<'de> Deserialize<'de> for JsonBlockCacheData {
         #[derive(Deserialize)]
         struct Data {
             meta: BlockchainDbMeta,
-            accounts: BTreeMap<Address, AccountInfo>,
-            storage: BTreeMap<Address, StorageInfo>,
+            accounts: Map<Address, AccountInfo>,
+            storage: Map<Address, StorageInfo>,
             block_hashes: Map<u64, H256>,
         }
 

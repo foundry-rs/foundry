@@ -13,6 +13,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
@@ -47,7 +48,7 @@ mod fuzz;
 mod snapshot;
 /// Utility cheatcodes (`sign` etc.)
 pub mod util;
-pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
+pub use util::DEFAULT_CREATE2_DEPLOYER;
 
 mod config;
 use crate::executor::backend::RevertDiagnostic;
@@ -73,6 +74,9 @@ pub struct Cheatcodes {
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
+
+    /// Rememebered private keys
+    pub script_wallets: Vec<LocalWallet>,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -112,6 +116,10 @@ pub struct Cheatcodes {
 
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
+
+    // Commit FS changes such as file creations, writes and deletes.
+    // Used to prevent duplicate changes file executing non-committing calls.
+    pub fs_commit: bool,
 }
 
 #[derive(Debug, Default)]
@@ -134,6 +142,7 @@ impl Cheatcodes {
             block: Some(block),
             gas_price: Some(gas_price),
             config: Arc::new(config),
+            fs_commit: true,
             ..Default::default()
         }
     }
@@ -150,6 +159,7 @@ impl Cheatcodes {
 
         // TODO: Log the opcode for the debugger
         env::apply(self, data, caller, &decoded)
+            .transpose()
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
@@ -311,7 +321,12 @@ where
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
                     if !is_static {
-                        data.journaled_state.load_account(broadcast.origin, data.db);
+                        if let Err(err) =
+                            data.journaled_state.load_account(broadcast.origin, data.db)
+                        {
+                            return (Return::Revert, Gas::new(call.gas_limit), err.string_encoded())
+                        }
+
                         let account =
                             data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
 
@@ -490,10 +505,22 @@ where
             if data.journaled_state.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                data.journaled_state.load_account(broadcast.origin, data.db);
+                if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
+                    return (Return::Revert, None, Gas::new(call.gas_limit), err.string_encoded())
+                }
 
                 let (bytecode, to, nonce) =
-                    process_create(broadcast.origin, call.init_code.clone(), data, call);
+                    match process_create(broadcast.origin, call.init_code.clone(), data, call) {
+                        Ok(val) => val,
+                        Err(err) => {
+                            return (
+                                Return::Revert,
+                                None,
+                                Gas::new(call.gas_limit),
+                                err.string_encoded(),
+                            )
+                        }
+                    };
 
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {

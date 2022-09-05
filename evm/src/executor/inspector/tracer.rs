@@ -163,7 +163,7 @@ where
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
-        data.journaled_state.load_account(call.caller, data.db);
+        let _ = data.journaled_state.load_account(call.caller, data.db);
         let nonce = data.journaled_state.account(call.caller).info.nonce;
         self.start_trace(
             data.journaled_state.depth() as usize,

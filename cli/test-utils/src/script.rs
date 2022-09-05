@@ -15,6 +15,7 @@ pub struct ScriptTester {
     pub accounts_priv: Vec<String>,
     pub provider: RetryProvider,
     pub nonces: BTreeMap<u32, U256>,
+    pub address_nonces: BTreeMap<Address, U256>,
     pub cmd: TestCommand,
 }
 
@@ -54,6 +55,7 @@ impl ScriptTester {
             ],
             provider: get_http_provider(endpoint),
             nonces: BTreeMap::default(),
+            address_nonces: BTreeMap::default(),
             cmd,
         }
     }
@@ -101,6 +103,18 @@ impl ScriptTester {
         self
     }
 
+    pub async fn load_addresses(&mut self, addresses: Vec<Address>) -> &mut Self {
+        for address in addresses {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            self.address_nonces.insert(address, nonce);
+        }
+        self
+    }
+
     pub fn add_deployer(&mut self, index: u32) -> &mut Self {
         self.cmd.args([
             "--sender",
@@ -140,6 +154,24 @@ impl ScriptTester {
                 .await
                 .unwrap();
             let prev_nonce = self.nonces.get(&private_key_slot).unwrap();
+
+            assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
+        }
+        self
+    }
+
+    /// In Vec<(address, expected increment)>
+    pub async fn assert_nonce_increment_addresses(
+        &mut self,
+        address_indexes: Vec<(Address, u32)>,
+    ) -> &mut Self {
+        for (address, expected_increment) in address_indexes {
+            let nonce = self
+                .provider
+                .get_transaction_count(NameOrAddress::Address(address), None)
+                .await
+                .unwrap();
+            let prev_nonce = self.address_nonces.get(&address).unwrap();
 
             assert_eq!(nonce, prev_nonce + U256::from(expected_increment));
         }
