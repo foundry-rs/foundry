@@ -27,7 +27,7 @@ use ethers::{
     types::BlockNumber,
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
-use foundry_common::{ProviderBuilder, REQUEST_TIMEOUT};
+use foundry_common::{ProviderBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -125,6 +125,8 @@ pub struct NodeConfig {
     pub fork_request_retries: u32,
     /// The initial retry backoff
     pub fork_retry_backoff: Duration,
+    /// available CUPS
+    pub compute_units_per_second: u64,
 }
 
 impl NodeConfig {
@@ -335,6 +337,8 @@ impl Default for NodeConfig {
             fork_request_timeout: REQUEST_TIMEOUT,
             fork_request_retries: 5,
             fork_retry_backoff: Duration::from_millis(1_000),
+            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
         }
     }
 }
@@ -559,6 +563,17 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the number of assumed available compute units per second
+    ///
+    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    #[must_use]
+    pub fn fork_compute_units_per_second(mut self, compute_units_per_second: Option<u64>) -> Self {
+        if let Some(compute_units_per_second) = compute_units_per_second {
+            self.compute_units_per_second = compute_units_per_second;
+        }
+        self
+    }
+
     /// Sets whether to enable tracing
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
@@ -646,6 +661,7 @@ impl NodeConfig {
                         .timeout(self.fork_request_timeout)
                         .timeout_retry(self.fork_request_retries)
                         .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                        .compute_units_per_second(self.compute_units_per_second)
                         .max_retry(10)
                         .initial_backoff(1000)
                         .connect()
@@ -764,6 +780,7 @@ impl NodeConfig {
                         timeout: self.fork_request_timeout,
                         retries: self.fork_request_retries,
                         backoff: self.fork_retry_backoff,
+                        compute_units_per_second: self.compute_units_per_second,
                     },
                     Arc::clone(&db),
                 );
