@@ -135,7 +135,7 @@ impl CoverageArgs {
                     .insert(source_file.id as usize, ast);
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(&path)
+                    fs::read_to_string(project_paths.root.join(&path))
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);
@@ -253,7 +253,7 @@ impl CoverageArgs {
 
         // Build the contract runner
         let evm_spec = utils::evm_spec(&config.evm_version);
-        let env = evm_opts.evm_env_blocking();
+        let env = evm_opts.evm_env_blocking()?;
         let mut runner = MultiContractRunnerBuilder::default()
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)

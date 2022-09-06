@@ -163,7 +163,7 @@ impl<'a> GitCheckout<'a> {
         revision: git2::Oid,
     ) -> eyre::Result<GitCheckout<'a>> {
         let dirname = into.parent().unwrap();
-        fs::create_dir_all(&dirname)?;
+        fs::create_dir_all(dirname)?;
         if into.exists() {
             fs::remove_dir_all(into)?;
         }
@@ -379,7 +379,7 @@ fn init(path: &Path, bare: bool) -> eyre::Result<git2::Repository> {
     // for an example issue that comes up.
     opts.external_template(false);
     opts.bare(bare);
-    Ok(git2::Repository::init_opts(&path, &opts)?)
+    Ok(git2::Repository::init_opts(path, &opts)?)
 }
 
 fn reset(repo: &git2::Repository, obj: &git2::Object<'_>) -> eyre::Result<()> {

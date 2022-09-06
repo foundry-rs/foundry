@@ -8,17 +8,18 @@ use cast::{decode, executor::inspector::DEFAULT_CREATE2_DEPLOYER};
 use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use ethers::{
-    abi::{Abi, Function},
+    abi::{Abi, Function, HumanReadableParser},
     prelude::{
         artifacts::{ContractBytecodeSome, Libraries},
         ArtifactId, Bytes, Project,
     },
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, Log, NameOrAddress, TransactionRequest,
         U256,
     },
 };
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
@@ -28,9 +29,9 @@ use forge::{
         CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE};
+use foundry_common::{evm::EvmArgs, ContractsByArtifact, CONTRACT_MAX_SIZE, SELECTOR_LEN};
 use foundry_config::{figment, Config};
-use foundry_utils::{encode_args, format_token, IntoFunction};
+use foundry_utils::{encode_args, format_token};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -80,7 +81,13 @@ pub struct ScriptArgs {
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
+    #[clap(
+        long,
+        short,
+        default_value = "run()",
+        value_name = "SIGNATURE",
+        value_parser = foundry_common::clap_helpers::strip_0x_prefix
+    )]
     pub sig: String,
 
     #[clap(
@@ -397,29 +404,40 @@ impl ScriptArgs {
         }
     }
 
+    /// Returns the Function and calldata based on the signature
+    ///
+    /// If the `sig` is a valid human-readable function we find the corresponding function in the
+    /// `abi` If the `sig` is valid hex, we assume it's calldata and try to find the
+    /// corresponding function by matching the selector, first 4 bytes in the calldata.
+    ///
+    /// Note: We assume that the `sig` is already stripped of its prefix, See [`ScriptArgs`]
     pub fn get_method_and_calldata(&self, abi: &Abi) -> eyre::Result<(Function, Bytes)> {
-        let (func, data) = match self.sig.strip_prefix("0x") {
-            Some(calldata) => (
+        let (func, data) = if let Ok(func) = HumanReadableParser::parse_function(&self.sig) {
+            (
                 abi.functions()
-                    .find(|&func| {
-                        func.short_signature().to_vec() == hex::decode(calldata).unwrap()[..4]
-                    })
-                    .expect("Function selector not found in the ABI"),
-                hex::decode(calldata).unwrap().into(),
-            ),
-            _ => {
-                let func = IntoFunction::into(self.sig.clone());
-                (
-                    abi.functions()
-                        .find(|&abi_func| abi_func.short_signature() == func.short_signature())
-                        .wrap_err(format!(
-                            "Function `{}` is not implemented in your script.",
-                            self.sig
-                        ))?,
-                    encode_args(&func, &self.args)?.into(),
-                )
-            }
+                    .find(|&abi_func| abi_func.short_signature() == func.short_signature())
+                    .wrap_err(format!(
+                        "Function `{}` is not implemented in your script.",
+                        self.sig
+                    ))?,
+                encode_args(&func, &self.args)?.into(),
+            )
+        } else {
+            let decoded = hex::decode(&self.sig).wrap_err("Invalid hex calldata")?;
+            let selector = &decoded[..SELECTOR_LEN];
+            (
+                abi.functions().find(|&func| selector == &func.short_signature()[..]).ok_or_else(
+                    || {
+                        eyre::eyre!(
+                            "Function selector `{}` not found in the ABI",
+                            hex::encode(selector)
+                        )
+                    },
+                )?,
+                decoded.into(),
+            )
         };
+
         Ok((func.clone(), data))
     }
 
@@ -515,6 +533,7 @@ pub struct ScriptResult {
     pub transactions: Option<VecDeque<TypedTransaction>>,
     pub returned: bytes::Bytes,
     pub address: Option<Address>,
+    pub script_wallets: Vec<LocalWallet>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -542,6 +561,22 @@ pub struct ScriptConfig {
 mod tests {
     use super::*;
     use crate::cmd::LoadConfig;
+    use foundry_cli_test_utils::tempfile::tempdir;
+    use std::fs;
+
+    #[test]
+    fn can_parse_sig() {
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--sig",
+            "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266",
+        ]);
+        assert_eq!(
+            args.sig,
+            "522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266"
+        );
+    }
 
     #[test]
     fn can_merge_script_config() {
@@ -553,5 +588,34 @@ mod tests {
         ]);
         let config = args.load_config();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
+
+    #[test]
+    fn can_extract_script_etherscan_key() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+                etherscan_api_key = "mumbai"
+
+                [etherscan]
+                mumbai = { key = "https://etherscan-mumbai.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+        let args: ScriptArgs = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--etherscan-api-key",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config();
+        let mumbai = config.get_etherscan_api_key(Some(ethers::types::Chain::PolygonMumbai));
+        assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }
 }

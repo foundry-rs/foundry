@@ -2,9 +2,15 @@
 
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
 use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
-use foundry_config::{Config, FuzzConfig, InvariantConfig, RpcEndpoint, RpcEndpoints};
+use foundry_config::{
+    fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
+    RpcEndpoint, RpcEndpoints,
+};
 use foundry_evm::{decode::decode_console_logs, executor::inspector::CheatsConfig};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
@@ -27,6 +33,16 @@ pub static TEST_OPTS: TestOptions = TestOptions {
     },
 };
 
+pub fn manifest_root() -> PathBuf {
+    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // need to check here where we're executing the test from, if in `forge` we need to also allow
+    // `testdata`
+    if root.ends_with("forge") {
+        root = root.parent().unwrap();
+    }
+    root.to_path_buf()
+}
+
 /// Builds a base runner
 pub fn base_runner() -> MultiContractRunnerBuilder {
     MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
@@ -35,23 +51,21 @@ pub fn base_runner() -> MultiContractRunnerBuilder {
 /// Builds a non-tracing runner
 pub fn runner() -> MultiContractRunner {
     let mut config = Config::with_root(PROJECT.root());
+    config.fs_permissions = FsPermissions::new(vec![PathPermission::read_write(manifest_root())]);
+    runner_with_config(config)
+}
+
+/// Builds a non-tracing runner
+pub fn runner_with_config(mut config: Config) -> MultiContractRunner {
     config.rpc_endpoints = rpc_endpoints();
-
-    let mut root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // need to check here where we're executing the test from, if in `forge` we need to also allow
-    // `testdata`
-    if root.ends_with("forge") {
-        root = root.parent().unwrap();
-    }
-
-    config.allow_paths.push(root.into());
+    config.allow_paths.push(manifest_root());
 
     base_runner()
         .with_cheats_config(CheatsConfig::new(&config, &EVM_OPTS))
         .build(
             &PROJECT.paths.root,
             (*COMPILED).clone(),
-            EVM_OPTS.evm_env_blocking(),
+            EVM_OPTS.evm_env_blocking().unwrap(),
             EVM_OPTS.clone(),
         )
         .unwrap()
@@ -62,7 +76,7 @@ pub fn tracing_runner() -> MultiContractRunner {
     let mut opts = EVM_OPTS.clone();
     opts.verbosity = 5;
     base_runner()
-        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking(), opts)
+        .build(&PROJECT.paths.root, (*COMPILED).clone(), EVM_OPTS.evm_env_blocking().unwrap(), opts)
         .unwrap()
 }
 
@@ -73,7 +87,7 @@ pub fn forked_runner(rpc: &str) -> MultiContractRunner {
     opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
     opts.fork_url = Some(rpc.to_string());
 
-    let env = opts.evm_env_blocking();
+    let env = opts.evm_env_blocking().unwrap();
     let fork = opts.get_fork(&Default::default(), env.clone());
 
     base_runner()

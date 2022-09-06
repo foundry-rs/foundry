@@ -53,6 +53,32 @@ contract BroadcastTest is DSTest {
         test.t(2);
     }
 
+    function deployRememberKey() public {
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        assertEq(privateKey, 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6);
+
+        address thisAddress = cheats.rememberKey(privateKey);
+        assertEq(thisAddress, 0x90F79bf6EB2c4f870365E785982E1f101E93b906);
+
+        cheats.broadcast(thisAddress);
+        Test test = new Test();
+    }
+
+    function deployRememberKeyResume() public {
+        cheats.broadcast(ACCOUNT_A);
+        Test test = new Test();
+
+        string memory mnemonic = "test test test test test test test test test test test junk";
+
+        uint256 privateKey = cheats.deriveKey(mnemonic, 3);
+        address thisAddress = cheats.rememberKey(privateKey);
+
+        cheats.broadcast(thisAddress);
+        Test test2 = new Test();
+    }
+
     function deployOther() public {
         cheats.startBroadcast(ACCOUNT_A);
         Test tmptest = new Test();

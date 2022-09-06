@@ -135,3 +135,47 @@ fn test_issue_2984() {
         }
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/3077>
+#[test]
+fn test_issue_3077() {
+    let mut runner = runner();
+    let suite_result =
+        runner.test(&Filter::new(".*", ".*", ".*repros/Issue3077"), None, TEST_OPTS).unwrap();
+    assert!(!suite_result.is_empty());
+
+    for (_, SuiteResult { test_results, .. }) in suite_result {
+        for (test_name, result) in test_results {
+            let logs = decode_console_logs(&result.logs);
+            assert!(
+                result.success,
+                "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                test_name,
+                result.reason,
+                logs.join("\n")
+            );
+        }
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3055>
+#[test]
+fn test_issue_3055() {
+    let mut runner = runner();
+    let suite_result =
+        runner.test(&Filter::new(".*", ".*", ".*repros/Issue3055"), None, TEST_OPTS).unwrap();
+    assert!(!suite_result.is_empty());
+
+    for (_, SuiteResult { test_results, .. }) in suite_result {
+        for (test_name, result) in test_results {
+            let logs = decode_console_logs(&result.logs);
+            assert!(
+                !result.success,
+                "Test {} did not fail as expected.\nReason: {:?}\nLogs:\n{}",
+                test_name,
+                result.reason,
+                logs.join("\n")
+            );
+        }
+    }
+}

@@ -356,15 +356,21 @@ forgetest_async!(
 
         let output = cmd.unchecked_output();
         let stdout = String::from_utf8_lossy(&output.stdout);
-
-        assert!(
-            stdout.contains("All (7) contracts were verified!"),
-            "{}",
-            format!(
-                "Failed to get verification, stdout: {}, stderr: {}",
-                stdout,
-                String::from_utf8_lossy(&output.stderr)
-            )
+        let err = format!(
+            "Failed to get verification, stdout: {}, stderr: {}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
         );
+
+        // ensure we're sending all 5 transactions
+        assert!(stdout.contains("Sending transactions [0 - 4]"), "{}", err);
+
+        // ensure all transactions are successful
+        assert_eq!(5, stdout.matches("✅").count(), "{}", err);
+
+        // ensure verified all deployments
+        // Note: the 5th tx creates contracts internally, which are little flaky at times because
+        // the goerli etherscan indexer can take a long time to index these contracts
+        assert!(stdout.matches("Contract successfully verified").count() >= 4, "{}", err);
     }
 );

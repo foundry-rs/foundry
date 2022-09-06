@@ -159,8 +159,8 @@ fn test_invariant_shrink() {
         .expect("`InvariantInnerContract` should have failed with a counterexample.");
 
     match counter {
-        CounterExample::Single(_) => assert!(false, "CounterExample should be a sequence."),
+        CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         // `fuzz_seed` at 100 makes this sequence shrinkable from 4 to 2.
-        CounterExample::Sequence(sequence) => assert!(sequence.len() == 2),
+        CounterExample::Sequence(sequence) => assert_eq!(sequence.len(), 2),
     };
 }

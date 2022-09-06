@@ -61,6 +61,7 @@ impl ScriptArgs {
             result.debug = script_result.debug;
             result.labeled_addresses.extend(script_result.labeled_addresses);
             result.returned = script_result.returned;
+            result.script_wallets.extend(script_result.script_wallets);
 
             match (&mut result.transactions, script_result.transactions) {
                 (Some(txs), Some(new_txs)) => {

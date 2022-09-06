@@ -5,26 +5,6 @@ use serde::{
 };
 use std::fmt;
 
-/// Bindings for additional `debug_traceTransaction` options
-///
-/// See <https://geth.ethereum.org/docs/rpc/ns-debug#debug_tracetransaction>
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GethDebugTracingOptions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_storage: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disable_stack: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_memory: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_return_data: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracer: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<String>,
-}
-
 /// Represents the params to set forking which can take various forms
 ///  - untagged
 ///  - tagged `forking`

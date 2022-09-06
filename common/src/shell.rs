@@ -1,6 +1,7 @@
 //! Helpers for printing to output
 
 use once_cell::sync::OnceCell;
+use serde::Serialize;
 use std::{
     error::Error,
     fmt, io,
@@ -28,7 +29,8 @@ pub fn set_shell(shell: Shell) -> Result<(), InstallError> {
     SHELL.set(shell).map_err(|_| InstallError)
 }
 
-fn with_shell<F, R>(f: F) -> R
+/// Runs the given closure with the current shell, or default shell if none was set
+pub fn with_shell<F, R>(f: F) -> R
 where
     F: FnOnce(&Shell) -> R,
 {
@@ -44,10 +46,19 @@ where
 pub fn print(msg: impl fmt::Display) -> io::Result<()> {
     with_shell(|shell| shell.write_stdout(msg))
 }
+/// Prints the given message to the shell
+pub fn print_json<T: Serialize>(obj: &T) -> serde_json::Result<()> {
+    with_shell(|shell| shell.print_json(obj))
+}
 
 /// Prints the given message to the shell
 pub fn eprint(msg: impl fmt::Display) -> io::Result<()> {
     with_shell(|shell| shell.write_stderr(msg))
+}
+
+/// Returns the configured verbosity
+pub fn verbosity() -> Verbosity {
+    with_shell(|shell| shell.verbosity)
 }
 
 /// An abstraction around console output that also considers verbosity
@@ -65,6 +76,16 @@ impl Shell {
     /// Creates a new shell instance
     pub fn new(output: ShellOut, verbosity: Verbosity) -> Self {
         Self { output, verbosity }
+    }
+
+    /// Returns a new shell that conforms to the specified verbosity arguments, where `json` takes
+    /// higher precedence
+    pub fn from_args(silent: bool, json: bool) -> Self {
+        match (silent, json) {
+            (_, true) => Self::json(),
+            (true, _) => Self::silent(),
+            _ => Default::default(),
+        }
     }
 
     /// Returns a new shell that won't emit anything
@@ -97,10 +118,10 @@ impl Shell {
     }
 
     /// Prints the object to stdout as json
-    pub fn print_json<T: serde::ser::Serialize>(&mut self, obj: &T) -> serde_json::Result<()> {
+    pub fn print_json<T: serde::ser::Serialize>(&self, obj: &T) -> serde_json::Result<()> {
         if self.verbosity.is_json() {
             let json = serde_json::to_string(&obj)?;
-            let _ = self.output.with_stdout(|out| write!(out, "{}", json));
+            let _ = self.output.with_stdout(|out| writeln!(out, "{}", json));
         }
         Ok(())
     }
@@ -108,7 +129,7 @@ impl Shell {
     pub fn pretty_print_json<T: serde::ser::Serialize>(&self, obj: &T) -> serde_json::Result<()> {
         if self.verbosity.is_json() {
             let json = serde_json::to_string_pretty(&obj)?;
-            let _ = self.output.with_stdout(|out| write!(out, "{}", json));
+            let _ = self.output.with_stdout(|out| writeln!(out, "{}", json));
         }
         Ok(())
     }
@@ -285,6 +306,11 @@ impl Verbosity {
     /// Returns true if silent
     pub fn is_silent(&self) -> bool {
         matches!(self, Verbosity::Silent)
+    }
+
+    /// Returns true if normal verbosity
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Verbosity::Normal)
     }
 }
 

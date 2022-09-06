@@ -1,5 +1,8 @@
 use super::Cheatcodes;
-use crate::abi::HEVMCalls;
+use crate::{
+    abi::HEVMCalls,
+    executor::backend::error::{DatabaseError, DatabaseResult},
+};
 use bytes::{BufMut, Bytes, BytesMut};
 use ethers::{
     abi::{AbiEncode, Address, ParamType, Token},
@@ -16,15 +19,13 @@ use ethers::{
 use foundry_common::fmt::*;
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-pub const MISSING_CREATE2_DEPLOYER: &str =
-    "CREATE2 Deployer not present on this chain. [0x4e59b44847b379578588920ca78fbf26c0b4956c]";
 
 // keccak(Error(string))
 pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
@@ -38,14 +39,14 @@ pub fn with_journaled_account<F, R, DB: Database>(
     db: &mut DB,
     addr: Address,
     mut f: F,
-) -> R
+) -> Result<R, DB::Error>
 where
     F: FnMut(&mut Account) -> R,
 {
-    journaled_state.load_account(addr, db);
+    journaled_state.load_account(addr, db)?;
     journaled_state.touch(&addr);
     let account = journaled_state.state.get_mut(&addr).expect("account loaded;");
-    f(account)
+    Ok(f(account))
 }
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
@@ -53,7 +54,7 @@ fn addr(private_key: U256) -> Result<Bytes, Bytes> {
         return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
         return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
     }
 
@@ -70,7 +71,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
         return Err("Private key cannot be 0.".to_string().encode().into())
     }
 
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
         return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
     }
 
@@ -95,7 +96,11 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
 }
 
 fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
-    let derivation_path = format!("{}{}", path, index);
+    let derivation_path = if path.ends_with('/') {
+        format!("{}{}", path, index)
+    } else {
+        format!("{}/{}", path, index)
+    };
 
     let wallet = MnemonicBuilder::<English>::default()
         .phrase(mnemonic)
@@ -107,6 +112,26 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
     let private_key = U256::from_big_endian(wallet.signer().to_bytes().as_slice());
 
     Ok(private_key.encode().into())
+}
+
+fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
+    if private_key.is_zero() {
+        return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    }
+
+    let mut bytes: [u8; 32] = [0; 32];
+    private_key.to_big_endian(&mut bytes);
+
+    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+
+    state.script_wallets.push(wallet.clone());
+
+    Ok(wallet.address().encode().into())
 }
 
 pub fn apply<DB: Database>(
@@ -121,6 +146,7 @@ pub fn apply<DB: Database>(
             derive_key(&inner.0, DEFAULT_DERIVATION_PATH_PREFIX, inner.1)
         }
         HEVMCalls::DeriveKey1(inner) => derive_key(&inner.0, &inner.1, inner.2),
+        HEVMCalls::RememberKey(inner) => remember_key(state, inner.0, data.env.cfg.chain_id),
         HEVMCalls::Label(inner) => {
             state.labels.insert(inner.0, inner.1.clone());
             Ok(Bytes::new())
@@ -155,33 +181,36 @@ pub fn apply<DB: Database>(
     })
 }
 
-pub fn process_create<DB: Database>(
+pub fn process_create<DB>(
     broadcast_sender: Address,
     bytecode: Bytes,
     data: &mut EVMData<'_, DB>,
     call: &mut CreateInputs,
-) -> (Bytes, Option<NameOrAddress>, u64) {
+) -> DatabaseResult<(Bytes, Option<NameOrAddress>, u64)>
+where
+    DB: Database<Error = DatabaseError>,
+{
     match call.scheme {
         revm::CreateScheme::Create => {
             call.caller = broadcast_sender;
 
-            (bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce)
+            Ok((bytecode, None, data.journaled_state.account(broadcast_sender).info.nonce))
         }
         revm::CreateScheme::Create2 { salt } => {
             // Sanity checks for our CREATE2 deployer
-            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db);
+            data.journaled_state.load_account(DEFAULT_CREATE2_DEPLOYER, data.db)?;
 
             let info = &data.journaled_state.account(DEFAULT_CREATE2_DEPLOYER).info;
             match &info.code {
                 Some(code) => {
                     if code.is_empty() {
-                        panic!("{MISSING_CREATE2_DEPLOYER}")
+                        return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
                 None => {
-                    // SharedBacked
-                    if data.db.code_by_hash(info.code_hash).is_empty() {
-                        panic!("{MISSING_CREATE2_DEPLOYER}")
+                    // forked db
+                    if data.db.code_by_hash(info.code_hash)?.is_empty() {
+                        return Err(DatabaseError::MissingCreate2Deployer)
                     }
                 }
             }
@@ -201,12 +230,12 @@ pub fn process_create<DB: Database>(
             calldata.put_slice(&salt_bytes);
             calldata.put(bytecode);
 
-            (calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce)
+            Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))
         }
     }
 }
 
-pub fn encode_error(reason: impl ToString) -> Bytes {
+pub fn encode_error(reason: impl Display) -> Bytes {
     [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
 }
 
