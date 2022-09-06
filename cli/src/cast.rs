@@ -208,26 +208,7 @@ async fn main() -> eyre::Result<()> {
             let provider = get_http_provider(rpc_url);
             println!("{}", Cast::new(provider).block_number().await?);
         }
-
-        Subcommands::Call { address, sig, args, block, eth } => {
-            let config = Config::from(&eth);
-            let provider = get_http_provider(
-                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            );
-
-            let chain: Chain = if let Some(chain) = eth.chain {
-                chain
-            } else {
-                provider.get_chainid().await?.into()
-            };
-
-            let mut builder =
-                TxBuilder::new(&provider, config.sender, Some(address), chain, false).await?;
-            builder.etherscan_api_key(config.etherscan_api_key).set_args(&sig, args).await?;
-            let builder_output = builder.build();
-            println!("{}", Cast::new(provider).call(builder_output, block).await?);
-        }
-
+        Subcommands::Call(cmd) => cmd.run().await?,
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
