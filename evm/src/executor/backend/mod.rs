@@ -228,6 +228,18 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         }
         Ok(())
     }
+
+    /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
+    /// in forking mode
+    fn ensure_cheatcode_access_forking_mode(
+        &self,
+        account: Address,
+    ) -> Result<(), NoCheatcodeAccessError> {
+        if self.is_forked_mode() {
+            return self.ensure_cheatcode_access(account)
+        }
+        Ok(())
+    }
 }
 
 /// Provides the underlying `revm::Database` implementation.

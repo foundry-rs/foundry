@@ -275,7 +275,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
 
             // TODO:  this is probably not a good long-term solution since it might mess up the gas
             // calculations
@@ -298,7 +298,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), true)?
         }
         HEVMCalls::Broadcast1(inner) => {
@@ -308,7 +308,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast(state, inner.0, caller, data.journaled_state.depth(), true)?
         }
         HEVMCalls::StartBroadcast0(_) => {
@@ -318,7 +318,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast(state, data.env.tx.caller, caller, data.journaled_state.depth(), false)?
         }
         HEVMCalls::StartBroadcast1(inner) => {
@@ -328,7 +328,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast(state, inner.0, caller, data.journaled_state.depth(), false)?
         }
         HEVMCalls::StopBroadcast(_) => {

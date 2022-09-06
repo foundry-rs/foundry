@@ -59,6 +59,19 @@ pub use config::CheatsConfig;
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
+///
+/// Executing cheatcodes can be very powerful. Most cheatcodes are limited to evm internals, but
+/// there are also cheatcodes like `ffi` which can execute arbitrary commands or `writeFile` and
+/// `readFile` which can manipulate files of the filesystem. Therefore, several restrictions are
+/// implemented for these cheatcodes:
+///
+///    - `ffi`, and file cheatcodes are _always_ opt-in (via foundry config) and never enabled by
+///      default: all respective cheatcode handlers implement the appropriate checks
+///    - File cheatcodes require explicit permissions which paths are allowed for which operation,
+///      see `Config.fs_permission`
+///    - Only permitted accounts are allowed to execute cheatcodes in forking mode, this ensures no
+///      contract deployed on the live network is able to execute cheatcodes by simply calling the
+///      cheatcode address
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
     /// The block environment
@@ -145,6 +158,10 @@ impl Cheatcodes {
     ) -> Result<Bytes, Bytes> {
         // Decode the cheatcode call
         let decoded = HEVMCalls::decode(&call.input).map_err(|err| err.to_string().encode())?;
+
+        // ensure the caller is allowed to execute cheatcodes, but only if the backend is in forking
+        // mode
+        data.db.ensure_cheatcode_access_forking_mode(caller).map_err(|err| err.encode_string())?;
 
         // TODO: Log the opcode for the debugger
         env::apply(self, data, caller, &decoded)

@@ -1,4 +1,4 @@
-//! error handling
+//! error handling and support
 
 use bytes::Bytes;
 use ethers::{abi::AbiEncode, utils::keccak256};
