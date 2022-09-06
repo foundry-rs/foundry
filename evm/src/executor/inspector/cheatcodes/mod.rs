@@ -71,7 +71,8 @@ pub use config::CheatsConfig;
 ///      see `Config.fs_permission`
 ///    - Only permitted accounts are allowed to execute cheatcodes in forking mode, this ensures no
 ///      contract deployed on the live network is able to execute cheatcodes by simply calling the
-///      cheatcode address
+///      cheatcode address: by default, the caller, test contract and newly deployed contracts are
+///      allowed to execute cheatcodes
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
     /// The block environment

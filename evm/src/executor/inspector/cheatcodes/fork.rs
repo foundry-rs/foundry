@@ -90,6 +90,10 @@ pub fn apply<DB: DatabaseExt>(
             }
             Ok(urls.encode().into())
         }
+        HEVMCalls::AllowCheatcodes(addr) => {
+            data.db.allow_cheatcode_access(addr.0);
+            Ok(Default::default())
+        }
         _ => return None,
     };
 

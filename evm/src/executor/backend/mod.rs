@@ -139,7 +139,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Ensures that an appropriate fork exits
     ///
     /// If `id` contains a requested `Fork` this will ensure it exits.
-    /// Otherwise this returns the currently active fork.
+    /// Otherwise, this returns the currently active fork.
     ///
     /// # Errors
     ///
