@@ -25,7 +25,7 @@ pub enum WalletSubcommands {
         #[clap(
             long,
             short,
-            help = r#"Depreacted: prompting for a hidden password is now the default.
+            help = r#"Deprecated: prompting for a hidden password is now the default.
             Triggers a hidden password prompt for the JSON keystore."#,
             conflicts_with = "unsafe-password",
             requires = "path"
