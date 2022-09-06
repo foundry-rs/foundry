@@ -3018,8 +3018,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         visit_source_if_disabled_else!(self, loc.with_end(if_branch.loc().start()), {
             self.surrounded(
                 SurroundingChunk::new("if (", Some(loc.start()), None),
-                SurroundingChunk::new(")", Some(if_branch.loc().start()), None),
-                // loc.start(), "if (", ")", Some(if_branch.loc().start()),
+                SurroundingChunk::new(")", None, Some(if_branch.loc().start())),
                 |fmt, _| {
                     cond.visit(fmt)?;
                     fmt.write_postfix_comments_before(if_branch.loc().start())
