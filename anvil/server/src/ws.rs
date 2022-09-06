@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{error, trace, warn};
+use tracing::{error, trace};
 
 /// Handles incoming Websocket upgrade
 ///
@@ -162,25 +162,30 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
         ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() }
     }
 
+    fn process_request(&mut self, req: serde_json::Result<Request>) {
+        let handler = self.compat_helper();
+        self.processing.push(Box::pin(async move {
+            match req {
+                Ok(req) => handle_request(req, handler)
+                    .await
+                    .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
+                Err(err) => {
+                    error!(target: "rpc::ws", ?err, "invalid request");
+                    Response::error(RpcError::invalid_request())
+                }
+            }
+        }));
+    }
+
     fn on_message(&mut self, msg: Message) -> bool {
         match msg {
             Message::Text(text) => {
-                let handler = self.compat_helper();
-                self.processing.push(Box::pin(async move {
-                    match serde_json::from_str::<Request>(&text) {
-                        Ok(req) => handle_request(req, handler)
-                            .await
-                            .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
-                        Err(err) => {
-                            error!(target: "rpc::ws", ?err, "invalid request");
-                            Response::error(RpcError::invalid_request())
-                        }
-                    }
-                }));
+                self.process_request(serde_json::from_str(&text));
             }
-            Message::Binary(_) => {
-                warn!(target: "rpc::ws","unexpected binary data");
-                return true
+            Message::Binary(data) => {
+                // the binary payload type is the request as-is but as bytes, if this is a valid
+                // `Request` then we can deserialize the Json from the data Vec
+                self.process_request(serde_json::from_slice(&data));
             }
             Message::Close(_) => {
                 trace!(target: "rpc::ws", "ws client disconnected");
