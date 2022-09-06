@@ -1,6 +1,6 @@
 //! Commonly used helpers to construct `Provider`s
 
-use crate::REQUEST_TIMEOUT;
+use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use ethers_core::types::Chain;
 use ethers_providers::{
     is_local_endpoint, Http, HttpRateLimitRetryPolicy, Middleware, Provider, RetryClient,
@@ -47,6 +47,8 @@ pub struct ProviderBuilder {
     timeout_retry: u32,
     initial_backoff: u64,
     timeout: Duration,
+    /// available CUPS
+    compute_units_per_second: u64,
 }
 
 // === impl ProviderBuilder ===
@@ -68,6 +70,8 @@ impl ProviderBuilder {
             timeout_retry: 5,
             initial_backoff: 100,
             timeout: REQUEST_TIMEOUT,
+            // alchemy max cpus <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+            compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
         }
     }
 
@@ -108,6 +112,14 @@ impl ProviderBuilder {
         self
     }
 
+    /// Sets the number of assumed available compute units per second
+    ///
+    /// See also, <https://github.com/alchemyplatform/alchemy-docs/blob/master/documentation/compute-units.md#rate-limits-cups>
+    pub fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
+        self.compute_units_per_second = compute_units_per_second;
+        self
+    }
+
     /// Sets aggressive `max_retry` and `initial_backoff` values
     ///
     /// This is only recommend for local dev nodes
@@ -129,8 +141,15 @@ impl ProviderBuilder {
 
     /// Constructs the `RetryProvider` taking all configs into account
     pub fn build(self) -> eyre::Result<RetryProvider> {
-        let ProviderBuilder { url, chain, max_retry, timeout_retry, initial_backoff, timeout } =
-            self;
+        let ProviderBuilder {
+            url,
+            chain,
+            max_retry,
+            timeout_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+        } = self;
         let url = url.wrap_err("Invalid provider url")?;
 
         let client = reqwest::Client::builder().timeout(timeout).build()?;
@@ -143,6 +162,7 @@ impl ProviderBuilder {
                 .initial_backoff(Duration::from_millis(initial_backoff))
                 .rate_limit_retries(max_retry)
                 .timeout_retries(timeout_retry)
+                .compute_units_per_second(compute_units_per_second)
                 .build(provider, Box::new(HttpRateLimitRetryPolicy::default())),
         );
 
