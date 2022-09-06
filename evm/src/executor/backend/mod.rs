@@ -30,7 +30,7 @@ use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
-use crate::executor::backend::in_memory_db::FoundryEvmInMemoryDB;
+use crate::executor::backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB};
 pub use error::{DatabaseError, DatabaseResult};
 
 mod in_memory_db;
@@ -222,9 +222,9 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Ensures that `account` is allowed to execute cheatcodes
     ///
     /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
-    fn ensure_cheatcode_access(&self, account: Address) -> eyre::Result<()> {
+    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), NoCheatcodeAccessError> {
         if !self.has_cheatcode_access(account) {
-            eyre::bail!("No cheatcode access: {:?}", account)
+            return Err(NoCheatcodeAccessError(account))
         }
         Ok(())
     }
@@ -407,6 +407,7 @@ impl Backend {
     pub fn set_caller(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting caller account");
         self.inner.caller = Some(acc);
+        self.allow_cheatcode_access(acc);
         self
     }
 
@@ -938,10 +939,12 @@ impl DatabaseExt for Backend {
     }
 
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "allow cheatcode access");
         self.inner.cheatcode_access_accounts.insert(account)
     }
 
     fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "revoke cheatcode access");
         self.inner.cheatcode_access_accounts.remove(&account)
     }
 

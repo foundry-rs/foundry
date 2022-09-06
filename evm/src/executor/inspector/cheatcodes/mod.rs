@@ -5,6 +5,7 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
+    error::SolError,
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
@@ -122,20 +123,8 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 }
 
-#[derive(Debug, Default)]
-pub struct Context {
-    //// Buffered readers for files opened for reading (path => BufReader mapping)
-    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
-}
-
-/// Every time we clone `Context`, we want it to be empty
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        Default::default()
-    }
-}
-
 impl Cheatcodes {
+    /// Creates a new `Cheatcodes` based on the given settings
     pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
             corrected_nonce: false,
@@ -324,7 +313,7 @@ where
                         if let Err(err) =
                             data.journaled_state.load_account(broadcast.origin, data.db)
                         {
-                            return (Return::Revert, Gas::new(call.gas_limit), err.string_encoded())
+                            return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let account =
@@ -506,7 +495,7 @@ where
                 call.caller == broadcast.original_caller
             {
                 if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
-                    return (Return::Revert, None, Gas::new(call.gas_limit), err.string_encoded())
+                    return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                 }
 
                 let (bytecode, to, nonce) =
@@ -517,7 +506,7 @@ where
                                 Return::Revert,
                                 None,
                                 Gas::new(call.gas_limit),
-                                err.string_encoded(),
+                                err.encode_string(),
                             )
                         }
                     };
@@ -547,6 +536,11 @@ where
         remaining_gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
+        // allow cheatcode access for newly deployed contracts
+        if let Some(address) = address {
+            data.db.allow_cheatcode_access(address);
+        }
+
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
@@ -576,5 +570,19 @@ where
         }
 
         (status, address, remaining_gas, retdata)
+    }
+}
+
+/// Contains additional, test specific resources that should be kept for the duration of the test
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
     }
 }

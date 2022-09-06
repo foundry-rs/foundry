@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
+    error::SolError,
     executor::{backend::DatabaseExt, inspector::cheatcodes::util::with_journaled_account},
 };
 use bytes::Bytes;
@@ -168,21 +169,21 @@ pub fn apply<DB: DatabaseExt>(
             // TODO: Does this increase gas usage?
             data.journaled_state
                 .load_account(inner.0, data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
             data.journaled_state
                 .sstore(inner.0, inner.1.into(), inner.2.into(), data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
             Bytes::new()
         }
         HEVMCalls::Load(inner) => {
             // TODO: Does this increase gas usage?
             data.journaled_state
                 .load_account(inner.0, data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
             let (val, _) = data
                 .journaled_state
                 .sload(inner.0, inner.1.into(), data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
             val.encode().into()
         }
         HEVMCalls::Etch(inner) => {
@@ -191,7 +192,7 @@ pub fn apply<DB: DatabaseExt>(
             // TODO: Does this increase gas usage?
             data.journaled_state
                 .load_account(inner.0, data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
             data.journaled_state.set_code(inner.0, Bytecode::new_raw(code.0).to_checked());
             Bytes::new()
         }
@@ -203,7 +204,7 @@ pub fn apply<DB: DatabaseExt>(
             with_journaled_account(&mut data.journaled_state, data.db, who, |account| {
                 account.info.balance = value;
             })
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             Bytes::new()
         }
         HEVMCalls::Prank0(inner) => prank(
@@ -265,7 +266,7 @@ pub fn apply<DB: DatabaseExt>(
                 } else {
                     Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
                 }
-            }).map_err(|err| err.string_encoded())??
+            }).map_err(|err| err.encode_string())??
         }
         HEVMCalls::GetNonce(inner) => {
             correct_sender_nonce(
@@ -280,7 +281,7 @@ pub fn apply<DB: DatabaseExt>(
             // calculations
             data.journaled_state
                 .load_account(inner.0, data.db)
-                .map_err(|err| err.string_encoded())?;
+                .map_err(|err| err.encode_string())?;
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.journaled_state.state().get(&inner.0).unwrap();
