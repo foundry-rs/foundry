@@ -105,8 +105,7 @@ impl WalletSubcommands {
                         password
                     } else {
                         // if no --unsafe-password was provided read via stdin
-                        println!("Insert secret:");
-                        rpassword::read_password()?
+                        rpassword::prompt_password("Enter secret: ")?
                     };
 
                     let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password, None)?;

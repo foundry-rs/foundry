@@ -196,8 +196,7 @@ impl WalletTrait for Wallet {}
 
 pub trait WalletTrait {
     fn get_from_interactive(&self) -> Result<LocalWallet> {
-        println!("Insert private key:");
-        let private_key = rpassword::read_password()?;
+        let private_key = rpassword::prompt_password("Enter private key: ")?;
         let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
         Ok(LocalWallet::from_str(private_key)?)
     }
@@ -242,8 +241,7 @@ pub trait WalletTrait {
         Ok(match (keystore_path, keystore_password) {
             (Some(path), Some(password)) => Some(LocalWallet::decrypt_keystore(path, password)?),
             (Some(path), None) => {
-                println!("Insert keystore password:");
-                let password = rpassword::read_password().unwrap();
+                let password = rpassword::prompt_password("Enter keystore password:")?;
                 Some(LocalWallet::decrypt_keystore(path, password)?)
             }
             (None, _) => None,
