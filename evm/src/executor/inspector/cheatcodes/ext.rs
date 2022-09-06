@@ -138,14 +138,15 @@ fn set_env(key: &str, val: &str) -> Result<Bytes, Bytes> {
 }
 
 fn get_env(key: &str, r#type: ParamType, delim: Option<&str>) -> Result<Bytes, Bytes> {
-    let val = env::var(key).map_err::<Bytes, _>(|e| e.to_string().encode().into())?;
+    let msg = format!("Failed to get environment variable `{}` as type `{}`", key, &r#type);
+    let val = env::var(key).map_err::<Bytes, _>(|e| format!("{}: {}", msg, e).encode().into())?;
     let val = if let Some(d) = delim {
         val.split(d).map(|v| v.trim().to_string()).collect()
     } else {
         vec![val]
     };
     let is_array: bool = delim.is_some();
-    util::value_to_abi(val, r#type, is_array)
+    util::value_to_abi(val, r#type, is_array).map_err(|e| format!("{}: {}", msg, e).encode().into())
 }
 
 fn project_root(state: &Cheatcodes) -> Result<Bytes, Bytes> {

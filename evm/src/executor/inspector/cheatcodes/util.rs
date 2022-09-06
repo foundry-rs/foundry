@@ -134,6 +134,15 @@ fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Re
     Ok(wallet.address().encode().into())
 }
 
+fn parse(
+    val: Vec<impl AsRef<str> + Clone>,
+    r#type: ParamType,
+    is_array: bool,
+) -> Result<Bytes, Bytes> {
+    let msg = format!("Failed to parse `{}` as type `{}`", &val[0].as_ref(), &r#type);
+    value_to_abi(val, r#type, is_array).map_err(|e| format!("{}: {}", msg, e).encode().into())
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -169,14 +178,12 @@ pub fn apply<DB: Database>(
         HEVMCalls::ToString5(inner) => {
             Ok(ethers::abi::encode(&[Token::String(inner.0.pretty())]).into())
         }
-        HEVMCalls::ParseBytes(inner) => value_to_abi(vec![&inner.0], ParamType::Bytes, false),
-        HEVMCalls::ParseAddress(inner) => value_to_abi(vec![&inner.0], ParamType::Address, false),
-        HEVMCalls::ParseUint(inner) => value_to_abi(vec![&inner.0], ParamType::Uint(256), false),
-        HEVMCalls::ParseInt(inner) => value_to_abi(vec![&inner.0], ParamType::Int(256), false),
-        HEVMCalls::ParseBytes32(inner) => {
-            value_to_abi(vec![&inner.0], ParamType::FixedBytes(32), false)
-        }
-        HEVMCalls::ParseBool(inner) => value_to_abi(vec![&inner.0], ParamType::Bool, false),
+        HEVMCalls::ParseBytes(inner) => parse(vec![&inner.0], ParamType::Bytes, false),
+        HEVMCalls::ParseAddress(inner) => parse(vec![&inner.0], ParamType::Address, false),
+        HEVMCalls::ParseUint(inner) => parse(vec![&inner.0], ParamType::Uint(256), false),
+        HEVMCalls::ParseInt(inner) => parse(vec![&inner.0], ParamType::Int(256), false),
+        HEVMCalls::ParseBytes32(inner) => parse(vec![&inner.0], ParamType::FixedBytes(32), false),
+        HEVMCalls::ParseBool(inner) => parse(vec![&inner.0], ParamType::Bool, false),
         _ => return None,
     })
 }
@@ -243,7 +250,7 @@ pub fn value_to_abi(
     val: Vec<impl AsRef<str>>,
     r#type: ParamType,
     is_array: bool,
-) -> Result<Bytes, Bytes> {
+) -> Result<Bytes, String> {
     let parse_bool = |v: &str| v.to_lowercase().parse::<bool>();
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
@@ -287,5 +294,4 @@ pub fn value_to_abi(
                 abi::encode(&[tokens.remove(0)]).into()
             }
         })
-        .map_err(|e| e.into())
 }
