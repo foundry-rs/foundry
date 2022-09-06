@@ -6,7 +6,7 @@ use crate::{
             test,
             test::{custom_run, Test, TestOutcome},
         },
-        Cmd,
+        u32_validator, Cmd,
     },
     utils::STATIC_FUZZ_SEED,
 };
@@ -59,7 +59,7 @@ pub struct SnapshotArgs {
     ///
     /// Outputs a diff if the snapshots do not match.
     ///
-    /// By default the comparison is done with .gas-snapshot.
+    /// By default, the comparison is done with .gas-snapshot.
     #[clap(
         conflicts_with = "diff",
         long,
@@ -79,6 +79,14 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
+
+    #[clap(
+        help = "Tolerates gas deviations up to the specified percentage.",
+        long,
+        validator = u32_validator(0, 100),
+        value_name = "SNAPSHOT_THRESHOLD"
+    )]
+    tolerance: Option<u32>,
 }
 
 impl SnapshotArgs {
@@ -117,7 +125,7 @@ impl Cmd for SnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_snapshot(snap)?;
-            if check(tests, snaps) {
+            if check(tests, snaps, self.tolerance) {
                 std::process::exit(0)
             } else {
                 std::process::exit(1)
@@ -318,7 +326,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
+fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>, tolerance: Option<u32>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -329,7 +337,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
             let source_gas = test.result.kind.report();
-            if source_gas.gas() != target_gas.gas() {
+            if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
@@ -424,9 +432,35 @@ fn fmt_change(change: i128) -> String {
     }
 }
 
+/// Returns true of the difference between the gas values exceeds the tolerance
+///
+/// If `tolerance` is `None`, then this returns `true` if both gas values are equal
+fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>) -> bool {
+    if let Some(tolerance) = tolerance_pct {
+        let (hi, lo) = if source_gas > target_gas {
+            (source_gas, target_gas)
+        } else {
+            (target_gas, source_gas)
+        };
+        let diff = (1. - (lo as f64 / hi as f64)) * 100.;
+        diff < tolerance as f64
+    } else {
+        source_gas == target_gas
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tolerance() {
+        assert!(within_tolerance(100, 105, Some(5)));
+        assert!(within_tolerance(105, 100, Some(5)));
+        assert!(!within_tolerance(100, 106, Some(5)));
+        assert!(!within_tolerance(106, 100, Some(5)));
+        assert!(within_tolerance(100, 100, None));
+    }
 
     #[test]
     fn can_parse_basic_snapshot_entry() {
