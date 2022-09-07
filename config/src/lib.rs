@@ -82,6 +82,7 @@ mod fuzz;
 pub use fuzz::FuzzConfig;
 
 mod invariant;
+use crate::resolve::UnresolvedEnvVarError;
 pub use invariant::InvariantConfig;
 use providers::remappings::RemappingsProvider;
 
@@ -713,6 +714,71 @@ impl Config {
     /// ```
     pub fn get_all_remappings(&self) -> Vec<Remapping> {
         self.remappings.iter().map(|m| m.clone().into()).collect()
+    }
+
+    /// Returns the configured rpc url
+    ///
+    /// Returns:
+    ///    - the matching, resolved url of  `rpc_endpoints` if `eth_rpc_url` is an alias
+    ///    - the `eth_rpc_url` as-is if it isn't an alias
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url().unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+        let eth_rpc_url = self.eth_rpc_url.as_ref()?;
+        let mut endpoints = self.rpc_endpoints.clone().resolved();
+        if let Some(alias) = endpoints.remove(eth_rpc_url) {
+            Some(alias.map(Cow::Owned))
+        } else {
+            Some(Ok(Cow::Borrowed(eth_rpc_url.as_str())))
+        }
+    }
+
+    /// Returns the configured rpc, or the fallback url
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_or("http://localhost:8545").unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_or<'a>(
+        &'a self,
+        fallback: impl Into<Cow<'a, str>>,
+    ) -> Result<Cow<str>, UnresolvedEnvVarError> {
+        if let Some(url) = self.get_rpc_url() {
+            url
+        } else {
+            Ok(fallback.into())
+        }
+    }
+
+    /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_or_localhost_http().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_or_localhost_http(&self) -> Result<Cow<str>, UnresolvedEnvVarError> {
+        self.get_rpc_url_or("http://localhost:8545")
     }
 
     /// Returns the `EtherscanConfig` to use, if any
@@ -2719,12 +2785,43 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_rpc_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                [rpc_endpoints]
+                optimism = "https://example.com/"
+                mainnet = "${_CONFIG_MAINNET}"
+            "#,
+            )?;
+            jail.set_env("_CONFIG_MAINNET", "https://eth-mainnet.alchemyapi.io/v2/123455");
+
+            let mut config = Config::load();
+            assert_eq!("http://localhost:8545", config.get_rpc_url_or_localhost_http().unwrap());
+
+            config.eth_rpc_url = Some("mainnet".to_string());
+            assert_eq!(
+                "https://eth-mainnet.alchemyapi.io/v2/123455",
+                config.get_rpc_url_or_localhost_http().unwrap()
+            );
+
+            config.eth_rpc_url = Some("optimism".to_string());
+            assert_eq!("https://example.com/", config.get_rpc_url_or_localhost_http().unwrap());
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_resolve_endpoints() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
                 r#"
                 [profile.default]
+                eth_rpc_url = "optimism"
                 [rpc_endpoints]
                 optimism = "https://example.com/"
                 mainnet = "${_CONFIG_MAINNET}"
@@ -2734,6 +2831,8 @@ mod tests {
             )?;
 
             let config = Config::load();
+
+            assert_eq!(config.get_rpc_url().unwrap().unwrap(), "https://example.com/");
 
             assert!(config.rpc_endpoints.clone().resolved().has_unresolved());
 

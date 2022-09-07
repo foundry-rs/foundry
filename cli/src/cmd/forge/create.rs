@@ -118,9 +118,7 @@ impl CreateArgs {
 
         // Add arguments to constructor
         let config = self.eth.load_config_emit_warnings();
-        let provider = Arc::new(get_http_provider(
-            config.eth_rpc_url.as_deref().unwrap_or("http://localhost:8545"),
-        ));
+        let provider = Arc::new(get_http_provider(config.get_rpc_url_or_localhost_http()?));
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =

@@ -138,7 +138,7 @@ pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
     if let Some(rpc_url) = rpc_url {
         rpc_url
     } else {
-        Config::load().eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string())
+        Config::load().get_rpc_url_or_localhost_http().expect("Invalid rpc url").into_owned()
     }
 }
 

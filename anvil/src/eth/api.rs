@@ -1056,7 +1056,7 @@ impl EthApi {
 
         // highest and lowest block num in the requested range
         let highest = number;
-        let lowest = highest.saturating_sub(block_count);
+        let lowest = highest.saturating_sub(block_count.saturating_sub(1));
 
         // only support ranges that are in cache range
         if lowest < self.backend.best_number().as_u64().saturating_sub(self.fee_history_limit) {
@@ -1074,7 +1074,7 @@ impl EthApi {
 
         let mut rewards = Vec::new();
         // iter over the requested block range
-        for n in lowest..highest + 1 {
+        for n in lowest..=highest {
             // <https://eips.ethereum.org/EIPS/eip-1559>
             if let Some(block) = fee_history.get(&n) {
                 response.base_fee_per_gas.push(U256::from(block.base_fee));
