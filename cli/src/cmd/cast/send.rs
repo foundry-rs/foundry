@@ -80,9 +80,7 @@ impl SendTxArgs {
             command,
         } = self;
         let config = Config::from(&eth);
-        let provider = Arc::new(get_http_provider(
-            &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-        ));
+        let provider = Arc::new(get_http_provider(config.get_rpc_url_or_localhost_http()?));
         let chain: Chain =
             if let Some(chain) = eth.chain { chain } else { provider.get_chainid().await?.into() };
         let mut sig = sig.unwrap_or_default();

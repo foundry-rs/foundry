@@ -181,9 +181,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let config = Config::from(&eth);
-            let provider = get_http_provider(
-                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            );
+            let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
 
             let chain: Chain = if let Some(chain) = eth.chain {
                 chain
@@ -253,9 +251,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::SendTx(cmd) => cmd.run().await?,
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
             let config = Config::from(&eth);
-            let provider = get_http_provider(
-                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            );
+            let provider = get_http_provider(config.get_rpc_url_or_localhost_http()?);
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;

@@ -8,7 +8,7 @@ use ethers_providers::{
 };
 use eyre::WrapErr;
 use reqwest::{IntoUrl, Url};
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 /// Helper type alias for a retry provider
 pub type RetryProvider = Provider<RetryClient<Http>>;
@@ -190,6 +190,12 @@ impl<'a> From<&'a String> for ProviderBuilder {
 impl From<String> for ProviderBuilder {
     fn from(url: String) -> Self {
         url.as_str().into()
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for ProviderBuilder {
+    fn from(url: Cow<'a, str>) -> Self {
+        url.as_ref().into()
     }
 }
 

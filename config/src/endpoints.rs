@@ -2,7 +2,11 @@
 
 use crate::resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, fmt, ops::Deref};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::{Deref, DerefMut},
+};
 
 /// Container type for API endpoints, like various RPC endpoints
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -152,5 +156,11 @@ impl Deref for ResolvedRpcEndpoints {
 
     fn deref(&self) -> &Self::Target {
         &self.endpoints
+    }
+}
+
+impl DerefMut for ResolvedRpcEndpoints {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.endpoints
     }
 }
