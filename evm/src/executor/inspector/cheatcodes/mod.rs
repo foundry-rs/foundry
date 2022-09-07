@@ -193,12 +193,10 @@ impl Cheatcodes {
             .unwrap_or_default();
         let created_address = get_create_address(inputs, old_nonce);
 
-        if data.journaled_state.depth > 1 {
-            if !data.db.has_cheatcode_access(inputs.caller) {
-                // we only grant cheat code access for new contracts if the caller also has
-                // cheatcode access and the new contract is created in top most call
-                return
-            }
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+            // we only grant cheat code access for new contracts if the caller also has
+            // cheatcode access and the new contract is created in top most call
+            return
         }
 
         data.db.allow_cheatcode_access(created_address);
