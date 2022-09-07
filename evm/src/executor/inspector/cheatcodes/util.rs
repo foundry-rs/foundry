@@ -9,27 +9,22 @@ use ethers::{
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
-        Lazy, LocalWallet, Signer, H160, *,
+        LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
     types::{NameOrAddress, H256, U256},
     utils,
-    utils::keccak256,
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-
-// keccak(Error(string))
-pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
-pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
 ///
@@ -240,10 +235,6 @@ where
             Ok((calldata.freeze(), Some(NameOrAddress::Address(DEFAULT_CREATE2_DEPLOYER)), nonce))
         }
     }
-}
-
-pub fn encode_error(reason: impl Display) -> Bytes {
-    [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
 }
 
 pub fn value_to_abi(

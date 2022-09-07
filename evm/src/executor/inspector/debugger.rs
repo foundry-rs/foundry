@@ -1,5 +1,6 @@
 use crate::{
     debug::{DebugArena, DebugNode, DebugStep, Instruction},
+    error::SolError,
     executor::{
         backend::DatabaseExt,
         inspector::utils::{gas_used, get_create_address},
@@ -166,7 +167,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         if let Err(err) = data.journaled_state.load_account(call.caller, data.db) {
-            return (Return::Revert, None, Gas::new(call.gas_limit), err.string_encoded())
+            return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
         }
 
         let nonce = data.journaled_state.account(call.caller).info.nonce;

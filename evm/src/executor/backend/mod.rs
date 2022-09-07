@@ -6,6 +6,7 @@ use crate::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
         snapshot::Snapshots,
     },
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     prelude::{H160, H256, U256},
@@ -30,7 +31,7 @@ use crate::executor::inspector::cheatcodes::util::with_journaled_account;
 pub use diagnostic::RevertDiagnostic;
 
 pub mod error;
-use crate::executor::backend::in_memory_db::FoundryEvmInMemoryDB;
+use crate::executor::backend::{error::NoCheatcodeAccessError, in_memory_db::FoundryEvmInMemoryDB};
 pub use error::{DatabaseError, DatabaseResult};
 
 mod in_memory_db;
@@ -139,7 +140,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
     /// Ensures that an appropriate fork exits
     ///
     /// If `id` contains a requested `Fork` this will ensure it exits.
-    /// Otherwise this returns the currently active fork.
+    /// Otherwise, this returns the currently active fork.
     ///
     /// # Errors
     ///
@@ -204,6 +205,41 @@ pub trait DatabaseExt: Database<Error = DatabaseError> {
         for acc in accounts {
             self.add_persistent_account(acc);
         }
+    }
+
+    /// Grants cheatcode access for the given `account`
+    ///
+    /// Returns true if the `account` already has access
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Revokes cheatcode access for the given account
+    ///
+    /// Returns true if the `account` was previously allowed cheatcode access
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool;
+
+    /// Returns `true` if the given account is allowed to execute cheatcodes
+    fn has_cheatcode_access(&self, account: Address) -> bool;
+
+    /// Ensures that `account` is allowed to execute cheatcodes
+    ///
+    /// Returns an error if [`Self::has_cheatcode_access`] returns `false`
+    fn ensure_cheatcode_access(&self, account: Address) -> Result<(), NoCheatcodeAccessError> {
+        if !self.has_cheatcode_access(account) {
+            return Err(NoCheatcodeAccessError(account))
+        }
+        Ok(())
+    }
+
+    /// Same as [`Self::ensure_cheatcode_access()`] but only enforces it if the backend is currently
+    /// in forking mode
+    fn ensure_cheatcode_access_forking_mode(
+        &self,
+        account: Address,
+    ) -> Result<(), NoCheatcodeAccessError> {
+        if self.is_forked_mode() {
+            return self.ensure_cheatcode_access(account)
+        }
+        Ok(())
     }
 }
 
@@ -364,14 +400,18 @@ impl Backend {
     ///
     /// This will also mark the caller as persistent and remove the persistent status from the
     /// previous test contract address
+    ///
+    /// This will also grant cheatcode access to the test account
     pub fn set_test_contract(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting test account");
         // toggle the previous sender
         if let Some(current) = self.inner.test_contract_address.take() {
             self.remove_persistent_account(&current);
+            self.revoke_cheatcode_access(acc);
         }
 
         self.add_persistent_account(acc);
+        self.allow_cheatcode_access(acc);
         self.inner.test_contract_address = Some(acc);
         self
     }
@@ -380,6 +420,7 @@ impl Backend {
     pub fn set_caller(&mut self, acc: Address) -> &mut Self {
         trace!(?acc, "setting caller account");
         self.inner.caller = Some(acc);
+        self.allow_cheatcode_access(acc);
         self
     }
 
@@ -912,6 +953,20 @@ impl DatabaseExt for Backend {
         trace!(?account, "add persistent account");
         self.inner.persistent_accounts.insert(account)
     }
+
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "allow cheatcode access");
+        self.inner.cheatcode_access_accounts.insert(account)
+    }
+
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        trace!(?account, "revoke cheatcode access");
+        self.inner.cheatcode_access_accounts.remove(&account)
+    }
+
+    fn has_cheatcode_access(&self, account: Address) -> bool {
+        self.inner.cheatcode_access_accounts.contains(&account)
+    }
 }
 
 impl DatabaseRef for Backend {
@@ -1119,6 +1174,8 @@ pub struct BackendInner {
     pub persistent_accounts: HashSet<Address>,
     /// The configured precompile spec id
     pub precompile_id: revm::precompiles::SpecId,
+    /// All accounts that are allowed to execute cheatcodes
+    pub cheatcode_access_accounts: HashSet<Address>,
 }
 
 // === impl BackendInner ===
@@ -1284,6 +1341,13 @@ impl Default for BackendInner {
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
             precompile_id: revm::precompiles::SpecId::LATEST,
+            // grant the cheatcode,default test and caller address access to execute cheatcodes
+            // itself
+            cheatcode_access_accounts: HashSet::from([
+                CHEATCODE_ADDRESS,
+                TEST_CONTRACT_ADDRESS,
+                CALLER,
+            ]),
         }
     }
 }
