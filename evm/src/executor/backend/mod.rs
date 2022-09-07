@@ -907,11 +907,11 @@ impl DatabaseExt for Backend {
     fn diagnose_revert(
         &self,
         callee: Address,
-        _journaled_state: &JournaledState,
+        journaled_state: &JournaledState,
     ) -> Option<RevertDiagnostic> {
         let active_id = self.active_fork_id()?;
         let active_fork = self.active_fork()?;
-        if !active_fork.is_contract(callee) {
+        if !active_fork.is_contract(callee) && !is_contract_in_state(journaled_state, callee) {
             // no contract for `callee` available on current fork, check if available on other forks
             let mut available_on = Vec::new();
             for (id, fork) in self.inner.forks_iter().filter(|(id, _)| *id != active_id) {
@@ -1111,11 +1111,7 @@ impl Fork {
                 return true
             }
         }
-        self.journaled_state
-            .state
-            .get(&acc)
-            .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
-            .unwrap_or_default()
+        is_contract_in_state(&self.journaled_state, acc)
     }
 }
 
@@ -1398,4 +1394,13 @@ fn clone_db_account_data<ExtDB: DatabaseRef>(
         fork_db.contracts.insert(acc.info.code_hash, code);
     }
     fork_db.accounts.insert(addr, acc);
+}
+
+/// Returns true of the address is a contract
+fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool {
+    journaled_state
+        .state
+        .get(&acc)
+        .map(|acc| acc.info.code_hash != KECCAK_EMPTY)
+        .unwrap_or_default()
 }
