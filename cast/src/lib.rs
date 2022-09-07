@@ -101,23 +101,12 @@ where
             format!("{res}\n")
         } else {
             // seth compatible user-friendly return type conversions
-            let out = decoded
+            decoded
                 .iter()
-                .map(|item| {
-                    match item {
-                        Token::Address(inner) => utils::to_checksum(inner, None),
-                        // add 0x
-                        Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
-                        Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
-                        // print as decimal
-                        Token::Uint(inner) => inner.to_string(),
-                        Token::Int(inner) => format!("{}", I256::from_raw(*inner)),
-                        _ => format!("{item}"),
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            out.join("\n")
+                .map(TokenDisplay)
+                .map(|token| token.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
         })
     }
 
