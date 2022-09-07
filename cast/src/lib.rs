@@ -1106,7 +1106,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_unit(value: &str, unit: &str) -> Result<String> {
-        let value = U256::from(LenientTokenizer::tokenize_uint(&value)?);
+        let value = U256::from(LenientTokenizer::tokenize_uint(value)?);
 
         Ok(match unit {
             "eth" | "ether" => ethers_core::utils::format_units(value, 18)?
