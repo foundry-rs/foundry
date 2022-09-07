@@ -8,6 +8,12 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{self, AbiEncode, RawLog, Token, Tokenizable, Tokenize},
+    prelude::k256::{
+        ecdsa::SigningKey,
+        elliptic_curve::{bigint::Encoding, Curve},
+        Secp256k1,
+    },
+    signers::{LocalWallet, Signer},
     types::{Address, U256},
 };
 use revm::{Bytecode, Database, EVMData};
@@ -60,6 +66,35 @@ fn broadcast(
 
     state.broadcast = Some(broadcast);
     Ok(Bytes::new())
+}
+
+fn broadcast_key(
+    state: &mut Cheatcodes,
+    private_key: U256,
+    original_caller: Address,
+    chain_id: U256,
+    depth: u64,
+    single_call: bool,
+) -> Result<Bytes, Bytes> {
+    if private_key.is_zero() {
+        return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    }
+
+    let mut bytes: [u8; 32] = [0; 32];
+    private_key.to_big_endian(&mut bytes);
+
+    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
+
+    state.script_wallets.push(wallet.clone());
+
+    let origin = wallet.address();
+
+    return broadcast(state, origin, original_caller, depth, single_call)
 }
 
 fn prank(
@@ -310,6 +345,23 @@ pub fn apply<DB: DatabaseExt>(
             .map_err(|err| err.string_encoded())?;
             broadcast(state, inner.0, caller, data.journaled_state.depth(), true)?
         }
+        HEVMCalls::Broadcast2(inner) => {
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast_key(
+                state,
+                inner.0,
+                caller,
+                data.env.cfg.chain_id,
+                data.journaled_state.depth(),
+                true,
+            )?
+        }
         HEVMCalls::StartBroadcast0(_) => {
             correct_sender_nonce(
                 data.env.tx.caller,
@@ -329,6 +381,23 @@ pub fn apply<DB: DatabaseExt>(
             )
             .map_err(|err| err.string_encoded())?;
             broadcast(state, inner.0, caller, data.journaled_state.depth(), false)?
+        }
+        HEVMCalls::StartBroadcast2(inner) => {
+            correct_sender_nonce(
+                data.env.tx.caller,
+                &mut data.journaled_state,
+                &mut data.db,
+                state,
+            )
+            .map_err(|err| err.string_encoded())?;
+            broadcast_key(
+                state,
+                inner.0,
+                caller,
+                data.env.cfg.chain_id,
+                data.journaled_state.depth(),
+                false,
+            )?
         }
         HEVMCalls::StopBroadcast(_) => {
             state.broadcast = None;
