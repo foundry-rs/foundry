@@ -158,12 +158,7 @@ The input can be:
         bits: String,
         #[clap(long = "--base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "shr")]
@@ -175,12 +170,7 @@ The input can be:
         bits: String,
         #[clap(long = "--base-in", help = "The input base")]
         base_in: Option<String>,
-        #[clap(
-            long = "--base-out",
-            help = "The output base",
-            default_value = "16",
-            parse(try_from_str = parse_base)
-        )]
+        #[clap(long = "--base-out", help = "The output base", default_value = "16")]
         base_out: String,
     },
     #[clap(name = "--to-unit")]
@@ -761,7 +751,7 @@ Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline
 
 pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
-        NameOrAddress::Address(s.parse::<Address>()?)
+        NameOrAddress::Address(s.parse()?)
     } else {
         NameOrAddress::Name(s.into())
     })
@@ -778,15 +768,7 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
 }
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
-    Ok(H256::from_uint(&U256::from(
-        Numeric::from_str(s).map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))?,
-    )))
-}
-
-fn parse_base(s: &str) -> eyre::Result<String> {
-    Ok(match s {
-        "10" | "dec" => "10".to_string(),
-        "16" | "hex" => "16".to_string(),
-        _ => eyre::bail!("Provided base is not a valid."),
-    })
+    Numeric::from_str(s)
+        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
+        .and_then(|n| Ok(H256::from_uint(&n.into())))
 }
