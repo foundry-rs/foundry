@@ -246,7 +246,7 @@ pub fn value_to_abi(
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
             let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_little_endian(&v))
+            Ok(U256::from_big_endian(&v))
         } else {
             U256::from_dec_str(v).map_err(|e| e.to_string())
         }
