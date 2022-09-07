@@ -503,7 +503,7 @@ pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
 // Gets pretty print strings for tokens
 pub fn format_token(param: &Token) -> String {
     match param {
-        Token::Address(addr) => format!("{}", to_checksum(addr, None)),
+        Token::Address(addr) => to_checksum(addr, None),
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(bytes)),
         Token::Int(num) => format!("{}", I256::from_raw(*num)),

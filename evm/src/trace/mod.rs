@@ -451,7 +451,7 @@ impl Default for CallTrace {
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let address = format!("{}", to_checksum(&self.address, None));
+        let address = to_checksum(&self.address, None);
         if self.created() {
             write!(
                 f,
