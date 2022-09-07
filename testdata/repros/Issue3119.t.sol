@@ -22,14 +22,13 @@ contract Issue3119Test is DSTest {
 }
 
 contract FortressSwap {
-
     address owner;
 
-    constructor(address _owner ) {
+    constructor(address _owner) {
         owner = _owner;
     }
 
-    function updateOwner(address new_owner)  public {
+    function updateOwner(address new_owner) public {
         require(msg.sender == owner, "must be owner");
         owner = new_owner;
     }
