@@ -47,6 +47,7 @@ pub struct Prank {
     pub single_call: bool,
 }
 
+/// Sets up broadcasting from a script using `origin` as the sender
 fn broadcast(
     state: &mut Cheatcodes,
     origin: Address,
@@ -68,6 +69,8 @@ fn broadcast(
     Ok(Bytes::new())
 }
 
+/// Sets up broadcasting from a script with the sender derived from `private_key`
+/// Adds this private key to `state`'s `script_wallets` vector to later be used for signing
 fn broadcast_key(
     state: &mut Cheatcodes,
     private_key: U256,
@@ -90,9 +93,9 @@ fn broadcast_key(
     let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
-    state.script_wallets.push(wallet.clone());
-
     let origin = wallet.address();
+
+    state.script_wallets.push(wallet);
 
     broadcast(state, origin, original_caller, depth, single_call)
 }
