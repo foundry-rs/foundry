@@ -96,7 +96,8 @@ impl<'a> FuzzedExecutor<'a> {
             (self.config.dictionary_weight, fuzz_calldata_from_state(func.clone(), state.clone())),
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
-        let run_result = self.runner.clone().run(&strat, |calldata| {
+        let mut runner = self.runner.clone();
+        let run_result = runner.run(&strat, |calldata| {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
@@ -115,7 +116,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME: Too many rejects"))
+                return Err(TestCaseError::reject("ASSUME cheatcode"));
             }
 
             let success = self.executor.is_success(
@@ -179,7 +180,7 @@ impl<'a> FuzzedExecutor<'a> {
 
         match run_result {
             Err(TestError::Abort(reason)) => {
-                result.reason = Some(reason.to_string());
+                result.reason = Some(format!("{}\nFuzzing run stats:\n{}", reason, runner));
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
