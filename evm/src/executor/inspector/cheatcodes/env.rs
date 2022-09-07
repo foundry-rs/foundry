@@ -94,7 +94,7 @@ fn broadcast_key(
 
     let origin = wallet.address();
 
-    return broadcast(state, origin, original_caller, depth, single_call)
+    broadcast(state, origin, original_caller, depth, single_call)
 }
 
 fn prank(
