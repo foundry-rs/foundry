@@ -49,7 +49,9 @@ impl<'a> ContractVisitor<'a> {
                     "The contract's AST node is missing a list of linearized base contracts"
                 )
             })?;
-        self.base_contract_node_ids.extend(linearized_base_contracts);
+
+        // We skip the first ID because that's the ID of the contract itself
+        self.base_contract_node_ids.extend(&linearized_base_contracts[1..]);
 
         // Find all functions and walk their AST
         for node in contract_ast.nodes {
@@ -522,8 +524,6 @@ impl SourceAnalyzer {
                         })
                         .clone(),
                 )?;
-                let base_contract_node_ids: Vec<usize> =
-                    base_contract_node_ids.into_iter().collect();
 
                 let is_test = items.iter().any(|item| {
                     if let CoverageItemKind::Function { name } = &item.kind {
@@ -538,7 +538,7 @@ impl SourceAnalyzer {
                 if !is_test {
                     self.contract_bases.insert(
                         contract_id.clone(),
-                        base_contract_node_ids[1..]
+                        base_contract_node_ids
                             .iter()
                             .filter_map(|base_contract_node_id| {
                                 self.contract_ids.get(base_contract_node_id).cloned()
