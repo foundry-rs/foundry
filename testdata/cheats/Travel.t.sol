@@ -12,9 +12,8 @@ contract ChainIdTest is DSTest {
         assertEq(block.chainid, 10, "chainId switch failed");
     }
 
-    function testChainIdFuzzed(uint128 jump) public {
-        uint256 pre = block.chainid;
-        cheats.chainId(block.chainid + jump);
-        assertEq(block.chainid, pre + jump, "chainId switch failed");
+    function testChainIdFuzzed(uint64 chainId) public {
+        cheats.chainId(chainId);
+        assertEq(block.chainid, chainId, "chainId switch failed");
     }
 }
