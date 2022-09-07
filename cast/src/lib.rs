@@ -21,11 +21,7 @@ use foundry_common::fmt::*;
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
 use rustc_hex::{FromHexIter, ToHex};
-use std::{
-    ops::{Shl, Shr},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
@@ -62,7 +58,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -113,7 +109,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -657,21 +653,10 @@ pub enum InterfacePath {
 
 pub struct SimpleCast;
 impl SimpleCast {
-    /// Converts UTF-8 text input to hex
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let bin = Cast::from_utf8("yo");
-    /// assert_eq!(bin, "0x796f")
-    /// ```
-    pub fn from_utf8(s: &str) -> String {
-        let s: String = s.as_bytes().to_hex();
-        format!("0x{s}")
-    }
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
+    ///
     /// ```no_run
     /// use cast::SimpleCast as Cast;
     /// use cast::InterfacePath;
@@ -739,18 +724,86 @@ impl SimpleCast {
             })
             .collect::<Result<Vec<InterfaceSource>>>()
     }
+
+    /// Returns maximum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MAX, Cast::max_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub const fn max_int() -> Result<I256> {
+        Ok(I256::MAX)
+    }
+
+    /// Returns maximum U256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(U256::MAX, Cast::max_uint()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub const fn max_uint() -> Result<U256> {
+        Ok(U256::MAX)
+    }
+
+    /// Returns minimum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MIN, Cast::min_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub const fn min_int() -> Result<I256> {
+        Ok(I256::MIN)
+    }
+
+    /// Converts UTF-8 text input to hex
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_utf8("yo"), "0x796f");
+    ///     assert_eq!(Cast::from_utf8("Hello, World!"), "0x48656c6c6f2c20576f726c6421");
+    ///     assert_eq!(Cast::from_utf8("TurboDappTools"), "0x547572626f44617070546f6f6c73");
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_utf8(s: &str) -> String {
+        let s: String = s.as_bytes().to_hex();
+        format!("0x{s}")
+    }
+
     /// Converts hex data into text data
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!("Hello, World!", Cast::ascii("48656c6c6f2c20576f726c6421")?);
-    ///     assert_eq!("TurboDappTools", Cast::ascii("0x547572626f44617070546f6f6c73")?);
+    ///     assert_eq!(Cast::to_ascii("0x796f")?, "yo");
+    ///     assert_eq!(Cast::to_ascii("48656c6c6f2c20576f726c6421")?, "Hello, World!");
+    ///     assert_eq!(Cast::to_ascii("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn ascii(hex: &str) -> Result<String> {
+    pub fn to_ascii(hex: &str) -> Result<String> {
         let hex_trimmed = hex.trim_start_matches("0x");
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();
@@ -758,24 +811,6 @@ impl SimpleCast {
             ascii.push(letter.unwrap() as char);
         }
         Ok(ascii)
-    }
-
-    /// Converts fixed point number into specified number of decimals
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
-    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
-        Ok(parse_units(value, decimals).unwrap())
     }
 
     /// Converts hex input to decimal
@@ -794,51 +829,40 @@ impl SimpleCast {
         Ok(U256::from_str(hex)?)
     }
 
-    /// Returns maximum I256 value
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::I256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(I256::MAX, Cast::max_int()?);
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn max_int() -> Result<I256> {
-        Ok(I256::MAX)
-    }
-
-    /// Returns minimum I256 value
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::I256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(I256::MIN, Cast::min_int()?);
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn min_int() -> Result<I256> {
-        Ok(I256::MIN)
-    }
-    /// Returns maximum U256 value
+    /// Converts decimal input to hex
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(U256::MAX, Cast::max_uint()?);
+    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("424242")?), "0x67932");
+    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("1234")?), "0x4d2");
+    ///     assert_eq!(Cast::to_hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn max_uint() -> Result<U256> {
-        Ok(U256::MAX)
+    pub fn to_hex(u: U256) -> String {
+        format!("{:#x}", u)
+    }
+
+    /// Converts fixed point number into specified number of decimals
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
+        Ok(parse_units(value, decimals).unwrap())
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -869,6 +893,7 @@ impl SimpleCast {
             Ok(value)
         }
     }
+
     /// Decodes abi-encoded hex input or output
     ///
     /// ```
@@ -943,24 +968,6 @@ impl SimpleCast {
         Ok(format!("0x{encoded}"))
     }
 
-    /// Converts decimal input to hex
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::U256;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("424242")?), "0x67932");
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("1234")?), "0x4d2");
-    ///     assert_eq!(Cast::hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn hex(u: U256) -> String {
-        format!("{:#x}", u)
-    }
-
     /// Concatencates hex strings
     ///
     /// ```
@@ -1001,9 +1008,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
-        let num_u256 = U256::from_str_radix(value, 10)?;
-        let num_hex = format!("{:x}", num_u256);
-        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+        let n = U256::from_str_radix(value, 10)?;
+        Ok(format!("0x{:064x}", n))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -1035,29 +1041,56 @@ impl SimpleCast {
             Some(b'-') => (Sign::Negative, &value[1..]),
             _ => (Sign::Positive, value),
         };
+        let mut n = U256::from_str_radix(value, 10)?;
 
-        let mut num = U256::from_str_radix(value, 10)?;
         if matches!(sign, Sign::Negative) {
-            num = (!num).overflowing_add(U256::one()).0;
+            n = (!n).overflowing_add(U256::one()).0;
         }
-        let num_hex = format!("{:x}", num);
-        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+
+        // same as to_uint256
+        Ok(format!("0x{:064x}", n))
     }
 
+    /// Performs the left shift operation (<<) on a number
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::left_shift("16", "10", 10)?, 0x4000.into());
+    ///     assert_eq!(Cast::left_shift("255", "16", 10)?, 0xff0000.into());
+    ///     assert_eq!(Cast::left_shift("0xff", "16", 16)?, 0xff0000.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn left_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
         let value = U256::from_str_radix(value, base_in)
-            .wrap_err("Cannot parse input as base {base_in}")?;
+            .wrap_err(format!("Cannot parse input as base {}", base_in))?;
         let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
 
-        Ok(value.shl(bits))
+        Ok(value << bits)
     }
 
+    /// Performs the right shift operation (>>) on a number
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::right_shift("0x4000", "10", 16)?, 16.into());
+    ///     assert_eq!(Cast::right_shift("16711680", "16", 10)?, 0xff.into());
+    ///     assert_eq!(Cast::right_shift("0xff0000", "16", 16)?, 0xff.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn right_shift(value: &str, bits: &str, base_in: u32) -> Result<U256> {
         let value = U256::from_str_radix(value, base_in)
-            .wrap_err("Cannot parse input as base {base_in}")?;
+            .wrap_err(format!("Cannot parse input as base {}", base_in))?;
         let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
 
-        Ok(value.shr(bits))
+        Ok(value >> bits)
     }
 
     /// Converts an eth amount into a specified unit
@@ -1066,51 +1099,27 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_unit("1 wei".to_string(), "wei".to_string())?, "1");
-    ///     assert_eq!(Cast::to_unit("1".to_string(), "wei".to_string())?, "1");
-    ///     assert_eq!(Cast::to_unit("1ether".to_string(), "wei".to_string())?, "1000000000000000000");
-    ///     assert_eq!(Cast::to_unit("100 gwei".to_string(), "gwei".to_string())?, "100");
+    ///     assert_eq!(Cast::to_unit("1 wei", "wei")?, "1");
+    ///     assert_eq!(Cast::to_unit("1", "wei")?, "1");
+    ///     assert_eq!(Cast::to_unit("1ether", "wei")?, "1000000000000000000");
+    ///     assert_eq!(Cast::to_unit("100 gwei", "gwei")?, "100");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_unit(value: String, unit: String) -> Result<String> {
+    pub fn to_unit(value: &str, unit: &str) -> Result<String> {
         let value = U256::from(LenientTokenizer::tokenize_uint(&value)?);
 
-        Ok(match &unit[..] {
-            "ether" => ethers_core::utils::format_units(value, 18)?
+        Ok(match unit {
+            "eth" | "ether" => ethers_core::utils::format_units(value, 18)?
                 .trim_end_matches(".000000000000000000")
                 .to_string(),
             "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?
                 .trim_end_matches(".000000000")
                 .to_string(),
             "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
-            _ => return Err(eyre::eyre!("invalid unit")),
+            _ => eyre::bail!("invalid unit"),
         })
-    }
-
-    /// Converts an eth amount into wei
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1000000000000000000");
-    ///     assert_eq!(Cast::to_wei(100.into(), "gwei".to_string())?, "100000000000");
-    ///     assert_eq!(Cast::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
-    ///     assert_eq!(Cast::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn to_wei(value: f64, unit: String) -> Result<String> {
-        let value = value.to_string();
-        Ok(match &unit[..] {
-            "gwei" => ethers_core::utils::parse_units(value, 9),
-            "eth" | "ether" => ethers_core::utils::parse_units(value, 18),
-            _ => ethers_core::utils::parse_units(value, 18),
-        }?
-        .to_string())
     }
 
     /// Converts wei into an eth amount
@@ -1119,40 +1128,44 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
-    ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
-    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.000000000000000010");
-    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.000000000000000100");
-    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "0.000000000000000017");
+    ///     assert_eq!(Cast::from_wei("1", "gwei")?, "0.000000001");
+    ///     assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
+    ///     assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
+    ///     assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
+    ///     assert_eq!(Cast::from_wei("17", "")?, "0.000000000000000017");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn from_wei(value: U256, unit: String) -> Result<String> {
-        Ok(match &unit[..] {
+    pub fn from_wei(value: &str, unit: &str) -> Result<String> {
+        let value = U256::from_dec_str(value)?;
+
+        Ok(match unit {
             "gwei" => ethers_core::utils::format_units(value, 9),
-            "eth" | "ether" => ethers_core::utils::format_units(value, 18),
             _ => ethers_core::utils::format_units(value, 18),
         }?)
     }
 
-    /// Encodes hex data or list of hex data to hexadecimal rlp
+    /// Converts an eth amount into wei
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
-    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
-    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    ///     assert_eq!(Cast::to_wei("1", "")?, "1000000000000000000");
+    ///     assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
+    ///     assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
+    ///     assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
+    ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
-        let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    pub fn to_wei(value: &str, unit: &str) -> Result<String> {
+        Ok(match unit {
+            "gwei" => ethers_core::utils::parse_units(value, 9),
+            _ => ethers_core::utils::parse_units(value, 18),
+        }?
+        .to_string())
     }
 
     /// Decodes rlp encoded list with hex data
@@ -1175,6 +1188,25 @@ impl SimpleCast {
         let bytes = hex::decode(striped_value).expect("Could not decode hex");
         let item = rlp::decode::<Item>(&bytes).expect("Could not decode rlp");
         Ok(format!("{}", item))
+    }
+
+    /// Encodes hex data or list of hex data to hexadecimal rlp
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_rlp("[]").unwrap(),"0xc0".to_string());
+    ///     assert_eq!(Cast::to_rlp("0x22").unwrap(),"0x22".to_string());
+    ///     assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
+    ///     assert_eq!(Cast::to_rlp( "[\"0xf1\",\"f2\"]").unwrap(), "0xc481f181f2".to_string());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_rlp(value: &str) -> Result<String> {
+        let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
+        let item = Item::value_to_item(&val)?;
+        Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1239,14 +1271,14 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
-        let hash: String = match data.as_bytes() {
-            // If has a 0x prefix, read it as hexdata.
-            // If has no 0x prefix, read it as text
-            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?).to_hex(),
-            _ => keccak256(data).to_hex(),
+        let hash = match data.as_bytes() {
+            // 0x prefix => read as hex data
+            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?),
+            // No 0x prefix => read as text
+            _ => keccak256(data),
         };
 
-        Ok(format!("0x{hash}"))
+        Ok(format!("{:?}", H256(hash)))
     }
 
     /// Converts ENS names to their namehash representation
