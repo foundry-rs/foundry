@@ -52,7 +52,7 @@ pub mod util;
 pub use util::DEFAULT_CREATE2_DEPLOYER;
 
 mod config;
-use crate::executor::backend::RevertDiagnostic;
+use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
@@ -174,6 +174,25 @@ impl Cheatcodes {
             .or_else(|| snapshot::apply(self, data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
+    }
+
+    /// Determines the address of the contract and marks it as allowed
+    ///
+    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
+    /// automatically we need to determine the new address
+    fn allow_cheatcodes_on_create<DB: DatabaseExt>(
+        &self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &CreateInputs,
+    ) {
+        let old_nonce = data
+            .journaled_state
+            .state
+            .get(&inputs.caller)
+            .map(|acc| acc.info.nonce)
+            .unwrap_or_default();
+        let created_address = get_create_address(inputs, old_nonce);
+        data.db.allow_cheatcode_access(created_address);
     }
 }
 
@@ -492,6 +511,9 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
+        // allow cheatcodes from the address of the new contract
+        self.allow_cheatcodes_on_create(data, call);
+
         // Apply our prank
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
@@ -554,11 +576,6 @@ where
         remaining_gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        // allow cheatcode access for newly deployed contracts
-        if let Some(address) = address {
-            data.db.allow_cheatcode_access(address);
-        }
-
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {

@@ -6,6 +6,7 @@ use crate::{
         inspector::DEFAULT_CREATE2_DEPLOYER,
         snapshot::Snapshots,
     },
+    CALLER, TEST_CONTRACT_ADDRESS,
 };
 use ethers::{
     prelude::{H160, H256, U256},
@@ -1337,8 +1338,13 @@ impl Default for BackendInner {
             next_fork_id: Default::default(),
             persistent_accounts: Default::default(),
             precompile_id: revm::precompiles::SpecId::LATEST,
-            // grant the cheatcode address access to execute cheatcodes itself
-            cheatcode_access_accounts: HashSet::from([CHEATCODE_ADDRESS]),
+            // grant the cheatcode,default test and caller address access to execute cheatcodes
+            // itself
+            cheatcode_access_accounts: HashSet::from([
+                CHEATCODE_ADDRESS,
+                TEST_CONTRACT_ADDRESS,
+                CALLER,
+            ]),
         }
     }
 }
