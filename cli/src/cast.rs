@@ -119,10 +119,6 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(address)?;
             println!("{}", SimpleCast::to_checksum_address(&val)?);
         }
-        Subcommands::ToBytes32 { bytes } => {
-            let val = unwrap_or_stdin(bytes)?;
-            println!("{}", SimpleCast::to_bytes32(&val)?);
-        }
         Subcommands::ToUint256 { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_uint256(&val)?);
@@ -150,6 +146,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToRlp { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_rlp(&val)?);
+        }
+        Subcommands::ToBytes32 { bytes } => {
+            let val = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleCast::to_bytes32(&val)?);
         }
         Subcommands::FormatBytes32String { string } => {
             let val = unwrap_or_stdin(string)?;
