@@ -60,7 +60,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
-            println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
+            println!("{}", SimpleCast::to_hex(U256::from_dec_str(&val)?));
         }
         Subcommands::ConcatHex { data } => {
             println!("{}", SimpleCast::concat_hex(data))
@@ -100,7 +100,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToAscii { hexdata } => {
             let val = unwrap_or_stdin(hexdata)?;
-            println!("{}", SimpleCast::ascii(&val)?);
+            println!("{}", SimpleCast::to_ascii(&val)?);
         }
         Subcommands::FromFix { decimals, value } => {
             let val = unwrap_or_stdin(value)?;
@@ -148,28 +148,16 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::ToUnit { value, unit } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_unit(val, unit)?);
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_unit(&value, &unit)?);
         }
         Subcommands::ToWei { value, unit } => {
-            let val = unwrap_or_stdin(value)?;
-            println!(
-                "{}",
-                SimpleCast::to_wei(
-                    val.parse::<f64>()?,
-                    unit.unwrap_or_else(|| String::from("eth"))
-                )?
-            );
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_wei(&value, &unit)?);
         }
         Subcommands::FromWei { value, unit } => {
-            let val = unwrap_or_stdin(value)?;
-            println!(
-                "{}",
-                SimpleCast::from_wei(
-                    U256::from_dec_str(&val)?,
-                    unit.unwrap_or_else(|| String::from("eth"))
-                )?
-            );
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_wei(&value, &unit)?);
         }
         Subcommands::ToRlp { value } => {
             let val = unwrap_or_stdin(value)?;
@@ -498,6 +486,7 @@ where
     })
 }
 
+// TODO: Integrate det_base_out and move to CastSimple as get_base(&str,Option<String>)->Result<u32>
 fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
     match base_in {
         Some(base_in) => match base_in.as_str() {
@@ -520,16 +509,35 @@ fn det_base_in(value: &str, base_in: Option<String>) -> eyre::Result<u32> {
 
 fn det_base_out(base_out: &str) -> eyre::Result<u32> {
     match base_out {
-        "10" | "dec" => Ok(10),
-        "16" | "hex" => Ok(16),
-        _ => eyre::bail!("Provided base is not a valid."),
+        "2" | "bin" | "binary" => Ok(2),
+        "8" | "oct" | "octal" => Ok(8),
+        "10" | "dec" | "decimal" => Ok(10),
+        "16" | "hex" | "hexadecimal " => Ok(16),
+        _ => Err(eyre::eyre!(
+            r#"Invalid output base. Possible options:
+2, bin, binary
+8, oct, octal
+10, dec, decimal
+16, hex, hexadecimal
+            "#
+        )),
     }
 }
 
-fn format_uint(val: U256, base_out: u32) -> eyre::Result<String> {
-    match base_out {
-        10 => Ok(val.to_string()),
-        16 => Ok(format!("0x{:x}", val)),
-        _ => Err(eyre::eyre!("Unknown output base: {base_out}")),
+// TODO: Move to CastSimple as to_base(&str, &str) -> Result<String>
+fn format_uint(val: U256, base: u32) -> eyre::Result<String> {
+    match base {
+        // Binary and Octal traits are not implemented for primitive-types types
+        2 | 8 => {
+            let arr = val.0;
+            let is_b = base == 2;
+            let prefix = if is_b { "0b" } else { "0o" };
+            let f = if is_b { |v: u64| format!("{:b}", v) } else { |v: u64| format!("{:o}", v) };
+            // little endian
+            Ok(format!("{}{}{}{}{}", prefix, f(arr[3]), f(arr[2]), f(arr[1]), f(arr[0])))
+        }
+        10 => Ok(format!("{}", val)),
+        16 => Ok(format!("{:#x}", val)),
+        _ => Err(eyre::eyre!("Invalid output base: {base}")),
     }
 }
