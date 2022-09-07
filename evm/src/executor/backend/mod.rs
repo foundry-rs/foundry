@@ -825,11 +825,14 @@ impl DatabaseExt for Backend {
                 // same effect as selecting (`select_fork`) by discarding
                 // non-persistent storage from the journaled_state. This which will
                 // reset cached state from the previous block
-                let persitent_addrs = self.inner.persistent_accounts.clone();
+                let mut persistent_addrs = self.inner.persistent_accounts.clone();
+                // we also want to copy the caller state here
+                persistent_addrs.extend(self.caller_address());
+
                 let active = self.inner.get_fork_mut(active_idx);
                 active.journaled_state = self.fork_init_journaled_state.clone();
                 active.journaled_state.depth = journaled_state.depth;
-                for addr in persitent_addrs {
+                for addr in persistent_addrs {
                     clone_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
                 }
                 *journaled_state = active.journaled_state.clone();
