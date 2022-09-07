@@ -116,7 +116,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME cheatcode"));
+                return Err(TestCaseError::reject("ASSUME cheatcode"))
             }
 
             let success = self.executor.is_success(
