@@ -359,7 +359,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast_key(
                 state,
                 inner.0,
@@ -396,7 +396,7 @@ pub fn apply<DB: DatabaseExt>(
                 &mut data.db,
                 state,
             )
-            .map_err(|err| err.string_encoded())?;
+            .map_err(|err| err.encode_string())?;
             broadcast_key(
                 state,
                 inner.0,
