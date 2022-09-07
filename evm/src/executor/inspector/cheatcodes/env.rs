@@ -287,6 +287,9 @@ pub fn apply<DB: DatabaseExt>(
             abi::encode(&[Token::Uint(account.info.nonce.into())]).into()
         }
         HEVMCalls::ChainId(inner) => {
+            if inner.0 > U256::from(u64::MAX) {
+                return Err("Chain ID must be less than 2^64".to_string().encode().into())
+            }
             data.env.cfg.chain_id = inner.0;
             Bytes::new()
         }
