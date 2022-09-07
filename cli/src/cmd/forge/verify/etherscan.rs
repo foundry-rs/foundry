@@ -48,7 +48,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         let retry: Retry = args.retry.into();
         let resp = retry.run_async(|| {
             async {
-                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::checksum_address(&verify_args.address));
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, SimpleCast::to_checksum_address(&verify_args.address));
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await

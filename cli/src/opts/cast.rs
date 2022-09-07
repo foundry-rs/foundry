@@ -281,9 +281,10 @@ Examples:
     #[clap(visible_alias = "c")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call(CallArgs),
+    #[clap(name = "calldata")]
     #[clap(visible_alias = "cd")]
     #[clap(about = "ABI-encode a function with arguments.")]
-    Calldata {
+    CalldataEncode {
         #[clap(
             help = "The function signature.",
             long_help = "The function signature in the form <name>(<types...>)",
