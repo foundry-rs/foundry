@@ -1,8 +1,9 @@
 use super::{ClapChain, EthereumOpts};
 use crate::{
     cmd::cast::{
-        estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, rpc::RpcArgs,
-        run::RunArgs, send::SendTxArgs, wallet::WalletSubcommands,
+        call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+        interface::InterfaceArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
+        wallet::WalletSubcommands,
     },
     utils::parse_u256,
 };
@@ -289,18 +290,7 @@ Examples:
     #[clap(name = "call")]
     #[clap(visible_alias = "c")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
-    Call {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address), value_name = "ADDRESS")]
-        address: NameOrAddress,
-        #[clap(value_name = "SIG")]
-        sig: String,
-        #[clap(value_name = "ARGS")]
-        args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id), value_name = "BLOCK")]
-        block: Option<BlockId>,
-        #[clap(flatten)]
-        eth: EthereumOpts,
-    },
+    Call(CallArgs),
     #[clap(visible_alias = "cd")]
     #[clap(about = "ABI-encode a function with arguments.")]
     Calldata {

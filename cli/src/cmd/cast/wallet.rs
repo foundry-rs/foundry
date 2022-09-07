@@ -25,7 +25,7 @@ pub enum WalletSubcommands {
         #[clap(
             long,
             short,
-            help = r#"Depreacted: prompting for a hidden password is now the default.
+            help = r#"Deprecated: prompting for a hidden password is now the default.
             Triggers a hidden password prompt for the JSON keystore."#,
             conflicts_with = "unsafe-password",
             requires = "path"
@@ -105,8 +105,7 @@ impl WalletSubcommands {
                         password
                     } else {
                         // if no --unsafe-password was provided read via stdin
-                        println!("Insert secret:");
-                        rpassword::read_password()?
+                        rpassword::prompt_password("Enter secret: ")?
                     };
 
                     let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password, None)?;
