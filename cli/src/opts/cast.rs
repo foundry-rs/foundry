@@ -203,8 +203,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--from-wei")]
     #[clap(visible_aliases = &["from-wei", "fw"])]
@@ -213,8 +213,8 @@ Examples:
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
-        #[clap(value_name = "UNIT")]
-        unit: Option<String>,
+        #[clap(value_name = "UNIT", default_value = "eth")]
+        unit: String,
     },
     #[clap(name = "--to-rlp")]
     #[clap(about = "RLP encodes hex data, or an array of hex data")]
