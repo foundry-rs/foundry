@@ -183,7 +183,7 @@ impl ProjectCompiler {
                 for (_, contracts) in compiled_contracts.into_iter() {
                     for (name, contract) in contracts {
                         let size = contract
-                            .get_bytecode_bytes()
+                            .get_deployed_bytecode_bytes()
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
 
