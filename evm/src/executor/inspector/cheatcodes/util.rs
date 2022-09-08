@@ -1,6 +1,7 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
+    error::encode_error_with_hints,
     executor::backend::error::{DatabaseError, DatabaseResult},
 };
 use bytes::{BufMut, Bytes, BytesMut};
@@ -255,12 +256,13 @@ pub fn value_to_abi(
 }
 
 pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    if private_key.is_zero() ||
+        private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes())
+    {
+        return Err(encode_error_with_hints("Invalid private key.", vec![
+            "Private keys must be greater than 0".to_string(),
+            "Private keys must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337".to_string(),
+        ]));
     }
 
     let mut bytes: [u8; 32] = [0; 32];
