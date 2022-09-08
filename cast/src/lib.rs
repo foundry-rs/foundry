@@ -6,7 +6,8 @@ use chrono::NaiveDateTime;
 use ethers_contract::RawAbi;
 use ethers_core::{
     abi::{
-        token::{LenientTokenizer, Tokenizer}, Function, HumanReadableParser, Token,
+        token::{LenientTokenizer, Tokenizer},
+        Function, HumanReadableParser, Token,
     },
     types::{Chain, *},
     utils::{
