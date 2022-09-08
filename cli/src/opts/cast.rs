@@ -780,6 +780,5 @@ pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
     Numeric::from_str(s)
-        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}"))
-        .and_then(|n| Ok(H256::from_uint(&n.into())))
+        .map_err(|e| eyre::eyre!("Could not parse slot number: {e}")).map(|n| H256::from_uint(&n.into()))
 }

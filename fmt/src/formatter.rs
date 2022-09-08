@@ -3096,7 +3096,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    #[allow(clippy::unused_peekable)]
+    #[allow(clippy::unused_self)]
     fn visit_try(
         &mut self,
         loc: Loc,
