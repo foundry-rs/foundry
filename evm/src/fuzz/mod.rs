@@ -96,8 +96,7 @@ impl<'a> FuzzedExecutor<'a> {
             (self.config.dictionary_weight, fuzz_calldata_from_state(func.clone(), state.clone())),
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
-        let mut runner = self.runner.clone();
-        let run_result = runner.run(&strat, |calldata| {
+        let run_result = self.runner.clone().run(&strat, |calldata| {
             let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
