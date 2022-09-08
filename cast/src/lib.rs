@@ -2,10 +2,10 @@
 //!
 //! Contains core function implementation for `cast`
 use crate::rlp_converter::Item;
+use base::{Base, NumberWithBase, ToBase};
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
-        ethereum_types::FromStrRadixErrKind,
         token::{LenientTokenizer, Tokenizer},
         Abi, Function, HumanReadableParser, Token,
     },
@@ -26,6 +26,7 @@ use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
+mod base;
 mod rlp_converter;
 mod tx;
 
@@ -876,8 +877,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_uint256(value: &str) -> Result<String> {
-        let n = U256::from_str_radix(value, 10)?;
-        Ok(format!("0x{:064x}", n))
+        let n = NumberWithBase::parse_uint(value, None)?;
+        Ok(format!("{:#066x}", n))
     }
 
     /// Converts a number into int256 hex string with 0x prefix
@@ -906,10 +907,8 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
-        let n = parse_int(value, 10)?;
-
-        // same as to_uint256
-        Ok(format!("0x{:064x}", n))
+        let n = NumberWithBase::parse_int(value, None)?;
+        Ok(format!("{:#066x}", n))
     }
 
     /// Converts an eth amount into a specified unit
@@ -1059,16 +1058,17 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_base(value: &str, base_in: Option<String>, base_out: &str) -> Result<String> {
-        let base_in = get_base_or_from_str(value, base_in)?;
-        let base_out = get_base(base_out)?;
+        let base_in = Base::unwrap_or_detect(base_in, value)?;
+        let base_out: Base = base_out.parse()?;
         if base_in == base_out {
             return Ok(value.to_string())
         }
 
-        let n = parse_num(value, base_in)?;
-        let s = format_uint(n, base_out, true)?;
+        let mut n = NumberWithBase::parse_int(value, Some(base_in.to_string()))?;
+        n.set_base(base_out);
 
-        Ok(s)
+        // Use Debug fmt
+        Ok(format!("{:#?}", n))
     }
 
     /// Converts hexdata into bytes32 value
@@ -1405,16 +1405,13 @@ impl SimpleCast {
         base_in: Option<String>,
         base_out: &str,
     ) -> Result<String> {
-        let base_in = get_base_or_from_str(value, base_in)?;
-        let base_out = get_base(base_out)?;
+        let base_out: Base = base_out.parse()?;
+        let value = NumberWithBase::parse_uint(value, base_in)?;
+        let bits = NumberWithBase::parse_uint(bits, None)?;
 
-        let value = parse_num(value, base_in)?;
-        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+        let res = value.number() << bits.number();
 
-        let res = value << bits;
-        let res = format_uint(res, base_out, true)?;
-
-        Ok(res)
+        Ok(res.to_base(base_out, true)?)
     }
 
     /// Performs the right shift operation (>>) on a number
@@ -1438,16 +1435,13 @@ impl SimpleCast {
         base_in: Option<String>,
         base_out: &str,
     ) -> Result<String> {
-        let base_in = get_base_or_from_str(value, base_in)?;
-        let base_out = get_base(base_out)?;
+        let base_out: Base = base_out.parse()?;
+        let value = NumberWithBase::parse_uint(value, base_in)?;
+        let bits = NumberWithBase::parse_uint(bits, None)?;
 
-        let value = parse_num(value, base_in)?;
-        let bits = U256::from_dec_str(bits).wrap_err("Cannot parse bits input")?;
+        let res = value.number() >> bits.number();
 
-        let res = value >> bits;
-        let res = format_uint(res, base_out, true)?;
-
-        Ok(res)
+        Ok(res.to_base(base_out, true)?)
     }
 
     /// Fetches source code of verified contracts from etherscan.
@@ -1515,128 +1509,6 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
-}
-
-fn parse_int(s: &str, base: u32) -> Result<U256> {
-    let (s, is_neg) = match s.as_bytes().first() {
-        Some(b'+') => (&s[1..], false),
-        Some(b'-') => (&s[1..], true),
-        _ => (s, false),
-    };
-    let mut n = U256::from_str_radix(s, base)?;
-
-    if is_neg {
-        n = (!n).overflowing_add(U256::one()).0;
-    }
-
-    Ok(n)
-}
-
-fn parse_uint(s: &str, base: u32) -> Result<U256> {
-    U256::from_str_radix(s, base).map_err(|e| {
-        if matches!(e.kind(), FromStrRadixErrKind::UnsupportedRadix) {
-            eyre::eyre!("Numbers in base {} are currently not supported as input.", base)
-        } else {
-            eyre::eyre!(e)
-        }
-    })
-}
-
-fn parse_num(s: &str, base: u32) -> Result<U256> {
-    // TODO: Parse from binary or octal str into U256
-    if base == 10 { parse_int(s, 10) } else { parse_uint(s, base) }
-        .map_err(|e| eyre::eyre!("Failed to parse value: {}", e))
-}
-
-fn get_base(base: &str) -> Result<u32> {
-    match base {
-        "2" | "bin" | "binary" => Ok(2),
-        "8" | "oct" | "octal" => Ok(8),
-        "10" | "dec" | "decimal" => Ok(10),
-        "16" | "hex" | "hexadecimal " => Ok(16),
-        _ => Err(eyre::eyre!(
-            r#"Invalid base. Possible options:
-2, bin, binary
-8, oct, octal
-10, dec, decimal
-16, hex, hexadecimal
-            "#
-        )),
-    }
-}
-
-fn get_base_from_str(s: &str) -> Result<u32> {
-    match s {
-        _ if s.starts_with("0b") => Ok(2),
-        _ if s.starts_with("0o") => Ok(8),
-        _ if s.starts_with("0x") => Ok(16),
-        // No prefix => first try parsing as decimal
-        _ => match U256::from_str_radix(s, 10) {
-            // Ambiguous, can be both
-            Ok(_) => {
-                Err(eyre::eyre!(
-                    "Could not autodetect base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter."
-                ))
-            }
-            // Try parsing as hexadecimal
-            Err(_) => match U256::from_str_radix(s, 16) {
-                Ok(_) => Ok(16),
-                Err(e) => Err(eyre::eyre!(
-                    "Could not autodetect base neither as decimal nor as hexadecimal: {}",
-                    e
-                )),
-            },
-        }
-    }
-}
-
-fn get_base_or_from_str(s: &str, base: Option<String>) -> Result<u32> {
-    match base {
-        Some(base) => get_base(&base),
-        None => get_base_from_str(s),
-    }
-}
-
-fn format_uint(val: impl Into<U256>, base: u32, add_prefix: bool) -> eyre::Result<String> {
-    let val: U256 = val.into();
-    let prefix = if !add_prefix {
-        ""
-    } else {
-        match base {
-            2 => "0b",
-            8 => "0o",
-            16 => "0x",
-            _ => "",
-        }
-    };
-    let s = match base {
-        // Binary and Octal traits are not implemented for primitive-types types
-        2 | 8 => {
-            let mut s = String::new();
-            let mut latch = false;
-            let is_b = base == 2;
-            let f = if is_b { |v: u8| format!("{:08b}", v) } else { |v: u8| format!("{:o}", v) };
-            // little endian so rev
-            for ch in val.0.iter().rev() {
-                let bytes = ch.to_be_bytes();
-                for byte in bytes {
-                    if !latch {
-                        latch = byte != 0;
-                    }
-
-                    if latch {
-                        s.push_str(&f(byte));
-                    }
-                }
-            }
-            s
-        }
-        10 => format!("{}", val),
-        16 => format!("{:x}", val),
-        _ => eyre::bail!("Invalid base: {}", base),
-    };
-
-    Ok(format!("{}{}", prefix, s))
 }
 
 #[cfg(test)]

@@ -1,11 +1,11 @@
 use ethers_core::{
-    abi::ethereum_types::{FromStrRadixErr, FromStrRadixErrKind},
+    abi::ethereum_types::FromStrRadixErrKind,
     types::{Sign, I256, U256},
 };
-use eyre::{Context, ContextCompat, Result};
+use eyre::Result;
 use std::{
-    convert::TryFrom,
-    fmt::{Debug, Display, Formatter, Result as FmtResult},
+    convert::{Infallible, TryFrom, TryInto},
+    fmt::{Binary, Debug, Display, Formatter, LowerHex, Octal, Result as FmtResult},
     iter::FromIterator,
     str::FromStr,
 };
@@ -37,18 +37,19 @@ impl FromStr for Base {
     type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().as_str() {
             "2" | "b" | "bin" | "binary" => Ok(Self::Binary),
             "8" | "o" | "oct" | "octal" => Ok(Self::Octal),
             "10" | "d" | "dec" | "decimal" => Ok(Self::Decimal),
-            "16" | "h" | "hex" | "hexadecimal " => Ok(Self::Hexadecimal),
-            _ => Err(eyre::eyre!(
-                r#"Invalid base. Possible options:
+            "16" | "h" | "hex" | "hexadecimal" => Ok(Self::Hexadecimal),
+            s => Err(eyre::eyre!(
+                r#"Invalid base "{}". Possible options:
 2, b, bin, binary
 8, o, oct, octal
 10, d, dec, decimal
 16, h, hex, hexadecimal
-                "#
+                "#,
+                s
             )),
         }
     }
@@ -117,31 +118,38 @@ impl From<Base> for String {
 }
 
 impl Base {
-    pub fn unwrap_or_detect(base: Option<Self>, s: impl AsRef<str>) -> Result<Self> {
-        base.map_or_else(|| Self::detect(s), |base| Ok(base))
+    pub fn unwrap_or_detect(base: Option<String>, s: impl AsRef<str>) -> Result<Self> {
+        match base {
+            Some(base) => base.try_into(),
+            None => Self::detect(s),
+        }
     }
 
     /// Try parsing a number's base from a string.
     pub fn detect(s: impl AsRef<str>) -> Result<Self> {
         let s = s.as_ref();
         match s {
+            // Ignore sign
+            _ if s.starts_with(['+', '-']) => Self::detect(&s[1..]),
+            // Cannot verify binary and octal as they cannot be parsed into U256
             _ if s.starts_with("0b") => Ok(Self::Binary),
             _ if s.starts_with("0o") => Ok(Self::Octal),
-            _ if s.starts_with("0x") => Ok(Self::Hexadecimal),
+            _ if s.starts_with("0x") => match U256::from_str_radix(s, 16) {
+                Ok(_) => Ok(Self::Hexadecimal),
+                Err(e) => Err(eyre::eyre!("could not parse hex value: {}", e)),
+            },
             // No prefix => first try parsing as decimal
             _ => match U256::from_str_radix(s, 10) {
                 Ok(_) => {
-                    match U256::from_str_radix(s, 16) {
-                        // Can be both, ambiguous
-                        Ok(_) => Err(eyre::eyre!("Could not autodetect base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter.")),
-                        // Can only be decimal
-                        Err(_) => Ok(Self::Decimal),
-                    }
+                    // Can be both, ambiguous but default to Decimal
+                    #[cfg_attr(rustfmt, rustfmt_skip)]
+                    // Err(eyre::eyre!("Could not autodetect base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter."))
+                    Ok(Self::Decimal)
                 }
                 Err(_) => match U256::from_str_radix(s, 16) {
                     Ok(_) => Ok(Self::Hexadecimal),
                     Err(e) => Err(eyre::eyre!(
-                        "Could not autodetect base neither as decimal nor as hexadecimal: {}",
+                        "could not autodetect base neither as decimal nor as hexadecimal: {}",
                         e
                     )),
                 },
@@ -169,20 +177,41 @@ pub struct NumberWithBase {
     base: Base,
 }
 
+// Format using self.base
 impl Debug for NumberWithBase {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        Display::fmt(self, f)
-    }
-}
-
-impl Display for NumberWithBase {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let prefix = self.base.prefix();
         if self.number.is_zero() {
             f.pad_integral(true, prefix, "0")
         } else {
-            f.pad_integral(self.is_positive, prefix, &self.format(false))
+            // Debug adds sign even if we're not formatting as decimal
+            let is_negative = matches!(self.base, Base::Decimal) && !self.is_positive;
+            f.pad_integral(!is_negative, prefix, &self.format(false))
         }
+    }
+}
+
+impl Binary for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(&self.with_base(Base::Binary), f)
+    }
+}
+
+impl Display for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(&self.with_base(Base::Decimal), f)
+    }
+}
+
+impl Octal for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(&self.with_base(Base::Octal), f)
+    }
+}
+
+impl LowerHex for NumberWithBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        Debug::fmt(&self.with_base(Base::Hexadecimal), f)
     }
 }
 
@@ -231,18 +260,22 @@ impl NumberWithBase {
         Self { number: number.into(), is_positive, base: base.into() }
     }
 
+    pub fn with_base(&self, base: impl Into<Base>) -> Self {
+        Self::new(self.number, self.is_positive, base)
+    }
+
     /// Parses a string slice into a signed integer. If base is None then it tries to determine base
     /// from the prefix, otherwise defaults to Decimal.
-    pub fn parse_int(s: &str, base: Option<Base>) -> Result<Self> {
-        let base = Base::unwrap_or_detect(base, s)/*.unwrap_or_default()*/?;
+    pub fn parse_int(s: &str, base: Option<String>) -> Result<Self> {
+        let base = Base::unwrap_or_detect(base, s)?;
         let (number, is_positive) = Self::_parse_int(s, base)?;
         Ok(Self { number, is_positive, base })
     }
 
     /// Parses a string slice into an unsigned integer. If base is None then it tries to determine
     /// base from the prefix, otherwise defaults to Decimal.
-    pub fn parse_uint(s: &str, base: Option<Base>) -> Result<Self> {
-        let base = Base::unwrap_or_detect(base, s)/*.unwrap_or_default()*/?;
+    pub fn parse_uint(s: &str, base: Option<String>) -> Result<Self> {
+        let base = Base::unwrap_or_detect(base, s)?;
         let number = Self::_parse_uint(s, base)?;
         Ok(Self { number, is_positive: true, base })
     }
@@ -345,18 +378,50 @@ impl NumberWithBase {
 
 /// Facilitates formatting an integer into a [Base].
 pub trait ToBase {
-    fn to_base(&self, base: Base, add_prefix: bool) -> String;
+    type Err;
+
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err>;
+}
+
+impl ToBase for NumberWithBase {
+    type Err = Infallible;
+
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
+        Ok(self.with_base(base).format(add_prefix))
+    }
 }
 
 impl ToBase for I256 {
-    fn to_base(&self, base: Base, add_prefix: bool) -> String {
-        NumberWithBase::from(*self).set_base(base).format(add_prefix)
+    type Err = Infallible;
+
+    /// Cannot fail.
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
+        Ok(NumberWithBase::from(*self).set_base(base).format(add_prefix))
     }
 }
 
 impl ToBase for U256 {
-    fn to_base(&self, base: Base, add_prefix: bool) -> String {
-        NumberWithBase::from(*self).set_base(base).format(add_prefix)
+    type Err = Infallible;
+
+    /// Cannot fail.
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
+        Ok(NumberWithBase::from(*self).set_base(base).format(add_prefix))
+    }
+}
+
+impl ToBase for String {
+    type Err = eyre::Report;
+
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
+        str::to_base(self, base, add_prefix)
+    }
+}
+
+impl ToBase for str {
+    type Err = eyre::Report;
+
+    fn to_base(&self, base: Base, add_prefix: bool) -> Result<String, Self::Err> {
+        Ok(self.parse::<NumberWithBase>()?.set_base(base).format(add_prefix))
     }
 }
 
@@ -390,17 +455,43 @@ mod tests {
     }
 
     #[test]
-    fn test_detect() {
+    fn can_parse_base() {
+        assert_eq!("2".parse::<Base>().unwrap(), Binary);
+        assert_eq!("b".parse::<Base>().unwrap(), Binary);
+        assert_eq!("bin".parse::<Base>().unwrap(), Binary);
+        assert_eq!("binary".parse::<Base>().unwrap(), Binary);
+
+        assert_eq!("8".parse::<Base>().unwrap(), Octal);
+        assert_eq!("o".parse::<Base>().unwrap(), Octal);
+        assert_eq!("oct".parse::<Base>().unwrap(), Octal);
+        assert_eq!("octal".parse::<Base>().unwrap(), Octal);
+
+        assert_eq!("10".parse::<Base>().unwrap(), Decimal);
+        assert_eq!("d".parse::<Base>().unwrap(), Decimal);
+        assert_eq!("dec".parse::<Base>().unwrap(), Decimal);
+        assert_eq!("decimal".parse::<Base>().unwrap(), Decimal);
+
+        assert_eq!("16".parse::<Base>().unwrap(), Hexadecimal);
+        assert_eq!("h".parse::<Base>().unwrap(), Hexadecimal);
+        assert_eq!("hex".parse::<Base>().unwrap(), Hexadecimal);
+        assert_eq!("hexadecimal".parse::<Base>().unwrap(), Hexadecimal);
+    }
+
+    #[test]
+    fn can_detect_base() {
         assert_eq!(Base::detect("0b100").unwrap(), Binary);
         assert_eq!(Base::detect("0o100").unwrap(), Octal);
         assert_eq!(Base::detect("100").unwrap(), Decimal);
         assert_eq!(Base::detect("0x100").unwrap(), Hexadecimal);
 
-        Base::detect("0b234abc").unwrap_err();
-        Base::detect("0o89cba").unwrap_err();
-        Base::detect("123456abcdef").unwrap_err();
-        Base::detect("0x123abclpmk").unwrap_err();
-        Base::detect("hello world").unwrap_err();
+        assert_eq!(Base::detect("0123456789abcdef").unwrap(), Hexadecimal);
+
+        // See Base::detect comments
+        // Base::detect("0b234abc").unwrap_err();
+        // Base::detect("0o89cba").unwrap_err();
+        let _ = Base::detect("0123456789abcdefg").unwrap_err();
+        let _ = Base::detect("0x123abclpmk").unwrap_err();
+        let _ = Base::detect("hello world").unwrap_err();
     }
 
     #[test]
@@ -414,7 +505,7 @@ mod tests {
         let expected_16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
         let expected_16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
 
-        let mut alt = false;
+        let mut alt;
         for (i, n) in POS_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
 
@@ -445,7 +536,7 @@ mod tests {
         let expected_16: Vec<_> = NEG_NUM.iter().map(|n| format!("{:f>64x}", n)).collect();
         let expected_16_alt: Vec<_> = NEG_NUM.iter().map(|n| format!("0x{:f>64x}", n)).collect();
 
-        let mut alt = false;
+        let mut alt;
         for (i, n) in NEG_NUM.into_iter().enumerate() {
             let mut num: NumberWithBase = I256::from(n).into();
 
@@ -460,6 +551,44 @@ mod tests {
             // assert_eq!(num.set_base(Octal).format(alt), expected_8_alt[i]);
             assert_eq!(num.set_base(Decimal).format(alt), expected_10_alt[i]);
             assert_eq!(num.set_base(Hexadecimal).format(alt), expected_16_alt[i]);
+        }
+    }
+
+    #[test]
+    fn test_fmt_macro() {
+        let nums: Vec<_> =
+            POS_NUM.into_iter().map(|n| NumberWithBase::from(I256::from(n))).collect();
+
+        let actual_2: Vec<_> = nums.iter().map(|n| format!("{:b}", n)).collect();
+        let actual_2_alt: Vec<_> = nums.iter().map(|n| format!("{:#b}", n)).collect();
+        let actual_8: Vec<_> = nums.iter().map(|n| format!("{:o}", n)).collect();
+        let actual_8_alt: Vec<_> = nums.iter().map(|n| format!("{:#o}", n)).collect();
+        let actual_10: Vec<_> = nums.iter().map(|n| format!("{:}", n)).collect();
+        let actual_10_alt: Vec<_> = nums.iter().map(|n| format!("{:#}", n)).collect();
+        let actual_16: Vec<_> = nums.iter().map(|n| format!("{:x}", n)).collect();
+        let actual_16_alt: Vec<_> = nums.iter().map(|n| format!("{:#x}", n)).collect();
+
+        let expected_2: Vec<_> = POS_NUM.iter().map(|n| format!("{:b}", n)).collect();
+        let expected_2_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#b}", n)).collect();
+        let expected_8: Vec<_> = POS_NUM.iter().map(|n| format!("{:o}", n)).collect();
+        let expected_8_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#o}", n)).collect();
+        let expected_10: Vec<_> = POS_NUM.iter().map(|n| format!("{:}", n)).collect();
+        let expected_10_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#}", n)).collect();
+        let expected_16: Vec<_> = POS_NUM.iter().map(|n| format!("{:x}", n)).collect();
+        let expected_16_alt: Vec<_> = POS_NUM.iter().map(|n| format!("{:#x}", n)).collect();
+
+        for (i, _) in POS_NUM.iter().enumerate() {
+            assert_eq!(actual_2[i], expected_2[i]);
+            assert_eq!(actual_2_alt[i], expected_2_alt[i]);
+
+            assert_eq!(actual_8[i], expected_8[i]);
+            assert_eq!(actual_8_alt[i], expected_8_alt[i]);
+
+            assert_eq!(actual_10[i], expected_10[i]);
+            assert_eq!(actual_10_alt[i], expected_10_alt[i]);
+
+            assert_eq!(actual_16[i], expected_16[i]);
+            assert_eq!(actual_16_alt[i], expected_16_alt[i]);
         }
     }
 }
