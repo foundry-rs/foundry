@@ -1615,7 +1615,7 @@ fn format_uint(val: impl Into<U256>, base: u32, add_prefix: bool) -> eyre::Resul
             let mut s = String::new();
             let mut latch = false;
             let is_b = base == 2;
-            let f = if is_b { |v: u8| format!("{:b}", v) } else { |v: u8| format!("{:o}", v) };
+            let f = if is_b { |v: u8| format!("{:08b}", v) } else { |v: u8| format!("{:o}", v) };
             // little endian so rev
             for ch in val.0.iter().rev() {
                 let bytes = ch.to_be_bytes();
