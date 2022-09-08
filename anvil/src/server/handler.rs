@@ -38,14 +38,14 @@ impl RpcHandler for HttpEthRpcHandler {
     }
 }
 
-/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via websocket
+/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via pubsub connection
 #[derive(Clone)]
-pub struct WsEthRpcHandler {
+pub struct PubSubEthRpcHandler {
     /// Access to the node
     api: EthApi,
 }
 
-impl WsEthRpcHandler {
+impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
     pub fn new(api: EthApi) -> Self {
         Self { api }
@@ -105,7 +105,7 @@ impl WsEthRpcHandler {
 }
 
 #[async_trait::async_trait]
-impl PubSubRpcHandler for WsEthRpcHandler {
+impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;
     type Subscription = EthSubscription;

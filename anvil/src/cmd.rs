@@ -125,6 +125,14 @@ pub struct NodeArgs {
         value_parser = Genesis::parse
     )]
     pub init: Option<Genesis>,
+
+    #[clap(
+        long,
+        help = "Whether to launch an ipc server.",
+        value_name = "PATH",
+        visible_alias = "ipcpath"
+    )]
+    pub ipc: Option<Option<String>>,
 }
 
 impl NodeArgs {
@@ -160,6 +168,7 @@ impl NodeArgs {
             .with_chain_id(self.evm_opts.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
+            .with_ipc(self.ipc)
     }
 
     fn account_generator(&self) -> AccountGenerator {

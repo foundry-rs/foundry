@@ -25,8 +25,8 @@ pub struct IpcEndpoint<Handler> {
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// Creates a new endpoint with the given handler
-    pub fn new(handler: Handler, endpoint: Endpoint) -> Self {
-        Self { handler, endpoint }
+    pub fn new(handler: Handler, endpoint: impl Into<String>) -> Self {
+        Self { handler, endpoint: Endpoint::new(endpoint.into()) }
     }
 
     /// Start listening for incoming connections
@@ -102,6 +102,7 @@ where
 
 struct JsonRpcCodec;
 
+// Adapted from <https://github.dev/paritytech/jsonrpc/blob/38af3c9439aa75481805edf6c05c6622a5ab1e70/server-utils/src/stream_codec.rs#L47-L105>
 impl tokio_util::codec::Decoder for JsonRpcCodec {
     type Item = String;
     type Error = io::Error;
@@ -143,7 +144,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
                 return match String::from_utf8(bts.as_ref().to_vec()) {
                     Ok(val) => Ok(Some(val)),
                     Err(_) => Ok(None),
-                };
+                }
             }
         }
         Ok(None)
