@@ -9,7 +9,7 @@ use anvil_core::eth::{
     EthPubSub, EthRequest, EthRpcCall,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use anvil_server::{RpcHandler, PubSubContext, PubSubRpcHandler};
+use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 use ethers::types::FilteredParams;
 use tracing::trace;
 

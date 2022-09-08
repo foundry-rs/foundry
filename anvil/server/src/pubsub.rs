@@ -1,18 +1,11 @@
-use crate::{handler::handle_request, RpcHandler};
+use crate::{error::RequestError, handler::handle_request, RpcHandler};
 use anvil_rpc::{
     error::RpcError,
     request::Request,
     response::{Response, ResponseResult},
 };
-use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        WebSocketUpgrade,
-    },
-    response::IntoResponse,
-    Extension,
-};
-use futures::{FutureExt, SinkExt, Stream, StreamExt};
+
+use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use std::{
@@ -48,7 +41,7 @@ pub struct PubSubContext<Handler: PubSubRpcHandler> {
     subscriptions: Subscriptions<Handler::SubscriptionId, Handler::Subscription>,
 }
 
-// === impl WsContext ===
+// === impl PubSubContext ===
 
 impl<Handler: PubSubRpcHandler> PubSubContext<Handler> {
     /// Adds new active subscription
@@ -120,25 +113,25 @@ impl<Handler: PubSubRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
 /// Represents a connection to a client via websocket
 ///
 /// Contains the state for the entire connection
-pub struct PubSubConnection<Handler: PubSubRpcHandler> {
+pub struct PubSubConnection<Handler: PubSubRpcHandler, Connection> {
     /// the handler for the websocket connection
     handler: Handler,
     /// contains all the subscription related context
     context: PubSubContext<Handler>,
     /// The established connection
-    connection: WebSocket,
+    connection: Connection,
     /// currently in progress requests
     processing: Vec<Pin<Box<dyn Future<Output = Response> + Send>>>,
     /// pending messages to send
-    pending: VecDeque<Message>,
+    pending: VecDeque<String>,
 }
 
-// === impl WsConnection ===
+// === impl PubSubConnection ===
 
-impl<Handler: PubSubRpcHandler> PubSubConnection<Handler> {
-    pub fn new(socket: WebSocket, handler: Handler) -> Self {
+impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection> {
+    pub fn new(connection: Connection, handler: Handler) -> Self {
         Self {
-            connection: socket,
+            connection,
             handler,
             context: Default::default(),
             pending: Default::default(),
@@ -165,31 +158,14 @@ impl<Handler: PubSubRpcHandler> PubSubConnection<Handler> {
             }
         }));
     }
-
-    fn on_message(&mut self, msg: Message) -> bool {
-        match msg {
-            Message::Text(text) => {
-                self.process_request(serde_json::from_str(&text));
-            }
-            Message::Binary(data) => {
-                // the binary payload type is the request as-is but as bytes, if this is a valid
-                // `Request` then we can deserialize the Json from the data Vec
-                self.process_request(serde_json::from_slice(&data));
-            }
-            Message::Close(_) => {
-                trace!(target: "rpc::ws", "ws client disconnected");
-                return true
-            }
-            Message::Ping(ping) => {
-                self.pending.push_back(Message::Pong(ping));
-            }
-            _ => {}
-        }
-        false
-    }
 }
 
-impl<Handler: PubSubRpcHandler> Future for PubSubConnection<Handler> {
+impl<Handler, Connection> Future for PubSubConnection<Handler, Connection>
+where
+    Handler: PubSubRpcHandler,
+    Connection: Sink<String> + Stream<Item = Result<Option<Request>, RequestError>> + Unpin,
+    <Connection as Sink<String>>::Error: fmt::Debug,
+{
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -209,16 +185,29 @@ impl<Handler: PubSubRpcHandler> Future for PubSubConnection<Handler> {
 
             loop {
                 match pin.connection.poll_next_unpin(cx) {
-                    Poll::Ready(Some(msg)) => {
-                        if let Ok(msg) = msg {
-                            if pin.on_message(msg) {
+                    Poll::Ready(Some(req)) => match req {
+                        Ok(Some(req)) => {
+                            pin.process_request(Ok(req));
+                        }
+                        Err(err) => match err {
+                            RequestError::Axum(err) => {
+                                trace!(target: "rpc", ?err, "client disconnected");
                                 return Poll::Ready(())
                             }
-                        } else {
-                            trace!(target: "rpc::ws", "client disconnected");
-                            return Poll::Ready(())
-                        }
-                    }
+                            RequestError::Io(err) => {
+                                trace!(target: "rpc", ?err, "client disconnected");
+                                return Poll::Ready(())
+                            }
+                            RequestError::Serde(err) => {
+                                pin.process_request(Err(err));
+                            }
+                            RequestError::Disconnect => {
+                                trace!(target: "rpc", "client disconnected");
+                                return Poll::Ready(())
+                            }
+                        },
+                        _ => {}
+                    },
                     Poll::Ready(None) => {
                         trace!(target: "rpc::ws", "socket connection finished");
                         return Poll::Ready(())
@@ -233,7 +222,7 @@ impl<Handler: PubSubRpcHandler> Future for PubSubConnection<Handler> {
                 match req.poll_unpin(cx) {
                     Poll::Ready(resp) => {
                         if let Ok(text) = serde_json::to_string(&resp) {
-                            pin.pending.push_back(Message::Text(text));
+                            pin.pending.push_back(text);
                             progress = true;
                         }
                     }
@@ -250,7 +239,7 @@ impl<Handler: PubSubRpcHandler> Future for PubSubConnection<Handler> {
                         match sub.poll_next_unpin(cx) {
                             Poll::Ready(Some(res)) => {
                                 if let Ok(text) = serde_json::to_string(&res) {
-                                    pin.pending.push_back(Message::Text(text));
+                                    pin.pending.push_back(text);
                                     progress = true;
                                 }
                             }
