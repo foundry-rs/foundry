@@ -1059,7 +1059,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_base(value: &str, base_in: Option<String>, base_out: &str) -> Result<String> {
-        let base_in = get_base_or_from_str(&value, base_in.clone())?;
+        let base_in = get_base_or_from_str(value, base_in)?;
         let base_out = get_base(base_out)?;
         if base_in == base_out {
             return Ok(value.to_string())
@@ -1405,7 +1405,7 @@ impl SimpleCast {
         base_in: Option<String>,
         base_out: &str,
     ) -> Result<String> {
-        let base_in = get_base_or_from_str(&value, base_in.clone())?;
+        let base_in = get_base_or_from_str(value, base_in)?;
         let base_out = get_base(base_out)?;
 
         let value = parse_num(value, base_in)?;
@@ -1438,7 +1438,7 @@ impl SimpleCast {
         base_in: Option<String>,
         base_out: &str,
     ) -> Result<String> {
-        let base_in = get_base_or_from_str(&value, base_in.clone())?;
+        let base_in = get_base_or_from_str(value, base_in)?;
         let base_out = get_base(base_out)?;
 
         let value = parse_num(value, base_in)?;
@@ -1593,7 +1593,7 @@ fn get_base_from_str(s: &str) -> Result<u32> {
 fn get_base_or_from_str(s: &str, base: Option<String>) -> Result<u32> {
     match base {
         Some(base) => get_base(&base),
-        None => get_base_from_str(&s),
+        None => get_base_from_str(s),
     }
 }
 
