@@ -1,9 +1,8 @@
-use crate::{Config, Warning};
+use crate::{Config, Warning, DEPRECATIONS};
 use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
-use std::collections::HashMap;
 
 pub mod remappings;
 
@@ -12,7 +11,6 @@ pub struct WarningsProvider<P> {
     provider: P,
     profile: Profile,
     old_warnings: Result<Vec<Warning>, Error>,
-    deprecations: HashMap<String, String>,
 }
 
 impl<P> WarningsProvider<P> {
@@ -23,9 +21,7 @@ impl<P> WarningsProvider<P> {
         profile: impl Into<Profile>,
         old_warnings: Result<Vec<Warning>, Error>,
     ) -> Self {
-        let mut deprecations = HashMap::new();
-        deprecations.insert("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into());
-        Self { provider, profile: profile.into(), old_warnings, deprecations }
+        Self { provider, profile: profile.into(), old_warnings }
     }
 
     pub fn for_figment(provider: P, figment: &Figment) -> Self {
@@ -68,10 +64,10 @@ impl<P: Provider> WarningsProvider<P> {
                 .flat_map(|(profile, dict)| {
                     dict.keys().map(move |key| format!("{}.{}", profile, key))
                 })
-                .filter(|k| self.deprecations.contains_key(k))
+                .filter(|k| DEPRECATIONS.contains_key(k))
                 .map(|deprecated_key| Warning::DeprecatedKey {
                     old: deprecated_key.clone(),
-                    new: self.deprecations.get(&deprecated_key).unwrap().to_string(),
+                    new: DEPRECATIONS.get(&deprecated_key).unwrap().to_string(),
                 }),
         );
         Ok(out)

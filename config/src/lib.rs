@@ -353,6 +353,11 @@ pub struct Config {
 pub static STANDALONE_FALLBACK_SECTIONS: Lazy<HashMap<&'static str, &'static str>> =
     Lazy::new(|| HashMap::from([("invariant", "fuzz")]));
 
+/// Deprecated keys.
+pub static DEPRECATIONS: Lazy<HashMap<String, String>> = Lazy::new(|| {
+    HashMap::from([("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into())])
+});
+
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
