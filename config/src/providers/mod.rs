@@ -3,14 +3,16 @@ use figment::{
     value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
 };
+use std::collections::HashMap;
 
 pub mod remappings;
 
-/// Generate warnings for unknown sections
+/// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
     provider: P,
     profile: Profile,
     old_warnings: Result<Vec<Warning>, Error>,
+    deprecations: HashMap<String, String>,
 }
 
 impl<P> WarningsProvider<P> {
@@ -21,7 +23,9 @@ impl<P> WarningsProvider<P> {
         profile: impl Into<Profile>,
         old_warnings: Result<Vec<Warning>, Error>,
     ) -> Self {
-        Self { provider, profile: profile.into(), old_warnings }
+        let mut deprecations = HashMap::new();
+        deprecations.insert("fuzz.max_global_rejects".into(), "fuzz.max_test_rejects".into());
+        Self { provider, profile: profile.into(), old_warnings, deprecations }
     }
 
     pub fn for_figment(provider: P, figment: &Figment) -> Self {
@@ -40,18 +44,34 @@ impl<P> WarningsProvider<P> {
 impl<P: Provider> WarningsProvider<P> {
     pub fn collect_warnings(&self) -> Result<Vec<Warning>, Error> {
         let mut out = self.old_warnings.clone()?;
+        // add warning for unknown sections
         out.extend(
             self.provider
                 .data()
                 .unwrap_or_default()
                 .keys()
                 .filter(|k| {
-                    k != &Config::PROFILE_SECTION &&
-                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                    k != &Config::PROFILE_SECTION
+                        && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());
                     Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+                }),
+        );
+        // add warning for deprecated keys
+        out.extend(
+            self.provider
+                .data()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|(profile, dict)| {
+                    dict.keys().map(move |key| format!("{}.{}", profile, key))
+                })
+                .filter(|k| self.deprecations.contains_key(k))
+                .map(|deprecated_key| Warning::DeprecatedKey {
+                    old: deprecated_key.clone(),
+                    new: self.deprecations.get(&deprecated_key).unwrap().to_string(),
                 }),
         );
         Ok(out)

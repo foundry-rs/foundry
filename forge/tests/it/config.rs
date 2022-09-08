@@ -15,7 +15,7 @@ use std::{
 pub static TEST_OPTS: TestOptions = TestOptions {
     fuzz: FuzzConfig {
         runs: 256,
-        max_local_rejects: 1024,
+        max_test_rejects: 65536,
         max_global_rejects: 65536,
         seed: None,
         include_storage: true,

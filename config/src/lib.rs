@@ -2352,6 +2352,12 @@ mod tests {
     use std::{collections::BTreeMap, fs::File, io::Write, str::FromStr};
     use tempfile::tempdir;
 
+    // Helper function to clear `__warnings` in config, since it will be populated during loading
+    // from file, causing testing problem when comparing to those created from `default()`, etc.
+    fn clear_warning(config: &mut Config) {
+        config.__warnings = vec![];
+    }
+
     #[test]
     fn default_sender() {
         assert_eq!(
@@ -3054,8 +3060,7 @@ mod tests {
                 [fuzz]
                 runs = 256
                 seed = '0x3e8'
-                max_global_rejects = 65536
-                max_local_rejects = 1024
+                max_test_rejects = 65536
 
                 [invariant]
                 runs = 256
@@ -3516,14 +3521,16 @@ mod tests {
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 
-            let other = Config::load();
+            let mut other = Config::load();
+            clear_warning(&mut other);
             assert_eq!(default, other);
 
             let other = other.into_basic();
             assert_eq!(basic, other);
 
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
-            let other = Config::load();
+            let mut other = Config::load();
+            clear_warning(&mut other);
             assert_eq!(default, other);
 
             Ok(())
@@ -3577,7 +3584,8 @@ mod tests {
                 stackAllocation = true
             "#,
             )?;
-            let loaded = Config::load();
+            let mut loaded = Config::load();
+            clear_warning(&mut loaded);
             assert_eq!(
                 loaded.optimizer_details,
                 Some(OptimizerDetails {
@@ -3593,7 +3601,8 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let reloaded = Config::load();
+            let mut reloaded = Config::load();
+            clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
             Ok(())
@@ -3615,7 +3624,8 @@ mod tests {
                 timeout = 10000
             "#,
             )?;
-            let loaded = Config::load();
+            let mut loaded = Config::load();
+            clear_warning(&mut loaded);
             assert_eq!(
                 loaded.model_checker,
                 Some(ModelCheckerSettings {
@@ -3635,7 +3645,8 @@ mod tests {
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
 
-            let reloaded = Config::load();
+            let mut reloaded = Config::load();
+            clear_warning(&mut reloaded);
             assert_eq!(loaded, reloaded);
 
             Ok(())

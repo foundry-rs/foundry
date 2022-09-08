@@ -116,7 +116,7 @@ impl<'a> FuzzedExecutor<'a> {
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                return Err(TestCaseError::reject("ASSUME cheatcode"))
+                return Err(TestCaseError::reject("ASSUME: Too many rejects"));
             }
 
             let success = self.executor.is_success(
@@ -179,8 +179,17 @@ impl<'a> FuzzedExecutor<'a> {
         };
 
         match run_result {
+            // Currently the only operation that can trigger proptest global rejects is the
+            // `vm.assume` cheatcode, thus we surface this info to the user when the fuzz test
+            // aborts due to too many global rejects, making the error message more actionable.
+            Err(TestError::Abort(reason)) if reason.message() == "Too many global rejects" => {
+                result.reason = Some(format!(
+                    "The `vm.assume` cheatcode rejected too many inputs ({} allowed)",
+                    self.runner.config().max_global_rejects
+                ));
+            }
             Err(TestError::Abort(reason)) => {
-                result.reason = Some(format!("{}\nFuzzing run stats:\n{}", reason, runner));
+                result.reason = Some(reason.to_string());
             }
             Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
