@@ -30,6 +30,8 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     }
 
     /// Start listening for incoming connections
+    ///
+    /// Spawns a new connection task for each incoming connection
     pub async fn listen(self) {
         let IpcEndpoint { handler, endpoint } = self;
         trace!(target: "ipc",  endpoint=?endpoint.path(), "starting ipc server" );
@@ -138,9 +140,9 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
 
             if depth == 0 && idx != start_idx && idx - start_idx + 1 > whitespaces {
                 let bts = buf.split_to(idx + 1);
-                match String::from_utf8(bts.as_ref().to_vec()) {
-                    Ok(val) => return Ok(Some(val)),
-                    Err(_) => return Ok(None),
+                return match String::from_utf8(bts.as_ref().to_vec()) {
+                    Ok(val) => Ok(Some(val)),
+                    Err(_) => Ok(None),
                 };
             }
         }
