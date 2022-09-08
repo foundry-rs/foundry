@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
     Extension,
 };
-use futures::{Sink, Stream, StreamExt};
+use futures::{Sink, Stream};
 use std::{
     pin::Pin,
     task::{ready, Context, Poll},

@@ -21,11 +21,11 @@ use tracing::{error, trace};
 
 mod config;
 
-// #[cfg(feature = "ipc")]
 mod error;
 /// handlers for axum server
 mod handler;
-mod ipc;
+#[cfg(feature = "ipc")]
+pub mod ipc;
 mod pubsub;
 mod ws;
 

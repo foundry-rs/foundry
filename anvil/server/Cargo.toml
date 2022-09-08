@@ -24,14 +24,15 @@ futures = "0.3"
 
 # ipc
 parity-tokio-ipc = { version = "0.9.0", optional = true }
-tokio-serde = { version = "0.8", features = ["json"], optional = true }
 tokio = { version = "1.21.0", optional = true }
+bytes = { version = "1.2" , optional = true }
 
 # misc
 serde_json = "1.0.67"
 serde = { version = "1.0.136", features = ["derive"] }
 async-trait = "0.1.53"
 thiserror = "1.0.34"
+tokio-util = { version = "0.7.4", features = ["io-util", "codec"], optional = true }
 
 clap = { version = "3.0.10", features = [
     "derive",
@@ -39,6 +40,7 @@ clap = { version = "3.0.10", features = [
 ], optional = true }
 pin-project = "1.0.12"
 
+
 [features]
 default = ["ipc"]
-ipc = ["parity-tokio-ipc", "tokio-serde", "tokio"]
+ipc = ["parity-tokio-ipc", "tokio", "bytes", "tokio-util"]

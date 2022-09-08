@@ -351,7 +351,7 @@ impl TransactionWithMetadata {
         local_contracts: &BTreeMap<Address, (String, &Abi)>,
         decoder: &CallTraceDecoder,
     ) -> eyre::Result<()> {
-        self.opcode = CallKind::Create;
+        self.opcode = CallKind::Call;
 
         if let Some(data) = self.transaction.data() {
             if data.0.len() >= 4 {
