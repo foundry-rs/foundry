@@ -4,6 +4,7 @@ use crate::Address;
 use ethers::prelude::Log;
 use foundry_evm::{
     coverage::HitMaps,
+    error::DecodedError,
     fuzz::{CounterExample, FuzzedCases},
     trace::{CallTraceArena, TraceKind},
 };
@@ -66,7 +67,7 @@ pub struct TestResult {
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
-    pub reason: Option<String>,
+    pub reason: Option<DecodedError>,
 
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
@@ -178,5 +179,5 @@ pub struct TestSetup {
     /// Whether the setup failed
     pub setup_failed: bool,
     /// The reason the setup failed
-    pub reason: Option<String>,
+    pub reason: Option<DecodedError>,
 }

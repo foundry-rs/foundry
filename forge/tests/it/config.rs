@@ -1,7 +1,10 @@
 //! Test setup
 
 use crate::test_helpers::{COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT};
-use forge::{result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder, TestOptions};
+use forge::{
+    error::DecodedError, result::SuiteResult, MultiContractRunner, MultiContractRunnerBuilder,
+    TestOptions,
+};
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, InvariantConfig,
     RpcEndpoint, RpcEndpoints,
@@ -152,7 +155,8 @@ pub fn assert_multiple(
                     logs.join("\n")
                 );
                 assert_eq!(
-                    actuals[*contract_name].test_results[*test_name].reason, *reason,
+                    actuals[*contract_name].test_results[*test_name].reason,
+                    reason.clone().map(DecodedError::from),
                     "Failure reason for test {} did not match what we expected.",
                     test_name
                 );

@@ -690,7 +690,7 @@ impl Backend {
                         return_revert!() => {
                             if let Some(ref r) = info.out {
                                 if let Ok(reason) = decode_revert(r.as_ref(), None, None) {
-                                    node_info!("    Error: reverted with '{}'", reason);
+                                    node_info!("    Error: reverted with '{}'", reason.message);
                                 } else {
                                     node_info!("    Error: reverted without a reason string");
                                 }

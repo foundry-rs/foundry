@@ -1,5 +1,5 @@
 use self::inspector::{InspectorData, InspectorStackConfig};
-use crate::{debug::DebugArena, decode, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, decode, error::DecodedError, trace::CallTraceArena, CALLER};
 pub use abi::{
     format_hardhat_call, patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS,
     CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -259,7 +259,7 @@ impl Executor {
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
+                    .unwrap_or_else(|_| DecodedError::from(format!("{:?}", exit_reason)));
                 Err(EvmError::Execution {
                     reverted,
                     reason,
@@ -474,7 +474,7 @@ impl Executor {
                 } else {
                     return Err(EvmError::Execution {
                         reverted: true,
-                        reason: "Deployment succeeded, but no address was returned. This is a bug, please report it".to_string(),
+                        reason: DecodedError::from("Deployment succeeded, but no address was returned. This is a bug, please report it"),
                         traces,
                         gas_used,
                         gas_refunded: 0,
@@ -490,7 +490,7 @@ impl Executor {
             }
             _ => {
                 let reason = decode::decode_revert(result.as_ref(), abi, Some(exit_reason))
-                    .unwrap_or_else(|_| format!("{:?}", exit_reason));
+                    .unwrap_or_else(|_| DecodedError::from(format!("{:?}", exit_reason)));
                 return Err(EvmError::Execution {
                     reverted: true,
                     reason,
@@ -629,10 +629,10 @@ impl Executor {
 #[allow(clippy::large_enum_variant)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
-    #[error("Execution reverted: {reason} (gas: {gas_used})")]
+    #[error("Execution reverted.")]
     Execution {
         reverted: bool,
-        reason: String,
+        reason: DecodedError,
         gas_used: u64,
         gas_refunded: u64,
         stipend: u64,
@@ -865,7 +865,7 @@ fn convert_call_result<D: Detokenize>(
         }
         _ => {
             let reason = decode::decode_revert(result.as_ref(), abi, Some(status))
-                .unwrap_or_else(|_| format!("{:?}", status));
+                .unwrap_or_else(|_| DecodedError::from(format!("{:?}", status)));
             Err(EvmError::Execution {
                 reverted,
                 reason,

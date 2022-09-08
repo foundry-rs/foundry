@@ -1,7 +1,7 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
+    error::{SolError, CHEATCODE_ERROR_SELECTOR, SOLIDITY_REVERT_SELECTOR},
     executor::backend::DatabaseExt,
 };
 use bytes::Bytes;
@@ -59,15 +59,16 @@ pub fn handle_expect_revert(
     }
 
     let string_data = match retdata {
-        _ if retdata.len() >= REVERT_PREFIX.len() &&
-            retdata[..REVERT_PREFIX.len()] == REVERT_PREFIX =>
+        _ if retdata.len() >= SOLIDITY_REVERT_SELECTOR.len() &&
+            retdata[..SOLIDITY_REVERT_SELECTOR.len()] == SOLIDITY_REVERT_SELECTOR =>
         {
             Some(&retdata[4..])
         }
-        _ if retdata.len() >= ERROR_PREFIX.len() &&
-            &retdata[..ERROR_PREFIX.len()] == ERROR_PREFIX.as_slice() =>
+        _ if retdata.len() >= CHEATCODE_ERROR_SELECTOR.len() &&
+            &retdata[..CHEATCODE_ERROR_SELECTOR.len()] ==
+                CHEATCODE_ERROR_SELECTOR.as_slice() =>
         {
-            Some(&retdata[ERROR_PREFIX.len()..])
+            Some(&retdata[CHEATCODE_ERROR_SELECTOR.len()..])
         }
         _ => None,
     };

@@ -185,7 +185,7 @@ impl ScriptRunner {
                     (address, gas_used, logs, traces, debug)
                 }
                 Err(EvmError::Execution { reason, traces, gas_used, logs, debug, .. }) => {
-                    println!("{}", Paint::red(format!("\nFailed with `{reason}`:\n")));
+                    println!("{}", Paint::red(format!("\nFailed with `{}`:\n", reason.message)));
 
                     (Address::zero(), gas_used, logs, traces, debug)
                 }

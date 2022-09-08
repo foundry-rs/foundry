@@ -1,6 +1,7 @@
 use super::{BasicTxDetails, InvariantContract};
 use crate::{
     decode::decode_revert,
+    error::DecodedError,
     executor::{Executor, RawCallResult},
     fuzz::{invariant::set_up_inner_replay, *},
     trace::{load_contracts, TraceKind},
@@ -18,7 +19,7 @@ pub struct InvariantFuzzError {
     /// The return reason of the offending call.
     pub return_reason: Reason,
     /// The revert string of the offending call.
-    pub revert_reason: String,
+    pub revert_reason: Option<DecodedError>,
     /// Address of the invariant asserter.
     pub addr: Address,
     /// Function data for invariant check.
@@ -55,7 +56,7 @@ impl InvariantFuzzError {
                         Some(invariant_contract.abi),
                         Some(call_result.exit_reason)
                     ) {
-                        Ok(e) => e,
+                        Ok(e) => e.message,
                         Err(e) => e.to_string(),
                     }
                 )
@@ -68,7 +69,7 @@ impl InvariantFuzzError {
                 Some(invariant_contract.abi),
                 Some(call_result.exit_reason),
             )
-            .unwrap_or_default(),
+            .ok(),
             addr: invariant_contract.address,
             func,
             inner_sequence: inner_sequence.to_vec(),

@@ -12,6 +12,7 @@ use foundry_common::{
     TestFunctionExt,
 };
 use foundry_evm::{
+    error::DecodedError,
     executor::{CallResult, DeployResult, EvmError, Executor},
     fuzz::{
         invariant::{InvariantContract, InvariantExecutor, InvariantFuzzTestResult},
@@ -153,7 +154,13 @@ impl<'a> ContractRunner<'a> {
                     }
                     Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
                         error!(reason=?reason, contract= ?address, "setUp failed");
-                        (true, logs, traces, labels, Some(format!("Setup failed: {reason}")))
+                        (
+                            true,
+                            logs,
+                            traces,
+                            labels,
+                            Some(format!("Setup failed: {}", reason.message).into()),
+                        )
                     }
                     Err(err) => {
                         error!(reason=?err, contract= ?address, "setUp failed");
@@ -162,7 +169,7 @@ impl<'a> ContractRunner<'a> {
                             Vec::new(),
                             None,
                             BTreeMap::new(),
-                            Some(format!("Setup failed: {}", &err.to_string())),
+                            Some(format!("Setup failed: {}", &err.to_string()).into()),
                         )
                     }
                 };
@@ -211,7 +218,13 @@ impl<'a> ContractRunner<'a> {
                     "setUp()".to_string(),
                     TestResult {
                         success: false,
-                        reason: Some("Multiple setUp functions".to_string()),
+                        reason: Some(DecodedError {
+                            message: "Multiple setUp functions found".to_string(),
+                            hints: vec![
+                                "You can only have one setUp function per test.".to_string(),
+                                "This check is case insensitive.".to_string(),
+                            ],
+                        }),
                         counterexample: None,
                         logs: vec![],
                         kind: TestKind::Standard(0),
@@ -473,9 +486,7 @@ impl<'a> ContractRunner<'a> {
 
                     TestResult {
                         success: test_error.is_none(),
-                        reason: test_error.as_ref().and_then(|err| {
-                            (!err.revert_reason.is_empty()).then(|| err.revert_reason.clone())
-                        }),
+                        reason: test_error.as_ref().and_then(|err| err.revert_reason.clone()),
                         counterexample,
                         logs,
                         kind: TestKind::Invariant(cases.clone(), reverts),

@@ -1,6 +1,7 @@
 use crate::{
     coverage::HitMaps,
     decode,
+    error::DecodedError,
     executor::{Executor, RawCallResult},
     trace::CallTraceArena,
 };
@@ -144,22 +145,12 @@ impl<'a> FuzzedExecutor<'a> {
 
                 Ok(())
             } else {
-                let status = call.exit_reason;
                 // We cannot use the calldata returned by the test runner in `TestError::Fail`,
                 // since that input represents the last run case, which may not correspond with our
                 // failure - when a fuzz case fails, proptest will try to run at least one more
                 // case to find a minimal failure case.
                 *counterexample.borrow_mut() = (calldata, call);
-                Err(TestCaseError::fail(
-                    match decode::decode_revert(
-                        counterexample.borrow().1.result.as_ref(),
-                        errors,
-                        Some(status),
-                    ) {
-                        Ok(e) => e,
-                        Err(_) => "".to_string(),
-                    },
-                ))
+                Err(TestCaseError::fail(""))
             }
         });
 
@@ -179,15 +170,16 @@ impl<'a> FuzzedExecutor<'a> {
 
         match run_result {
             Err(TestError::Abort(reason)) => {
-                result.reason = Some(reason.to_string());
+                result.reason = Some(DecodedError::from(reason.to_string()));
             }
-            Err(TestError::Fail(reason, _)) => {
-                let reason = reason.to_string();
-                result.reason = if reason.is_empty() { None } else { Some(reason) };
+            Err(TestError::Fail(_, _)) => {
+                result.reason =
+                    decode::decode_revert(call.result.as_ref(), errors, Some(call.exit_reason))
+                        .ok();
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
-                    .expect("could not decode fuzzer inputs");
+                    .expect("Could not decode fuzzer inputs.");
 
                 result.counterexample = Some(CounterExample::Single(BaseCounterExample {
                     sender: None,
@@ -302,7 +294,7 @@ pub struct FuzzTestResult {
 
     /// If there was a revert, this field will be populated. Note that the test can
     /// still be successful (i.e self.success == true) when it's expected to fail.
-    pub reason: Option<String>,
+    pub reason: Option<DecodedError>,
 
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,

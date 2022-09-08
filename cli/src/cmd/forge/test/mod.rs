@@ -292,7 +292,7 @@ fn short_test_result(name: &str, result: &TestResult) {
         let reason = result
             .reason
             .as_ref()
-            .map(|reason| format!("Reason: {reason}"))
+            .map(|reason| format!("Reason: {}", reason.message))
             .unwrap_or_else(|| "Reason: Assertion failed.".to_string());
 
         let counterexample = result
@@ -505,6 +505,17 @@ fn test(
             }
             for (name, result) in &mut tests {
                 short_test_result(name, result);
+
+                // We always display hints if the revert had any.
+                if let Some(reason) = &result.reason {
+                    if !reason.hints.is_empty() {
+                        println!("Hints:");
+                        for hint in &reason.hints {
+                            println!("  {hint}");
+                        }
+                        println!();
+                    }
+                }
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {

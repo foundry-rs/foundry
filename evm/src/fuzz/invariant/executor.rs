@@ -5,6 +5,7 @@ use super::{
     InvariantFuzzTestResult, RandomCallGenerator, TargetedContracts,
 };
 use crate::{
+    error::DecodedError,
     executor::{
         inspector::Fuzzer, Executor, RawCallResult, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS,
     },
@@ -576,7 +577,7 @@ fn can_continue(
             let error =
                 InvariantFuzzError::new(invariant_contract, None, calldata, call_result, &[]);
 
-            failures.revert_reason = Some(error.revert_reason.clone());
+            failures.revert_reason = error.revert_reason.clone();
 
             // Hacky to provide the full error to the user.
             for invariant in invariant_contract.invariant_functions.iter() {
@@ -593,7 +594,7 @@ fn can_continue(
 /// Stores information about failures and reverts of the invariant tests.
 pub struct InvariantFailures {
     /// The latest revert reason of a run.
-    pub revert_reason: Option<String>,
+    pub revert_reason: Option<DecodedError>,
     /// Total number of reverts.
     pub reverts: usize,
     /// How many different invariants have been broken.
