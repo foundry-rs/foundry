@@ -5,6 +5,7 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
+    error::SolError,
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
@@ -51,13 +52,27 @@ pub mod util;
 pub use util::DEFAULT_CREATE2_DEPLOYER;
 
 mod config;
-use crate::executor::backend::RevertDiagnostic;
+use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
+///
+/// Executing cheatcodes can be very powerful. Most cheatcodes are limited to evm internals, but
+/// there are also cheatcodes like `ffi` which can execute arbitrary commands or `writeFile` and
+/// `readFile` which can manipulate files of the filesystem. Therefore, several restrictions are
+/// implemented for these cheatcodes:
+///
+///    - `ffi`, and file cheatcodes are _always_ opt-in (via foundry config) and never enabled by
+///      default: all respective cheatcode handlers implement the appropriate checks
+///    - File cheatcodes require explicit permissions which paths are allowed for which operation,
+///      see `Config.fs_permission`
+///    - Only permitted accounts are allowed to execute cheatcodes in forking mode, this ensures no
+///      contract deployed on the live network is able to execute cheatcodes by simply calling the
+///      cheatcode address: by default, the caller, test contract and newly deployed contracts are
+///      allowed to execute cheatcodes
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
     /// The block environment
@@ -122,20 +137,8 @@ pub struct Cheatcodes {
     pub fs_commit: bool,
 }
 
-#[derive(Debug, Default)]
-pub struct Context {
-    //// Buffered readers for files opened for reading (path => BufReader mapping)
-    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
-}
-
-/// Every time we clone `Context`, we want it to be empty
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        Default::default()
-    }
-}
-
 impl Cheatcodes {
+    /// Creates a new `Cheatcodes` based on the given settings
     pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
             corrected_nonce: false,
@@ -157,6 +160,10 @@ impl Cheatcodes {
         // Decode the cheatcode call
         let decoded = HEVMCalls::decode(&call.input).map_err(|err| err.to_string().encode())?;
 
+        // ensure the caller is allowed to execute cheatcodes, but only if the backend is in forking
+        // mode
+        data.db.ensure_cheatcode_access_forking_mode(caller).map_err(|err| err.encode_string())?;
+
         // TODO: Log the opcode for the debugger
         env::apply(self, data, caller, &decoded)
             .transpose()
@@ -167,6 +174,32 @@ impl Cheatcodes {
             .or_else(|| snapshot::apply(self, data, &decoded))
             .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
+    }
+
+    /// Determines the address of the contract and marks it as allowed
+    ///
+    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
+    /// automatically we need to determine the new address
+    fn allow_cheatcodes_on_create<DB: DatabaseExt>(
+        &self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &CreateInputs,
+    ) {
+        let old_nonce = data
+            .journaled_state
+            .state
+            .get(&inputs.caller)
+            .map(|acc| acc.info.nonce)
+            .unwrap_or_default();
+        let created_address = get_create_address(inputs, old_nonce);
+
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+            // we only grant cheat code access for new contracts if the caller also has
+            // cheatcode access and the new contract is created in top most call
+            return
+        }
+
+        data.db.allow_cheatcode_access(created_address);
     }
 }
 
@@ -324,7 +357,7 @@ where
                         if let Err(err) =
                             data.journaled_state.load_account(broadcast.origin, data.db)
                         {
-                            return (Return::Revert, Gas::new(call.gas_limit), err.string_encoded())
+                            return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
                         }
 
                         let account =
@@ -485,6 +518,9 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
+        // allow cheatcodes from the address of the new contract
+        self.allow_cheatcodes_on_create(data, call);
+
         // Apply our prank
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
@@ -506,7 +542,7 @@ where
                 call.caller == broadcast.original_caller
             {
                 if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
-                    return (Return::Revert, None, Gas::new(call.gas_limit), err.string_encoded())
+                    return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
                 }
 
                 let (bytecode, to, nonce) =
@@ -517,7 +553,7 @@ where
                                 Return::Revert,
                                 None,
                                 Gas::new(call.gas_limit),
-                                err.string_encoded(),
+                                err.encode_string(),
                             )
                         }
                     };
@@ -576,5 +612,19 @@ where
         }
 
         (status, address, remaining_gas, retdata)
+    }
+}
+
+/// Contains additional, test specific resources that should be kept for the duration of the test
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
     }
 }

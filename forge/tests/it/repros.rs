@@ -201,3 +201,25 @@ fn test_issue_3110() {
         }
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/3119>
+#[test]
+fn test_issue_3119() {
+    let mut runner = runner();
+    let suite_result =
+        runner.test(&Filter::new(".*", ".*", ".*repros/Issue3119"), None, TEST_OPTS).unwrap();
+    assert!(!suite_result.is_empty());
+
+    for (_, SuiteResult { test_results, .. }) in suite_result {
+        for (test_name, result) in test_results {
+            let logs = decode_console_logs(&result.logs);
+            assert!(
+                result.success,
+                "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                test_name,
+                result.reason,
+                logs.join("\n")
+            );
+        }
+    }
+}

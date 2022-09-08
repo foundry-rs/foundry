@@ -137,6 +137,18 @@ impl<'a> DatabaseExt for FuzzBackendWrapper<'a> {
     fn add_persistent_account(&mut self, account: Address) -> bool {
         self.backend.to_mut().add_persistent_account(account)
     }
+
+    fn allow_cheatcode_access(&mut self, account: Address) -> bool {
+        self.backend.to_mut().allow_cheatcode_access(account)
+    }
+
+    fn revoke_cheatcode_access(&mut self, account: Address) -> bool {
+        self.backend.to_mut().revoke_cheatcode_access(account)
+    }
+
+    fn has_cheatcode_access(&self, account: Address) -> bool {
+        self.backend.has_cheatcode_access(account)
+    }
 }
 
 impl<'a> DatabaseRef for FuzzBackendWrapper<'a> {

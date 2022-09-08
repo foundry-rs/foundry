@@ -119,6 +119,7 @@ ethers::contract::abigen!(
             rpcUrls()(string[2][])
             parseJson(string, string)(bytes)
             parseJson(string)(bytes)
+            allowCheatcodes(address)
     ]"#,
 );
 pub use hevm::{HEVMCalls, HEVM_ABI};

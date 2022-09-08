@@ -2,7 +2,7 @@ use super::{ContractId, CoverageItem, CoverageItemKind, SourceLocation};
 use ethers::solc::artifacts::ast::{self, Ast, Node, NodeType};
 use foundry_common::TestFunctionExt;
 use semver::Version;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
 /// A visitor that walks the AST of a single contract and finds coverage items.
@@ -22,15 +22,37 @@ pub struct ContractVisitor<'a> {
     last_line: usize,
 
     /// Coverage items
-    items: Vec<CoverageItem>,
+    pub items: Vec<CoverageItem>,
+
+    /// Node IDs of this contract's base contracts, as well as IDs for referenced contracts such as
+    /// libraries
+    pub base_contract_node_ids: HashSet<usize>,
 }
 
 impl<'a> ContractVisitor<'a> {
     pub fn new(source_id: usize, source: &'a str, contract_name: String) -> Self {
-        Self { source_id, source, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
+        Self {
+            source_id,
+            source,
+            contract_name,
+            branch_id: 0,
+            last_line: 0,
+            items: Vec::new(),
+            base_contract_node_ids: HashSet::new(),
+        }
     }
 
-    pub fn visit(mut self, contract_ast: Node) -> eyre::Result<Vec<CoverageItem>> {
+    pub fn visit(mut self, contract_ast: Node) -> eyre::Result<Self> {
+        let linearized_base_contracts: Vec<usize> =
+            contract_ast.attribute("linearizedBaseContracts").ok_or_else(|| {
+                eyre::eyre!(
+                    "The contract's AST node is missing a list of linearized base contracts"
+                )
+            })?;
+
+        // We skip the first ID because that's the ID of the contract itself
+        self.base_contract_node_ids.extend(&linearized_base_contracts[1..]);
+
         // Find all functions and walk their AST
         for node in contract_ast.nodes {
             if node.node_type == NodeType::FunctionDefinition {
@@ -38,7 +60,7 @@ impl<'a> ContractVisitor<'a> {
             }
         }
 
-        Ok(self.items)
+        Ok(self)
     }
 
     fn visit_function_definition(&mut self, mut node: Node) -> eyre::Result<()> {
@@ -262,15 +284,28 @@ impl<'a> ContractVisitor<'a> {
                     hits: 0,
                 });
 
-                let name = node
-                    .other
-                    .get("expression")
-                    .and_then(|v| v.get("name"))
-                    .and_then(|v| v.as_str());
-                if let Some("assert" | "require") = name {
-                    self.push_branches(&node.src, self.branch_id);
-                    self.branch_id += 1;
+                let expr: Option<Node> = node.attribute("expression");
+                match expr.as_ref().map(|expr| &expr.node_type) {
+                    // Might be a require/assert call
+                    Some(NodeType::Identifier) => {
+                        let name: Option<String> = expr.and_then(|expr| expr.attribute("name"));
+                        if let Some("assert" | "require") = name.as_deref() {
+                            self.push_branches(&node.src, self.branch_id);
+                            self.branch_id += 1;
+                        }
+                    }
+                    // Might be a call to a library
+                    Some(NodeType::MemberAccess) => {
+                        let referenced_declaration_id = expr
+                            .and_then(|expr| expr.attribute("expression"))
+                            .and_then(|subexpr: Node| subexpr.attribute("referencedDeclaration"));
+                        if let Some(id) = referenced_declaration_id {
+                            self.base_contract_node_ids.insert(id);
+                        }
+                    }
+                    _ => (),
                 }
+
                 Ok(())
             }
             NodeType::Conditional => {
@@ -468,17 +503,10 @@ impl SourceAnalyzer {
     }
 
     fn analyze_contracts(&mut self) -> eyre::Result<()> {
-        for (contract_id, contract) in &self.contracts {
-            let base_contract_node_ids: Vec<usize> =
-                contract.attribute("linearizedBaseContracts").ok_or_else(|| {
-                    eyre::eyre!(
-                        "The contract's AST node is missing a list of linearized base contracts"
-                    )
-                })?;
-
+        for contract_id in self.contracts.keys() {
             // Find this contract's coverage items if we haven't already
             if self.contract_items.get(contract_id).is_none() {
-                let items = ContractVisitor::new(
+                let ContractVisitor { items, base_contract_node_ids, .. } = ContractVisitor::new(
                     contract_id.source_id,
                     self.sources.get(&contract_id.source_id).unwrap_or_else(|| {
                         panic!(
@@ -496,6 +524,7 @@ impl SourceAnalyzer {
                         })
                         .clone(),
                 )?;
+
                 let is_test = items.iter().any(|item| {
                     if let CoverageItemKind::Function { name } = &item.kind {
                         name.is_test()
@@ -509,7 +538,7 @@ impl SourceAnalyzer {
                 if !is_test {
                     self.contract_bases.insert(
                         contract_id.clone(),
-                        base_contract_node_ids[1..]
+                        base_contract_node_ids
                             .iter()
                             .filter_map(|base_contract_node_id| {
                                 self.contract_ids.get(base_contract_node_id).cloned()

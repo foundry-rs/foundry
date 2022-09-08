@@ -1,6 +1,7 @@
 use crate::executor::opts::EvmOpts;
 use bytes::Bytes;
 
+use crate::error;
 use ethers::solc::{utils::canonicalize, ProjectPathsConfig};
 use foundry_common::fs::normalize_path;
 use foundry_config::{
@@ -9,8 +10,6 @@ use foundry_config::{
 };
 use std::path::{Path, PathBuf};
 use tracing::trace;
-
-use super::util;
 
 /// Additional, configurable context the `Cheatcodes` inspector has access to
 ///
@@ -142,11 +141,11 @@ impl CheatsConfig {
                 if let Ok(url) = err.try_resolve() {
                     return Ok(url)
                 }
-                Err(util::encode_error(err))
+                Err(error::encode_error(err))
             }
             None => {
                 if !url_or_alias.starts_with("http") && !url_or_alias.starts_with("ws") {
-                    Err(util::encode_error(format!("invalid rpc url {}", url_or_alias)))
+                    Err(error::encode_error(format!("invalid rpc url {}", url_or_alias)))
                 } else {
                     Ok(url_or_alias)
                 }

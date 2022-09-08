@@ -1,12 +1,10 @@
-use crate::executor::inspector::cheatcodes::util;
-use bytes::Bytes;
-use ethers::{
-    abi::AbiEncode,
-    types::{Address, H256, U256},
-};
+use crate::error::SolError;
+
+use ethers::types::{Address, H256, U256};
 use futures::channel::mpsc::{SendError, TrySendError};
 use std::{
     convert::Infallible,
+    fmt,
     sync::{mpsc::RecvError, Arc},
 };
 
@@ -43,17 +41,9 @@ impl DatabaseError {
     pub fn msg(msg: impl Into<String>) -> Self {
         DatabaseError::Message(msg.into())
     }
-
-    /// Returns the abi encoded error
-    pub fn err_encoded(&self) -> Bytes {
-        util::encode_error(self)
-    }
-
-    /// Returns the error as abi encoded String
-    pub fn string_encoded(&self) -> Bytes {
-        self.to_string().encode().into()
-    }
 }
+
+impl SolError for DatabaseError {}
 
 impl<T> From<TrySendError<T>> for DatabaseError {
     fn from(err: TrySendError<T>) -> Self {
@@ -66,3 +56,19 @@ impl From<Infallible> for DatabaseError {
         match never {}
     }
 }
+
+/// Error thrown when the address is not allowed to execute cheatcodes
+///
+/// See also [`DatabaseExt`](crate::executor::DatabaseExt)
+#[derive(Debug, Clone, Copy)]
+pub struct NoCheatcodeAccessError(pub Address);
+
+impl fmt::Display for NoCheatcodeAccessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "No cheatcode access granted for: {:?}, see `vm.allowCheatcodes()`", self.0)
+    }
+}
+
+impl std::error::Error for NoCheatcodeAccessError {}
+
+impl SolError for NoCheatcodeAccessError {}

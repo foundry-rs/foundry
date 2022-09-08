@@ -9,27 +9,22 @@ use ethers::{
     core::k256::elliptic_curve::Curve,
     prelude::{
         k256::{ecdsa::SigningKey, elliptic_curve::bigint::Encoding, Secp256k1},
-        Lazy, LocalWallet, Signer, H160, *,
+        LocalWallet, Signer, H160, *,
     },
     signers::{coins_bip39::English, MnemonicBuilder},
     types::{NameOrAddress, H256, U256},
     utils,
-    utils::keccak256,
 };
 use foundry_common::fmt::*;
 use hex::FromHex;
 use revm::{Account, CreateInputs, Database, EVMData, JournaledState};
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 pub const DEFAULT_CREATE2_DEPLOYER: H160 = H160([
     78, 89, 180, 72, 71, 179, 121, 87, 133, 136, 146, 12, 167, 143, 191, 38, 192, 180, 149, 108,
 ]);
-
-// keccak(Error(string))
-pub static REVERT_PREFIX: [u8; 4] = [8, 195, 121, 160];
-pub static ERROR_PREFIX: Lazy<[u8; 32]> = Lazy::new(|| keccak256("CheatCodeError"));
 
 /// Applies the given function `f` to the `revm::Account` belonging to the `addr`
 ///
@@ -50,35 +45,13 @@ where
 }
 
 fn addr(private_key: U256) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = parse_private_key(private_key)?;
     let addr = utils::secret_key_to_address(&key);
     Ok(addr.encode().into())
 }
 
 fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
@@ -115,18 +88,7 @@ fn derive_key(mnemonic: &str, path: &str, index: u32) -> Result<Bytes, Bytes> {
 }
 
 fn remember_key(state: &mut Cheatcodes, private_key: U256, chain_id: U256) -> Result<Bytes, Bytes> {
-    if private_key.is_zero() {
-        return Err("Private key cannot be 0.".to_string().encode().into())
-    }
-
-    if private_key > U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
-        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
-    }
-
-    let mut bytes: [u8; 32] = [0; 32];
-    private_key.to_big_endian(&mut bytes);
-
-    let key = SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode())?;
+    let key = parse_private_key(private_key)?;
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     state.script_wallets.push(wallet.clone());
@@ -242,10 +204,6 @@ where
     }
 }
 
-pub fn encode_error(reason: impl Display) -> Bytes {
-    [ERROR_PREFIX.as_slice(), reason.to_string().encode().as_slice()].concat().into()
-}
-
 pub fn value_to_abi(
     val: Vec<impl AsRef<str>>,
     r#type: ParamType,
@@ -255,7 +213,7 @@ pub fn value_to_abi(
     let parse_uint = |v: &str| {
         if v.starts_with("0x") {
             let v = Vec::from_hex(v.strip_prefix("0x").unwrap()).map_err(|e| e.to_string())?;
-            Ok(U256::from_little_endian(&v))
+            Ok(U256::from_big_endian(&v))
         } else {
             U256::from_dec_str(v).map_err(|e| e.to_string())
         }
@@ -294,4 +252,19 @@ pub fn value_to_abi(
                 abi::encode(&[tokens.remove(0)]).into()
             }
         })
+}
+
+pub fn parse_private_key(private_key: U256) -> Result<SigningKey, Bytes> {
+    if private_key.is_zero() {
+        return Err("Private key cannot be 0.".to_string().encode().into())
+    }
+
+    if private_key >= U256::from_big_endian(&Secp256k1::ORDER.to_be_bytes()) {
+        return Err("Private key must be less than 115792089237316195423570985008687907852837564279074904382605163141518161494337 (the secp256k1 curve order).".to_string().encode().into());
+    }
+
+    let mut bytes: [u8; 32] = [0; 32];
+    private_key.to_big_endian(&mut bytes);
+
+    SigningKey::from_bytes(&bytes).map_err(|err| err.to_string().encode().into())
 }

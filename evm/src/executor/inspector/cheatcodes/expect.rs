@@ -1,10 +1,8 @@
 use super::Cheatcodes;
 use crate::{
     abi::HEVMCalls,
-    executor::{
-        backend::DatabaseExt,
-        inspector::cheatcodes::util::{ERROR_PREFIX, REVERT_PREFIX},
-    },
+    error::{SolError, ERROR_PREFIX, REVERT_PREFIX},
+    executor::backend::DatabaseExt,
 };
 use bytes::Bytes;
 use ethers::{
@@ -266,7 +264,7 @@ pub fn apply<DB: DatabaseExt>(
         HEVMCalls::MockCall0(inner) => {
             // TODO: Does this increase gas usage?
             if let Err(err) = data.journaled_state.load_account(inner.0, data.db) {
-                return Some(Err(err.string_encoded()))
+                return Some(Err(err.encode_string()))
             }
 
             // Etches a single byte onto the account if it is empty to circumvent the `extcodesize`
