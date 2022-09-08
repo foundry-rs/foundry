@@ -32,6 +32,7 @@ use foundry_common::{evm::EvmArgs, fs, ContractsByArtifact};
 use foundry_config::Config;
 use semver::Version;
 use std::{collections::HashMap, sync::mpsc::channel, thread};
+use tracing::trace;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(CoverageArgs, opts, evm_opts);
@@ -108,6 +109,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
+    #[tracing::instrument(name = "prepare coverage", skip_all)]
     fn prepare(
         &self,
         config: &Config,
@@ -133,9 +135,13 @@ impl CoverageArgs {
                     .entry(version.clone())
                     .or_default()
                     .insert(source_file.id as usize, ast);
+
+                let file = project_paths.root.join(&path);
+                trace!(root=?project_paths.root, ?file, "reading source file");
+
                 versioned_sources.entry(version.clone()).or_default().insert(
                     source_file.id as usize,
-                    fs::read_to_string(project_paths.root.join(&path))
+                    fs::read_to_string(&file)
                         .wrap_err("Could not read source code for analysis")?,
                 );
                 report.add_source(version, source_file.id as usize, path);
