@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use ethers::{
-    abi::{self, Abi, AbiDecode, AbiEncode, AbiError, ParamType},
+    abi::{self, Abi, AbiDecode, AbiEncode, AbiError, ParamType, Tokenizable},
     prelude::U256,
     utils::keccak256,
 };
@@ -47,8 +47,7 @@ pub fn encode_error(reason: impl Display) -> Bytes {
 pub fn encode_error_with_hints(reason: impl Display, hints: Vec<String>) -> Bytes {
     [
         CHEATCODE_ERROR_SELECTOR.as_slice(),
-        reason.to_string().encode().as_slice(),
-        hints.encode().as_slice(),
+        abi::encode(&[reason.to_string().into_token(), hints.into_token()]).as_slice(),
     ]
     .concat()
     .into()
@@ -179,7 +178,7 @@ impl AbiDecode for DecodedError {
                 } else {
                     let mut tokens = abi::decode(
                         &[ParamType::String, ParamType::Array(Box::new(ParamType::String))],
-                        bytes.as_ref(),
+                        &bytes.as_ref()[32..],
                     )?
                     .into_iter();
 
