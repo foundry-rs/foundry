@@ -9,7 +9,7 @@ use anvil_core::eth::{
     EthPubSub, EthRequest, EthRpcCall,
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use anvil_server::{RpcHandler, WsContext, WsRpcHandler};
+use anvil_server::{RpcHandler, PubSubContext, PubSubRpcHandler};
 use ethers::types::FilteredParams;
 use tracing::trace;
 
@@ -52,7 +52,7 @@ impl WsEthRpcHandler {
     }
 
     /// Invoked for an ethereum pubsub rpc call
-    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: WsContext<Self>) -> ResponseResult {
+    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: PubSubContext<Self>) -> ResponseResult {
         let id = SubscriptionId::random_hex();
         trace!(target: "rpc::ws", "received pubsub request {:?}", pubsub);
         match pubsub {
@@ -105,12 +105,12 @@ impl WsEthRpcHandler {
 }
 
 #[async_trait::async_trait]
-impl WsRpcHandler for WsEthRpcHandler {
+impl PubSubRpcHandler for WsEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;
     type Subscription = EthSubscription;
 
-    async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult {
+    async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult {
         trace!(target: "rpc::ws", "received ws request {:?}", request);
         match request {
             EthRpcCall::Request(request) => self.api.execute(*request).await,

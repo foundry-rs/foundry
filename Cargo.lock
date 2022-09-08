@@ -171,6 +171,7 @@ dependencies = [
  "clap 3.2.16",
  "futures",
  "hyper",
+ "parity-tokio-ipc",
  "parking_lot 0.12.0",
  "serde",
  "serde_json",
@@ -3676,6 +3677,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "parity-tokio-ipc"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9981e32fb75e004cc148f5fb70342f393830e0a4aa62e3cc93b50976218d42b6"
+dependencies = [
+ "futures",
+ "libc",
+ "log",
+ "rand 0.7.3",
+ "tokio",
+ "winapi",
 ]
 
 [[package]]
