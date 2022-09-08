@@ -331,7 +331,7 @@ pub enum CoverageReportKind {
 ///
 /// This is needed in order to analyze the bytecode for contracts that use libraries.
 fn dummy_link_bytecode(mut obj: CompactBytecode) -> Option<Bytes> {
-    let link_references = std::mem::take(&mut obj.link_references);
+    let link_references = obj.link_references.clone();
     for (file, libraries) in link_references {
         for library in libraries.keys() {
             obj.link(&file, library, Address::zero());
