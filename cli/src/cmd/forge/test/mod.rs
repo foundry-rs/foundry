@@ -509,9 +509,9 @@ fn test(
                 // We always display hints if the revert had any.
                 if let Some(reason) = &result.reason {
                     if !reason.hints.is_empty() {
-                        println!("Hints:");
+                        println!("{}", Paint::blue("Hints:"));
                         for hint in &reason.hints {
-                            println!("  {hint}");
+                            println!("  - {hint}");
                         }
                         println!();
                     }
