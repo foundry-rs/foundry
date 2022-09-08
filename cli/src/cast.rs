@@ -424,24 +424,10 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::keccak(&data)?);
         }
         Subcommands::LeftShift { value, bits, base_in, base_out } => {
-            // println!(
-            //     "{}",
-            //     format_uint(
-            //         SimpleCast::left_shift(&value, &bits, det_base_in(&value, base_in)?)?,
-            //         det_base_out(&base_out)?
-            //     )?
-            // );
-            todo!()
+            println!("{}", SimpleCast::left_shift(&value, &bits, base_in, &base_out)?);
         }
         Subcommands::RightShift { value, bits, base_in, base_out } => {
-            // println!(
-            //     "{}",
-            //     format_uint(
-            //         SimpleCast::right_shift(&value, &bits, det_base_in(&value, base_in)?)?,
-            //         det_base_out(&base_out)?
-            //     )?
-            // );
-            todo!()
+            println!("{}", SimpleCast::right_shift(&value, &bits, base_in, &base_out)?);
         }
         Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
             let api_key = match etherscan_api_key {
