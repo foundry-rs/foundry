@@ -5,6 +5,7 @@ use crate::rlp_converter::Item;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
+        ethereum_types::FromStrRadixErrKind,
         token::{LenientTokenizer, Tokenizer},
         Abi, Function, HumanReadableParser, Token,
     },
@@ -846,7 +847,7 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Cast::checksum_address(&addr)?;
+    /// let addr = Cast::to_checksum_address(&addr)?;
     /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
     ///
     /// # Ok(())
@@ -905,16 +906,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
-        let (sign, value) = match value.as_bytes().first() {
-            Some(b'+') => (Sign::Positive, &value[1..]),
-            Some(b'-') => (Sign::Negative, &value[1..]),
-            _ => (Sign::Positive, value),
-        };
-        let mut n = U256::from_str_radix(value, 10)?;
-
-        if matches!(sign, Sign::Negative) {
-            n = (!n).overflowing_add(U256::one()).0;
-        }
+        let n = parse_int(value, 10)?;
 
         // same as to_uint256
         Ok(format!("0x{:064x}", n))
@@ -1044,6 +1036,54 @@ impl SimpleCast {
         let val = serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.parse()?));
         let item = Item::value_to_item(&val)?;
         Ok(format!("0x{}", hex::encode(rlp::encode(&item))))
+    }
+
+    /// Converts a number of one base to another
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "16")?, "0x64");
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "oct")?, "0o144");
+    ///     assert_eq!(Cast::to_base("100", Some("10".to_string()), "binary")?, "0b1100100");
+    ///
+    ///     assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
+    ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?, u128::MAX.to_string());
+    ///     assert_eq!(Cast::to_base("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", None, "decimal")?, U256::MAX.to_string());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_base(value: &str, base_in: Option<String>, base_out: &str) -> Result<String> {
+        let base_in = match base_in {
+            Some(base_in) => get_base(&base_in),
+            None => get_base_from_str(&value),
+        }?;
+        let base_out = get_base(base_out)?;
+        if base_in == base_out {
+            return Ok(value.to_string())
+        }
+
+        // TODO: Parse str from binary or octal into U256
+        let n = if base_in == 10 {
+            parse_int(value, 10)
+        } else {
+            U256::from_str_radix(value, base_in).map_err(|e| {
+                if matches!(e.kind(), FromStrRadixErrKind::UnsupportedRadix) {
+                    eyre::eyre!("Numbers in base {} are currently not supported as input.", base_in)
+                } else {
+                    eyre::eyre!(e)
+                }
+            })
+        }
+        .map_err(|e| eyre::eyre!("Failed to parse value: {}", e))?;
+        let s = format_uint(n, base_out, true)?;
+
+        Ok(s)
     }
 
     /// Converts hexdata into bytes32 value
@@ -1470,6 +1510,105 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+fn parse_int(s: &str, base: u32) -> Result<U256> {
+    let (s, is_neg) = match s.as_bytes().first() {
+        Some(b'+') => (&s[1..], false),
+        Some(b'-') => (&s[1..], true),
+        _ => (s, false),
+    };
+    let mut n = U256::from_str_radix(s, base)?;
+
+    if is_neg {
+        n = (!n).overflowing_add(U256::one()).0;
+    }
+
+    Ok(n)
+}
+
+fn get_base(base: &str) -> Result<u32> {
+    match base {
+        "2" | "bin" | "binary" => Ok(2),
+        "8" | "oct" | "octal" => Ok(8),
+        "10" | "dec" | "decimal" => Ok(10),
+        "16" | "hex" | "hexadecimal " => Ok(16),
+        _ => Err(eyre::eyre!(
+            r#"Invalid base. Possible options:
+2, bin, binary
+8, oct, octal
+10, dec, decimal
+16, hex, hexadecimal
+            "#
+        )),
+    }
+}
+
+fn get_base_from_str(s: &str) -> Result<u32> {
+    match s {
+        _ if s.starts_with("0b") => Ok(2),
+        _ if s.starts_with("0o") => Ok(8),
+        _ if s.starts_with("0x") => Ok(16),
+        // No prefix => first try parsing as decimal
+        _ => match U256::from_str_radix(s, 10) {
+            // Ambiguous, can be both
+            Ok(_) => {
+                Err(eyre::eyre!(
+                    "Could not autodetect base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter."
+                ))
+            }
+            // Try parsing as hexadecimal
+            Err(_) => match U256::from_str_radix(s, 16) {
+                Ok(_) => Ok(16),
+                Err(e) => Err(eyre::eyre!(
+                    "Could not autodetect base neither as decimal nor as hexadecimal: {}",
+                    e
+                )),
+            },
+        }
+    }
+}
+
+fn format_uint(val: impl Into<U256>, base: u32, add_prefix: bool) -> eyre::Result<String> {
+    let val: U256 = val.into();
+    let prefix = if !add_prefix {
+        ""
+    } else {
+        match base {
+            2 => "0b",
+            8 => "0o",
+            16 => "0x",
+            _ => "",
+        }
+    };
+    let s = match base {
+        // Binary and Octal traits are not implemented for primitive-types types
+        2 | 8 => {
+            let mut s = String::new();
+            let mut latch = false;
+            let is_b = base == 2;
+            let f = if is_b { |v: u8| format!("{:b}", v) } else { |v: u8| format!("{:o}", v) };
+            // little endian so rev
+            for ch in val.0.iter().rev() {
+                let bytes = ch.to_be_bytes();
+                for byte in bytes {
+                    if !latch {
+                        latch = byte != 0;
+                    }
+
+                    if latch {
+                        s.push_str(&f(byte));
+                    }
+                }
+            }
+            s
+        }
+        10 => format!("{}", val),
+        16 => format!("{:x}", val),
+        _ => eyre::bail!("Invalid base: {}", base),
+    };
+
+    Ok(format!("{}{}", prefix, s))
 }
 
 #[cfg(test)]
