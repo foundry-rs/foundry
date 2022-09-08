@@ -233,21 +233,10 @@ const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
 const ALIAS_SEPARATOR: char = '=';
 
-/// Commonly used aliases for solidity repos,
-const COMMON_ORG_ALIASES: &[(&str, &str); 1] = &[("@openzeppelin", "openzeppelin")];
-
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
-        let mut dependency = dependency.to_string();
-
-        // this will update wrong conventional aliases
-        for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
-            if dependency.starts_with(alias) {
-                dependency = dependency.replacen(alias, real_org, 1);
-                break
-            }
-        }
+        let dependency = dependency.to_string();
 
         // everything before "=" should be considered the alias
         let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
