@@ -764,3 +764,15 @@ async fn can_impersonate_in_fork() {
     let res = provider.send_transaction(tx, None).await;
     res.unwrap_err();
 }
+
+// <https://etherscan.io/block/14608400>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_total_difficulty_fork() {
+    let (_api, handle) = spawn(fork_config()).await;
+
+    let total_difficulty: U256 = 46_673_965_560_973_856_260_636u128.into();
+
+    let provider = handle.http_provider();
+    let block = provider.get_block(BlockNumber::Latest).await.unwrap().unwrap();
+    assert_eq!(block.total_difficulty, Some(total_difficulty))
+}

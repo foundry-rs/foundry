@@ -112,6 +112,10 @@ impl ClientFork {
         self.config.read().block_number
     }
 
+    pub fn total_difficulty(&self) -> U256 {
+        self.config.read().total_difficulty
+    }
+
     pub fn base_fee(&self) -> Option<U256> {
         self.config.read().base_fee
     }
@@ -494,6 +498,8 @@ pub struct ClientForkConfig {
     pub backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// total difficulty of the chain until this block
+    pub total_difficulty: U256,
 }
 
 // === impl ClientForkConfig ===

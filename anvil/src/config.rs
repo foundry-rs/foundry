@@ -715,7 +715,7 @@ impl NodeConfig {
                 env.block = BlockEnv {
                     number: fork_block_number.into(),
                     timestamp: block.timestamp,
-                    difficulty: block.difficulty,
+                    difficulty: Default::default(),
                     gas_limit: block.gas_limit,
                     // Keep previous `coinbase` and `basefee` value
                     coinbase: env.block.coinbase,
@@ -791,6 +791,7 @@ impl NodeConfig {
                         retries: self.fork_request_retries,
                         backoff: self.fork_retry_backoff,
                         compute_units_per_second: self.compute_units_per_second,
+                        total_difficulty: block.total_difficulty.unwrap_or_default(),
                     },
                     Arc::clone(&db),
                 );
