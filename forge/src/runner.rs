@@ -313,7 +313,7 @@ impl<'a> ContractRunner<'a> {
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
                 match result.kind {
                     TestKind::Invariant(ref _cases, _) => {
-                        test_results.insert(function.name.clone(), result);
+                        test_results.insert(function.signature(), result);
                     }
                     _ => unreachable!(),
                 }

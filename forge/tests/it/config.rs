@@ -110,6 +110,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
 }
 
 /// A helper to assert the outcome of multiple tests with helpful assert messages
+#[track_caller]
 pub fn assert_multiple(
     actuals: &BTreeMap<String, SuiteResult>,
     expecteds: BTreeMap<
