@@ -165,10 +165,7 @@ contract PrankTest is DSTest {
             sender, "msg.sender was not set during prank", origin, "tx.origin was not set during prank"
         );
         victim.assertCallerAndOrigin(
-            sender,
-            "msg.sender was not set during prank (call 2)",
-            origin,
-            "tx.origin was not set during prank (call 2)"
+            sender, "msg.sender was not set during prank (call 2)", origin, "tx.origin was not set during prank (call 2)"
         );
         cheats.stopPrank();
 
