@@ -58,31 +58,30 @@ async fn main() -> eyre::Result<()> {
 
         // Conversions & transformations
         Subcommands::FromUtf8 { text } => {
-            let val = unwrap_or_stdin(text)?;
-            println!("{}", SimpleCast::from_utf8(&val));
+            let value = unwrap_or_stdin(text)?;
+            println!("{}", SimpleCast::from_utf8(&value));
         }
         Subcommands::ToAscii { hexdata } => {
-            let val = unwrap_or_stdin(hexdata)?;
-            println!("{}", SimpleCast::to_ascii(&val)?);
+            let value = unwrap_or_stdin(hexdata)?;
+            println!("{}", SimpleCast::to_ascii(&value)?);
         }
         Subcommands::ToDec { hexvalue } => {
-            let val = unwrap_or_stdin(hexvalue)?;
-            println!("{}", SimpleCast::to_dec(&val)?);
+            let value = unwrap_or_stdin(hexvalue)?;
+            println!("{}", SimpleCast::to_dec(&value)?);
         }
         Subcommands::ToHex { decimal } => {
-            let val = unwrap_or_stdin(decimal)?;
-            println!("{}", SimpleCast::to_hex(U256::from_dec_str(&val)?));
+            let value = unwrap_or_stdin(decimal)?;
+            println!("{}", SimpleCast::to_hex(&value)?);
         }
-        Subcommands::FromFix { decimals, value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::from_fix(unwrap_or_stdin(decimals)? as u32, &val)?);
+        Subcommands::FromFixedPoint { decimals, value } => {
+            let value = unwrap_or_stdin(value)?;
+            let decimals = unwrap_or_stdin(decimals)?;
+            println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?);
         }
-        Subcommands::ToFix { decimals, value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!(
-                "{}",
-                SimpleCast::to_fix(unwrap_or_stdin(decimals)?, U256::from_dec_str(&val)?)?
-            );
+        Subcommands::ToFixedPoint { decimals, value } => {
+            let value = unwrap_or_stdin(value)?;
+            let decimals = unwrap_or_stdin(decimals)?;
+            println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?);
         }
         Subcommands::ConcatHex { data } => {
             println!("{}", SimpleCast::concat_hex(data))
@@ -95,8 +94,8 @@ async fn main() -> eyre::Result<()> {
             println!("0x{hex}");
         }
         Subcommands::ToHexdata { input } => {
-            let val = unwrap_or_stdin(input)?;
-            let output = match val {
+            let value = unwrap_or_stdin(input)?;
+            let output = match value {
                 s if s.starts_with('@') => {
                     let var = std::env::var(&s[1..])?;
                     var.as_bytes().to_hex()
@@ -116,16 +115,16 @@ async fn main() -> eyre::Result<()> {
             println!("0x{output}");
         }
         Subcommands::ToCheckSumAddress { address } => {
-            let val = unwrap_or_stdin(address)?;
-            println!("{}", SimpleCast::to_checksum_address(&val)?);
+            let value = unwrap_or_stdin(address)?;
+            println!("{}", SimpleCast::to_checksum_address(&value));
         }
         Subcommands::ToUint256 { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_uint256(&val)?);
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_uint256(&value)?);
         }
         Subcommands::ToInt256 { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_int256(&val)?);
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_int256(&value)?);
         }
         Subcommands::ToUnit { value, unit } => {
             let value = unwrap_or_stdin(value)?;
@@ -140,27 +139,27 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::to_wei(&value, &unit)?);
         }
         Subcommands::FromRlp { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::from_rlp(val)?);
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_rlp(value)?);
         }
         Subcommands::ToRlp { value } => {
-            let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_rlp(&val)?);
+            let value = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_rlp(&value)?);
         }
         Subcommands::ToBase { value, base_in, base_out } => {
             println!("{}", SimpleCast::to_base(&value, base_in, &base_out)?);
         }
         Subcommands::ToBytes32 { bytes } => {
-            let val = unwrap_or_stdin(bytes)?;
-            println!("{}", SimpleCast::to_bytes32(&val)?);
+            let value = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleCast::to_bytes32(&value)?);
         }
         Subcommands::FormatBytes32String { string } => {
-            let val = unwrap_or_stdin(string)?;
-            println!("{}", SimpleCast::format_bytes32_string(&val)?);
+            let value = unwrap_or_stdin(string)?;
+            println!("{}", SimpleCast::format_bytes32_string(&value)?);
         }
         Subcommands::ParseBytes32String { bytes } => {
-            let val = unwrap_or_stdin(bytes)?;
-            println!("{}", SimpleCast::parse_bytes32_string(&val)?);
+            let value = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleCast::parse_bytes32_string(&value)?);
         }
 
         // ABI encoding & decoding
