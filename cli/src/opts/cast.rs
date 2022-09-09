@@ -104,9 +104,9 @@ The input can be:
     #[clap(name = "--from-fix")]
     #[clap(visible_aliases = &["from-fix", "ff"])]
     #[clap(about = "Convert a fixed point number into an integer.")]
-    FromFix {
+    FromFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
         // negative values not yet supported internally
         value: Option<String>,
@@ -128,11 +128,10 @@ The input can be:
     #[clap(name = "--to-fix")]
     #[clap(visible_aliases = &["to-fix", "tf", "2f"])]
     #[clap(about = "Convert an integer into a fixed point number.")]
-    ToFix {
+    ToFixedPoint {
         #[clap(value_name = "DECIMALS")]
-        decimals: Option<u128>,
+        decimals: Option<String>,
         #[clap(allow_hyphen_values = true, value_name = "VALUE")]
-        // negative values not yet supported internally
         value: Option<String>,
     },
     #[clap(name = "--to-uint256")]
@@ -188,6 +187,7 @@ Examples:
     )]
     ToUnit {
         #[clap(value_name = "VALUE")]
+        // negative values not yet supported internally
         value: Option<String>,
         #[clap(
             help = "The unit to convert to (ether, gwei, wei).",
@@ -223,7 +223,8 @@ Examples:
     #[clap(about = "Decodes RLP encoded data. Input must be hexadecimal.")]
     FromRlp { value: Option<String> },
     #[clap(name = "--to-base")]
-    #[clap(about = "")]
+    #[clap(visible_aliases = &["--to-radix", "to-radix", "to-base", "tr", "2r"])]
+    #[clap(about = "Converts a number of one base to another")]
     ToBase {
         #[clap(value_name = "VALUE")]
         value: String,
