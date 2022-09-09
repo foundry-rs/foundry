@@ -160,8 +160,10 @@ impl Base {
             _ => match U256::from_str_radix(s, 10) {
                 Ok(_) => {
                     // Can be both, ambiguous but default to Decimal
-                    #[cfg_attr(rustfmt, rustfmt_skip)]
-                    // Err(eyre::eyre!("Could not autodetect base: input could be decimal or hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a --base-in parameter."))
+
+                    // Err(eyre::eyre!("Could not autodetect base: input could be decimal or
+                    // hexadecimal. Please prepend with 0x if the input is hexadecimal, or specify a
+                    // --base-in parameter."))
                     Ok(Self::Decimal)
                 }
                 Err(_) => match U256::from_str_radix(s, 16) {
